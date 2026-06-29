@@ -1,0 +1,128 @@
+// WebGL Water - GPU heightfield simulation (Unity 6 / URP port)
+// Original: Evan Wallace, http://madebyevan.com/webgl-water/ (MIT)
+//
+// Texture channels (per texel): (height, velocity, normal.x, normal.z)
+// Ping-pong between two RGBAFloat RenderTextures (Src -> Dst), swapped in C#.
+
+#pragma kernel Drop
+#pragma kernel Update
+#pragma kernel Normal
+#pragma kernel Sphere
+#pragma kernel Conserve
+
+static const float PI = 3.141592653589793;
+
+// Both bound to RGBAFloat RenderTextures with enableRandomWrite = true.
+RWTexture2D<float4> Src;   // read source
+RWTexture2D<float4> Dst;   // write destination
+
+// Mip-mapped copy of the height channel; its top (1x1) mip is the mean height.
+Texture2D<float4> HeightMip;
+SamplerState sampler_HeightMip;
+
+float  _Size;     // texture resolution (256)
+float2 _Delta;    // 1.0 / _Size
+
+// Drop
+float2 _Center;   // in [-1, 1]
+float  _Radius;
+float  _Strength;
+
+// Update (wave equation tuning)
+float  _WaveSpeed; // stiffness ~ propagation speed (stable for 0 < x <= 2.0)
+float  _Damping;   // velocity attenuation per step (e.g. 0.995)
+
+// Sphere displacement
+float3 _OldCenter;
+float3 _NewCenter;
+float  _SphereRadius;
+
+int Clamp1(int v)            { return clamp(v, 0, (int)_Size - 1); }
+int2 ClampC(int2 p)         { return int2(Clamp1(p.x), Clamp1(p.y)); }
+
+[numthreads(8, 8, 1)]
+void Drop(uint3 id : SV_DispatchThreadID)
+{
+    int2 p = int2(id.xy);
+    float2 coord = (p + 0.5) * _Delta;
+    float4 info = Src[p];
+
+    float drop = max(0.0, 1.0 - length(_Center * 0.5 + 0.5 - coord) / _Radius);
+    drop = 0.5 - cos(drop * PI) * 0.5;
+    info.r += drop * _Strength;
+
+    Dst[p] = info;
+}
+
+[numthreads(8, 8, 1)]
+void Update(uint3 id : SV_DispatchThreadID)
+{
+    int2 p = int2(id.xy);
+    float4 info = Src[p];
+
+    float average = (
+        Src[ClampC(p + int2(-1, 0))].r +
+        Src[ClampC(p + int2( 0,-1))].r +
+        Src[ClampC(p + int2( 1, 0))].r +
+        Src[ClampC(p + int2( 0, 1))].r
+    ) * 0.25;
+
+    // move velocity toward the neighbor average, attenuate, integrate height
+    info.g += (average - info.r) * _WaveSpeed;
+    info.g *= _Damping;
+    info.r += info.g;
+
+    Dst[p] = info;
+}
+
+[numthreads(8, 8, 1)]
+void Normal(uint3 id : SV_DispatchThreadID)
+{
+    int2 p = int2(id.xy);
+    float4 info = Src[p];
+
+    float rx = Src[ClampC(p + int2(1, 0))].r;
+    float ry = Src[ClampC(p + int2(0, 1))].r;
+
+    float3 dx = float3(_Delta.x, rx - info.r, 0.0);
+    float3 dy = float3(0.0, ry - info.r, _Delta.y);
+    info.ba = normalize(cross(dy, dx)).xz;
+
+    Dst[p] = info;
+}
+
+// Smooth approximation of the water displaced by the sphere at a given column.
+float VolumeInSphere(float3 center, float2 coord)
+{
+    float3 toCenter = float3(coord.x * 2.0 - 1.0, 0.0, coord.y * 2.0 - 1.0) - center;
+    float t = length(toCenter) / _SphereRadius;
+    float dy = exp(-pow(t * 1.5, 6.0));
+    float ymin = min(0.0, center.y - dy);
+    float ymax = min(max(0.0, center.y + dy), ymin + 2.0 * dy);
+    return (ymax - ymin) * 0.1;
+}
+
+[numthreads(8, 8, 1)]
+void Sphere(uint3 id : SV_DispatchThreadID)
+{
+    int2 p = int2(id.xy);
+    float2 coord = (p + 0.5) * _Delta;
+    float4 info = Src[p];
+
+    info.r += VolumeInSphere(_OldCenter, coord);
+    info.r -= VolumeInSphere(_NewCenter, coord);
+
+    Dst[p] = info;
+}
+
+// Subtract the mean height so the closed pool conserves volume (stops the whole
+// surface drifting up/down as ripples are added). Mean = top mip of HeightMip.
+[numthreads(8, 8, 1)]
+void Conserve(uint3 id : SV_DispatchThreadID)
+{
+    int2 p = int2(id.xy);
+    float4 info = Src[p];
+    float mean = HeightMip.SampleLevel(sampler_HeightMip, float2(0.5, 0.5), 20.0).r;
+    info.r -= mean;
+    Dst[p] = info;
+}

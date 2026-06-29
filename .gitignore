@@ -1,0 +1,37 @@
+# Unity generated folders
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+[Pp]rofilerCaptures/
+[Rr]ecordings/
+
+# Asset meta data should only be ignored when the corresponding asset is also ignored
+!/[Aa]ssets/**/*.meta
+
+# Visual Studio / Rider / IDE
+.vs/
+.idea/
+.vsconfig
+*.csproj
+*.sln
+*.slnx
+*.user
+*.userprefs
+*.suo
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Unity crash / build artifacts
+sysinfo.txt
+*.apk
+*.aab
+*.unitypackage
+crashlytics-build.properties
