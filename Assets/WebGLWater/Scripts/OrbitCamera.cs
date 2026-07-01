@@ -31,7 +31,12 @@ namespace WebGLWater
         [Tooltip("Two-finger pinch zoom sensitivity (per pixel of finger spread).")]
         public float pinchZoomSpeed = 0.02f;
 
-        float _lastPinchDist = -1f;
+        // OS mouse-wheel delta per notch; dividing by it normalizes a notch to ~1 zoom step.
+        const float MouseWheelNotchDelta = 120f;
+        const float ScrollDeadzone = 0.0001f;       // ignore sub-pixel scroll jitter
+        const float NoActivePinch = -1f;            // sentinel: no pinch gesture in progress
+
+        float _lastPinchDist = NoActivePinch;
 
         static readonly int ID_Eye = Shader.PropertyToID("_Eye");
 
@@ -60,7 +65,7 @@ namespace WebGLWater
         void LateUpdate()
         {
             float scroll = ScrollDelta();
-            if (Mathf.Abs(scroll) > 0.0001f) Zoom(scroll);
+            if (Mathf.Abs(scroll) > ScrollDeadzone) Zoom(scroll);
             HandlePinch();
             Apply();
         }
@@ -76,7 +81,7 @@ namespace WebGLWater
             }
             else
             {
-                _lastPinchDist = -1f;
+                _lastPinchDist = NoActivePinch;
             }
         }
 
@@ -117,7 +122,7 @@ namespace WebGLWater
         static float ScrollDelta()
         {
 #if ENABLE_INPUT_SYSTEM
-            return Mouse.current != null ? Mouse.current.scroll.ReadValue().y / 120f : 0f;
+            return Mouse.current != null ? Mouse.current.scroll.ReadValue().y / MouseWheelNotchDelta : 0f;
 #else
             return Input.mouseScrollDelta.y;
 #endif

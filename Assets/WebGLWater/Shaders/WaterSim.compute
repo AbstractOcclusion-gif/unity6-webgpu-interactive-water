@@ -11,6 +11,13 @@
 #pragma kernel Foam
 #pragma kernel Conserve
 
+// Compute thread-group size. MUST equal WaterSimulation.ThreadGroupSize on the C# side.
+#define THREAD_GROUP_SIZE 8
+
+// LOD that samples HeightMip's top (1x1) mip = the mean height. Any value >= the largest
+// mip index works (SampleLevel clamps to the top), so this covers every practical resolution.
+#define MEAN_MIP_LOD 20.0
+
 static const float PI = 3.141592653589793;
 
 // Hard bounds on the simulated field. The explicit wave integrator is only
@@ -41,7 +48,7 @@ RWTexture2D<float4> Dst;   // write destination
 Texture2D<float4> HeightMip;
 SamplerState sampler_HeightMip;
 
-float  _Size;     // texture resolution (256)
+float  _Size;     // texture resolution (set per quality tier from C#)
 float2 _Delta;    // 1.0 / _Size
 
 // Drop
@@ -88,7 +95,7 @@ float4 Sanitize(float4 info)
     return info;
 }
 
-[numthreads(8, 8, 1)]
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
 void Drop(uint3 id : SV_DispatchThreadID)
 {
     int2 p = int2(id.xy);
@@ -102,7 +109,7 @@ void Drop(uint3 id : SV_DispatchThreadID)
     Dst[p] = Sanitize(info);
 }
 
-[numthreads(8, 8, 1)]
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
 void Update(uint3 id : SV_DispatchThreadID)
 {
     int2 p = int2(id.xy);
@@ -123,7 +130,7 @@ void Update(uint3 id : SV_DispatchThreadID)
     Dst[p] = Sanitize(info);
 }
 
-[numthreads(8, 8, 1)]
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
 void Normal(uint3 id : SV_DispatchThreadID)
 {
     int2 p = int2(id.xy);
@@ -142,7 +149,7 @@ void Normal(uint3 id : SV_DispatchThreadID)
 // Push the surface by how much the submerged footprint changed since last frame:
 // water rushes back where an object left a column and is pushed down where it
 // entered (and deeper as the object sinks). Mirrors the old sphere old/new trick.
-[numthreads(8, 8, 1)]
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
 void Obstacle(uint3 id : SV_DispatchThreadID)
 {
     int2 p = int2(id.xy);
@@ -175,7 +182,7 @@ void Obstacle(uint3 id : SV_DispatchThreadID)
 // waves and slides off crests instead of spreading evenly), softened by a little
 // isotropic diffusion, fed where the surface is agitated, then decayed. Reads the
 // height/normal state from Src and ping-pongs the foam buffer.
-[numthreads(8, 8, 1)]
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
 void Foam(uint3 id : SV_DispatchThreadID)
 {
     int2 p = int2(id.xy);
@@ -217,12 +224,12 @@ void Foam(uint3 id : SV_DispatchThreadID)
 
 // Subtract the mean height so the closed pool conserves volume (stops the whole
 // surface drifting up/down as ripples are added). Mean = top mip of HeightMip.
-[numthreads(8, 8, 1)]
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
 void Conserve(uint3 id : SV_DispatchThreadID)
 {
     int2 p = int2(id.xy);
     float4 info = Read(p);
-    float mean = HeightMip.SampleLevel(sampler_HeightMip, float2(0.5, 0.5), 20.0).r;
+    float mean = HeightMip.SampleLevel(sampler_HeightMip, float2(0.5, 0.5), MEAN_MIP_LOD).r;
     info.r -= mean;
     Dst[p] = info;
 }

@@ -36,6 +36,7 @@ Shader "WebGLWater/WaterReceiver"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "WaterFog.hlsl"
             #include "WaterVolume.hlsl"
+            #include "WaterShared.hlsl" // IOR_*, ProjectCausticUV
 
             TEXTURE2D(_BaseMap);    SAMPLER(sampler_BaseMap);
             TEXTURE2D(_CausticTex); SAMPLER(sampler_CausticTex);
@@ -82,8 +83,8 @@ Shader "WebGLWater/WaterReceiver"
                 float simH = SAMPLE_TEXTURE2D(_WaterTex, sampler_WaterTex, wuv).r;
                 if (poolPos.y < simH)
                 {
-                    float3 refractedLight = -refract(-_LightDir, float3(0,1,0), 1.0/1.333);
-                    float2 cuv = 0.75 * (poolPos.xz - poolPos.y * refractedLight.xz / refractedLight.y) * 0.5 + 0.5;
+                    float3 refractedLight = -refract(-_LightDir, float3(0,1,0), IOR_AIR / IOR_WATER);
+                    float2 cuv = ProjectCausticUV(poolPos, refractedLight);
                     float caustic = SAMPLE_TEXTURE2D(_CausticTex, sampler_CausticTex, cuv).r;
                     color += albedo * _CausticTint.rgb * (caustic * _CausticStrength * mainLight.shadowAttenuation);
                     color *= _UnderwaterTint.rgb;

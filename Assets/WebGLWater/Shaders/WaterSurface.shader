@@ -55,7 +55,15 @@ Shader "WebGLWater/WaterSurface"
             #include "WaterCommon.hlsl"
             #include "WaterFog.hlsl"
             #include "WaterWaves.hlsl"
-            #include "WaterVolume.hlsl"
+            #include "WaterVolume.hlsl" // brings WaterShared (via WaterCommon): POOL_RIM_HEIGHT etc.
+
+            // Look constants local to this surface pass (single-use here).
+            #define SUN_GLINT_TINT          float3(10.0, 8.0, 6.0)
+            #define SUN_GLINT_SHARPNESS     5000.0
+            #define UNDERWATER_REFRACT_TINT float3(0.8, 1.0, 1.1)
+            #define FRESNEL_POWER           3.0
+            #define FRESNEL_MIN_ABOVE       0.25
+            #define FRESNEL_MIN_BELOW       0.5
 
             float _Underwater;
             float _ReflectionStrength;
@@ -167,7 +175,7 @@ Shader "WebGLWater/WaterSurface"
                 {
                     float2 t = IntersectCube(po, pd, float3(-1.0, -POOL_HEIGHT, -1.0), float3(1.0, 2.0, 1.0));
                     float3 hit = po + pd * t.y;
-                    if (hit.y < 2.0 / 12.0)
+                    if (hit.y < POOL_RIM_HEIGHT)
                     {
                         color = GetWallColor(hit);
                     }
@@ -175,7 +183,7 @@ Shader "WebGLWater/WaterSurface"
                     {
                         color = texCUBE(_Sky, worldRay).rgb;
                         // sun glint - direction from _LightDir, tint/brightness from the Unity sun
-                        color += float3(10.0, 8.0, 6.0) * _SunColor * pow(max(0.0, dot(_LightDir, worldRay)), 5000.0);
+                        color += SUN_GLINT_TINT * _SunColor * pow(max(0.0, dot(_LightDir, worldRay)), SUN_GLINT_SHARPNESS);
                     }
                 }
                 if (worldRay.y < 0.0) color *= waterColor;
@@ -210,15 +218,15 @@ Shader "WebGLWater/WaterSurface"
                     normal = -normal;
                     float3 reflectedRay = reflect(incomingRay, normal);
                     float3 refractedRay = refract(incomingRay, normal, IOR_WATER / IOR_AIR);
-                    float fresnel = lerp(0.5, 1.0, pow(1.0 - dot(normal, -incomingRay), 3.0));
+                    float fresnel = lerp(FRESNEL_MIN_BELOW, 1.0, pow(1.0 - dot(normal, -incomingRay), FRESNEL_POWER));
 
                     float3 reflectedColor = getSurfaceRayColor(i.worldPos, reflectedRay, UNDERWATER_COLOR);
-                    float3 refractedColor = getSurfaceRayColor(i.worldPos, refractedRay, float3(1.0, 1.0, 1.0)) * float3(0.8, 1.0, 1.1);
+                    float3 refractedColor = getSurfaceRayColor(i.worldPos, refractedRay, float3(1.0, 1.0, 1.0)) * UNDERWATER_REFRACT_TINT;
 
                     // Real transparency from below: sample the live scene above the surface.
                 #if defined(_REAL_REFRACTION)
                     float2 ruvU = i.screenPos.xy / max(i.screenPos.w, 1e-5) + normal.xz * _RefractionDistortion;
-                    refractedColor = tex2D(_CameraOpaqueTexture, saturate(ruvU)).rgb * float3(0.8, 1.0, 1.1);
+                    refractedColor = tex2D(_CameraOpaqueTexture, saturate(ruvU)).rgb * UNDERWATER_REFRACT_TINT;
                 #endif
 
                     float tUnder = (1.0 - fresnel) * length(refractedRay);
@@ -229,7 +237,7 @@ Shader "WebGLWater/WaterSurface"
                 {
                     float3 reflectedRay = reflect(incomingRay, normal);
                     float3 refractedRay = refract(incomingRay, normal, IOR_AIR / IOR_WATER);
-                    float fresnel = lerp(0.25, 1.0, pow(1.0 - dot(normal, -incomingRay), 3.0));
+                    float fresnel = lerp(FRESNEL_MIN_ABOVE, 1.0, pow(1.0 - dot(normal, -incomingRay), FRESNEL_POWER));
 
                     float3 reflectedColor = getSurfaceRayColor(i.worldPos, reflectedRay, ABOVEWATER_COLOR);
                     float3 refractedColor = getSurfaceRayColor(i.worldPos, refractedRay, ABOVEWATER_COLOR);

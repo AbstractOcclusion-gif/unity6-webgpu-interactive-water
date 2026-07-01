@@ -23,7 +23,9 @@ Shader "WebGLWater/Caustics"
             #pragma fragment frag
             #pragma target 4.0
             #include "UnityCG.cginc"
-            #include "WaterCommon.hlsl"
+            #include "WaterCommon.hlsl" // brings WaterShared: CAUSTIC_PROJECTION_SCALE, RIM_SHADOW_*, POOL_*
+
+            #define CAUSTIC_FOCUS_SCALE 0.2 // brightness of the focused caustic
 
             struct appdata { float4 vertex : POSITION; };
             struct v2f
@@ -55,7 +57,7 @@ Shader "WebGLWater/Caustics"
                 o.oldPos = project(v.vertex.xzy, refractedLight, refractedLight);
                 o.newPos = project(v.vertex.xzy + float3(0.0, info.r, 0.0), ray, refractedLight);
 
-                o.pos = float4(0.75 * (o.newPos.xz + refractedLight.xz / refractedLight.y), 0.0, 1.0);
+                o.pos = float4(CAUSTIC_PROJECTION_SCALE * (o.newPos.xz + refractedLight.xz / refractedLight.y), 0.0, 1.0);
                 return o;
             }
 
@@ -67,13 +69,13 @@ Shader "WebGLWater/Caustics"
                 // green channel = occluder shadow term; 1.0 means unshadowed.
                 // Guard newArea: a degenerate (near-parallel) projected triangle would divide
                 // by ~0 and write Inf/NaN into the caustic RT that every other pass samples.
-                float4 col = float4(oldArea / max(newArea, 1e-6) * 0.2, 1.0, 0.0, 0.0);
+                float4 col = float4(oldArea / max(newArea, 1e-6) * CAUSTIC_FOCUS_SCALE, 1.0, 0.0, 0.0);
 
                 float3 refractedLight = refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
 
                 // shadow for the rim of the pool
                 float2 t = IntersectCube(i.newPos, -refractedLight, float3(-1.0, -POOL_HEIGHT, -1.0), float3(1.0, 2.0, 1.0));
-                col.r *= 1.0 / (1.0 + exp(-200.0 / (1.0 + 10.0 * (t.y - t.x)) * (i.newPos.y - refractedLight.y * t.y - 2.0 / 12.0)));
+                col.r *= 1.0 / (1.0 + exp(-RIM_SHADOW_SHARPNESS / (1.0 + RIM_SHADOW_SPREAD * (t.y - t.x)) * (i.newPos.y - refractedLight.y * t.y - POOL_RIM_HEIGHT)));
 
                 return col;
             }

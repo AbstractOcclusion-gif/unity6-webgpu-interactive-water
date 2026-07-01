@@ -20,9 +20,14 @@ namespace WebGLWater
         [Tooltip("Strength of the ripple injected into the sim on impact.")]
         public float rippleStrength = 0.04f;
 
+        const float FallbackHalfExtent = 0.15f;    // used when there is no collider to size from
+        const float MinRippleRadius = 0.02f;
+        const float MaxRippleRadius = 0.2f;
+        const float SpeedToRippleStrength = 0.02f; // downward impact speed -> injected ripple height
+        const float MinDivisorSpeed = 0.01f;       // guard against maxImpactSpeed = 0
+
         Rigidbody _rb;
         Collider _col;
-        WaterController _ctrl;
         bool _wasUnder;
 
         void Awake()
@@ -38,27 +43,27 @@ namespace WebGLWater
 
         void FixedUpdate()
         {
-            Vector3 c = _rb.worldCenterOfMass;
+            Vector3 center = _rb.worldCenterOfMass;
             // Resolve from the object's position so a splash fires into the lake it enters.
-            _ctrl = WaterController.BodyContaining(c);
+            WaterController body = WaterController.BodyContaining(center);
             float surfaceY = 0f;
-            if (_ctrl != null) _ctrl.TryGetWaterHeight(c.x, c.z, out surfaceY);
+            if (body != null) body.TryGetWaterHeight(center.x, center.z, out surfaceY);
 
-            float halfY = _col != null ? _col.bounds.extents.y : 0.15f;
-            float halfX = _col != null ? _col.bounds.extents.x : 0.15f;
-            bool under = (c.y - halfY) <= surfaceY;
+            float halfY = _col != null ? _col.bounds.extents.y : FallbackHalfExtent;
+            float halfX = _col != null ? _col.bounds.extents.x : FallbackHalfExtent;
+            bool under = (center.y - halfY) <= surfaceY;
 
             if (under && !_wasUnder)
             {
                 float speed = Mathf.Max(0f, -_rb.linearVelocity.y);
                 if (speed >= minImpactSpeed)
                 {
-                    float strength = Mathf.Clamp01(speed / Mathf.Max(0.01f, maxImpactSpeed));
+                    float strength = Mathf.Clamp01(speed / Mathf.Max(MinDivisorSpeed, maxImpactSpeed));
                     if (emitter != null)
-                        emitter.EmitSplash(new Vector3(c.x, surfaceY, c.z), strength, halfX * 2f);
-                    if (_ctrl != null)
-                        _ctrl.AddRipple(c.x, c.z, Mathf.Clamp(halfX, 0.02f, 0.2f),
-                                        Mathf.Min(rippleStrength, speed * 0.02f));
+                        emitter.EmitSplash(new Vector3(center.x, surfaceY, center.z), strength, halfX * 2f);
+                    if (body != null)
+                        body.AddRipple(center.x, center.z, Mathf.Clamp(halfX, MinRippleRadius, MaxRippleRadius),
+                                       Mathf.Min(rippleStrength, speed * SpeedToRippleStrength));
                 }
             }
             _wasUnder = under;

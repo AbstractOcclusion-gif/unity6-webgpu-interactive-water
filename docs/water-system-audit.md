@@ -22,11 +22,31 @@ Two commits landed against this list (compile/behavior reviewed by a second pass
 - **Magic numbers 16 (partial)** (WaterController camera consts + `activationDistance = CameraFarClip`
   coupling + seed-ripple consts). **Nit 23/24** (dropped `StepSimulation` default args; `TwoPi = 2·π`).
 
-**Still open** (next passes): the `#define THREAD_GROUP_SIZE`/`TOP_MIP_LOD` compute side of 7-8, the
-shared shader constants/helpers header (9, 19), MPB-vs-global de-dup (10), per-frame body-resolution
-cache (11), `Build` decomposition (12), `public`→`[SerializeField] private` (14, needs care — the
-builder writes many of these), the remaining magic-number clusters (17-20, 22, 25-26), and deleting the
-deprecated `WaterSphere.shader` (21, needs a Unity-side reference check).
+Second cleanup pass (2026-07-01):
+
+- **Compute side of 7-8:** `#define THREAD_GROUP_SIZE 8` (all six `[numthreads]`) + named `MEAN_MIP_LOD`
+  for the mean-height sample; stale `_Size` "(256)" comment updated.
+- **Magic numbers 17, 20, 25:** `WaterObstacle` ortho-frustum consts + `_res`→`_resolution`; `WaterSplash`
+  fallback/ripple consts (+ `_ctrl` field → local `body`, `c`→`center`); `PlanarReflection`
+  depth-bits/min-size consts + `w`/`h`→`width`/`height`; `OrbitCamera` wheel/deadzone/pinch consts.
+
+Third cleanup pass (2026-07-01) — **shared shader header**:
+
+- New `Shaders/WaterShared.hlsl` (backend-agnostic: `IOR_*`, `POOL_HEIGHT`, `POOL_RIM_HEIGHT`,
+  `CAUSTIC_PROJECTION_SCALE`, `RIM_SHADOW_*`, `IntersectCube`, `ProjectCausticUV`). Routed
+  `WaterCommon`/`GodRays`/`WaterReceiver`/`Caustics`/`WaterSurface`/`PoolWall` through it and deleted the
+  duplicated `IntersectCube`/IOR defines and the four-way caustic-projection copy. Named the remaining
+  shared/flagged shader magic-numbers (rim sigmoid, sun-glint tint+exponent, underwater refraction tint,
+  Fresnel bases, pool-rim height, `PoolWall` boost, `Caustics` focus). Covers audit items 9, 17, 18, 19,
+  22, 24, 25 and shader-findings 7, 8 (rim), 10.
+
+**Still open** (next passes): MPB-vs-global de-dup (10); per-frame body-resolution cache (11); `Build`
+decomposition (12); `public`→`[SerializeField] private` (14, needs care — the builder writes many of
+these, best done with the packaging asmdefs); a few remaining single-use shader nits (`WaterSurface`
+peaked-refine `5`/`0.005` and foam-nudge `0.1`, the analytic box `float3(1,2,1)` y-max, the
+`WaterCommon`/`Caustics` `length(p)`/`sqrt` guards — findings 9, 12, 13, 16); and deleting the deprecated
+`WaterSphere.shader` (21 — do it from the Unity editor: it's still referenced by `Generated/Sphere.mat`,
+so the editor will confirm nothing else uses that material before removal).
 
 **Already clean (no findings):** `WaterQuality.cs`, `WaterFog.hlsl`, `WaterWaves.hlsl`,
 `ObstacleDepth.shader` — named constants, immutable structs, guarded divides, WHY-comments. Good

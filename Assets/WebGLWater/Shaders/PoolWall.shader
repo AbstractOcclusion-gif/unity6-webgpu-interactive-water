@@ -38,6 +38,8 @@ Shader "WebGLWater/PoolWall"
             #include "WaterFog.hlsl"
             #include "WaterVolume.hlsl"
 
+            #define UNDERWATER_WALL_BOOST 1.2 // walls read a touch brighter than the surface underwater
+
             float _ObjectShadowStrength;
 
             struct appdata { float4 vertex : POSITION; };
@@ -63,7 +65,7 @@ Shader "WebGLWater/PoolWall"
             {
                 float3 color = GetWallColor(i.position);
                 float4 info = tex2D(_WaterTex, i.position.xz * 0.5 + 0.5);
-                if (i.position.y < info.r) color *= UNDERWATER_COLOR * 1.2;
+                if (i.position.y < info.r) color *= UNDERWATER_COLOR * UNDERWATER_WALL_BOOST;
 
                 // receive real object shadows from the scene's directional light
                 float4 shadowCoord = TransformWorldToShadowCoord(i.worldPos);

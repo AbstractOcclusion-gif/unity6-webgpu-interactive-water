@@ -38,6 +38,9 @@ namespace WebGLWater
         [Tooltip("Render the reflection at all. Turn off to disable planar reflections cheaply.")]
         public bool enableReflection = true;
 
+        const int MinReflectionSize = 8;     // don't allocate a sub-8px reflection target
+        const int ReflectionDepthBits = 24;  // depth buffer for the mirrored scene render
+
         static readonly int ID_PlanarTex = Shader.PropertyToID("_PlanarReflectionTex");
 
         Camera _reflectionCamera;
@@ -108,19 +111,19 @@ namespace WebGLWater
 
         void EnsureResources(Camera src)
         {
-            int w = Mathf.Max(8, Mathf.RoundToInt(src.pixelWidth  * resolutionScale));
-            int h = Mathf.Max(8, Mathf.RoundToInt(src.pixelHeight * resolutionScale));
-            if (_rt == null || _rtSize.x != w || _rtSize.y != h)
+            int width = Mathf.Max(MinReflectionSize, Mathf.RoundToInt(src.pixelWidth * resolutionScale));
+            int height = Mathf.Max(MinReflectionSize, Mathf.RoundToInt(src.pixelHeight * resolutionScale));
+            if (_rt == null || _rtSize.x != width || _rtSize.y != height)
             {
                 if (_rt != null) _rt.Release();
-                _rt = new RenderTexture(w, h, 24, RenderTextureFormat.DefaultHDR)
+                _rt = new RenderTexture(width, height, ReflectionDepthBits, RenderTextureFormat.DefaultHDR)
                 {
                     name = "PlanarReflectionTex",
                     wrapMode = TextureWrapMode.Clamp,
                     filterMode = FilterMode.Bilinear,
                 };
                 _rt.Create();
-                _rtSize = new Vector2Int(w, h);
+                _rtSize = new Vector2Int(width, height);
             }
 
             if (_reflectionCamera == null)

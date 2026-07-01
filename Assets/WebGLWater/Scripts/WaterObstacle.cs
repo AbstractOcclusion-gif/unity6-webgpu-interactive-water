@@ -12,10 +12,16 @@ namespace WebGLWater
         public RenderTexture Prev => _prev;
         public RenderTexture Curr => _curr;
 
+        const float MinExtent = 1e-4f;        // floor so a zero extent can't collapse the frustum
+        const float EyeHeightInExtents = 2f;  // ortho camera sits this many depth-extents above the surface
+        const float FarPlaneInExtents = 4f;   // far plane spans this many depth-extents below the eye
+        const float OrthoNearPlane = 0.01f;
+        const float OrthoFarPad = 0.02f;       // keep the floor just inside the far plane
+
         readonly Material _mat;
         readonly CommandBuffer _cb;
         readonly MaterialPropertyBlock _mpb;
-        readonly int _res;
+        readonly int _resolution;
         RenderTexture _prev, _curr;
         Matrix4x4 _view, _gpuProj;
 
@@ -25,7 +31,7 @@ namespace WebGLWater
         public WaterObstacle(Shader obstacleShader, int resolution, Vector3 volumeCenter,
                              Quaternion volumeRotation, Vector3 volumeExtent)
         {
-            _res = resolution;
+            _resolution = resolution;
             _mat = new Material(obstacleShader);
             _cb = new CommandBuffer { name = "WebGLWater.Obstacle" };
             _mpb = new MaterialPropertyBlock();
@@ -36,22 +42,22 @@ namespace WebGLWater
             // footprint maps into the RT along the same axis the surface is displaced.
             // Extents (X half-width, Z half-length) set the ortho size; up = volume forward
             // so the RT's u<->pool x and v<->pool z (the sim's coordinate convention).
-            float ex = Mathf.Max(volumeExtent.x, 1e-4f);
-            float ez = Mathf.Max(volumeExtent.z, 1e-4f);
-            float ey = Mathf.Max(volumeExtent.y, 1e-4f);
+            float ex = Mathf.Max(volumeExtent.x, MinExtent);
+            float ez = Mathf.Max(volumeExtent.z, MinExtent);
+            float ey = Mathf.Max(volumeExtent.y, MinExtent);
             Vector3 up = volumeRotation * Vector3.up;
-            Vector3 eye = volumeCenter + up * (2f * ey);
+            Vector3 eye = volumeCenter + up * (EyeHeightInExtents * ey);
             Quaternion rot = Quaternion.LookRotation(-up, volumeRotation * Vector3.forward);
             Matrix4x4 camToWorld = Matrix4x4.TRS(eye, rot, Vector3.one);
             _view = Matrix4x4.Scale(new Vector3(1f, 1f, -1f)) * camToWorld.inverse;
 
-            Matrix4x4 proj = Matrix4x4.Ortho(-ex, ex, -ez, ez, 0.01f, 4f * ey + 0.02f);
+            Matrix4x4 proj = Matrix4x4.Ortho(-ex, ex, -ez, ez, OrthoNearPlane, FarPlaneInExtents * ey + OrthoFarPad);
             _gpuProj = GL.GetGPUProjectionMatrix(proj, true); // renderIntoTexture = true
         }
 
         RenderTexture Create()
         {
-            var rt = new RenderTexture(_res, _res, 0, RenderTextureFormat.RFloat)
+            var rt = new RenderTexture(_resolution, _resolution, 0, RenderTextureFormat.RFloat)
             {
                 filterMode = FilterMode.Bilinear,
                 wrapMode = TextureWrapMode.Clamp,

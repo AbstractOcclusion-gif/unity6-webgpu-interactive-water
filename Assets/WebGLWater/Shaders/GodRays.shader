@@ -49,9 +49,7 @@ Shader "WebGLWater/GodRays"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
             #include "WaterVolume.hlsl"
-
-            #define IOR_AIR   1.0
-            #define IOR_WATER 1.333
+            #include "WaterShared.hlsl" // IOR_*, IntersectCube, ProjectCausticUV
 
             TEXTURE2D(_CausticTex); SAMPLER(sampler_CausticTex);
             float3 _LightDir;       // global, normalized direction toward the light
@@ -62,18 +60,6 @@ Shader "WebGLWater/GodRays"
                 float  _GodRayDensity;
                 float  _GodRaySteps;
             CBUFFER_END
-
-            // Slab intersection of a ray with an axis-aligned box; returns (tNear, tFar).
-            float2 IntersectCube(float3 origin, float3 ray, float3 cubeMin, float3 cubeMax)
-            {
-                float3 tMin = (cubeMin - origin) / ray;
-                float3 tMax = (cubeMax - origin) / ray;
-                float3 t1 = min(tMin, tMax);
-                float3 t2 = max(tMin, tMax);
-                float tNear = max(max(t1.x, t1.y), t1.z);
-                float tFar  = min(min(t2.x, t2.y), t2.z);
-                return float2(tNear, tFar);
-            }
 
             // The box mesh is authored in POOL space ([-1,0] in y, [-1,1] in x,z) with an
             // identity transform; the volume frame places it in the world.
@@ -135,7 +121,7 @@ Shader "WebGLWater/GodRays"
                     if (pe > sceneEye) break;                              // behind solid geometry
 
                     // project the sample down the refracted light onto the caustic map
-                    float2 cuv = 0.75 * (pPool.xz - pPool.y * refractedLight.xz / refractedLight.y) * 0.5 + 0.5;
+                    float2 cuv = ProjectCausticUV(pPool, refractedLight);
                     float caustic = SAMPLE_TEXTURE2D_LOD(_CausticTex, sampler_CausticTex, cuv, 0).r;
 
                     // hybrid: occlude this sample by the main light's shadow so solid
