@@ -8,6 +8,26 @@ this is a triage list to turn into commits.
 **How to read it:** findings are grouped by severity. Line numbers are approximate (the quoted code is
 the real anchor). Items marked **✓verified** were spot-checked directly against the file text.
 
+## Resolved (2026-07-01)
+
+Two commits landed against this list (compile/behavior reviewed by a second pass — no regressions):
+
+- **All four blockers (1-4):** guarded `Caustics.shader` `sqrt`/area divides, guarded `GodRays.shader`
+  `/steps` (+ C# `Mathf.Max(1, …)` clamp), and `WaterSplashEmitter` now resolves each droplet's body via
+  `BodyContaining` instead of the primary.
+- **Should-fix 5** (WaterSimulation kernel/property strings → consts + cached ids, precomputed `_delta`).
+- **Should-fix 6 + 13** (builder shader/property names → consts; optional-shader validation warnings).
+- **Should-fix 7 (partial)** (WaterQuality now derives `ThreadGroupSize` from `WaterSimulation`).
+- **Should-fix 15** (`WaterInteractable.Active` → `IReadOnlyList`).
+- **Magic numbers 16 (partial)** (WaterController camera consts + `activationDistance = CameraFarClip`
+  coupling + seed-ripple consts). **Nit 23/24** (dropped `StepSimulation` default args; `TwoPi = 2·π`).
+
+**Still open** (next passes): the `#define THREAD_GROUP_SIZE`/`TOP_MIP_LOD` compute side of 7-8, the
+shared shader constants/helpers header (9, 19), MPB-vs-global de-dup (10), per-frame body-resolution
+cache (11), `Build` decomposition (12), `public`→`[SerializeField] private` (14, needs care — the
+builder writes many of these), the remaining magic-number clusters (17-20, 22, 25-26), and deleting the
+deprecated `WaterSphere.shader` (21, needs a Unity-side reference check).
+
 **Already clean (no findings):** `WaterQuality.cs`, `WaterFog.hlsl`, `WaterWaves.hlsl`,
 `ObstacleDepth.shader` — named constants, immutable structs, guarded divides, WHY-comments. Good
 baselines for the rest.

@@ -56,7 +56,7 @@ namespace WebGLWater
         const float GoldenRatio = 0.6180339887f;  // low-discrepancy angular stratification
 
         const int GenerationSeed = 9173;          // deterministic bank for reproducibility
-        const float TwoPi = 6.2831853f;
+        const float TwoPi = 2f * Mathf.PI;
 
         struct Wave
         {

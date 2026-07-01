@@ -12,9 +12,9 @@ namespace WebGLWater
     {
         public enum Selection { Auto, ForceLow, ForceMedium, ForceHigh }
 
-        // The sim compute dispatches in 8x8 thread groups, so the grid must be a positive
-        // multiple of this.
-        const int ThreadGroupSize = 8;
+        // Grid resolution must be a positive multiple of the sim's thread-group size; derive
+        // from the single source of truth so the two can't drift.
+        const int ThreadGroupSize = WaterSimulation.ThreadGroupSize;
         const int MinCausticResolution = 64;
         const int MidGraphicsMemoryMB = 2048; // below this, Auto steps down from High to Medium
 

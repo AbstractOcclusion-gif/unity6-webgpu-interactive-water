@@ -61,7 +61,7 @@ namespace WebGLWater
         public bool enableCulling = true;
         [Tooltip("Bodies whose centre is farther than this from the camera pause their simulation " +
                  "(they hold their last state). Matches the camera far clip by default.")]
-        public float activationDistance = 100f;
+        public float activationDistance = CameraFarClip;
 
         public enum ReflectionMode { SkyOnly, SSR, Planar }
 
@@ -234,6 +234,17 @@ namespace WebGLWater
         bool _visible = true;   // inside the camera frustum -> its renderers draw
         bool _simulate = true;  // visible AND in range AND within the sim budget -> runs the GPU sim
 
+        // Camera framing. activationDistance defaults to the far clip so "beyond the far clip"
+        // is exactly what pauses a distant body - the two stay coupled, not coincidentally equal.
+        const float CameraFieldOfView = 45f;
+        const float CameraNearClip = 0.01f;
+        const float CameraFarClip = 100f;
+
+        // Startup pool seeding: a few random ripples so the surface isn't dead-flat on load.
+        const int SeedRippleCount = 20;
+        const float SeedRippleRadius = 0.03f;
+        const float SeedRippleStrength = 0.01f;
+
         // interaction (only the primary body runs this; it routes clicks to the hit body)
         const int MODE_NONE = -1, MODE_ADD_DROPS = 0, MODE_ORBIT = 2;
 
@@ -310,14 +321,15 @@ namespace WebGLWater
 
             // seed the pool with a few ripples
             if (seedRipplesOnStart)
-                for (int i = 0; i < 20; i++)
-                    _water.AddDrop(Random.value * 2f - 1f, Random.value * 2f - 1f, 0.03f, (i & 1) == 1 ? 0.01f : -0.01f);
+                for (int i = 0; i < SeedRippleCount; i++)
+                    _water.AddDrop(Random.value * 2f - 1f, Random.value * 2f - 1f, SeedRippleRadius,
+                                   (i & 1) == 1 ? SeedRippleStrength : -SeedRippleStrength);
 
             if (targetCamera != null)
             {
-                targetCamera.fieldOfView = 45f;
-                targetCamera.nearClipPlane = 0.01f;
-                targetCamera.farClipPlane = 100f;
+                targetCamera.fieldOfView = CameraFieldOfView;
+                targetCamera.nearClipPlane = CameraNearClip;
+                targetCamera.farClipPlane = CameraFarClip;
             }
 
             if (isPrimary) Primary = this;

@@ -18,6 +18,20 @@ namespace WebGLWater.EditorTools
         const string Gen = "Assets/WebGLWater/Generated";
         const int GridDetail = 200;
 
+        // Shader names (keep in sync with the Shader "..." declarations in Shaders/).
+        const string ShaderWaterSurface = "WebGLWater/WaterSurface";
+        const string ShaderPoolWall = "WebGLWater/PoolWall";
+        const string ShaderCaustics = "WebGLWater/Caustics";
+        const string ShaderObstacle = "WebGLWater/ObstacleDepth";
+        const string ShaderReceiver = "WebGLWater/WaterReceiver";
+        const string ShaderGodRays = "WebGLWater/GodRays";
+        const string ShaderSpritesDefault = "Sprites/Default";
+
+        // Material property names (keep in sync with the shader Properties blocks).
+        const string PropUnderwater = "_Underwater";
+        const string PropCull = "_Cull";
+        const string PropBaseColor = "_BaseColor";
+
         [MenuItem("Tools/WebGL Water/Build Scene (with analytic pool)")]
         static void BuildWithPool() => Build(true);
 
@@ -30,11 +44,11 @@ namespace WebGLWater.EditorTools
                 AssetDatabase.CreateFolder(Root, "Generated");
 
             // ---- shaders ----
-            var sfWater    = Shader.Find("WebGLWater/WaterSurface");
-            var sfPool     = Shader.Find("WebGLWater/PoolWall");
-            var sfCaust    = Shader.Find("WebGLWater/Caustics");
-            var sfObstacle = Shader.Find("WebGLWater/ObstacleDepth");
-            var sfReceiver = Shader.Find("WebGLWater/WaterReceiver");
+            var sfWater    = Shader.Find(ShaderWaterSurface);
+            var sfPool     = Shader.Find(ShaderPoolWall);
+            var sfCaust    = Shader.Find(ShaderCaustics);
+            var sfObstacle = Shader.Find(ShaderObstacle);
+            var sfReceiver = Shader.Find(ShaderReceiver);
             var compute    = AssetDatabase.LoadAssetAtPath<ComputeShader>(Root + "/Shaders/WaterSim.compute");
 
             if (sfWater == null || sfCaust == null || compute == null)
@@ -45,6 +59,11 @@ namespace WebGLWater.EditorTools
                 return;
             }
 
+            // Optional shaders degrade gracefully but should say so, not fail silently.
+            if (sfObstacle == null) Debug.LogWarning($"[WebGL Water] Shader '{ShaderObstacle}' not found; object->water displacement will be disabled.");
+            if (sfReceiver == null) Debug.LogWarning($"[WebGL Water] Shader '{ShaderReceiver}' not found; the demo crate will use its default material.");
+            if (buildAnalyticPool && sfPool == null) Debug.LogWarning($"[WebGL Water] Shader '{ShaderPoolWall}' not found; the analytic pool will be skipped.");
+
             // ---- meshes ----
             var gridMesh   = SaveAsset(BuildGrid(GridDetail),     Gen + "/WaterGrid.asset");
 
@@ -53,14 +72,18 @@ namespace WebGLWater.EditorTools
             var tiles = LoadOrBuildTiles(Gen + "/Tiles.png");
 
             // ---- materials ----
-            var matAbove = SaveMaterial(MakeMat(sfWater, m => { m.SetFloat("_Underwater", 0f); m.SetFloat("_Cull", 1f); }),
+            // _Cull maps to UnityEngine.Rendering.CullMode: the above-water pass culls front
+            // faces, the underwater pass and the pool interior cull back faces.
+            float cullFront = (float)UnityEngine.Rendering.CullMode.Front;
+            float cullBack = (float)UnityEngine.Rendering.CullMode.Back;
+            var matAbove = SaveMaterial(MakeMat(sfWater, m => { m.SetFloat(PropUnderwater, 0f); m.SetFloat(PropCull, cullFront); }),
                                         Gen + "/WaterAbove.mat");
-            var matUnder = SaveMaterial(MakeMat(sfWater, m => { m.SetFloat("_Underwater", 1f); m.SetFloat("_Cull", 2f); }),
+            var matUnder = SaveMaterial(MakeMat(sfWater, m => { m.SetFloat(PropUnderwater, 1f); m.SetFloat(PropCull, cullBack); }),
                                         Gen + "/WaterUnder.mat");
 
             Material matPool = null;
             if (buildAnalyticPool && sfPool != null)
-                matPool = SaveMaterial(MakeMat(sfPool, m => m.SetFloat("_Cull", 2f)), Gen + "/Pool.mat");
+                matPool = SaveMaterial(MakeMat(sfPool, m => m.SetFloat(PropCull, cullBack)), Gen + "/Pool.mat");
 
             // ---- scene objects ----
             var root = new GameObject("WebGL Water");
@@ -90,7 +113,7 @@ namespace WebGLWater.EditorTools
             if (sfReceiver != null)
             {
                 var crateMat = new Material(sfReceiver);
-                crateMat.SetColor("_BaseColor", new Color(0.82f, 0.52f, 0.30f));
+                crateMat.SetColor(PropBaseColor, new Color(0.82f, 0.52f, 0.30f));
                 crate.GetComponent<MeshRenderer>().sharedMaterial = crateMat;
             }
             var rb = crate.AddComponent<Rigidbody>();
@@ -101,7 +124,7 @@ namespace WebGLWater.EditorTools
             crate.AddComponent<WaterMembership>();      // lit by the lake it is actually in
 
             // ---- underwater god-ray volume (caustic-masked light shafts) ----
-            var sfGodRays = Shader.Find("WebGLWater/GodRays");
+            var sfGodRays = Shader.Find(ShaderGodRays);
             GameObject godGO = null;
             if (sfGodRays != null)
             {
@@ -164,7 +187,7 @@ namespace WebGLWater.EditorTools
             var splashPS = splashGO.AddComponent<ParticleSystem>();
             WaterSplashEmitter.ConfigureForDrift(splashPS);
             var splashPSR = splashGO.GetComponent<ParticleSystemRenderer>();
-            var sfSprite = Shader.Find("Sprites/Default");
+            var sfSprite = Shader.Find(ShaderSpritesDefault);
             if (sfSprite != null)
             {
                 var dm = new Material(sfSprite) { mainTexture = LoadOrBuildDroplet(Gen + "/Droplet.png") };

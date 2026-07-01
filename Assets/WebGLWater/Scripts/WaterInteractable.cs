@@ -10,8 +10,11 @@ namespace WebGLWater
     [RequireComponent(typeof(Renderer))]
     public class WaterInteractable : MonoBehaviour
     {
-        /// <summary>All currently enabled interactables, for the obstacle pass.</summary>
-        public static readonly List<WaterInteractable> Active = new List<WaterInteractable>();
+        static readonly List<WaterInteractable> _active = new List<WaterInteractable>();
+
+        /// <summary>All currently enabled interactables, for the obstacle pass. Read-only to
+        /// callers; membership is managed by OnEnable/OnDisable.</summary>
+        public static IReadOnlyList<WaterInteractable> Active => _active;
 
         [Tooltip("Per-object RELATIVE weight on how strongly it displaces the water. Leave " +
                  "at 1 unless one object should push more or less than the others; the " +
@@ -27,9 +30,9 @@ namespace WebGLWater
         void OnEnable()
         {
             if (Renderer == null) Renderer = GetComponent<Renderer>();
-            if (!Active.Contains(this)) Active.Add(this);
+            if (!_active.Contains(this)) _active.Add(this);
         }
-        void OnDisable() { Active.Remove(this); }
+        void OnDisable() { _active.Remove(this); }
 
         /// <summary>Local water surface height (world Y) under the object, used as the
         /// per-object waterline for the submerged-thickness footprint. A float riding a
