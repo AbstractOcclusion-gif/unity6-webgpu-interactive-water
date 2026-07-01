@@ -61,7 +61,7 @@ namespace WebGLWater
         void Start()
         {
             BuildSamplePoints();
-            _ctrl = FindFirstObjectByType<WaterController>();
+            _ctrl = WaterController.Resolve(); // TODO(Phase 2): the body containing this object
             if (_ctrl == null)
                 Debug.LogWarning("WaterBuoyancy: no WaterController in the scene; object will not float.");
         }

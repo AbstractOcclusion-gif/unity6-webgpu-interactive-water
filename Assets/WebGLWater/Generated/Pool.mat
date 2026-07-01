@@ -7,7 +7,7 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: Pool
+  m_Name: WebGLWater/PoolWall
   m_Shader: {fileID: 4800000, guid: ee0b56b5b6cbbd64f93aac6d0f2acc57, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0

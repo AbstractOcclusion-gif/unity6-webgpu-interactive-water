@@ -72,7 +72,7 @@ namespace WebGLWater
 
         void Start()
         {
-            _controller = FindFirstObjectByType<WaterController>();
+            _controller = WaterController.Resolve(); // TODO(Phase 2): the body containing this emitter
         }
 
         // Pop -> stick -> drift. Runs after the controller has stepped the sim so the

@@ -33,7 +33,7 @@ namespace WebGLWater
 
         void Start()
         {
-            _ctrl = FindFirstObjectByType<WaterController>();
+            _ctrl = WaterController.Resolve(); // TODO(Phase 2): the body containing this object
             if (emitter == null) emitter = FindFirstObjectByType<WaterSplashEmitter>();
         }
 

@@ -20,7 +20,7 @@
 // _WaveB[i] = (amplitude in pool units, phase offset, unused, unused)
 float4 _WaveA[WATER_MAX_WAVES];
 float4 _WaveB[WATER_MAX_WAVES];
-int    _WaveCount;          // active components; 0 disables the whole layer
+float  _WaveCount;          // active components (float so it binds via MaterialPropertyBlock); 0 disables
 float  _WaveTime;           // shared animation time (published with the bank)
 float  _WaveMetersPerUnit;  // pool unit -> metres (waves are defined in metres)
 
@@ -34,9 +34,10 @@ float WavePhase(int i, float2 m)
 float WaveHeight(float2 poolXZ)
 {
     float2 m = poolXZ * _WaveMetersPerUnit;
+    int count = (int)_WaveCount;
     float height = 0.0;
     [loop]
-    for (int i = 0; i < _WaveCount; i++)
+    for (int i = 0; i < count; i++)
         height += _WaveB[i].x * sin(WavePhase(i, m));
     return height;
 }
@@ -46,9 +47,10 @@ float WaveHeight(float2 poolXZ)
 float2 WaveSlope(float2 poolXZ)
 {
     float2 m = poolXZ * _WaveMetersPerUnit;
+    int count = (int)_WaveCount;
     float2 gradient = 0.0;
     [loop]
-    for (int i = 0; i < _WaveCount; i++)
+    for (int i = 0; i < count; i++)
     {
         float c = cos(WavePhase(i, m));
         // d/d(poolXZ) introduces a factor k * dir * d(m)/d(poolXZ) = k * dir * metersPerUnit.

@@ -101,13 +101,14 @@ namespace WebGLWater.EditorTools
 
             // ---- underwater god-ray volume (caustic-masked light shafts) ----
             var sfGodRays = Shader.Find("WebGLWater/GodRays");
+            GameObject godGO = null;
             if (sfGodRays != null)
             {
                 // Pool-space box ([-1,0] in y, [-1,1] in x,z) with an IDENTITY transform;
                 // the GodRays shader places it via the volume frame, like the surface/pool.
-                var god = CreateRenderer("God Rays", SaveAsset(BuildGodRayBox(), Gen + "/GodRayBox.asset"),
-                                         new Material(sfGodRays), root.transform);
-                var gmr = god.GetComponent<MeshRenderer>();
+                godGO = CreateRenderer("God Rays", SaveAsset(BuildGodRayBox(), Gen + "/GodRayBox.asset"),
+                                       new Material(sfGodRays), root.transform);
+                var gmr = godGO.GetComponent<MeshRenderer>();
                 gmr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                 gmr.receiveShadows = false;
             }
@@ -203,6 +204,13 @@ namespace WebGLWater.EditorTools
             ctrl.tiles = tiles;
             ctrl.sky = sky;
 
+            // Multi-instance: this body drives its own renderers via a property block.
+            ctrl.surfaceAbove = above.GetComponent<Renderer>();
+            ctrl.surfaceUnder = under.GetComponent<Renderer>();
+            if (poolGO != null) ctrl.poolRenderer = poolGO.GetComponent<Renderer>();
+            if (godGO != null) ctrl.godRayRenderer = godGO.GetComponent<Renderer>();
+            ctrl.isPrimary = true;
+
             Selection.activeObject = root;
             EditorUtility.SetDirty(ctrl);
             UnityEditor.SceneManagement.EditorSceneManager.MarkAllScenesDirty();
@@ -211,6 +219,75 @@ namespace WebGLWater.EditorTools
             Debug.Log("[WebGL Water] Scene built. Press Play.  " +
                       (buildAnalyticPool ? "Analytic pool included." : "No pool created - using your own.") +
                       "  Assign your pool tile texture to the Water Controller's 'Tiles' field for matching reflections.");
+        }
+
+        // Adds a SECOND (non-primary) water body next to the primary, sharing the sun,
+        // camera, compute and shaders. The new body renders through its own
+        // MaterialPropertyBlock, so it must look independent - proof the de-globalisation
+        // works. Move its "Frame" child to reposition; edit its extent for a different size.
+        [MenuItem("Tools/WebGL Water/Add Water Body (secondary)")]
+        static void AddSecondaryBody()
+        {
+            var all = Object.FindObjectsByType<WaterController>(FindObjectsSortMode.None);
+            if (all == null || all.Length == 0)
+            {
+                Debug.LogError("[WebGL Water] Build the scene first (no WaterController found).");
+                return;
+            }
+            WaterController primary = System.Array.Find(all, c => c.isPrimary) ?? all[0];
+
+            var bodyRoot = new GameObject("Water Body (secondary)");
+
+            // The frame IS the controller's transform. Offset it so the bodies sit side by side.
+            var frameGO = new GameObject("Frame (WaterController)");
+            frameGO.transform.SetParent(bodyRoot.transform);
+            float offsetX = 2f * primary.volumeExtent.x + 1f;
+            frameGO.transform.position = primary.transform.position + new Vector3(offsetX, 0f, 0f);
+
+            var ctrl = frameGO.AddComponent<WaterController>();
+            ctrl.simCompute = primary.simCompute;
+            ctrl.causticsShader = primary.causticsShader;
+            ctrl.obstacleShader = primary.obstacleShader;
+            ctrl.waterMesh = primary.waterMesh;
+            ctrl.targetCamera = primary.targetCamera;
+            ctrl.sun = primary.sun;
+            ctrl.tiles = primary.tiles;
+            ctrl.sky = primary.sky;
+            ctrl.volumeExtent = primary.volumeExtent;
+            ctrl.isPrimary = false; // only ONE body mirrors to globals
+
+            // Renderers live at world identity; the volume frame places them in the shader.
+            var rendGO = new GameObject("Renderers");
+            rendGO.transform.SetParent(bodyRoot.transform);
+            ctrl.surfaceAbove = CloneBodyRenderer(primary.surfaceAbove, rendGO.transform, "Water (above)");
+            ctrl.surfaceUnder = CloneBodyRenderer(primary.surfaceUnder, rendGO.transform, "Water (under)");
+            ctrl.poolRenderer = CloneBodyRenderer(primary.poolRenderer, rendGO.transform, "Analytic Pool");
+            ctrl.godRayRenderer = CloneBodyRenderer(primary.godRayRenderer, rendGO.transform, "God Rays");
+
+            Selection.activeObject = bodyRoot;
+            EditorUtility.SetDirty(ctrl);
+            UnityEditor.SceneManagement.EditorSceneManager.MarkAllScenesDirty();
+            Debug.Log("[WebGL Water] Secondary water body added. Move its 'Frame' child to reposition; " +
+                      "edit that Water Controller's Volume Extent for a different size/shape.");
+        }
+
+        // Copy a body renderer (same mesh + material + world transform, so its object->world
+        // maps to the same pool space as the source); per-body data arrives via the MPB.
+        static Renderer CloneBodyRenderer(Renderer src, Transform parent, string name)
+        {
+            if (src == null) return null;
+            var go = new GameObject(name);
+            go.transform.SetParent(parent);
+            go.transform.SetPositionAndRotation(src.transform.position, src.transform.rotation);
+            go.transform.localScale = src.transform.lossyScale;
+
+            var srcFilter = src.GetComponent<MeshFilter>();
+            if (srcFilter != null) go.AddComponent<MeshFilter>().sharedMesh = srcFilter.sharedMesh;
+            var mr = go.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = src.sharedMaterial;
+            mr.shadowCastingMode = src.shadowCastingMode;
+            mr.receiveShadows = src.receiveShadows;
+            return mr;
         }
 
         // ---------------------------------------------------------------- meshes

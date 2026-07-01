@@ -5,6 +5,7 @@
 // Coordinate convention (identical to the original demo):
 //   - water surface at y = 0, pool spans x,z in [-1, 1], floor at y = -1.
 //   - light points toward the light source; default normalize(2, 2, -1).
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 using Unity.Collections;
@@ -30,16 +31,36 @@ namespace WebGLWater
         public Cubemap sky;               // sky cubemap for above-water reflections
 
         [Header("Water volume (placement)")]
-        [Tooltip("World position of the pool origin (centre of the surface).")]
-        public Vector3 volumeCenter = Vector3.zero;
         [Tooltip("World half-size per pool unit, per axis: X = half width, Y = depth to the " +
                  "floor, Z = half length. (1,1,1) is the original 1:1 pool. X != Z gives a " +
-                 "rectangular footprint; Y alone makes it shallow/deep.")]
+                 "rectangular footprint; Y alone makes it shallow/deep. The volume's POSITION " +
+                 "and ROTATION come from THIS GameObject's Transform - move/rotate it to place " +
+                 "the water. Set extent/transform before Play; the obstacle map reads them at startup.")]
         public Vector3 volumeExtent = Vector3.one;
-        [Tooltip("Rotation of the whole volume (Euler degrees). Y rotates the footprint; " +
-                 "X/Z tilt the body (tilt is visual - object floating assumes near-level water). " +
-                 "Set extent/rotation before Play; the obstacle map is built from them at startup.")]
-        public Vector3 volumeEuler = Vector3.zero;
+
+        [Header("Water body (multi-instance)")]
+        [Tooltip("Renderers driven by THIS body via a MaterialPropertyBlock (surface above/under, " +
+                 "pool, god rays). Assigned by the scene builder.")]
+        public Renderer surfaceAbove;
+        public Renderer surfaceUnder;
+        public Renderer poolRenderer;
+        public Renderer godRayRenderer;
+        [Tooltip("The primary body also mirrors its data to global shader state so floating " +
+                 "objects and analytic receivers work. Exactly one body should be primary. " +
+                 "TODO(Phase 2): resolve each object's containing body instead of a single primary.")]
+        public bool isPrimary = true;
+
+        /// <summary>The primary water body (drives objects/buoyancy until per-object
+        /// association exists). TODO(Phase 2): replace with per-object body resolution.</summary>
+        public static WaterController Primary { get; private set; }
+
+        /// <summary>Resolve the body an object should use. Phase 1: the primary body (or any
+        /// found body as a fallback). TODO(Phase 2): pick the body whose volume contains the object.</summary>
+        public static WaterController Resolve() => Primary != null ? Primary : FindFirstObjectByType<WaterController>();
+
+        /// <summary>All live water bodies. Used by the primary's input router to send a
+        /// click to whichever body's surface the ray hits.</summary>
+        static readonly List<WaterController> Bodies = new List<WaterController>();
 
         [Header("Simulation")]
         [Tooltip("Direction TOWARD the light. Auto-driven from 'sun' when one is assigned.")]
@@ -146,22 +167,22 @@ namespace WebGLWater
         RenderTexture _causticRT;
         RenderTexture _heightMip;
         CommandBuffer _cb;
+        MaterialPropertyBlock _mpb; // per-body uniforms pushed to this body's renderers
 
         bool _paused;
 
-        // interaction
+        // interaction (only the primary body runs this; it routes clicks to the hit body)
         const int MODE_NONE = -1, MODE_ADD_DROPS = 0, MODE_ORBIT = 2;
 
-        // Pool-space distance the cursor must travel between injected ripples while
-        // dragging. Holding the button still otherwise re-injects into the same texels
-        // every frame, pumping unbounded energy into the explicit solver until it
-        // overshoots. The initial press bypasses this (via _forceDrop) so a plain click
-        // still makes a ripple.
-        const float MinDragRippleSpacing = 0.01f;
+        // World distance the cursor must travel between injected ripples while dragging.
+        // Holding still otherwise re-injects into the same texels every frame, pumping
+        // unbounded energy into the explicit solver. The initial press bypasses this.
+        const float MinDragWorldSpacing = 0.02f;
 
         int _mode = MODE_NONE;
         Vector2 _oldMouse;
-        Vector3 _prevDrop;
+        Vector3 _prevWorld;         // last world-space ripple point during a drag
+        WaterController _dragBody;  // body being rippled this drag
         bool _forceDrop;
 
         // shader global ids
@@ -199,7 +220,7 @@ namespace WebGLWater
 
             if (obstacleShader != null)
                 _obstacle = new WaterObstacle(obstacleShader, WaterSimulation.Resolution,
-                                              volumeCenter, VolumeRotation, VolumeExtentSafe);
+                                              VolumeCenter, VolumeRotation, VolumeExtentSafe);
 
             _causticMat = new Material(causticsShader);
             _causticRT = new RenderTexture(causticResolution, causticResolution, 0, RenderTextureFormat.ARGB32)
@@ -233,19 +254,21 @@ namespace WebGLWater
                 targetCamera.farClipPlane = 100f;
             }
 
-            if (sun != null) lightDir = -sun.transform.forward; // light travels along sun.forward
-            Shader.SetGlobalVector(ID_Light, lightDir.normalized);
-            Shader.SetGlobalColor(ID_SunColor, sun != null ? sun.color * sun.intensity : Color.white);
-            PublishFog();
-            PublishVolume();
+            if (isPrimary) Primary = this;
+            if (!Bodies.Contains(this)) Bodies.Add(this);
+            _mpb = new MaterialPropertyBlock();
+
+            PublishSharedGlobals();
             EnsureWaveBank();
-            PublishWaves();
-            if (tiles != null) Shader.SetGlobalTexture(ID_Tiles, tiles);
-            if (sky != null) Shader.SetGlobalTexture(ID_Sky, sky);
+            UpdateCaustics();
+            ApplyBodyBlock();
+            if (isPrimary) PublishBodyGlobals();
         }
 
         void OnDisable()
         {
+            if (Primary == this) Primary = null;
+            Bodies.Remove(this);
             _water?.Dispose();
             _obstacle?.Dispose();
             if (_causticRT != null) _causticRT.Release();
@@ -255,25 +278,98 @@ namespace WebGLWater
 
         void Update()
         {
-            HandleKeys();
-            HandleMouse();
+            // Input is a scene-level concern: only the primary body handles mouse/keys and
+            // routes clicks to whichever body's surface the ray hits (avoids two controllers
+            // fighting over one camera). TODO(Phase 2): a dedicated WaterInput component.
+            if (isPrimary)
+            {
+                HandleKeys();
+                HandleMouse();
+            }
 
             float dt = Time.deltaTime;
             if (!_paused) { Step(dt); _waveTime += dt; }
 
-            // publish globals for the surface / pool shaders
+            PublishSharedGlobals();     // sun, sky, tiles, camera-independent shared clock
+            EnsureWaveBank();
+            UpdateCaustics();           // renders THIS body's caustic RT from its own sim
+
+            ApplyBodyBlock();           // per-body uniforms -> this body's renderers (MPB)
+            // Primary bridge: mirror this body's data to globals so floating objects and the
+            // analytic receivers work. TODO(Phase 2): resolve each object's containing body.
+            if (isPrimary) PublishBodyGlobals();
+
+            RequestHeightReadback();
+        }
+
+        // Genuinely shared across all bodies: the sun, the environment, and the wave clock.
+        void PublishSharedGlobals()
+        {
             if (sun != null) lightDir = -sun.transform.forward;
-            Shader.SetGlobalTexture(ID_Water, _water.Texture);
             Shader.SetGlobalVector(ID_Light, lightDir.normalized);
             Shader.SetGlobalColor(ID_SunColor, sun != null ? sun.color * sun.intensity : Color.white);
+            Shader.SetGlobalFloat(ID_WaveTime, _waveTime);
+            if (tiles != null) Shader.SetGlobalTexture(ID_Tiles, tiles);
+            if (sky != null) Shader.SetGlobalTexture(ID_Sky, sky);
+        }
+
+        // Per-body uniforms pushed to THIS body's own renderers via a property block, so
+        // multiple water bodies never fight over global state.
+        void ApplyBodyBlock()
+        {
+            if (_mpb == null) _mpb = new MaterialPropertyBlock();
+            _mpb.Clear();
+
+            if (_water != null)
+            {
+                _mpb.SetTexture(ID_Water, _water.Texture);
+                if (_water.FoamTexture != null) _mpb.SetTexture(ID_FoamMask, _water.FoamTexture);
+            }
+            if (_causticRT != null) _mpb.SetTexture(ID_Caustic, _causticRT);
+
+            _mpb.SetVector(ID_VolumeCenter, VolumeCenter);
+            _mpb.SetVector(ID_VolumeExtent, VolumeExtentSafe);
+            _mpb.SetMatrix(ID_VolumeRot, Matrix4x4.Rotate(VolumeRotation));
+
+            _mpb.SetVectorArray(ID_WaveA, _waveBank.PackedA);
+            _mpb.SetVectorArray(ID_WaveB, _waveBank.PackedB);
+            _mpb.SetFloat(ID_WaveCount, windWaves ? _waveBank.Count : 0f);
+            _mpb.SetFloat(ID_WaveMeters, WaveMetersPerUnit);
+            _mpb.SetFloat(ID_WaveNormal, waveNormalStrength);
+
+            _mpb.SetColor(ID_FogColor, fogColor);
+            _mpb.SetColor(ID_FogExt, fogExtinction);
+            _mpb.SetFloat(ID_FogDensity, fogDensity);
+            _mpb.SetFloat(ID_FogEnabled, waterFog ? 1f : 0f);
+
+            _mpb.SetColor(ID_FoamColor, foamColor);
+            _mpb.SetFloat(ID_FoamEnabled, foam ? 1f : 0f);
+            _mpb.SetFloat(ID_FoamStrength, foamStrength);
+            _mpb.SetFloat(ID_FoamBorder, foamBorderWidth);
+            _mpb.SetFloat(ID_FoamContact, foamContactDepth);
+
+            ApplyBlockTo(surfaceAbove);
+            ApplyBlockTo(surfaceUnder);
+            ApplyBlockTo(poolRenderer);
+            ApplyBlockTo(godRayRenderer);
+        }
+
+        void ApplyBlockTo(Renderer r) { if (r != null) r.SetPropertyBlock(_mpb); }
+
+        // Mirror this (primary) body's per-body data to global shader state, so objects and
+        // the analytic receivers - which still read globals in Phase 1 - follow this body.
+        void PublishBodyGlobals()
+        {
+            if (_water != null)
+            {
+                Shader.SetGlobalTexture(ID_Water, _water.Texture);
+                if (_water.FoamTexture != null) Shader.SetGlobalTexture(ID_FoamMask, _water.FoamTexture);
+            }
+            if (_causticRT != null) Shader.SetGlobalTexture(ID_Caustic, _causticRT);
+            PublishVolume();
             PublishFog();
             PublishFoam();
-            PublishVolume();
-            EnsureWaveBank();
             PublishWaves();
-
-            UpdateCaustics();
-            RequestHeightReadback();
         }
 
         // ---- height readback for buoyancy ----------------------------------
@@ -301,7 +397,7 @@ namespace WebGLWater
         /// in world units (kept round via the average horizontal extent).</summary>
         public void AddRipple(float worldX, float worldZ, float radius, float strength)
         {
-            Vector3 probe = new Vector3(worldX, volumeCenter.y, worldZ);
+            Vector3 probe = new Vector3(worldX, VolumeCenter.y, worldZ);
             if (!WorldToPoolXZ(probe, out float px, out float pz)) return;
             _water?.AddDrop(px, pz, radius / VolumeHorizontalExtent, strength / VolumeExtentSafe.y);
         }
@@ -312,7 +408,7 @@ namespace WebGLWater
         {
             height = 0f;
             if (!_heightReady || _heightCpu == null) return false;
-            Vector3 probe = new Vector3(worldX, volumeCenter.y, worldZ);
+            Vector3 probe = new Vector3(worldX, VolumeCenter.y, worldZ);
             if (!WorldToPoolXZ(probe, out float px, out float pz)) return false;
 
             float poolHeight = SamplePoolHeight(px, pz);
@@ -328,7 +424,7 @@ namespace WebGLWater
             height = 0f;
             flow = Vector2.zero;
             if (!_heightReady || _heightCpu == null) return false;
-            Vector3 probe = new Vector3(worldX, volumeCenter.y, worldZ);
+            Vector3 probe = new Vector3(worldX, VolumeCenter.y, worldZ);
             if (!WorldToPoolXZ(probe, out float px, out float pz)) return false;
 
             Color sample = SamplePoolTexel(px, pz);
@@ -396,7 +492,7 @@ namespace WebGLWater
             // Push the surface with the live submerged footprint of interactable objects.
             if (_obstacle != null)
             {
-                _obstacle.Render(volumeCenter.y);
+                _obstacle.Render(VolumeCenter.y);
                 _water.ApplyObstacle(_obstacle.Prev, _obstacle.Curr, obstacleStrength, obstacleFlipY);
             }
 
@@ -419,12 +515,17 @@ namespace WebGLWater
 
         void UpdateCaustics()
         {
+            // Feed THIS body's sim to its own caustic material so caustics don't come from
+            // whatever body last wrote the _WaterTex global.
+            if (_water != null) _causticMat.SetTexture(ID_Water, _water.Texture);
+
             _cb.Clear();
             _cb.SetRenderTarget(_causticRT);
             _cb.ClearRenderTarget(true, true, Color.clear);
             _cb.DrawMesh(waterMesh, Matrix4x4.identity, _causticMat, 0, 0);
             Graphics.ExecuteCommandBuffer(_cb);
-            Shader.SetGlobalTexture(ID_Caustic, _causticRT);
+            // The caustic RT reaches this body's renderers via the MPB; the primary also
+            // mirrors it to the _CausticTex global (PublishBodyGlobals) for objects.
         }
 
         // ---- volume placement frame (center + rotation + non-uniform extent) ----
@@ -432,23 +533,25 @@ namespace WebGLWater
             Mathf.Max(volumeExtent.x, 1e-5f),
             Mathf.Max(volumeExtent.y, 1e-5f),
             Mathf.Max(volumeExtent.z, 1e-5f));
-        Quaternion VolumeRotation => Quaternion.Euler(volumeEuler);
+        // Position + rotation come from this GameObject's transform (move it to place water).
+        Vector3 VolumeCenter => transform.position;
+        Quaternion VolumeRotation => transform.rotation;
         Vector3 VolumeUp => VolumeRotation * Vector3.up;
         // Average horizontal extent, used to keep a click ripple round in world units.
         float VolumeHorizontalExtent => 0.5f * (VolumeExtentSafe.x + VolumeExtentSafe.z);
 
-        Vector3 PoolToWorld(Vector3 pool) => volumeCenter + VolumeRotation * Vector3.Scale(pool, VolumeExtentSafe);
+        Vector3 PoolToWorld(Vector3 pool) => VolumeCenter + VolumeRotation * Vector3.Scale(pool, VolumeExtentSafe);
 
         Vector3 WorldToPool(Vector3 world)
         {
             Vector3 e = VolumeExtentSafe;
-            Vector3 local = Quaternion.Inverse(VolumeRotation) * (world - volumeCenter);
+            Vector3 local = Quaternion.Inverse(VolumeRotation) * (world - VolumeCenter);
             return new Vector3(local.x / e.x, local.y / e.y, local.z / e.z);
         }
 
         void PublishVolume()
         {
-            Shader.SetGlobalVector(ID_VolumeCenter, volumeCenter);
+            Shader.SetGlobalVector(ID_VolumeCenter, VolumeCenter);
             Shader.SetGlobalVector(ID_VolumeExtent, VolumeExtentSafe);
             Shader.SetGlobalMatrix(ID_VolumeRot, Matrix4x4.Rotate(VolumeRotation));
         }
@@ -470,7 +573,7 @@ namespace WebGLWater
             Vector3 n = VolumeUp;
             float denom = Vector3.Dot(dir, n);
             if (Mathf.Abs(denom) < 1e-6f) return false;
-            float t = Vector3.Dot(volumeCenter - eye, n) / denom;
+            float t = Vector3.Dot(VolumeCenter - eye, n) / denom;
             if (t < 0f) return false;
             worldHit = eye + dir * t;
             Vector3 pool = WorldToPool(worldHit);
@@ -499,13 +602,13 @@ namespace WebGLWater
             _waveGenEnabled = windWaves;
         }
 
+        // Wave arrays are per-body (mirrored to globals only by the primary). The wave
+        // CLOCK (_WaveTime) is shared and published in PublishSharedGlobals.
         void PublishWaves()
         {
-            int count = windWaves ? _waveBank.Count : 0;
             Shader.SetGlobalVectorArray(ID_WaveA, _waveBank.PackedA);
             Shader.SetGlobalVectorArray(ID_WaveB, _waveBank.PackedB);
-            Shader.SetGlobalInt(ID_WaveCount, count);
-            Shader.SetGlobalFloat(ID_WaveTime, _waveTime);
+            Shader.SetGlobalFloat(ID_WaveCount, windWaves ? _waveBank.Count : 0f);
             Shader.SetGlobalFloat(ID_WaveMeters, WaveMetersPerUnit);
             Shader.SetGlobalFloat(ID_WaveNormal, waveNormalStrength);
         }
@@ -535,7 +638,34 @@ namespace WebGLWater
             return targetCamera.ScreenPointToRay(new Vector3(p.x, p.y, 0f));
         }
 
-        // ---- interaction ----------------------------------------------------
+        // ---- interaction (primary body acts as the scene input router) -------
+
+        /// <summary>Does this body's surface plane lie under the ray, within its footprint?
+        /// Returns the world hit point. Lets the input router pick which lake was clicked.</summary>
+        public bool TryRaycastSurface(Ray ray, out Vector3 worldHit)
+        {
+            worldHit = Vector3.zero;
+            if (!TryPickSurface(ray.origin, ray.direction, out Vector3 hit, out float px, out float pz)) return false;
+            if (Mathf.Abs(px) > 1f || Mathf.Abs(pz) > 1f) return false;
+            worldHit = hit;
+            return true;
+        }
+
+        // Nearest water body whose surface the ray hits (null = none, so we orbit instead).
+        static WaterController FindHitBody(Ray ray, out Vector3 worldHit)
+        {
+            worldHit = Vector3.zero;
+            WaterController best = null;
+            float bestSqr = float.MaxValue;
+            for (int i = 0; i < Bodies.Count; i++)
+            {
+                if (!Bodies[i].TryRaycastSurface(ray, out Vector3 hit)) continue;
+                float sqr = (hit - ray.origin).sqrMagnitude;
+                if (sqr < bestSqr) { bestSqr = sqr; best = Bodies[i]; worldHit = hit; }
+            }
+            return best;
+        }
+
         void HandleMouse()
         {
             // While pinching (2+ fingers), don't ripple/orbit — let the camera zoom.
@@ -546,21 +676,17 @@ namespace WebGLWater
             if (MouseDown())
             {
                 _oldMouse = m;
-                Ray ray = PixelRay(m);
-                Vector3 eye = ray.origin;
-                Vector3 d = ray.direction;
-
-                bool onPlane = TryPickSurface(eye, d, out _, out float px, out float pz);
-                if (onPlane && Mathf.Abs(px) <= 1f && Mathf.Abs(pz) <= 1f)
+                _dragBody = FindHitBody(PixelRay(m), out Vector3 hit);
+                if (_dragBody != null)
                 {
                     _mode = MODE_ADD_DROPS;
-                    _prevDrop = new Vector3(px, 0f, pz); // store POOL coords
+                    _prevWorld = hit;
                     _forceDrop = true; // the initial press always injects one ripple
                     DuringDrag(m);
                 }
                 else
                 {
-                    _mode = MODE_ORBIT;
+                    _mode = MODE_ORBIT; // clicked empty space -> orbit the camera
                 }
             }
             else if (MouseHeld())
@@ -570,6 +696,7 @@ namespace WebGLWater
             else if (MouseUp())
             {
                 _mode = MODE_NONE;
+                _dragBody = null;
             }
         }
 
@@ -579,28 +706,25 @@ namespace WebGLWater
             {
                 case MODE_ADD_DROPS:
                 {
-                    Ray ray = PixelRay(m);
-                    Vector3 eye = ray.origin, d = ray.direction;
-                    if (!TryPickSurface(eye, d, out Vector3 hit, out float px, out float pz)) break;
+                    if (_dragBody == null) break;
+                    if (!_dragBody.TryRaycastSurface(PixelRay(m), out Vector3 hit)) break;
 
-                    // Throttle injection by pool-space distance travelled so holding the
-                    // cursor still doesn't pump energy into the same texels every frame.
-                    float moved = Vector2.Distance(new Vector2(px, pz), new Vector2(_prevDrop.x, _prevDrop.z));
-                    if (!_forceDrop && moved < MinDragRippleSpacing) break;
+                    // Throttle injection by world distance travelled so holding the cursor
+                    // still doesn't pump energy into the same texels every frame.
+                    float moved = Vector2.Distance(new Vector2(hit.x, hit.z), new Vector2(_prevWorld.x, _prevWorld.z));
+                    if (!_forceDrop && moved < MinDragWorldSpacing) break;
                     _forceDrop = false;
 
-                    // rippleRadius/rippleStrength are WORLD-sized, so the click feels the
-                    // same regardless of volume scale; convert to pool units for the sim.
-                    _water.AddDrop(px, pz, rippleRadius / VolumeHorizontalExtent, rippleStrength / VolumeExtentSafe.y);
+                    // Route the ripple to the clicked body (world-space API; it converts).
+                    _dragBody.AddRipple(hit.x, hit.z, rippleRadius, rippleStrength);
 
-                    // splash droplets where the cursor drags across the surface (world space)
                     if (splashEmitter != null)
                     {
                         float strength = Mathf.Clamp01(moved / 0.08f);
                         if (strength > 0.1f)
                             splashEmitter.EmitSplash(hit, strength * 0.6f, rippleRadius * 4f);
                     }
-                    _prevDrop = new Vector3(px, 0f, pz);
+                    _prevWorld = hit;
                     break;
                 }
                 case MODE_ORBIT:

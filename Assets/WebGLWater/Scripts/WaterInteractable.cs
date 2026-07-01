@@ -27,7 +27,7 @@ namespace WebGLWater
         void Awake()
         {
             Renderer = GetComponent<Renderer>();
-            _ctrl = FindFirstObjectByType<WaterController>();
+            _ctrl = WaterController.Resolve(); // TODO(Phase 2): the body containing this object
         }
         void OnEnable()
         {
