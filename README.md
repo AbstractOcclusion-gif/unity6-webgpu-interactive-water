@@ -51,6 +51,25 @@ arbitrary objects, real lights and real shadows.
 - **Real shadows & caustics on geometry** — objects cast and receive URP shadows,
   the pool receives them too, and submerged objects catch the projected caustics on
   their own surfaces.
+- **Ambient wind waves & foam** — an analytic spectral (JONSWAP-shaped) wind-wave
+  layer is composited on top of the interactive ripples (floating objects ride it
+  too), with GPU foam along shorelines, at object contact lines and from turbulence.
+- **Underwater god-ray shafts** — a caustic-masked additive light volume with hybrid
+  real-shadow shafts, so floating objects carve dark beams through the haze.
+- **Depth-aware water colour** — per-channel downwelling darkening makes deeper water
+  read darker and bluer, and caustics and god rays fade with depth; god rays also haze
+  into the view-path fog. All opt-in, with independent per-effect controls.
+- **Real terrain lake beds** — bakes a Unity Terrain heightmap into a bed-depth map so
+  the surface shows a true shoreline gradient (clear in the shallows, dark over the
+  drop-off) over uneven ground.
+- **Deep, rectangular & rotated bodies** — non-uniform volume extent places and sizes
+  the water without touching object scales; wave/ripple height is correctly decoupled
+  from depth, so deep water no longer spikes.
+- **Multiple water bodies** — several independent lakes coexist via per-body
+  `MaterialPropertyBlock`s; a floating object is lit by whichever body it's actually in.
+- **Demo suite** — a one-click builder for eight showcase scenes (classic pool, deep
+  lake, terrain lake, multi-lake, underwater, open water, reflections trio, object
+  pool), each with its own isolated material folder.
 
 ## Features
 
@@ -83,6 +102,7 @@ arbitrary objects, real lights and real shadows.
    - **Build Scene (water only — keep my pool)** if you've already built a pool.
    - **Build Scene (with analytic pool)** for the original look out of the box
      (includes a procedurally textured pool that receives the caustics).
+   - **Demos ▸ …** to build any of the eight showcase scenes into an empty scene.
 3. Press **Play**.
 
 The builder generates the meshes, materials, a procedural sky cubemap and a
@@ -148,14 +168,15 @@ in-editor tweaks you may need (face-culling direction, caustic Y-flip, color spa
 
 ## Known limitations
 
-It's a **contained, heightfield** water — great for pools, ponds and fountains,
-not oceans. It simulates vertical displacement only (no breaking waves yet — foam
-and splashes are on the roadmap), and covers a single bounded body of water.
-Reflections now see real scene geometry via SSR/planar, and arbitrary objects
-interact two-way, but buoyancy relies on `AsyncGPUReadback` of the height texture,
-which is not guaranteed on every backend (notably WebGPU is still experimental) —
-where it's unavailable, objects sink rather than float. See the developer guide for
-the full list.
+It's a **contained, heightfield** water — great for pools, ponds and lakes, not
+oceans. It simulates vertical displacement only (no breaking waves). The interactive
+ripple sim is a fixed-resolution grid over the body, so on a very **large** body the
+interactive ripples get coarse; the analytic wind waves stay fine everywhere, and a
+camera-following, world-anchored interactive-sim window for big water is planned (see
+[`docs/large-water-sim-window-plan.md`](docs/large-water-sim-window-plan.md)).
+Buoyancy relies on `AsyncGPUReadback` of the height texture, which is not guaranteed
+on every backend (notably WebGPU is still experimental) — where it's unavailable,
+objects sink rather than float. See the developer guide for the full list.
 
 ## Credits & License
 
