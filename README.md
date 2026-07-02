@@ -25,7 +25,7 @@ the GPU inside Unity.
 
 ## Demo gallery
 
-A few of the one-click showcase scenes (**Tools ▸ WebGL Water ▸ Demos**):
+A few of the showcase scenes:
 
 <table>
   <tr>
@@ -94,9 +94,9 @@ arbitrary objects, real lights and real shadows.
   from depth, so deep water no longer spikes.
 - **Multiple water bodies** — several independent lakes coexist via per-body
   `MaterialPropertyBlock`s; a floating object is lit by whichever body it's actually in.
-- **Demo suite** — a one-click builder for eight showcase scenes (classic pool, deep
-  lake, terrain lake, multi-lake, underwater, open water, reflections trio, object
-  pool), each with its own isolated material folder.
+- **Showcase scenes** — eight example scenes (classic pool, deep lake, terrain lake,
+  multi-lake, underwater, open water, reflections trio, object pool), each with its own
+  isolated material folder.
 
 ## Features
 
@@ -129,7 +129,6 @@ arbitrary objects, real lights and real shadows.
    - **Build Scene (water only — keep my pool)** if you've already built a pool.
    - **Build Scene (with analytic pool)** for the original look out of the box
      (includes a procedurally textured pool that receives the caustics).
-   - **Demos ▸ …** to build any of the eight showcase scenes into an empty scene.
 3. Press **Play**.
 
 The builder generates the meshes, materials, a procedural sky cubemap and a
