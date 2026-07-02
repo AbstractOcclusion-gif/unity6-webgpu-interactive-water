@@ -239,11 +239,13 @@ interactive-sim window for big water is planned (see
 does not scale to many bodies — use SSR + a reflection probe for multi-body scenes and reserve
 planar for a single hero body.
 
-**Mobile / WebGPU are experimental.** The WebGPU backend is still experimental in Unity: the
-buoyancy `AsyncGPUReadback` path is unreliable there (objects sink rather than float), and the
-WebGPU build has crashed on some phones — gate it behind a `navigator.gpu` / capability check.
-A couple of newer features (GPU foam particles, the wind-wave layer) are shipped but not yet
-fully verified on the WebGPU build.
+**Mobile / WebGPU are supported, with graceful degradation.** Where `AsyncGPUReadback` isn't
+available, buoyancy falls back to the analytic waterline — objects still float, they just don't
+react to interactive ripples or object displacement. The runtime auto-selects the **Low** quality
+tier on WebGL/WebGPU/mobile (`WaterQuality.Probe`) and disables a body cleanly if the device lacks
+compute shaders or float render textures. GPU foam particles and the wind-wave layer run on the
+WebGPU build; foam-particle density scales with the sim grid, so tune it per quality tier for a
+matching look between High and Low.
 
 See the package README for the full developer-facing list.
 
