@@ -23,6 +23,33 @@ An interactive pool of water you can poke and ripple, drop real objects into, an
 watch them float — with real-time caustics, reflections and shadows, running on
 the GPU inside Unity.
 
+## Demo gallery
+
+A few of the one-click showcase scenes (**Tools ▸ WebGL Water ▸ Demos**):
+
+<table>
+  <tr>
+    <td width="50%" valign="top" align="center">
+      <img src="docs/simplepool.png" alt="Classic Pool demo — a tiled pool with a floating crate, surface ripples and projected floor caustics" width="100%"><br>
+      <sub><b>1. Classic Pool</b> — a floating crate rippling a tiled pool, with projected caustics on the floor.</sub>
+    </td>
+    <td width="50%" valign="top" align="center">
+      <img src="docs/depthextinction.png" alt="Deep Lake demo — a deep body with a submerged pillar showing depth-based colour extinction" width="100%"><br>
+      <sub><b>2. Deep Lake</b> — depth-aware downwelling extinction darkens the water over a deep, submerged pillar.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top" align="center">
+      <img src="docs/multipool.png" alt="Multi-Lake demo — three independent water bodies coexisting in one scene" width="100%"><br>
+      <sub><b>4. Multi-Lake</b> — several independent water bodies coexist via per-body <code>MaterialPropertyBlock</code>s.</sub>
+    </td>
+    <td width="50%" valign="top" align="center">
+      <img src="docs/underwater.png" alt="Underwater demo — a submerged view with caustics, god-ray shafts and real refraction" width="100%"><br>
+      <sub><b>5. Underwater</b> — a submerged view with caustics, god-ray shafts and real screen-space refraction.</sub>
+    </td>
+  </tr>
+</table>
+
 ## A full Unity adaptation — not just a port
 
 The goal was not to stop at a 1:1 translation of the 2011 demo, but to make it a
