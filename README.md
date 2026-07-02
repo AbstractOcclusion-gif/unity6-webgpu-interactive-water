@@ -1,4 +1,8 @@
-# WebGL Water — Unity 6 / URP Adaptation & Enhancement
+# AbstractOcclusion.WebGpuWater — GPU water for Unity 6 / URP
+
+> **Renders entirely on the GPU via Unity 6 WebGPU (experimental) — so this runs not just on
+> desktop but in the browser and on some mobile devices and tablets. Water of this quality
+> shipping to the web is the "wait, this runs _here_?" moment. (Tablet gameplay video coming soon.)**
 
 > **Based on the original [WebGL Water](https://madebyevan.com/webgl-water/) by
 > [Evan Wallace](https://madebyevan.com/) (2011, MIT).** The GPU heightfield
@@ -95,8 +99,8 @@ arbitrary objects, real lights and real shadows.
 - **Multiple water bodies** — several independent lakes coexist via per-body
   `MaterialPropertyBlock`s; a floating object is lit by whichever body it's actually in.
 - **Showcase scenes** — eight example scenes (classic pool, deep lake, terrain lake,
-  multi-lake, underwater, open water, reflections trio, object pool), each with its own
-  isolated material folder.
+  multi-lake, underwater, open water, reflections trio, object pool), shipped as an importable
+  Package Manager sample.
 
 ## Features
 
@@ -112,28 +116,45 @@ arbitrary objects, real lights and real shadows.
 - **Reusable orbit camera** — drag to orbit, scroll to zoom.
 - **Designer knobs** — wave speed, damping, sub-steps, ripple strength/radius,
   reflection strength, obstacle strength and buoyancy, all exposed in the inspector.
-- **Self-contained** — a one-click editor menu builds the whole scene, including a
-  procedural sky cubemap, a directional light, and a demo floating crate.
+- **One-window authoring** — the **Water Wizard** builds a configured water surface (size,
+  analytic pool, god rays, foam particles, surface + edge foam) and can turn your own scene
+  objects into floating or interactable props, generating the sky cubemap, light and materials
+  for you.
 
 ## Requirements
 
 - **Unity 6** (developed on `6000.3.9f1`).
-- **Universal Render Pipeline** (`17.3.0`).
+- **Universal Render Pipeline** (`17.3.0`). The base assembly compiles without URP, but the
+  water needs URP for its full look (planar reflection, screen-space refraction).
 - A GPU that supports **compute shaders** and **RGBAFloat** random-write
   textures (any modern desktop/console GPU; GLES3.1+/Metal/Vulkan on mobile).
 
+## Install
+
+WebGpuWater ships as a UPM package, **`com.abstractocclusion.webgpuwater`**. Add it to a
+Unity 6 / URP project by copying the package into your project's `Packages/` folder (embedded),
+or via **Window ▸ Package Manager ▸ + ▸ Add package from disk…** pointed at its `package.json`.
+
 ## Quick start
 
-1. Open the project in Unity 6 and let it import (no console errors expected).
-2. Menu **Tools ▸ WebGL Water**:
-   - **Build Scene (water only — keep my pool)** if you've already built a pool.
-   - **Build Scene (with analytic pool)** for the original look out of the box
-     (includes a procedurally textured pool that receives the caustics).
-3. Press **Play**.
+1. Let Unity import the package (no console errors expected).
+2. Open **AbstractOcclusion ▸ WebGpuWater ▸ Water Wizard**.
+3. Set the size and toggle what you want — analytic pool, god rays, foam particles, surface
+   foam (and the conditional **edge foam**) — optionally drag scene objects into the list to
+   make them **Floatable** or **Interactable**, then press **Create Water Surface**.
+4. Press **Play**.
 
-The builder generates the meshes, materials, a procedural sky cubemap and a
-fallback tile texture under `Assets/WebGLWater/Generated/`, and wires up the
-camera and the `Water Controller`.
+The wizard generates the meshes, materials, a procedural sky cubemap and a fallback tile
+texture under `Assets/WebGLWater/Generated/` (in your project, not the read-only package), and
+wires up the camera and the `WaterVolume`. One-off utilities — create prefab, add foam particles
+to a selection, assign foam textures, upgrade splash materials, add a secondary body — live in
+the same window under **Utilities**.
+
+## Demo scenes
+
+The eight example scenes ship as a Package Manager **sample**. In **Package Manager ▸
+AbstractOcclusion.WebGpuWater ▸ Samples**, import **Demo Scenes** to drop them — along with the
+generated meshes, sky and materials they depend on — into `Assets/Samples/…`.
 
 ## Controls
 
@@ -148,7 +169,7 @@ camera and the `Water Controller`.
 > Drop real objects in by giving them a `Rigidbody`, a `Collider`,
 > `WaterInteractable` and `WaterBuoyancy` — they'll displace the surface and float.
 
-## Tuning (Water Controller inspector)
+## Tuning (WaterVolume inspector)
 
 | Knob | Effect |
 | --- | --- |
@@ -173,7 +194,7 @@ camera and the `Water Controller`.
 The water surface ray-traces an **analytic** pool defined in normalized space:
 floor at `y = -1`, walls up to `y = 2/12`, spanning `x,z ∈ [-1, 1]` (1 unit = the
 demo's unit). For your own pool's reflections to match, keep it at those
-dimensions and assign your tile texture to **Water Controller ▸ Tiles**.
+dimensions and assign your tile texture to **WaterVolume ▸ Tiles**.
 
 ## How it maps to the original
 
@@ -184,25 +205,47 @@ dimensions and assign your tile texture to **Water Controller ▸ Tiles**.
 | water / cube shaders | `WaterSurface` (hybrid reflection + real refraction) / `PoolWall` (URP, shadow-receiving) |
 | sphere shader + ball physics | **removed** — replaced by `WaterInteractable` + `WaterObstacle` + `WaterBuoyancy` for arbitrary objects |
 | `updateCaustics` | `Caustics.shader` drawn into a 1024² RT via a CommandBuffer |
-| `main.js` (input, camera, physics) | `WaterController.cs` + `OrbitCamera.cs` |
+| `main.js` (input, camera, physics) | `WaterVolume.cs` + `OrbitCamera.cs` |
 | _(new)_ planar reflection | `PlanarReflection.cs` |
 | _(new)_ lit objects + caustics + shadows | `WaterReceiver.shader` driven by a real Unity directional light |
 
-There's a more detailed developer guide in
-[`Assets/WebGLWater/README.md`](Assets/WebGLWater/README.md), including the few
-in-editor tweaks you may need (face-culling direction, caustic Y-flip, color space).
+There's a more detailed developer guide in the package README
+(`Packages/com.abstractocclusion.webgpuwater/README.md`), including the few in-editor tweaks you
+may need (face-culling direction, caustic Y-flip, color space).
+
+## Using it in a game
+
+The water is a self-contained **`WaterVolume`** component you drop into any scene; several bodies
+coexist (each drives its own sim and pushes per-body state through a `MaterialPropertyBlock`), and
+the gameplay primitives are already there — world-space height queries, `AddRipple`, buoyancy and
+submersion tests. That makes it usable for contained water in a real **desktop-URP** game today.
+
+Still on the roadmap before it's turnkey for every target: a high-level gameplay event API
+(enter/exit water, a clean façade over the internals), many-body performance culling and quality
+tiers, scene-view handles for the volume, and hardening the `AsyncGPUReadback` buoyancy path on
+WebGPU/mobile (where readback is unreliable, objects sink rather than float). See
+[`docs/game-integration-plan.md`](docs/game-integration-plan.md).
 
 ## Known limitations
 
-It's a **contained, heightfield** water — great for pools, ponds and lakes, not
-oceans. It simulates vertical displacement only (no breaking waves). The interactive
-ripple sim is a fixed-resolution grid over the body, so on a very **large** body the
-interactive ripples get coarse; the analytic wind waves stay fine everywhere, and a
-camera-following, world-anchored interactive-sim window for big water is planned (see
+It's a **contained, heightfield** water — great for pools, ponds and lakes, not oceans. It
+simulates vertical displacement only (no breaking waves). The interactive ripple sim is a
+fixed-resolution grid over the body, so on a very **large** body the interactive ripples get
+coarse; the analytic wind waves stay fine everywhere, and a camera-following, world-anchored
+interactive-sim window for big water is planned (see
 [`docs/large-water-sim-window-plan.md`](docs/large-water-sim-window-plan.md)).
-Buoyancy relies on `AsyncGPUReadback` of the height texture, which is not guaranteed
-on every backend (notably WebGPU is still experimental) — where it's unavailable,
-objects sink rather than float. See the developer guide for the full list.
+
+**Reflections don't all scale.** Planar reflection is a second camera render *per body*, so it
+does not scale to many bodies — use SSR + a reflection probe for multi-body scenes and reserve
+planar for a single hero body.
+
+**Mobile / WebGPU are experimental.** The WebGPU backend is still experimental in Unity: the
+buoyancy `AsyncGPUReadback` path is unreliable there (objects sink rather than float), and the
+WebGPU build has crashed on some phones — gate it behind a `navigator.gpu` / capability check.
+A couple of newer features (GPU foam particles, the wind-wave layer) are shipped but not yet
+fully verified on the WebGPU build.
+
+See the package README for the full developer-facing list.
 
 ## Credits & License
 
