@@ -435,6 +435,18 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (simCompute == null) { Debug.LogError("WaterVolume: simCompute not assigned."); enabled = false; return; }
 
+            // Hard capability guard: the sim needs compute shaders + a float random-write RT. On a
+            // backend without them, disable this body cleanly instead of dispatching into a crash.
+            // (The quality tier already scales cost; this handles the total absence of support.)
+            if (!SystemInfo.supportsComputeShaders ||
+                !SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.ARGBFloat))
+            {
+                Debug.LogWarning("WaterVolume: device lacks compute shaders or float render textures; " +
+                                 "water simulation disabled on this body.", this);
+                enabled = false;
+                return;
+            }
+
             ResolveSceneRefs(); // let a dropped-in prefab find the scene's camera/sun without manual wiring
 
             ApplyQuality();     // sets _simRes, causticResolution, _godRaysAllowed + god-ray steps
