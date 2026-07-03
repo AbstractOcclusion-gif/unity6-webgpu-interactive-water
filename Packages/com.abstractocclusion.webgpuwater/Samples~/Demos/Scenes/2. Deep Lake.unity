@@ -136,7 +136,7 @@ GameObject:
   - component: {fileID: 15939936}
   m_Layer: 0
   m_Name: Cube (2)
-  m_TagString: WaterInteractable
+  m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
@@ -227,12 +227,12 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 15939929}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0.7071068, z: 0, w: 0.7071068}
-  m_LocalPosition: {x: 0, y: -5, z: 2.5}
-  m_LocalScale: {x: 1, y: 11, z: 4.5}
+  m_LocalRotation: {x: -0, y: 0.7071068, z: -0, w: 0.7071068}
+  m_LocalPosition: {x: 0, y: -4, z: 2.5}
+  m_LocalScale: {x: 1, y: 8.5, z: 4.5}
   m_ConstrainProportionsScale: 0
   m_Children: []
-  m_Father: {fileID: 0}
+  m_Father: {fileID: 691222220}
   m_LocalEulerAnglesHint: {x: 0, y: 90, z: 0}
 --- !u!114 &15939934
 MonoBehaviour:
@@ -783,7 +783,7 @@ GameObject:
   - component: {fileID: 627504922}
   m_Layer: 0
   m_Name: Cube (3)
-  m_TagString: WaterInteractable
+  m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
@@ -889,7 +889,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: e89091d97d6ce1b40aafab910dd698e6, type: 2}
+  - {fileID: 2100000, guid: 348d91045bdf39742a1b2976be2f2c49, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -930,11 +930,11 @@ Transform:
   m_GameObject: {fileID: 627504921}
   serializedVersion: 2
   m_LocalRotation: {x: 0.5, y: 0.5, z: 0.5, w: 0.5}
-  m_LocalPosition: {x: -0.02, y: -8.1, z: 3.14}
-  m_LocalScale: {x: 0.25, y: 11, z: 4}
+  m_LocalPosition: {x: 0, y: -8.125, z: 0}
+  m_LocalScale: {x: 0.25, y: 4, z: 4}
   m_ConstrainProportionsScale: 0
   m_Children: []
-  m_Father: {fileID: 0}
+  m_Father: {fileID: 691222220}
   m_LocalEulerAnglesHint: {x: 0, y: 90, z: 90}
 --- !u!1 &649397180
 GameObject:
@@ -954,7 +954,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &649397181
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5833,6 +5833,10 @@ Transform:
   - {fileID: 1985312901}
   - {fileID: 1459669333}
   - {fileID: 1568166738}
+  - {fileID: 1741354808}
+  - {fileID: 627504928}
+  - {fileID: 15939933}
+  - {fileID: 1191616473}
   - {fileID: 1842193742}
   - {fileID: 2014849508}
   - {fileID: 342801230}
@@ -6255,7 +6259,7 @@ GameObject:
   - component: {fileID: 1191616476}
   m_Layer: 0
   m_Name: Cube (1)
-  m_TagString: WaterInteractable
+  m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
@@ -6346,12 +6350,12 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1191616469}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -2.125, y: -5, z: 0}
-  m_LocalScale: {x: 0.25, y: 11, z: 4}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: -2.125, y: -4, z: 0}
+  m_LocalScale: {x: 0.25, y: 8.5, z: 4}
   m_ConstrainProportionsScale: 0
   m_Children: []
-  m_Father: {fileID: 0}
+  m_Father: {fileID: 691222220}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &1191616474
 MonoBehaviour:
@@ -6520,13 +6524,13 @@ MonoBehaviour:
   obstacleSmoothing: 0.65
   obstacleFlipY: 1
   waterFog: 1
-  fogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
+  fogColor: {r: 0.062178683, g: 0.19753784, b: 0.2679245, a: 1}
   fogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
   fogDensity: 4.3
   waterOpacity: 0
   depthDarken: 1
-  depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
-  depthDarkenStrength: 1
+  depthExtinction: {r: 0.5245282, g: 0.26543105, b: 0.20486288, a: 1}
+  depthDarkenStrength: 7.05
   causticDepthFade: 0.4
   godRayDepthFade: 0.3
   linkDepthToFog: 0
@@ -6542,7 +6546,7 @@ MonoBehaviour:
   poolHalfExtentMeters: 5
   waveCount: 12
   waveAmplitudeScale: 4
-  waveDirectionSpread: 2
+  waveDirectionSpread: 1.18
   waveNormalStrength: 1
   foam: 0
   foamGenRate: 0.6
@@ -6561,7 +6565,7 @@ MonoBehaviour:
   foamContactDepth: 0.06
   waveSpeed: 0.6
   damping: 0.99
-  stepsPerFrame: 2
+  stepsPerFrame: 3
   rippleStrength: 0.025
   rippleRadius: 0.05
   seedRipplesOnStart: 1
@@ -6633,8 +6637,8 @@ Transform:
   m_GameObject: {fileID: 1568166737}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: -0.4, y: -4, z: 0.3}
-  m_LocalScale: {x: 0.5, y: 8, z: 0.5}
+  m_LocalPosition: {x: -0.4, y: -3.76, z: 0.3}
+  m_LocalScale: {x: 0.5, y: 8.5, z: 0.5}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 691222220}
@@ -6762,7 +6766,7 @@ GameObject:
   - component: {fileID: 1741354811}
   m_Layer: 0
   m_Name: Cube
-  m_TagString: WaterInteractable
+  m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
@@ -6853,12 +6857,12 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1741354804}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 2.125, y: -5, z: 0}
-  m_LocalScale: {x: 0.25, y: 11, z: 4}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 2.125, y: -4, z: 0}
+  m_LocalScale: {x: 0.25, y: 8.5, z: 4}
   m_ConstrainProportionsScale: 0
   m_Children: []
-  m_Father: {fileID: 0}
+  m_Father: {fileID: 691222220}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &1741354809
 MonoBehaviour:
@@ -6985,7 +6989,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!198 &1985312899
 ParticleSystem:
   m_ObjectHideFlags: 0
@@ -12017,7 +12021,3 @@ SceneRoots:
   m_Roots:
   - {fileID: 961739753}
   - {fileID: 691222220}
-  - {fileID: 1741354808}
-  - {fileID: 627504928}
-  - {fileID: 15939933}
-  - {fileID: 1191616473}

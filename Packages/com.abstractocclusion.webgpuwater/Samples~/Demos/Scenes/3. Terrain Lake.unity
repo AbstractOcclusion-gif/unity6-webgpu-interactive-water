@@ -5447,13 +5447,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5ba7f08200b36e84d8c995dae6ad429c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterBuoyancy
-  buoyancy: 2.5
+  buoyancy: 1.4
   waterLinearDamping: 2
   waterAngularDamping: 1
   samplesPerAxis: 2
   floatRadiusScale: 1.5
-  waveDriftStrength: 1
-  verticalSettleDamping: 1
+  waveDriftStrength: 0.2
+  verticalSettleDamping: 1.5
 --- !u!114 &648697667
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5467,6 +5467,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterInteractable
   displaceScale: 1
+  verticalEmitSpacing: 0.012
+  horizontalEmitSpacing: 0.02
+  rippleRadiusScale: 1
 --- !u!54 &648697668
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -10792,13 +10795,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5ba7f08200b36e84d8c995dae6ad429c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterBuoyancy
-  buoyancy: 2.5
+  buoyancy: 1.4
   waterLinearDamping: 2
   waterAngularDamping: 1
   samplesPerAxis: 2
   floatRadiusScale: 1.5
-  waveDriftStrength: 1
-  verticalSettleDamping: 1
+  waveDriftStrength: 0.2
+  verticalSettleDamping: 1.5
 --- !u!114 &1216013719
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -10812,6 +10815,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterInteractable
   displaceScale: 1
+  verticalEmitSpacing: 0.012
+  horizontalEmitSpacing: 0.02
+  rippleRadiusScale: 1
 --- !u!54 &1216013720
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -11110,13 +11116,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5ba7f08200b36e84d8c995dae6ad429c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterBuoyancy
-  buoyancy: 2.5
+  buoyancy: 1.4
   waterLinearDamping: 2
   waterAngularDamping: 1
   samplesPerAxis: 2
   floatRadiusScale: 1.5
-  waveDriftStrength: 1
-  verticalSettleDamping: 1
+  waveDriftStrength: 0.2
+  verticalSettleDamping: 1.5
 --- !u!114 &1476185876
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -11130,6 +11136,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterInteractable
   displaceScale: 1
+  verticalEmitSpacing: 0.012
+  horizontalEmitSpacing: 0.02
+  rippleRadiusScale: 1
 --- !u!54 &1476185877
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -11277,7 +11286,7 @@ MeshRenderer:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1499971914}
-  m_Enabled: 1
+  m_Enabled: 0
   m_CastShadows: 0
   m_ReceiveShadows: 0
   m_DynamicOccludee: 1
@@ -11506,10 +11515,10 @@ MonoBehaviour:
   sun: {fileID: 1572765278}
   tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
   sky: {fileID: 8900000, guid: 90846655472c1354b8fb1a3cb2a47920, type: 2}
-  volumeExtent: {x: 50, y: 10, z: 50}
+  volumeExtent: {x: 40, y: 10, z: 40}
   enableLargeBodyWindow: 1
-  largeBodyThreshold: 48
-  simWindowMeters: 32
+  largeBodyThreshold: 18
+  simWindowMeters: 10
   clampWindowToShore: 0
   simWindowEdgeFadeTexels: 8
   surfaceAbove: {fileID: 256226364}
@@ -11517,13 +11526,18 @@ MonoBehaviour:
   poolRenderer: {fileID: 0}
   godRayRenderer: {fileID: 1499971916}
   isPrimary: 1
-  quality: {fileID: 11400000, guid: 9ac62b790871b16449e0b1f34b6796e8, type: 2}
+  autoLinkReceivers: 1
+  quality: {fileID: 11400000, guid: 9d725521a0e492e49a009888cfe28ca6, type: 2}
   enableCulling: 1
   activationDistance: 100
   reflectionMode: 1
+  environmentSource: 0
   lightDir: {x: 0.6666666, y: 0.6666666, z: -0.3333334}
   causticResolution: 1024
-  obstacleStrength: 0.247
+  objectInteraction: 0
+  obstacleStrength: 0.15
+  obstacleDeadband: 0.0006
+  obstacleSmoothing: 0.65
   obstacleFlipY: 1
   waterFog: 1
   fogColor: {r: 0.023260934, g: 0.08988423, b: 0.12452829, a: 1}
@@ -11542,33 +11556,39 @@ MonoBehaviour:
   deepWaterColor: {r: 0.019615497, g: 0.076772645, b: 0.10943389, a: 1}
   shorelineFadeDepth: 1
   shorelineStrength: 0.85
-  windWaves: 1
+  windWaves: 0
   windSpeed: 3.79
   windFromDegrees: 0
-  poolHalfExtentMeters: 25
+  poolHalfExtentMeters: 24
   waveCount: 12
   waveAmplitudeScale: 12
   waveDirectionSpread: 1
   waveNormalStrength: 1
-  foam: 1
-  foamGenRate: 1.6
+  foam: 0
+  foamGenRate: 1
   foamDecay: 0.949
+  foamDecayResidual: 0.993
+  foamDecayRate: 1
   foamSpread: 0.011
   foamAdvect: 3.32
   foamFromSpeed: 6
   foamFromCurvature: 30
   foamColor: {r: 1, g: 1, b: 1, a: 1}
-  foamStrength: 2
+  foamStrength: 1
+  foamFeather: 0.15
+  foamCoreCut: 0.5
   foamBorderWidth: 0.08
   foamContactDepth: 0.06
-  waveSpeed: 0.11
+  waveSpeed: 0.52
   damping: 0.9952
-  stepsPerFrame: 1
-  rippleStrength: 0.0206
-  rippleRadius: 0.145
+  stepsPerFrame: 2
+  rippleStrength: 0.0169
+  rippleRadius: 0.05
   seedRipplesOnStart: 1
   conserveVolume: 1
+  conserveMaxCorrection: 0.05
   orbit: {fileID: 961739754}
+  configureCamera: 0
   splashEmitter: {fileID: 969391270}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:

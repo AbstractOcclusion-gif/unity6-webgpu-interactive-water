@@ -7,7 +7,7 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: Tiles
+  m_Name: GroundTiles
   m_Shader: {fileID: 4800000, guid: 4bf26aec2f1180a4aa701bb7ec523aa5, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
@@ -26,7 +26,7 @@ Material:
     m_TexEnvs:
     - _BaseMap:
         m_Texture: {fileID: 2800000, guid: 0e32f4dccadfd7d42b0b3dd4f2516558, type: 3}
-        m_Scale: {x: 5, y: 10}
+        m_Scale: {x: 5, y: 5}
         m_Offset: {x: 0, y: 0}
     - _BumpMap:
         m_Texture: {fileID: 2800000, guid: c5fe82f4bcac80b48a0d5b16ada72ecc, type: 3}

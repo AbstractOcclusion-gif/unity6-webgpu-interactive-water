@@ -110,6 +110,15 @@ Shader "WebGLWater/WaterSurface"
             #define FOAM_UNDERSIDE_GLOW   0.4
 
             float _Underwater;
+            // Camera-following high-detail patch (windowed large bodies): a dense [-1,1] grid
+            // remapped into just the sim window's sub-region of pool space, so near-field
+            // ripple/wave geometry is sampled densely enough (target ~one vertex per sim texel)
+            // to avoid the undersampling shimmer / false ripples a coarse whole-plane mesh shows
+            // on big volumes. Inert at the defaults (_IsPatch = 0, _PatchDepthBias = 0).
+            float  _IsPatch;          // 0 = normal full-plane surface, 1 = the window patch
+            float2 _PatchPoolCenter;  // window centre in pool xz
+            float2 _PatchPoolHalf;    // window half-size in pool units (per axis)
+            float  _PatchDepthBias;   // tiny NDC bias so the patch wins over the coplanar far plane
             float _ReflectionStrength;
             float _WaveNormalStrength; // global; scales the wind-wave tilt on the normal
             float _PeakedRefineSteps;  // per-body (quality tier); see PEAKED_REFINE_MAX_STEPS
@@ -319,7 +328,12 @@ Shader "WebGLWater/WaterSurface"
             v2f vert(appdata v)
             {
                 v2f o;
-                float3 poolFlat = v.vertex.xzy;        // grid XY plane -> pool (x, 0, z)
+                // Full-plane surface uses the grid vertex as pool xz directly; the window
+                // patch remaps the SAME [-1,1] grid into the window's pool sub-region, so it
+                // tessellates only the near field (dense) while reusing every ripple/wave path.
+                float2 poolXZ = (_IsPatch > 0.5) ? (_PatchPoolCenter + v.vertex.xy * _PatchPoolHalf)
+                                                 : v.vertex.xy;
+                float3 poolFlat = float3(poolXZ.x, 0.0, poolXZ.y); // grid -> pool (x, 0, z)
                 // World position at the surface plane (height 0) picks the windowed UV; the
                 // xz mapping doesn't depend on ripple height, so this is exact.
                 float3 worldFlat = PoolToWorld(poolFlat);
@@ -327,11 +341,18 @@ Shader "WebGLWater/WaterSurface"
                 float4 info = SampleRipple(poolFlat, worldFlat, fade);
                 float3 position = poolFlat;
                 position.y += info.r;                  // interactive ripple heightfield (windowed: faded)
-                position.y += WaveHeight(v.vertex.xy); // ambient wind-wave layer (pool xz = vertex.xy)
+                position.y += WaveHeight(poolXZ);      // ambient wind-wave layer (pool xz)
                 o.position = position;                 // keep pool-space position for the tracer
                 float3 worldPos = PoolToWorld(position);
                 o.worldPos = worldPos;
                 o.pos = mul(UNITY_MATRIX_VP, float4(worldPos, 1.0));
+                // Nudge the patch a hair toward the camera so it wins the depth test against the
+                // coplanar far plane in the overlap (no z-fighting); inert when bias = 0.
+                #if UNITY_REVERSED_Z
+                    o.pos.z += _PatchDepthBias * o.pos.w;
+                #else
+                    o.pos.z -= _PatchDepthBias * o.pos.w;
+                #endif
                 o.screenPos = ComputeScreenPos(o.pos);
                 return o;
             }
@@ -473,7 +494,12 @@ Shader "WebGLWater/WaterSurface"
 
                     // Dim the underwater view by the CAMERA's depth: the deeper the eye, the less
                     // downwelling light reaches it, so the whole submerged scene reads darker.
-                    underColor *= DownwellingAttenuation(_WorldSpaceCameraPos.y, _VolumeCenter.y);
+                    // Measured against the analytic surface (rest + waves) directly above the eye,
+                    // not the flat centre plane, so depth stays consistent with the rest of the
+                    // shading when the surface is wind-driven.
+                    float3 camPool = WorldToPool(_WorldSpaceCameraPos);
+                    float camSurfaceY = PoolToWorld(float3(camPool.x, WaveHeight(camPool.xz), camPool.z)).y;
+                    underColor *= DownwellingAttenuation(_WorldSpaceCameraPos.y, camSurfaceY);
                     return float4(underColor, 1.0);
                 }
                 else

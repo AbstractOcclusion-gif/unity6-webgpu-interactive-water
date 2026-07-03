@@ -981,7 +981,7 @@ MonoBehaviour:
   driftDamping: 2.5
   surfaceRideHeight: 0.004
   crownParticles: {fileID: 2013404533}
-  crownMinStrength: 0.25
+  crownMinStrength: 0.086
   crownBaseSize: 0.4
   crownLifetime: 0.5
 --- !u!198 &1342015188
@@ -5866,6 +5866,7 @@ MonoBehaviour:
   poolRenderer: {fileID: 1005765276}
   godRayRenderer: {fileID: 321993030}
   isPrimary: 1
+  autoLinkReceivers: 1
   quality: {fileID: 11400000, guid: 9d725521a0e492e49a009888cfe28ca6, type: 2}
   enableCulling: 0
   activationDistance: 100
@@ -6278,7 +6279,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!198 &2013404533
 ParticleSystem:
   m_ObjectHideFlags: 0
@@ -7571,7 +7572,7 @@ ParticleSystem:
         ctime6: 0
         ctime7: 0
         atime0: 0
-        atime1: 45875
+        atime1: 16577
         atime2: 65535
         atime3: 0
         atime4: 0
@@ -7579,7 +7580,7 @@ ParticleSystem:
         atime6: 0
         atime7: 0
         m_Mode: 0
-        m_ColorSpace: -1
+        m_ColorSpace: 0
         m_NumColorKeys: 2
         m_NumAlphaKeys: 3
       minGradient:

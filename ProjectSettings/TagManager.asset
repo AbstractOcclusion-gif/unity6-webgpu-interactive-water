@@ -3,8 +3,7 @@
 --- !u!78 &1
 TagManager:
   serializedVersion: 3
-  tags:
-  - WaterInteractable
+  tags: []
   layers:
   - Default
   - TransparentFX

@@ -452,6 +452,20 @@ namespace AbstractOcclusion.WebGpuWater
         WaterUniformPublisher _publisher;
         WaterInputRouter _inputRouter;
 
+        // Camera-following high-detail surface over the sim window (windowed bodies, play mode).
+        // Its grid is built at the SIM resolution so the near field is sampled ~one vertex per
+        // texel - the far plane's fixed grid stretched over a large volume samples the ripple
+        // heightfield too sparsely and aliases into false, bobbing ripples.
+        Renderer _patchRenderer;
+        Mesh _patchGrid;
+        MaterialPropertyBlock _patchMpb;
+        static readonly int ID_IsPatch = Shader.PropertyToID("_IsPatch");
+        static readonly int ID_PatchPoolCenter = Shader.PropertyToID("_PatchPoolCenter");
+        static readonly int ID_PatchPoolHalf = Shader.PropertyToID("_PatchPoolHalf");
+        static readonly int ID_PatchDepthBias = Shader.PropertyToID("_PatchDepthBias");
+        const float PatchDepthBiasNdc = 1e-4f;      // tiny nudge toward the camera to beat the coplanar far plane
+        const string PatchObjectName = "Sim Window Patch";
+
         // Lazy: the bed baker serves the context-menu RebakeBed even on an uninitialized
         // body, and the publisher serves WriteBodyProps callers defensively.
         WaterBedBaker BedBaker => _bedBaker ??= new WaterBedBaker(this);
@@ -660,6 +674,7 @@ namespace AbstractOcclusion.WebGpuWater
             ApplyReflections();
             ApplyMeshDetail();   // Low tier: coarse surface grid (play mode only)
             ApplyPipelineTier(); // Low tier: render scale / opaque-copy release (primary, play mode only)
+            CreateSimWindowPatch(); // windowed bodies: dense near-field surface over the sim window
 
             BedBaker.EnsureBaked(); // lazy terrain -> pool-space bed bake, only when useBedDepth is on
 
@@ -684,6 +699,7 @@ namespace AbstractOcclusion.WebGpuWater
             _obstacle?.Dispose(); _obstacle = null;
             _caustics?.Dispose(); _caustics = null;
             _bedBaker?.Dispose();  // also re-arms the lazy bake gate for the next enable
+            DestroySimWindowPatch(); // before restoring the surface material it borrows
             RestoreSurfaceMaterial(surfaceAbove, ref _surfaceAboveInstance, ref _surfaceAboveOriginal);
             RestoreSurfaceMaterial(surfaceUnder, ref _surfaceUnderInstance, ref _surfaceUnderOriginal);
             RestoreMeshDetail();
@@ -1017,6 +1033,64 @@ namespace AbstractOcclusion.WebGpuWater
             ApplyBlockTo(surfaceUnder);
             ApplyBlockTo(poolRenderer);
             ApplyBlockTo(godRayRenderer);
+            ApplyPatchBlock();
+        }
+
+        // Feed the sim-window patch the same per-body uniforms PLUS the window remap it needs.
+        // Kept out of the shared block so _IsPatch never leaks onto the flat surface renderers.
+        // The patch's transform is cosmetic (the shader places its verts via PoolToWorld); it
+        // only sizes the culling bounds, so we park it on the window to cull with the window.
+        void ApplyPatchBlock()
+        {
+            if (_patchRenderer == null) return;
+            if (_patchMpb == null) _patchMpb = new MaterialPropertyBlock();
+            WriteBodyProps(_patchMpb);
+
+            Vector3 poolCenter = WorldToPool(SimWindowCenter);
+            _patchMpb.SetFloat(ID_IsPatch, 1f);
+            _patchMpb.SetFloat(ID_PatchDepthBias, PatchDepthBiasNdc);
+            _patchMpb.SetVector(ID_PatchPoolCenter, new Vector4(poolCenter.x, poolCenter.z, 0f, 0f));
+            _patchMpb.SetVector(ID_PatchPoolHalf, new Vector4(
+                SimHorizontalExtent / VolumeExtentSafe.x, SimHorizontalExtent / VolumeExtentSafe.z, 0f, 0f));
+            _patchRenderer.SetPropertyBlock(_patchMpb);
+
+            Transform t = _patchRenderer.transform;
+            t.position = SimWindowCenter;
+            t.localScale = SimHalfExtent;
+        }
+
+        // Build the windowed near-field patch: a grid at the sim resolution, remapped by the
+        // shader into the window's pool sub-region. Reuses THIS body's surface material instance
+        // (so it inherits reflections/fog) with _IsPatch riding its property block. Play mode
+        // only - it depends on the per-body material instance created in ApplyReflections.
+        void CreateSimWindowPatch()
+        {
+            if (!Application.isPlaying || !_windowed) return;
+            if (_patchRenderer != null || surfaceAbove == null || surfaceAbove.sharedMaterial == null) return;
+
+            _patchGrid = WaterMeshBuilder.BuildGrid(Mathf.Max(1, _simRes));
+            _patchGrid.hideFlags = HideFlags.HideAndDontSave;
+
+            var go = new GameObject(PatchObjectName) { hideFlags = HideFlags.DontSave };
+            go.transform.SetParent(surfaceAbove.transform.parent, false);
+            go.AddComponent<MeshFilter>().sharedMesh = _patchGrid;
+            var mr = go.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = surfaceAbove.sharedMaterial; // same per-body instance; _IsPatch rides the block
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            mr.receiveShadows = false;
+            _patchRenderer = mr;
+        }
+
+        void DestroySimWindowPatch()
+        {
+            if (_patchRenderer != null)
+            {
+                DestroyRuntimeObject(_patchRenderer.gameObject);
+                _patchRenderer = null;
+            }
+            DestroyRuntimeObject(_patchGrid);
+            _patchGrid = null;
+            _patchMpb = null;
         }
 
         // (1/res, 1/res, res, res) of the sim texture, so shaders can bilinear-filter it manually
@@ -1056,6 +1130,7 @@ namespace AbstractOcclusion.WebGpuWater
             SetRendererEnabled(surfaceAbove, on);
             SetRendererEnabled(surfaceUnder, on);
             SetRendererEnabled(poolRenderer, on);
+            SetRendererEnabled(_patchRenderer, on && _windowed);
             // God rays obey the quality tier as well as culling: a tier that disables them
             // keeps the renderer off even when the body is on-screen. Windowed bodies also
             // suppress god rays (out of scope, same reason as caustics).
