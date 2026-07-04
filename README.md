@@ -2,7 +2,8 @@
 
 > **Renders entirely on the GPU via Unity 6 WebGPU (experimental) — so this runs not just on
 > desktop but in the browser and on some mobile devices and tablets. Water of this quality
-> shipping to the web is the "wait, this runs _here_?" moment. (Tablet gameplay video coming soon.)**
+> shipping to the web is the "wait, this runs _here_?" moment. (See it running on a budget
+> tablet [below](#runs-on-a-budget-tablet--live-in-the-browser).)**
 
 > **Based on the original [WebGL Water](https://madebyevan.com/webgl-water/) by
 > [Evan Wallace](https://madebyevan.com/) (2011, MIT).** The GPU heightfield
@@ -27,6 +28,16 @@ An interactive pool of water you can poke and ripple, drop real objects into, an
 watch them float — with real-time caustics, reflections and shadows, running on
 the GPU inside Unity.
 
+## Runs on a budget tablet — live in the browser
+
+<a href="docs/demo-phone-tab.mp4">
+  <img src="docs/demo-phone-tab.png" alt="The WebGPU water demo running in a mobile browser on a Redmi Pad SE (Snapdragon 4G, Adreno 610), a finger poking the pool and rippling the surface in real time" width="70%">
+</a>
+
+**▶ Click to play.** The live **WebGPU** demo running *in a mobile browser* on a **Redmi Pad SE**
+(Snapdragon 4G-class SoC, Adreno 610) — an entry-level 2026 tablet — with the GPU heightfield
+sim, caustics and reflections all rippling in real time under a finger.
+
 ## Demo gallery
 
 A few of the showcase scenes:
@@ -50,6 +61,16 @@ A few of the showcase scenes:
     <td width="50%" valign="top" align="center">
       <img src="docs/underwater.png" alt="Underwater demo — a submerged view with caustics, god-ray shafts and real refraction" width="100%"><br>
       <sub><b>5. Underwater</b> — a submerged view with caustics, god-ray shafts and real screen-space refraction.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top" align="center">
+      <a href="docs/deep-custom-pool.mp4"><img src="docs/deep-custom-pool.png" alt="Deep custom pool demo — a tall cutaway pool showing depth-based colour extinction, god-ray shafts and floating objects rippling the surface" width="100%"></a><br>
+      <sub><b>6. Deep custom pool</b> ▶ — a tall, custom-sized body: depth extinction darkens the water with depth, god-ray shafts pierce it, and floating props ripple the surface. <b>Click to play.</b></sub>
+    </td>
+    <td width="50%" valign="top" align="center">
+      <img src="docs/multilevel-multipool.png" alt="Multi-level multi-pool demo — several independent water bodies at different heights, each with its own surface level, ripples and caustics" width="100%"><br>
+      <sub><b>7. Multi-level pools</b> — several independent bodies sitting at different heights, each with its own surface <code>Y</code>, ripples and caustics.</sub>
     </td>
   </tr>
 </table>
