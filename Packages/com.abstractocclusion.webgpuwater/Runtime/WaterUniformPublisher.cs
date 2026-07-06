@@ -60,6 +60,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_LargeWaveAmp = Shader.PropertyToID("_LargeWaveAmplitude");
         static readonly int ID_LargeWaveWind = Shader.PropertyToID("_LargeWaveWindHeading");
         static readonly int ID_LargeWaveChop = Shader.PropertyToID("_LargeWaveChoppiness");
+        static readonly int ID_LargeWaveDetail = Shader.PropertyToID("_LargeWaveDetailDistance");
+        static readonly int ID_OceanWorldWaves = Shader.PropertyToID("_OceanWorldWaves");
         static readonly int ID_PeakedRefine = Shader.PropertyToID("_PeakedRefineSteps");
 
         readonly WaterVolume _body;
@@ -132,6 +134,8 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_LargeWaveAmp, _body.LargeWaveAmplitudeEffective);
             sink.SetFloat(ID_LargeWaveWind, _body.LargeWaveHeadingRad);
             sink.SetFloat(ID_LargeWaveChop, _body.LargeWaveChoppiness);
+            sink.SetFloat(ID_LargeWaveDetail, _body.OceanWaveReach);
+            sink.SetFloat(ID_OceanWorldWaves, _body.IsOceanClipmap ? 1f : 0f);
 
             sink.SetVectorArray(ID_WaveA, _body.WaveBank.PackedA);
             sink.SetVectorArray(ID_WaveB, _body.WaveBank.PackedB);

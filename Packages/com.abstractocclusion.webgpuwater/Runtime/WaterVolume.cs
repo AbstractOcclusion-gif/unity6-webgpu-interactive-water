@@ -103,10 +103,12 @@ namespace AbstractOcclusion.WebGpuWater
         [Min(ClipmapMinRings)] [SerializeField] internal int clipmapRings = DefaultClipmapRings;
         [Tooltip("Vertices per ring. More = rounder rings, at more vertices.")]
         [Min(ClipmapMinSegments)] [SerializeField] internal int clipmapSegments = DefaultClipmapSegments;
-        [Tooltip("Radius (metres) of the innermost ring: the dense near-field around the camera.")]
-        [Min(ClipmapMinRadius)] [SerializeField] internal float clipmapInnerRadius = DefaultClipmapInnerRadius;
         [Tooltip("Radius (metres) of the outermost ring: push near the camera far plane to reach the horizon.")]
         [Min(ClipmapMinRadius)] [SerializeField] internal float clipmapOuterRadius = DefaultClipmapOuterRadius;
+        [Tooltip("Distance (metres) over which the open-water swell FADES to a calm, flat sea. The coarse " +
+                 "far mesh cannot resolve the waves, so they are calmed with distance to stop the far surface " +
+                 "aliasing/crawling as the camera moves. Full waves out to half this; flat by this.")]
+        [Min(1f)] [SerializeField] internal float oceanWaveReach = DefaultOceanWaveReach;
 
         // The open-water swell shares the body's wind settings so one wind drives both wave scales.
         // ReferenceWind maps the default breeze (windSpeed 3) to a x1 swell; stronger wind grows it,
@@ -123,16 +125,25 @@ namespace AbstractOcclusion.WebGpuWater
         // near-field chop/ripples; outer ring near the far plane to reach the horizon.
         const int DefaultClipmapRings = 48;
         const int DefaultClipmapSegments = 96;
-        const float DefaultClipmapInnerRadius = 2f;
         const float DefaultClipmapOuterRadius = 10000f;
+        const float DefaultOceanWaveReach = 90f;
         const int ClipmapMinRings = 2;
         const int ClipmapMinSegments = 3;
         const float ClipmapMinRadius = 1e-3f;
+        // The clipmap's central hole is set a little INSIDE the near-field patch so the patch (which
+        // carries a depth bias) covers the seam; beyond the patch, only the clipmap draws.
+        const float ClipmapPatchOverlap = 0.9f;
+        // Frustum-cull AABB size for an ocean body: large enough to always intersect the frustum
+        // (the ocean is everywhere), matching the clipmap mesh's own huge bounds.
+        const float OceanCullBoundsSize = 1_000_000f;
 
         // True when this body renders its surface as an unbounded ocean clipmap: needs open water, the
         // opt-in flag, AND the sim window (its ripple fade is what keeps the far field clean). Bounded
         // lakes / pools are always false, so their render path is untouched.
-        bool IsOceanClipmap => openWater && unboundedOcean && _windowed;
+        internal bool IsOceanClipmap => openWater && unboundedOcean && _windowed;
+        // Distance over which the ocean swell fades to flat. 0 for non-ocean bodies -> no fade -> the
+        // bounded open-water surface keeps full waves everywhere (unchanged).
+        internal float OceanWaveReach => IsOceanClipmap ? oceanWaveReach : 0f;
 
         [Header("Water body (multi-instance)")]
         [Tooltip("Renderers driven by THIS body via a MaterialPropertyBlock (surface above/under, " +
@@ -1180,9 +1191,12 @@ namespace AbstractOcclusion.WebGpuWater
             _clipmapMpb.SetFloat(ID_IsClipmap, 1f);
             _clipmapRenderer.SetPropertyBlock(_clipmapMpb);
 
+            // Ride the SAME camera-following, texel-snapped centre as the near-field patch, so the two
+            // never slide against each other - the clipmap's hole stays locked over the patch. The ocean
+            // is unbounded, so the window is not clamped to the footprint (clampWindowToShore = false).
             Transform t = _clipmapRenderer.transform;
-            t.SetPositionAndRotation(VolumeCenter, Quaternion.identity); // mesh is world-axis-aligned;
-            t.localScale = Vector3.one;                                  // verts are already in metres
+            t.SetPositionAndRotation(SimWindowCenter, VolumeRotation);
+            t.localScale = Vector3.one; // verts are already in world metres
         }
 
         // Build the unbounded-ocean clipmap: a radial ring mesh in world metres, reusing THIS body's
@@ -1202,8 +1216,12 @@ namespace AbstractOcclusion.WebGpuWater
             if (!IsOceanClipmap) return;
             if (_clipmapRenderer != null || surfaceAbove == null || surfaceAbove.sharedMaterial == null) return;
 
+            // Hollow the clipmap centre to sit just inside the near-field patch, so the dense patch owns
+            // the near field and the two meshes never overlap / z-fight (which showed as stitches + a
+            // colour seam once the swell was tall). The patch's depth bias covers the overlap ring.
+            float holeRadius = Mathf.Max(ClipmapMinRadius, SimHorizontalExtent * ClipmapPatchOverlap);
             _clipmapMesh = LargeWaterClipmap.BuildRadialGrid(clipmapRings, clipmapSegments,
-                                                             clipmapInnerRadius, clipmapOuterRadius);
+                                                             holeRadius, clipmapOuterRadius, solidCenter: false);
             _clipmapMesh.hideFlags = HideFlags.HideAndDontSave;
 
             var go = new GameObject(ClipmapObjectName) { hideFlags = HideFlags.DontSave };
@@ -1249,6 +1267,12 @@ namespace AbstractOcclusion.WebGpuWater
         // culling under the volume transform, so frustum culling tests this real box instead.
         internal Bounds CullBounds()
         {
+            // An unbounded ocean follows the camera and is drawn everywhere, so it must never be
+            // frustum-culled by its (small) footprint - that is what made the horizon surface vanish
+            // once the camera left the volume bounds. Report effectively-infinite bounds instead.
+            if (IsOceanClipmap)
+                return new Bounds(VolumeCenter, Vector3.one * OceanCullBoundsSize);
+
             Bounds b = new Bounds(PoolToWorld(new Vector3(-1f, -1f, -1f)), Vector3.zero);
             b.Encapsulate(PoolToWorld(new Vector3( 1f, -1f, -1f)));
             b.Encapsulate(PoolToWorld(new Vector3(-1f, -1f,  1f)));
@@ -1429,7 +1453,11 @@ namespace AbstractOcclusion.WebGpuWater
             Vector3 probe = new Vector3(worldX, VolumeCenter.y, worldZ);
             if (!WorldToPoolXZ(probe, out float px, out float pz)) return false;
 
-            float poolHeight = windWaves ? _waveBank.SampleHeight(px, pz, _waveTime, WaveMetersPerUnit) : 0f;
+            // Oceans sample the wind-wave layer in WORLD metres (extent-independent) to match the shader.
+            float mpu = WaveMetersPerUnit;
+            float waveX = IsOceanClipmap ? worldX / mpu : px;
+            float waveZ = IsOceanClipmap ? worldZ / mpu : pz;
+            float poolHeight = windWaves ? _waveBank.SampleHeight(waveX, waveZ, _waveTime, mpu) : 0f;
             height = PoolToWorld(new Vector3(px, poolHeight, pz)).y;
             // Open water layers the big world-space swell on top of the small wind waves, mirroring
             // the shader (CPU copy of WaterLargeWaves.hlsl) so floaters ride the rendered surface.

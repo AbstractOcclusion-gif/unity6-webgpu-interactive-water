@@ -20,6 +20,7 @@
 float _LargeWaveAmplitude;   // overall height/slope multiplier; falls back to 1 when unpublished
 float _LargeWaveWindHeading;  // wind direction, radians (the fan of wave directions centres here)
 float _LargeWaveChoppiness;   // Gerstner horizontal-displacement scale; falls back to 0 (=smooth sine)
+float _LargeWaveDetailDistance; // metres: swell fades to a flat sea by here; 0 = no fade (full waves)
 
 // --- Placeholder spectrum constants (world units). Tuned for a light-breeze lake/ocean; these
 //     become FFT spectrum inputs (wind speed / fetch) in step 2. ---
@@ -32,6 +33,7 @@ float _LargeWaveChoppiness;   // Gerstner horizontal-displacement scale; falls b
 #define LBW_GRAVITY            9.81
 #define LBW_TWO_PI             6.28318530718
 #define LBW_NORMAL_MIN_Y       1e-4   // clamps the Jacobian normal's up-component before dividing
+#define LBW_DETAIL_FADE_START  0.5    // fraction of the detail distance where the swell begins fading
 
 // Fixed-point iterations that invert Gerstner horizontal displacement when sampling height at a
 // world xz (Crest's SampleInvertedDisplacement uses 4). Declared here as the SHARED count so the CPU
@@ -141,6 +143,18 @@ float3 ApplyLargeBodyWaveNormal(float3 worldNormal, float2 sourceXZ, float stren
     float3 n = cross(tangentZ, tangentX);
     float2 tilt = n.xz / max(n.y, LBW_NORMAL_MIN_Y);
     return normalize(worldNormal + float3(tilt.x, 0.0, tilt.y) * strength);
+}
+
+// Render-only far-field fade [1 near .. 0 far], by distance from the camera. The coarse clipmap
+// triangles far out cannot resolve the swell, so it aliases/crawls as the camera moves; fading it to
+// a flat sea there hides that (the same reason Crest keeps a flat far skirt). This is applied at the
+// call sites, NOT inside the wave sum, so the CPU buoyancy mirror stays the true full-spectrum field
+// (buoyancy only samples the near field, where this fade is 1). 0 distance = disabled (bounded bodies).
+float LargeBodyWaveDetailFade(float2 worldXZ)
+{
+    if (_LargeWaveDetailDistance <= 0.0) return 1.0;
+    float d = distance(worldXZ, _WorldSpaceCameraPos.xz);
+    return 1.0 - smoothstep(_LargeWaveDetailDistance * LBW_DETAIL_FADE_START, _LargeWaveDetailDistance, d);
 }
 
 #endif // WEBGPUWATER_LARGE_WAVES_INCLUDED

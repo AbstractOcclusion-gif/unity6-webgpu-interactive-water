@@ -123,6 +123,9 @@ Shader "WebGLWater/WaterSurface"
             // Unbounded-ocean clipmap: 1 = the camera-following radial mesh authored in WORLD metres
             // (reaches the horizon), 0 = pool-grid surfaces. Inert at the default (_IsClipmap = 0).
             float  _IsClipmap;
+            // 1 = sample the small wind-wave layer in WORLD metres (oceans), so its scale is independent
+            // of the volume extent; 0 = pool space (bounded bodies, unchanged). Inert at the default.
+            float  _OceanWorldWaves;
             float _ReflectionStrength;
             float _WaveNormalStrength; // global; scales the wind-wave tilt on the normal
             float _PeakedRefineSteps;  // per-body (quality tier); see PEAKED_REFINE_MAX_STEPS
@@ -332,6 +335,17 @@ Shader "WebGLWater/WaterSurface"
                                                       // (not the chop-displaced worldPos)
             };
 
+            // Coordinate fed to the wind-wave layer (WaveHeight/WaveSlope). Bounded bodies sample in
+            // pool xz, so the wave scale rides the volume extent (worldXZ / extent). Oceans sample in
+            // WORLD metres instead, so tweaking the volume box no longer slides/rescales the wind-wave
+            // pattern - its scale is set solely by Pool Half Extent Meters (_WaveMetersPerUnit). At a
+            // matched extent the two are identical, so this only decouples; it doesn't change the look.
+            float2 WindWaveSampleXZ(float2 poolXZ, float2 worldXZ)
+            {
+                if (_OceanWorldWaves > 0.5) return worldXZ / max(_WaveMetersPerUnit, 1e-3);
+                return poolXZ;
+            }
+
             v2f vert(appdata v)
             {
                 v2f o;
@@ -365,7 +379,7 @@ Shader "WebGLWater/WaterSurface"
                 float4 info = SampleRipple(poolFlat, worldFlat, fade);
                 float3 position = poolFlat;
                 position.y += info.r;                  // interactive ripple heightfield (windowed: faded)
-                position.y += WaveHeight(poolXZ);      // small wind-wave detail (pool xz); open water
+                position.y += WaveHeight(WindWaveSampleXZ(poolXZ, worldFlat.xz)); // small wind-wave detail; open water
                                                        // layers the big swell on top in world space below
                 o.position = position;                 // keep pool-space position for the tracer
                 float3 worldPos = PoolToWorld(position);
@@ -379,8 +393,12 @@ Shader "WebGLWater/WaterSurface"
                 {
                     float2 sourceXZ = worldPos.xz;
                     o.largeWaveSourceXZ = sourceXZ;
-                    worldPos.y  += LargeBodyWaveHeight(sourceXZ);
-                    worldPos.xz += LargeBodyWaveDisplacement(sourceXZ); // 0 when choppiness = 0
+                    // Calm the swell where the far clipmap mesh is too coarse to draw it (no-op = 1 for
+                    // bounded bodies and near the camera). Height and chop fade together so the surface
+                    // flattens smoothly toward the horizon instead of aliasing.
+                    float detail = LargeBodyWaveDetailFade(sourceXZ);
+                    worldPos.y  += LargeBodyWaveHeight(sourceXZ) * detail;
+                    worldPos.xz += LargeBodyWaveDisplacement(sourceXZ) * detail; // 0 when choppiness = 0
                 }
                 o.worldPos = worldPos;
                 o.pos = mul(UNITY_MATRIX_VP, float4(worldPos, 1.0));
@@ -467,7 +485,7 @@ Shader "WebGLWater/WaterSurface"
                 // Combine the ripple normal (info.ba = normal.xz) with the wind-wave
                 // tilt. A height gradient g contributes normal.xz = -g, so the two
                 // slopes simply add in the xz components before re-deriving y.
-                float2 nxz = info.ba - WaveSlope(i.position.xz) * _WaveNormalStrength;
+                float2 nxz = info.ba - WaveSlope(WindWaveSampleXZ(i.position.xz, i.largeWaveSourceXZ)) * _WaveNormalStrength;
                 float3 normalPool = float3(nxz.x, sqrt(max(1e-4, 1.0 - dot(nxz, nxz))), nxz.y);
                 // World-space surface normal + view ray, so reflection/refraction angles
                 // are correct even when the volume is rotated or has a rectangular footprint.
@@ -477,7 +495,8 @@ Shader "WebGLWater/WaterSurface"
                 // WORLD-space wave slope here (after that division) so open water keeps real normals
                 // and refraction holds at any size. No-op for pool/small bodies (_LargeBody = 0).
                 if (_LargeBody > 0.5)
-                    normal = ApplyLargeBodyWaveNormal(normal, i.largeWaveSourceXZ, _WaveNormalStrength);
+                    normal = ApplyLargeBodyWaveNormal(normal, i.largeWaveSourceXZ,
+                                                      _WaveNormalStrength * LargeBodyWaveDetailFade(i.largeWaveSourceXZ));
                 float3 incomingRay = normalize(i.worldPos - _WorldSpaceCameraPos);
 
                 if (_Underwater > 0.5)
@@ -546,7 +565,8 @@ Shader "WebGLWater/WaterSurface"
                     // not the flat centre plane, so depth stays consistent with the rest of the
                     // shading when the surface is wind-driven.
                     float3 camPool = WorldToPool(_WorldSpaceCameraPos);
-                    float camSurfaceY = PoolToWorld(float3(camPool.x, WaveHeight(camPool.xz), camPool.z)).y;
+                    float camSurfaceY = PoolToWorld(float3(camPool.x,
+                        WaveHeight(WindWaveSampleXZ(camPool.xz, _WorldSpaceCameraPos.xz)), camPool.z)).y;
                     underColor *= DownwellingAttenuation(_WorldSpaceCameraPos.y, camSurfaceY);
                     return float4(underColor, 1.0);
                 }

@@ -38,37 +38,44 @@ namespace AbstractOcclusion.WebGpuWater
 
         /// <summary>
         /// Radial clipmap grid: <paramref name="rings"/> concentric rings of
-        /// <paramref name="segments"/> vertices each, plus a centre vertex. Ring radii grow
-        /// GEOMETRICALLY from <paramref name="innerRadius"/> to <paramref name="outerRadius"/>
-        /// so triangle size scales with distance (roughly constant screen-space density).
+        /// <paramref name="segments"/> vertices each. Ring radii grow GEOMETRICALLY from
+        /// <paramref name="innerRadius"/> to <paramref name="outerRadius"/> so triangle size scales
+        /// with distance (roughly constant screen-space density). When <paramref name="solidCenter"/>
+        /// is true a hub vertex fills the middle (a disc); when false the middle is a HOLE (an
+        /// annulus) - used so a dense near-field patch can own the centre without the two overlapping.
         /// </summary>
-        internal static Mesh BuildRadialGrid(int rings, int segments, float innerRadius, float outerRadius)
+        internal static Mesh BuildRadialGrid(int rings, int segments, float innerRadius, float outerRadius,
+                                             bool solidCenter = true)
         {
             ValidateOrThrow(rings, segments, innerRadius, outerRadius);
 
-            int vertexCount = 1 + rings * segments;                 // centre + one vertex per ring/segment
+            int centerCount = solidCenter ? 1 : 0;                  // disc = one hub vertex; annulus = none
+            int vertexCount = centerCount + rings * segments;
             var vertices = new Vector3[vertexCount];
             var uvs = new Vector2[vertexCount];
 
-            vertices[0] = Vector3.zero;                             // centre
-            uvs[0] = new Vector2(0.5f, 0.5f);
+            if (solidCenter)
+            {
+                vertices[0] = Vector3.zero;                         // centre hub
+                uvs[0] = new Vector2(0.5f, 0.5f);
+            }
 
             float radiusRatio = Mathf.Pow(outerRadius / innerRadius, 1f / (rings - 1));
             for (int ring = 0; ring < rings; ring++)
             {
                 float radius = innerRadius * Mathf.Pow(radiusRatio, ring);
-                WriteRing(vertices, uvs, ring, segments, radius, outerRadius);
+                WriteRing(vertices, uvs, centerCount, ring, segments, radius, outerRadius);
             }
 
-            int[] triangles = BuildTriangles(rings, segments);
+            int[] triangles = BuildTriangles(rings, segments, centerCount);
 
             return Assemble(vertices, uvs, triangles);
         }
 
         // One ring of 'segments' vertices evenly spaced around a circle of the given radius.
-        static void WriteRing(Vector3[] vertices, Vector2[] uvs, int ring, int segments, float radius, float outerRadius)
+        static void WriteRing(Vector3[] vertices, Vector2[] uvs, int centerCount, int ring, int segments, float radius, float outerRadius)
         {
-            int ringStart = 1 + ring * segments;
+            int ringStart = centerCount + ring * segments;
             float angleStep = 2f * Mathf.PI / segments;
             for (int seg = 0; seg < segments; seg++)
             {
@@ -83,28 +90,33 @@ namespace AbstractOcclusion.WebGpuWater
             }
         }
 
-        // Centre fan (centre -> ring 0) plus a quad strip between each pair of consecutive rings,
-        // each quad split into two triangles. Wound clockwise so the surface faces +Y (up).
-        static int[] BuildTriangles(int rings, int segments)
+        // Quad strip between each pair of consecutive rings (each quad split into two triangles),
+        // plus a centre fan (centre -> ring 0) only when the mesh has a hub vertex. An annulus
+        // (centerCount = 0) has a hole and only the strips. Wound clockwise so the surface faces +Y.
+        static int[] BuildTriangles(int rings, int segments, int centerCount)
         {
-            int fanTriangles = segments;
+            bool solidCenter = centerCount > 0;
+            int fanTriangles = solidCenter ? segments : 0;
             int stripTriangles = (rings - 1) * segments * 2;
             var triangles = new int[(fanTriangles + stripTriangles) * 3];
             int t = 0;
 
-            // Centre fan.
-            for (int seg = 0; seg < segments; seg++)
+            // Centre fan (disc only).
+            if (solidCenter)
             {
-                int a = 1 + seg;
-                int b = 1 + NextSeg(seg, segments);
-                t = EmitTriangle(triangles, t, 0, b, a);
+                for (int seg = 0; seg < segments; seg++)
+                {
+                    int a = centerCount + seg;
+                    int b = centerCount + NextSeg(seg, segments);
+                    t = EmitTriangle(triangles, t, 0, b, a);
+                }
             }
 
             // Ring-to-ring strips.
             for (int ring = 0; ring < rings - 1; ring++)
             {
-                int inner = 1 + ring * segments;
-                int outer = 1 + (ring + 1) * segments;
+                int inner = centerCount + ring * segments;
+                int outer = centerCount + (ring + 1) * segments;
                 for (int seg = 0; seg < segments; seg++)
                 {
                     int segNext = NextSeg(seg, segments);
