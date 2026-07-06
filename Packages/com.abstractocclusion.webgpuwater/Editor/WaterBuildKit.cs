@@ -208,6 +208,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var volume = frameGO.AddComponent<WaterVolume>();
             volume.simCompute = ctx.Shaders.Compute;
             volume.causticsShader = ctx.Shaders.Caustics;
+            // Optional (oceans only): near-field caustics in the sim-window frame. Non-fatal if absent,
+            // so bounded/pool builds don't require it - Shader.Find just leaves the field null.
+            volume.largeBodyCausticsShader = Shader.Find("WebGpuWater/LargeBodyCaustics");
             volume.obstacleShader = ctx.Shaders.Obstacle;
             volume.waterMesh = ctx.Grid;
             volume.targetCamera = ctx.Camera;

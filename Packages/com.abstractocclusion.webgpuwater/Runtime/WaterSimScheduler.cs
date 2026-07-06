@@ -66,6 +66,10 @@ namespace AbstractOcclusion.WebGpuWater
         static bool IsSimEligible(WaterVolume body, Vector3 camPos)
         {
             if (!body.EnableCulling || !body._visible) return false;
+            // An unbounded ocean follows the camera and spans everywhere, so it must never be paused by
+            // distance from its (fixed) origin - that froze the surface once the camera roamed past
+            // activationDistance. It stays eligible (still subject to visibility and the sim budget).
+            if (body.IsOceanClipmap) return true;
             float distSqr = (body.VolumeCenter - camPos).sqrMagnitude;
             return distSqr <= body.activationDistance * body.activationDistance;
         }

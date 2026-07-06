@@ -12,14 +12,17 @@ namespace AbstractOcclusion.WebGpuWater
     internal sealed class WaterCausticsPass
     {
         static readonly int ID_Water = Shader.PropertyToID("_WaterTex");
+        static readonly int ID_SimCenter = Shader.PropertyToID("_SimCenter");
+        static readonly int ID_SimExtent = Shader.PropertyToID("_SimExtent");
 
         readonly Material _material;
+        readonly Material _largeBodyMaterial; // null when the large-body caustics shader isn't assigned (oceans only)
         readonly RenderTexture _target;
         readonly CommandBuffer _cb;
 
         internal RenderTexture Texture => _target;
 
-        internal WaterCausticsPass(Shader causticsShader, int resolution)
+        internal WaterCausticsPass(Shader causticsShader, Shader largeBodyCausticsShader, int resolution)
         {
             if (causticsShader == null) throw new System.ArgumentNullException(nameof(causticsShader));
             if (resolution <= 0)
@@ -28,6 +31,10 @@ namespace AbstractOcclusion.WebGpuWater
 
             // HideAndDontSave: an edit-mode preview must never serialize these into the scene.
             _material = new Material(causticsShader) { hideFlags = HideFlags.HideAndDontSave };
+            // Optional: only the windowed ocean uses it, so a project without the shader assigned simply
+            // gets no large-body caustics (the shafts still read as plain shadow shafts).
+            if (largeBodyCausticsShader != null)
+                _largeBodyMaterial = new Material(largeBodyCausticsShader) { hideFlags = HideFlags.HideAndDontSave };
             _target = new RenderTexture(resolution, resolution, 0, RenderTextureFormat.ARGB32)
             {
                 filterMode = FilterMode.Bilinear,
@@ -52,6 +59,25 @@ namespace AbstractOcclusion.WebGpuWater
             Graphics.ExecuteCommandBuffer(_cb);
         }
 
+        // Ocean version: project the near-field WINDOW sim into the caustic RT via the large-body
+        // (world-frame) caustic. The window centre/extent are set on the material explicitly so the
+        // projection frame is correct even on the first frame, before the body publishes those globals.
+        // No-op when the large-body shader isn't assigned, so oceans just fall back to plain shafts.
+        internal void RenderLargeBody(Mesh windowMesh, RenderTexture simTexture,
+                                      Vector3 windowCenter, Vector3 windowHalfExtent)
+        {
+            if (_largeBodyMaterial == null || windowMesh == null) return;
+            if (simTexture != null) _largeBodyMaterial.SetTexture(ID_Water, simTexture);
+            _largeBodyMaterial.SetVector(ID_SimCenter, windowCenter);
+            _largeBodyMaterial.SetVector(ID_SimExtent, windowHalfExtent);
+
+            _cb.Clear();
+            _cb.SetRenderTarget(_target);
+            _cb.ClearRenderTarget(true, true, Color.clear);
+            _cb.DrawMesh(windowMesh, Matrix4x4.identity, _largeBodyMaterial, 0, 0);
+            Graphics.ExecuteCommandBuffer(_cb);
+        }
+
         internal void Dispose()
         {
             _cb?.Release();
@@ -63,6 +89,7 @@ namespace AbstractOcclusion.WebGpuWater
                 DestroyRuntimeObject(_target);
             }
             DestroyRuntimeObject(_material);
+            DestroyRuntimeObject(_largeBodyMaterial);
         }
 
         static void DestroyRuntimeObject(Object obj)

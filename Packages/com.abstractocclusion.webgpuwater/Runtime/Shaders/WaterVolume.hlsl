@@ -26,6 +26,11 @@ float3   _SimCenter;         // world centre of the window (on the surface plane
 float3   _SimExtent;         // world half-size (x,z) and height scale (y) of the window
 float    _SimEdgeFadeTexels; // border falloff width, in sim texels
 
+// Depth (world metres) below the surface that the large-body caustic is projected onto - the ocean
+// analog of the pool floor. SHARED by LargeBodyCaustics.shader (generation) and LargeBodyGodRays.shader
+// (sampling) so both use the exact same projection plane; keep them in lockstep.
+#define LARGE_CAUSTIC_REFERENCE_DEPTH 4.0
+
 // Open-water (lake/ocean) path flag. 0 = the original pool / small-body look, unchanged.
 // 1 = the surface stands alone with NO pool: the analytic refraction ray-march is bypassed
 // (a deep-water colour is returned instead) and the mesh god rays are suppressed. Published
