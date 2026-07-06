@@ -91,6 +91,11 @@ namespace AbstractOcclusion.WebGpuWater
                  "0 = smooth sine swell (byte-for-byte the previous look); higher = sharper, more " +
                  "ocean-like peaks. Buoyancy inverts it, so floaters still ride the visible crest.")]
         [Range(0f, LargeWaveChoppinessMax)] [SerializeField] internal float largeWaveChoppiness = 0f;
+        [Tooltip("Long-period SWELL height (metres): tall, slow, rolling waves that keep the open sea " +
+                 "moving toward the horizon, layered on top of the wind chop. 0 = no long swell.")]
+        [Min(0f)] [SerializeField] internal float swellHeight = 0f;
+        [Tooltip("Wavelength (metres) of the longest swell component. Bigger = longer, slower rolls.")]
+        [Min(1f)] [SerializeField] internal float swellWavelength = DefaultSwellWavelength;
         [Tooltip("Extend this open-water body's surface to the HORIZON with a camera-following clipmap " +
                  "mesh (an OCEAN, not a bounded lake). Requires Open Water ON and the large-body sim " +
                  "window (near-field ripples fade to flat past it). OFF = the surface stays the bounded " +
@@ -120,6 +125,9 @@ namespace AbstractOcclusion.WebGpuWater
         internal float LargeWaveHeadingRad => windFromDegrees * Mathf.Deg2Rad;
         internal float LargeWaveAmplitudeEffective => largeWaveAmplitude * (windSpeed / LargeWaveReferenceWind);
         internal float LargeWaveChoppiness => largeWaveChoppiness;
+        internal float SwellHeight => swellHeight;
+        internal float SwellWavelength => swellWavelength;
+        const float DefaultSwellWavelength = 140f;
 
         // Ocean clipmap guard rails (mirror LargeWaterClipmap's) + defaults. Inner ring dense for
         // near-field chop/ripples; outer ring near the far plane to reach the horizon.
@@ -533,7 +541,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_PatchPoolCenter = Shader.PropertyToID("_PatchPoolCenter");
         static readonly int ID_PatchPoolHalf = Shader.PropertyToID("_PatchPoolHalf");
         static readonly int ID_PatchDepthBias = Shader.PropertyToID("_PatchDepthBias");
-        const float PatchDepthBiasNdc = 1e-4f;      // tiny nudge toward the camera to beat the coplanar far plane
+        const float PatchDepthBiasNdc = 5e-4f;      // nudge toward the camera so the dense patch wins the overlap
+                                                    // (beats the coplanar far plane AND the coarser ocean clipmap)
         const string PatchObjectName = "Sim Window Patch";
 
         // Camera-following clipmap surface for unbounded open-water (ocean) bodies: a radial ring mesh
@@ -1189,6 +1198,9 @@ namespace AbstractOcclusion.WebGpuWater
             if (_clipmapMpb == null) _clipmapMpb = new MaterialPropertyBlock();
             WriteBodyProps(_clipmapMpb);
             _clipmapMpb.SetFloat(ID_IsClipmap, 1f);
+            // No depth bias on the clipmap: its far rings sit near the camera far plane, and any push
+            // would clip them (the horizon vanishes). The patch is nudged toward the camera instead
+            // (PatchDepthBiasNdc) to win the overlap, and the patch is always near, so it never clips.
             _clipmapRenderer.SetPropertyBlock(_clipmapMpb);
 
             // Ride the SAME camera-following, texel-snapped centre as the near-field patch, so the two
@@ -1356,7 +1368,8 @@ namespace AbstractOcclusion.WebGpuWater
             if (openWater)
             {
                 Vector3 wave = LargeWaveField.EvaluateAtQuery(worldX, worldZ, _waveTime,
-                                                       LargeWaveAmplitudeEffective, LargeWaveHeadingRad, LargeWaveChoppiness);
+                                                       LargeWaveAmplitudeEffective, LargeWaveHeadingRad,
+                                                       SwellWavelength, SwellHeight, LargeWaveChoppiness);
                 height += wave.x;
                 worldFlow += new Vector3(-wave.y, 0f, -wave.z) * waveNormalStrength;
             }
@@ -1387,7 +1400,8 @@ namespace AbstractOcclusion.WebGpuWater
             if (openWater)
             {
                 Vector3 wave = LargeWaveField.EvaluateAtQuery(worldPoint.x, worldPoint.z, _waveTime,
-                                                       LargeWaveAmplitudeEffective, LargeWaveHeadingRad, LargeWaveChoppiness);
+                                                       LargeWaveAmplitudeEffective, LargeWaveHeadingRad,
+                                                       SwellWavelength, SwellHeight, LargeWaveChoppiness);
                 depthWorld += wave.x;
                 worldFlow += new Vector3(-wave.y, 0f, -wave.z) * waveNormalStrength;
             }
@@ -1463,7 +1477,8 @@ namespace AbstractOcclusion.WebGpuWater
             // the shader (CPU copy of WaterLargeWaves.hlsl) so floaters ride the rendered surface.
             if (openWater)
                 height += LargeWaveField.HeightAtQuery(worldX, worldZ, _waveTime,
-                                                LargeWaveAmplitudeEffective, LargeWaveHeadingRad, LargeWaveChoppiness);
+                                                LargeWaveAmplitudeEffective, LargeWaveHeadingRad,
+                                                SwellWavelength, SwellHeight, LargeWaveChoppiness);
             return true;
         }
 

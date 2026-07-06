@@ -21,6 +21,8 @@ float _LargeWaveAmplitude;   // overall height/slope multiplier; falls back to 1
 float _LargeWaveWindHeading;  // wind direction, radians (the fan of wave directions centres here)
 float _LargeWaveChoppiness;   // Gerstner horizontal-displacement scale; falls back to 0 (=smooth sine)
 float _LargeWaveDetailDistance; // metres: swell fades to a flat sea by here; 0 = no fade (full waves)
+float _LargeSwellWavelength;  // metres, longest LONG-PERIOD swell component (rolling horizon swell)
+float _LargeSwellHeight;      // metres, amplitude of the longest swell component; 0 = no long swell
 
 // --- Placeholder spectrum constants (world units). Tuned for a light-breeze lake/ocean; these
 //     become FFT spectrum inputs (wind speed / fetch) in step 2. ---
@@ -30,6 +32,15 @@ float _LargeWaveDetailDistance; // metres: swell fades to a flat sea by here; 0 
 #define LBW_BASE_AMPLITUDE     0.14   // metres, height amplitude of the longest component
 #define LBW_AMPLITUDE_FALLOFF  0.76   // shorter waves carry less energy
 #define LBW_DIR_SPREAD         1.05   // radians of direction fan around the wind heading
+#define LBW_CHOP_PHASE_SEED    1.0    // hash seed for the chop band (keeps the original crests exact)
+// Long-period swell band (rolling horizon). Wavelength + height are art knobs (uniforms above); the
+// band is narrower in direction (swell is more coherent than wind chop) and its energy falls off
+// slowly across a few long components. Inert when _LargeSwellHeight = 0.
+#define LBW_SWELL_COUNT              4
+#define LBW_SWELL_WAVELENGTH_FALLOFF 0.68  // 4 components spanning ~1x .. ~0.2x the swell wavelength
+#define LBW_SWELL_AMPLITUDE_FALLOFF  0.85  // long swell keeps energy across components (rolls, not spiky)
+#define LBW_SWELL_DIR_SPREAD         0.5   // radians: tighter fan than the wind chop
+#define LBW_SWELL_PHASE_SEED         101.0 // distinct hash seed so swell never aligns with the chop
 #define LBW_GRAVITY            9.81
 #define LBW_TWO_PI             6.28318530718
 #define LBW_NORMAL_MIN_Y       1e-4   // clamps the Jacobian normal's up-component before dividing
@@ -63,52 +74,63 @@ struct LargeBodyWaveField
     float3 dispDeriv;
 };
 
-// Gerstner is the classic sum: height = A*sin(phase), horizontal = Q*A*dir*cos(phase). The Jacobian
-// of that displaced position gives the correct normal under chop (Crest's approach), and at Q = 0 it
-// collapses to normal.xz = -slope, i.e. the original smooth-swell behaviour byte-for-byte.
-LargeBodyWaveField EvaluateLargeBodyWave(float2 worldXZ)
+// Sum one band of directional Gerstner components (height = A*sin, horizontal = A*dir*cos) into the
+// accumulating field. 'amplitudeScale' multiplies the whole band (the wind swell size for the chop
+// band, the swell-height knob for the long band). 'phaseSeed' picks an independent hash stream so the
+// bands never align into ridges. Directions scatter within 'dirSpread' of the wind heading.
+void LbwAccumulateBand(float2 worldXZ, int count, float baseWavelength, float wavelengthFalloff,
+                       float baseAmplitude, float amplitudeFalloff, float dirSpread, float phaseSeed,
+                       float amplitudeScale, inout LargeBodyWaveField f)
 {
-    float height = 0.0;
-    float2 slope = float2(0.0, 0.0);
-    float2 disp = float2(0.0, 0.0);
-    float3 dispDeriv = float3(0.0, 0.0, 0.0); // (dDx/dx, dDx/dz, dDz/dz); dDz/dx == dDx/dz by symmetry
-    float wavelength = LBW_BASE_WAVELENGTH;
-    float amplitude = LBW_BASE_AMPLITUDE;
+    float wavelength = baseWavelength;
+    float amplitude = baseAmplitude;
 
     [loop]
-    for (int n = 0; n < LBW_WAVE_COUNT; n++)
+    for (int n = 0; n < count; n++)
     {
-        // Scatter each component's direction within the wind fan and give it a random phase, so
-        // the crests do NOT align into parallel ridges. Wind-biased (fan centred on the heading),
-        // but incoherent - the key to a natural, smooth surface rather than corduroy.
         float fn = (float)n;
-        float headingJitter = (LbwHash(fn + 1.0) * 2.0 - 1.0) * LBW_DIR_SPREAD;
+        float headingJitter = (LbwHash(fn + phaseSeed) * 2.0 - 1.0) * dirSpread;
         float heading = _LargeWaveWindHeading + headingJitter;
         float2 dir = float2(cos(heading), sin(heading));
-        float phaseOffset = LbwHash(fn + 17.0) * LBW_TWO_PI;
+        float phaseOffset = LbwHash(fn + phaseSeed + 16.0) * LBW_TWO_PI;
 
         float k = LBW_TWO_PI / max(wavelength, 1e-3);   // wavenumber
         float omega = sqrt(LBW_GRAVITY * k);            // deep-water dispersion
         float phase = dot(dir, worldXZ) * k - omega * _WaveTime + phaseOffset;
         float sinP = sin(phase);
         float cosP = cos(phase);
+        float a = amplitudeScale * amplitude;
 
-        height += amplitude * sinP;
-        slope  += amplitude * k * dir * cosP;           // d/dxz of A*sin(phase)
-        disp   += amplitude * dir * cosP;               // A*dir*cos(phase) (chop applied by caller)
+        f.height    += a * sinP;
+        f.slope     += a * k * dir * cosP;              // d/dxz of A*sin(phase)
+        f.disp      += a * dir * cosP;                  // A*dir*cos(phase) (chop applied by caller)
         // d/dxz of A*dir*cos(phase) = -A*k*dir*dir*sin(phase); only three unique 2x2 terms.
-        float akSin = amplitude * k * sinP;
-        dispDeriv += -akSin * float3(dir.x * dir.x, dir.x * dir.y, dir.y * dir.y);
+        float akSin = a * k * sinP;
+        f.dispDeriv += -akSin * float3(dir.x * dir.x, dir.x * dir.y, dir.y * dir.y);
 
-        wavelength *= LBW_WAVELENGTH_FALLOFF;
-        amplitude  *= LBW_AMPLITUDE_FALLOFF;
+        wavelength *= wavelengthFalloff;
+        amplitude  *= amplitudeFalloff;
     }
+}
 
+// Gerstner is the classic sum: height = A*sin(phase), horizontal = Q*A*dir*cos(phase). Two bands are
+// summed: the wind CHOP band (short crests, scaled by the wind swell amplitude - unchanged from the
+// original single band) and the long-period SWELL band (rolling horizon, scaled by its height knob;
+// inert when that is 0). The Jacobian of the displaced position gives the correct normal under chop.
+LargeBodyWaveField EvaluateLargeBodyWave(float2 worldXZ)
+{
     LargeBodyWaveField f;
-    f.height    = height    * _LargeWaveAmplitude;
-    f.slope     = slope     * _LargeWaveAmplitude;
-    f.disp      = disp      * _LargeWaveAmplitude;
-    f.dispDeriv = dispDeriv * _LargeWaveAmplitude;
+    f.height = 0.0;
+    f.slope = float2(0.0, 0.0);
+    f.disp = float2(0.0, 0.0);
+    f.dispDeriv = float3(0.0, 0.0, 0.0); // (dDx/dx, dDx/dz, dDz/dz); dDz/dx == dDx/dz by symmetry
+
+    LbwAccumulateBand(worldXZ, LBW_WAVE_COUNT, LBW_BASE_WAVELENGTH, LBW_WAVELENGTH_FALLOFF,
+                      LBW_BASE_AMPLITUDE, LBW_AMPLITUDE_FALLOFF, LBW_DIR_SPREAD, LBW_CHOP_PHASE_SEED,
+                      _LargeWaveAmplitude, f);
+    LbwAccumulateBand(worldXZ, LBW_SWELL_COUNT, _LargeSwellWavelength, LBW_SWELL_WAVELENGTH_FALLOFF,
+                      1.0, LBW_SWELL_AMPLITUDE_FALLOFF, LBW_SWELL_DIR_SPREAD, LBW_SWELL_PHASE_SEED,
+                      _LargeSwellHeight, f);
     return f;
 }
 
