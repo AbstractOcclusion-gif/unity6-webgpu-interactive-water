@@ -126,6 +126,11 @@ Shader "WebGLWater/WaterSurface"
             // 1 = sample the small wind-wave layer in WORLD metres (oceans), so its scale is independent
             // of the volume extent; 0 = pool space (bounded bodies, unchanged). Inert at the default.
             float  _OceanWorldWaves;
+            // Distance (metres) at which the ocean surface has fully dissolved into the horizon sky, so
+            // the far edge has no hard line. 0 = off (bounded bodies, and until the artist opts in). A
+            // light stopgap - the real horizon softening is the (future) large-body fog pass.
+            float  _HorizonFadeDistance;
+            #define HORIZON_FADE_START 0.5   // fraction of the fade distance where the blend to sky begins
             float _ReflectionStrength;
             float _WaveNormalStrength; // global; scales the wind-wave tilt on the normal
             float _PeakedRefineSteps;  // per-body (quality tier); see PEAKED_REFINE_MAX_STEPS
@@ -684,6 +689,16 @@ Shader "WebGLWater/WaterSurface"
 
                             outColor = lerp(outColor, foamLook, foamAlpha);
                         }
+                    }
+
+                    // ---- Horizon fade (ocean stopgap): dissolve the far surface into the horizon sky
+                    // so the outer mesh edge / water-sky boundary has no hard line. Off when the distance
+                    // is 0 (bounded bodies). The sky along the near-horizontal view ray IS the horizon. ----
+                    if (_HorizonFadeDistance > 0.0)
+                    {
+                        float horizD = distance(i.worldPos, _WorldSpaceCameraPos);
+                        float horizonFade = smoothstep(_HorizonFadeDistance * HORIZON_FADE_START, _HorizonFadeDistance, horizD);
+                        outColor = lerp(outColor, SampleEnvironment(incomingRay), horizonFade);
                     }
 
                     return float4(outColor, 1.0);

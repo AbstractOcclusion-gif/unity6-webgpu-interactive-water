@@ -115,6 +115,10 @@ namespace AbstractOcclusion.WebGpuWater
                  "horizon while dropping short chop the coarse far mesh can't resolve (which would crawl). " +
                  "Lower = waves reach further (needs denser Clipmap Rings); higher = calms sooner.")]
         [Min(0f)] [SerializeField] internal float oceanDetailFalloff = DefaultOceanDetailFalloff;
+        [Tooltip("Distance (metres) at which the ocean surface fully dissolves into the horizon sky, so " +
+                 "the far mesh edge has no hard line. 0 = off. A light stopgap - real horizon softening " +
+                 "is the future fog pass. Set near the Clipmap Outer Radius to try it.")]
+        [Min(0f)] [SerializeField] internal float horizonFadeDistance = 0f;
 
         // The open-water swell shares the body's wind settings so one wind drives both wave scales.
         // ReferenceWind maps the default breeze (windSpeed 3) to a x1 swell; stronger wind grows it,
@@ -154,6 +158,8 @@ namespace AbstractOcclusion.WebGpuWater
         // Band-limit slope for the shader. 0 for non-ocean bodies -> no band-limit -> the bounded
         // open-water surface keeps its full spectrum everywhere (unchanged).
         internal float OceanDetailSlope => IsOceanClipmap ? oceanDetailFalloff : 0f;
+        // Horizon fade distance for the shader. 0 for non-ocean bodies -> no fade (unchanged).
+        internal float HorizonFadeDistance => IsOceanClipmap ? horizonFadeDistance : 0f;
 
         [Header("Water body (multi-instance)")]
         [Tooltip("Renderers driven by THIS body via a MaterialPropertyBlock (surface above/under, " +
