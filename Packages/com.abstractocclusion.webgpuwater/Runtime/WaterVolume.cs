@@ -110,10 +110,11 @@ namespace AbstractOcclusion.WebGpuWater
         [Min(ClipmapMinSegments)] [SerializeField] internal int clipmapSegments = DefaultClipmapSegments;
         [Tooltip("Radius (metres) of the outermost ring: push near the camera far plane to reach the horizon.")]
         [Min(ClipmapMinRadius)] [SerializeField] internal float clipmapOuterRadius = DefaultClipmapOuterRadius;
-        [Tooltip("Distance (metres) over which the open-water swell FADES to a calm, flat sea. The coarse " +
-                 "far mesh cannot resolve the waves, so they are calmed with distance to stop the far surface " +
-                 "aliasing/crawling as the camera moves. Full waves out to half this; flat by this.")]
-        [Min(1f)] [SerializeField] internal float oceanWaveReach = DefaultOceanWaveReach;
+        [Tooltip("Far-field band-limit: how fast the shortest DRAWN wavelength grows with camera distance " +
+                 "(metres of wavelength per metre of distance). Keeps the long rolling swell out to the " +
+                 "horizon while dropping short chop the coarse far mesh can't resolve (which would crawl). " +
+                 "Lower = waves reach further (needs denser Clipmap Rings); higher = calms sooner.")]
+        [Min(0f)] [SerializeField] internal float oceanDetailFalloff = DefaultOceanDetailFalloff;
 
         // The open-water swell shares the body's wind settings so one wind drives both wave scales.
         // ReferenceWind maps the default breeze (windSpeed 3) to a x1 swell; stronger wind grows it,
@@ -134,7 +135,8 @@ namespace AbstractOcclusion.WebGpuWater
         const int DefaultClipmapRings = 48;
         const int DefaultClipmapSegments = 96;
         const float DefaultClipmapOuterRadius = 10000f;
-        const float DefaultOceanWaveReach = 90f;
+        const float DefaultOceanDetailFalloff = 0.03f; // low: the clipmap resolves waves far out, so the
+                                                       // swell rolls near to the horizon before band-limiting
         const int ClipmapMinRings = 2;
         const int ClipmapMinSegments = 3;
         const float ClipmapMinRadius = 1e-3f;
@@ -149,9 +151,9 @@ namespace AbstractOcclusion.WebGpuWater
         // opt-in flag, AND the sim window (its ripple fade is what keeps the far field clean). Bounded
         // lakes / pools are always false, so their render path is untouched.
         internal bool IsOceanClipmap => openWater && unboundedOcean && _windowed;
-        // Distance over which the ocean swell fades to flat. 0 for non-ocean bodies -> no fade -> the
-        // bounded open-water surface keeps full waves everywhere (unchanged).
-        internal float OceanWaveReach => IsOceanClipmap ? oceanWaveReach : 0f;
+        // Band-limit slope for the shader. 0 for non-ocean bodies -> no band-limit -> the bounded
+        // open-water surface keeps its full spectrum everywhere (unchanged).
+        internal float OceanDetailSlope => IsOceanClipmap ? oceanDetailFalloff : 0f;
 
         [Header("Water body (multi-instance)")]
         [Tooltip("Renderers driven by THIS body via a MaterialPropertyBlock (surface above/under, " +

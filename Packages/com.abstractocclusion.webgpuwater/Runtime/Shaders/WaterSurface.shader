@@ -393,12 +393,11 @@ Shader "WebGLWater/WaterSurface"
                 {
                     float2 sourceXZ = worldPos.xz;
                     o.largeWaveSourceXZ = sourceXZ;
-                    // Calm the swell where the far clipmap mesh is too coarse to draw it (no-op = 1 for
-                    // bounded bodies and near the camera). Height and chop fade together so the surface
-                    // flattens smoothly toward the horizon instead of aliasing.
-                    float detail = LargeBodyWaveDetailFade(sourceXZ);
-                    worldPos.y  += LargeBodyWaveHeight(sourceXZ) * detail;
-                    worldPos.xz += LargeBodyWaveDisplacement(sourceXZ) * detail; // 0 when choppiness = 0
+                    // Height + chop. The far-field band-limit (dropping short waves the coarse mesh can't
+                    // resolve, keeping the long swell) lives INSIDE these functions now, driven by
+                    // camera distance - no-op for bounded bodies (_LargeWaveDetailSlope = 0).
+                    worldPos.y  += LargeBodyWaveHeight(sourceXZ);
+                    worldPos.xz += LargeBodyWaveDisplacement(sourceXZ); // 0 when choppiness = 0
                 }
                 o.worldPos = worldPos;
                 o.pos = mul(UNITY_MATRIX_VP, float4(worldPos, 1.0));
@@ -495,8 +494,7 @@ Shader "WebGLWater/WaterSurface"
                 // WORLD-space wave slope here (after that division) so open water keeps real normals
                 // and refraction holds at any size. No-op for pool/small bodies (_LargeBody = 0).
                 if (_LargeBody > 0.5)
-                    normal = ApplyLargeBodyWaveNormal(normal, i.largeWaveSourceXZ,
-                                                      _WaveNormalStrength * LargeBodyWaveDetailFade(i.largeWaveSourceXZ));
+                    normal = ApplyLargeBodyWaveNormal(normal, i.largeWaveSourceXZ, _WaveNormalStrength);
                 float3 incomingRay = normalize(i.worldPos - _WorldSpaceCameraPos);
 
                 if (_Underwater > 0.5)

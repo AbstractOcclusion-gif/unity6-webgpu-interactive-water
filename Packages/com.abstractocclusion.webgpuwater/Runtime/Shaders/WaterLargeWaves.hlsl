@@ -20,7 +20,8 @@
 float _LargeWaveAmplitude;   // overall height/slope multiplier; falls back to 1 when unpublished
 float _LargeWaveWindHeading;  // wind direction, radians (the fan of wave directions centres here)
 float _LargeWaveChoppiness;   // Gerstner horizontal-displacement scale; falls back to 0 (=smooth sine)
-float _LargeWaveDetailDistance; // metres: swell fades to a flat sea by here; 0 = no fade (full waves)
+float _LargeWaveDetailSlope; // band-limit: the shortest wavelength the mesh can resolve grows this many
+                             // metres per metre of camera distance. 0 = no band-limit (full spectrum).
 float _LargeSwellWavelength;  // metres, longest LONG-PERIOD swell component (rolling horizon swell)
 float _LargeSwellHeight;      // metres, amplitude of the longest swell component; 0 = no long swell
 
@@ -44,7 +45,10 @@ float _LargeSwellHeight;      // metres, amplitude of the longest swell componen
 #define LBW_GRAVITY            9.81
 #define LBW_TWO_PI             6.28318530718
 #define LBW_NORMAL_MIN_Y       1e-4   // clamps the Jacobian normal's up-component before dividing
-#define LBW_DETAIL_FADE_START  0.5    // fraction of the detail distance where the swell begins fading
+// Distance band-limit transition (Crest keeps the wavelengths a LOD can resolve, zeroes the rest). A
+// component whose wavelength is below LOW*minWavelength is dropped, above HIGH*minWavelength kept.
+#define LBW_BANDLIMIT_LOW      0.7
+#define LBW_BANDLIMIT_HIGH     1.5
 
 // Fixed-point iterations that invert Gerstner horizontal displacement when sampling height at a
 // world xz (Crest's SampleInvertedDisplacement uses 4). Declared here as the SHARED count so the CPU
@@ -80,7 +84,7 @@ struct LargeBodyWaveField
 // bands never align into ridges. Directions scatter within 'dirSpread' of the wind heading.
 void LbwAccumulateBand(float2 worldXZ, int count, float baseWavelength, float wavelengthFalloff,
                        float baseAmplitude, float amplitudeFalloff, float dirSpread, float phaseSeed,
-                       float amplitudeScale, inout LargeBodyWaveField f)
+                       float amplitudeScale, float minWavelength, inout LargeBodyWaveField f)
 {
     float wavelength = baseWavelength;
     float amplitude = baseAmplitude;
@@ -99,7 +103,12 @@ void LbwAccumulateBand(float2 worldXZ, int count, float baseWavelength, float wa
         float phase = dot(dir, worldXZ) * k - omega * _WaveTime + phaseOffset;
         float sinP = sin(phase);
         float cosP = cos(phase);
-        float a = amplitudeScale * amplitude;
+        // Distance band-limit: drop components the local mesh cannot resolve (short waves far out),
+        // keep the long swell. weight = 1 near the camera (minWavelength ~ 0), so buoyancy's CPU mirror
+        // (which samples only near the camera) stays exact against this full-spectrum near field.
+        float bandWeight = (minWavelength <= 0.0) ? 1.0
+                         : smoothstep(minWavelength * LBW_BANDLIMIT_LOW, minWavelength * LBW_BANDLIMIT_HIGH, wavelength);
+        float a = amplitudeScale * amplitude * bandWeight;
 
         f.height    += a * sinP;
         f.slope     += a * k * dir * cosP;              // d/dxz of A*sin(phase)
@@ -117,7 +126,7 @@ void LbwAccumulateBand(float2 worldXZ, int count, float baseWavelength, float wa
 // summed: the wind CHOP band (short crests, scaled by the wind swell amplitude - unchanged from the
 // original single band) and the long-period SWELL band (rolling horizon, scaled by its height knob;
 // inert when that is 0). The Jacobian of the displaced position gives the correct normal under chop.
-LargeBodyWaveField EvaluateLargeBodyWave(float2 worldXZ)
+LargeBodyWaveField EvaluateLargeBodyWave(float2 worldXZ, float minWavelength)
 {
     LargeBodyWaveField f;
     f.height = 0.0;
@@ -127,24 +136,31 @@ LargeBodyWaveField EvaluateLargeBodyWave(float2 worldXZ)
 
     LbwAccumulateBand(worldXZ, LBW_WAVE_COUNT, LBW_BASE_WAVELENGTH, LBW_WAVELENGTH_FALLOFF,
                       LBW_BASE_AMPLITUDE, LBW_AMPLITUDE_FALLOFF, LBW_DIR_SPREAD, LBW_CHOP_PHASE_SEED,
-                      _LargeWaveAmplitude, f);
+                      _LargeWaveAmplitude, minWavelength, f);
     LbwAccumulateBand(worldXZ, LBW_SWELL_COUNT, _LargeSwellWavelength, LBW_SWELL_WAVELENGTH_FALLOFF,
                       1.0, LBW_SWELL_AMPLITUDE_FALLOFF, LBW_SWELL_DIR_SPREAD, LBW_SWELL_PHASE_SEED,
-                      _LargeSwellHeight, f);
+                      _LargeSwellHeight, minWavelength, f);
     return f;
+}
+
+// Shortest wavelength the mesh can resolve at this world xz: grows with distance from the camera
+// (the clipmap triangles get bigger). 0 when band-limiting is off (bounded bodies, _LargeWaveDetailSlope = 0).
+float LargeBodyWaveMinWavelength(float2 worldXZ)
+{
+    return distance(worldXZ, _WorldSpaceCameraPos.xz) * _LargeWaveDetailSlope;
 }
 
 // Wave HEIGHT (metres) only - for the vertex Y displacement.
 float LargeBodyWaveHeight(float2 worldXZ)
 {
-    return EvaluateLargeBodyWave(worldXZ).height;
+    return EvaluateLargeBodyWave(worldXZ, LargeBodyWaveMinWavelength(worldXZ)).height;
 }
 
 // Horizontal Gerstner offset (metres) for the vertex xz displacement, choppiness baked in. Zero when
 // _LargeWaveChoppiness = 0, so the surface reduces to the pure vertical swell (unchanged).
 float2 LargeBodyWaveDisplacement(float2 worldXZ)
 {
-    return EvaluateLargeBodyWave(worldXZ).disp * _LargeWaveChoppiness;
+    return EvaluateLargeBodyWave(worldXZ, LargeBodyWaveMinWavelength(worldXZ)).disp * _LargeWaveChoppiness;
 }
 
 // Tilt a WORLD-space surface normal by the open-water wave shape at its SOURCE xz (the undisplaced
@@ -153,7 +169,7 @@ float2 LargeBodyWaveDisplacement(float2 worldXZ)
 // Gerstner surface; at choppiness = 0 it equals -slope, i.e. the original smooth-swell normal.
 float3 ApplyLargeBodyWaveNormal(float3 worldNormal, float2 sourceXZ, float strength)
 {
-    LargeBodyWaveField f = EvaluateLargeBodyWave(sourceXZ);
+    LargeBodyWaveField f = EvaluateLargeBodyWave(sourceXZ, LargeBodyWaveMinWavelength(sourceXZ));
     float q = _LargeWaveChoppiness;
     float dDxdx = f.dispDeriv.x;
     float dDxdz = f.dispDeriv.y; // == dDz/dx
@@ -165,18 +181,6 @@ float3 ApplyLargeBodyWaveNormal(float3 worldNormal, float2 sourceXZ, float stren
     float3 n = cross(tangentZ, tangentX);
     float2 tilt = n.xz / max(n.y, LBW_NORMAL_MIN_Y);
     return normalize(worldNormal + float3(tilt.x, 0.0, tilt.y) * strength);
-}
-
-// Render-only far-field fade [1 near .. 0 far], by distance from the camera. The coarse clipmap
-// triangles far out cannot resolve the swell, so it aliases/crawls as the camera moves; fading it to
-// a flat sea there hides that (the same reason Crest keeps a flat far skirt). This is applied at the
-// call sites, NOT inside the wave sum, so the CPU buoyancy mirror stays the true full-spectrum field
-// (buoyancy only samples the near field, where this fade is 1). 0 distance = disabled (bounded bodies).
-float LargeBodyWaveDetailFade(float2 worldXZ)
-{
-    if (_LargeWaveDetailDistance <= 0.0) return 1.0;
-    float d = distance(worldXZ, _WorldSpaceCameraPos.xz);
-    return 1.0 - smoothstep(_LargeWaveDetailDistance * LBW_DETAIL_FADE_START, _LargeWaveDetailDistance, d);
 }
 
 #endif // WEBGPUWATER_LARGE_WAVES_INCLUDED
