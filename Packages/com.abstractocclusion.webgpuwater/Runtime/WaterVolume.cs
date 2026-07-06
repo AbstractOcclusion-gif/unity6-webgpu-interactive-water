@@ -75,6 +75,14 @@ namespace AbstractOcclusion.WebGpuWater
                  "its border so there is no seam.")]
         [Range(0f, 32f)] [SerializeField] internal float simWindowEdgeFadeTexels = 8f;
 
+        [Header("Open water (lake / ocean) - EXPERIMENTAL")]
+        [Tooltip("Render this body as open water: the surface stands alone with NO analytic pool. " +
+                 "The refracted view falls back to the deep-water colour where there is no scene " +
+                 "geometry, and the mesh god rays are suppressed (the large-body render feature " +
+                 "replaces them). OFF = the original pool / small-body look, byte-for-byte unchanged. " +
+                 "Publishes the _LargeBody shader flag; the clipmap + FFT modules read the same flag.")]
+        [SerializeField] internal bool openWater = false;
+
         [Header("Water body (multi-instance)")]
         [Tooltip("Renderers driven by THIS body via a MaterialPropertyBlock (surface above/under, " +
                  "pool, god rays). Assigned by the scene builder.")]

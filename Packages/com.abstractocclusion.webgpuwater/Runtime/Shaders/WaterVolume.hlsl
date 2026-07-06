@@ -26,6 +26,13 @@ float3   _SimCenter;         // world centre of the window (on the surface plane
 float3   _SimExtent;         // world half-size (x,z) and height scale (y) of the window
 float    _SimEdgeFadeTexels; // border falloff width, in sim texels
 
+// Open-water (lake/ocean) path flag. 0 = the original pool / small-body look, unchanged.
+// 1 = the surface stands alone with NO pool: the analytic refraction ray-march is bypassed
+// (a deep-water colour is returned instead) and the mesh god rays are suppressed. Published
+// per-body via the MaterialPropertyBlock, exactly like _SimWindowed above. Defaults to 0 when
+// unpublished, so nothing changes for bodies that never set it.
+float    _LargeBody;
+
 float3 VolumeExtentSafe()
 {
     return float3(_VolumeExtent.x > 1e-5 ? _VolumeExtent.x : 1.0,

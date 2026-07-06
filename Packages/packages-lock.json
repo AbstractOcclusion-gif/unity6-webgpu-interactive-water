@@ -6,6 +6,13 @@
       "source": "embedded",
       "dependencies": {}
     },
+    "com.needle.upm-in-unitypackage": {
+      "version": "https://github.com/needle-tools/upm-in-unitypackage.git",
+      "depth": 0,
+      "source": "git",
+      "dependencies": {},
+      "hash": "a2b01ee8ea1f02b7e9e3339fe13dabf5e0519b15"
+    },
     "com.unity.ai.navigation": {
       "version": "2.0.10",
       "depth": 0,

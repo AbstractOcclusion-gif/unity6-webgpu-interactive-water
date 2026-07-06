@@ -113,6 +113,11 @@ Shader "WebGLWater/GodRays"
 
             half4 frag(Varyings IN) : SV_Target
             {
+                // Open-water bodies suppress this pool-box god-ray volume; the large-body render
+                // feature provides scalable shafts instead. Keeps this pass free of any pool
+                // assumption when the surface is standing alone. (_LargeBody defaults to 0.)
+                if (_LargeBody > 0.5) return half4(0, 0, 0, 0);
+
                 // March in POOL space: caustics + the box bounds live there. Convert each
                 // sample back to world only for the depth test and the shadow lookup.
                 float3 roPool = WorldToPool(_WorldSpaceCameraPos);

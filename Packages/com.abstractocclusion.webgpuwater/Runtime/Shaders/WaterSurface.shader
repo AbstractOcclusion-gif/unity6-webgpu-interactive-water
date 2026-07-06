@@ -66,6 +66,7 @@ Shader "WebGLWater/WaterSurface"
             #include "WaterFog.hlsl"
             #include "WaterWaves.hlsl"
             #include "WaterVolume.hlsl" // brings WaterShared (via WaterCommon): POOL_RIM_HEIGHT etc.
+            #include "WaterLargeWaves.hlsl" // open-water world-space wave normal (large-body path)
 
             // Look constants local to this surface pass (single-use here).
             #define SUN_GLINT_TINT          float3(10.0, 8.0, 6.0)
@@ -344,6 +345,12 @@ Shader "WebGLWater/WaterSurface"
                 position.y += WaveHeight(poolXZ);      // ambient wind-wave layer (pool xz)
                 o.position = position;                 // keep pool-space position for the tracer
                 float3 worldPos = PoolToWorld(position);
+                // Open water: add the wave HEIGHT in WORLD space (metres), so large bodies get real
+                // 3D waves whose amplitude is NOT shrunk by the depth extent the way the pool-unit
+                // WaveHeight above is. Matches the fragment normal (same field), so shading agrees
+                // with the geometry. No-op for pool/small bodies (_LargeBody = 0).
+                if (_LargeBody > 0.5)
+                    worldPos.y += LargeBodyWaveHeight(worldPos.xz);
                 o.worldPos = worldPos;
                 o.pos = mul(UNITY_MATRIX_VP, float4(worldPos, 1.0));
                 // Nudge the patch a hair toward the camera so it wins the depth test against the
@@ -393,6 +400,13 @@ Shader "WebGLWater/WaterSurface"
             {
                 if (worldRay.y < 0.0)
                 {
+                    // Open water has no pool floor to sample: return the deep-water inscattering
+                    // colour so the analytic refraction reads as "can't see the bottom" rather than
+                    // pool tiles. The _REAL_REFRACTION path (in frag) samples the actual scene where
+                    // geometry exists and overrides this; this is the no-geometry fallback.
+                    if (_LargeBody > 0.5)
+                        return _WaterFogColor.rgb * waterColor;
+
                     float3 po = WorldToPool(worldOrigin);
                     float3 pd = WorldDirToPool(worldRay);
                     float2 t = IntersectCube(po, pd, POOL_BOX_MIN, POOL_BOX_MAX);
@@ -427,6 +441,12 @@ Shader "WebGLWater/WaterSurface"
                 // World-space surface normal + view ray, so reflection/refraction angles
                 // are correct even when the volume is rotated or has a rectangular footprint.
                 float3 normal = PoolNormalToWorld(normalPool);
+                // Open water: PoolNormalToWorld divides normal.xz by the (large) footprint extent,
+                // flattening the surface so screen-space refraction collapses on big bodies. Add a
+                // WORLD-space wave slope here (after that division) so open water keeps real normals
+                // and refraction holds at any size. No-op for pool/small bodies (_LargeBody = 0).
+                if (_LargeBody > 0.5)
+                    normal = ApplyLargeBodyWaveNormal(normal, i.worldPos.xz, _WaveNormalStrength);
                 float3 incomingRay = normalize(i.worldPos - _WorldSpaceCameraPos);
 
                 if (_Underwater > 0.5)
@@ -538,13 +558,19 @@ Shader "WebGLWater/WaterSurface"
                     // fogged by the geometry shaders, so we only fog the ANALYTIC pool
                     // here - avoids double-fogging what's seen through the surface. ----
                 #if !defined(_REAL_REFRACTION)
-                    // Fog distance is the WORLD length of the refracted segment through the
-                    // pool, found by intersecting the unit box in pool space then measuring
-                    // the world chord (correct under non-uniform extent / rotation).
-                    float3 pdFog = WorldDirToPool(refractedRay);
-                    float2 tfog = IntersectCube(i.position, pdFog, POOL_BOX_MIN, POOL_BOX_MAX);
-                    float3 exitWorld = PoolToWorld(i.position + pdFog * max(0.0, tfog.y));
-                    refractedColor = ApplyWaterFog(refractedColor, length(exitWorld - i.worldPos));
+                    // Open water carries no pool box to measure a chord against; the refracted
+                    // colour is already the deep-water colour (see getSurfaceRayColor), so the
+                    // pool-chord fog is skipped entirely for the large-body path.
+                    if (_LargeBody < 0.5)
+                    {
+                        // Fog distance is the WORLD length of the refracted segment through the
+                        // pool, found by intersecting the unit box in pool space then measuring
+                        // the world chord (correct under non-uniform extent / rotation).
+                        float3 pdFog = WorldDirToPool(refractedRay);
+                        float2 tfog = IntersectCube(i.position, pdFog, POOL_BOX_MIN, POOL_BOX_MAX);
+                        float3 exitWorld = PoolToWorld(i.position + pdFog * max(0.0, tfog.y));
+                        refractedColor = ApplyWaterFog(refractedColor, length(exitWorld - i.worldPos));
+                    }
                 #endif
 
                     refractedColor = ApplyWaterOpacity(refractedColor); // art-directed turbidity floor

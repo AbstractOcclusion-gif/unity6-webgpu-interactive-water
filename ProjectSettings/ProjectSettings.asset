@@ -836,7 +836,7 @@ PlayerSettings:
   webWasm2023: 0
   webEnableSubmoduleStrippingCompatibility: 0
   scriptingDefineSymbols:
-    WebGL: UNITY_PIPELINE_URP
+    WebGL: UNITY_PIPELINE_URP;UNITY_ASTOOLS_EXPERIMENTAL
   additionalCompilerArguments: {}
   platformArchitecture: {}
   scriptingBackend:
