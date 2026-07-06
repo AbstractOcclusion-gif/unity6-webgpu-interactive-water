@@ -82,6 +82,26 @@ namespace AbstractOcclusion.WebGpuWater
                  "replaces them). OFF = the original pool / small-body look, byte-for-byte unchanged. " +
                  "Publishes the _LargeBody shader flag; the clipmap + FFT modules read the same flag.")]
         [SerializeField] internal bool openWater = false;
+        [Tooltip("Open-water SWELL height multiplier. The big waves' scale and direction come from " +
+                 "the Wind waves settings below (wind speed scales the swell, wind heading steers it); " +
+                 "this is an artistic multiplier on top, like Wave Amplitude Scale is for the small " +
+                 "waves. 0 = no big swell (small wind waves remain).")]
+        [Min(0f)] [SerializeField] internal float largeWaveAmplitude = 1f;
+        [Tooltip("Open-water CHOPPINESS: horizontal Gerstner displacement that sharpens wave crests. " +
+                 "0 = smooth sine swell (byte-for-byte the previous look); higher = sharper, more " +
+                 "ocean-like peaks. Buoyancy inverts it, so floaters still ride the visible crest.")]
+        [Range(0f, LargeWaveChoppinessMax)] [SerializeField] internal float largeWaveChoppiness = 0f;
+
+        // The open-water swell shares the body's wind settings so one wind drives both wave scales.
+        // ReferenceWind maps the default breeze (windSpeed 3) to a x1 swell; stronger wind grows it,
+        // calm flattens it. Both the shader publisher and the CPU buoyancy read these, so they match.
+        const float LargeWaveReferenceWind = 3f;
+        // Crest's _Chop range; beyond this the Gerstner surface self-intersects (pinch-through) and the
+        // buoyancy inversion stops converging, so the knob is clamped here.
+        const float LargeWaveChoppinessMax = 2f;
+        internal float LargeWaveHeadingRad => windFromDegrees * Mathf.Deg2Rad;
+        internal float LargeWaveAmplitudeEffective => largeWaveAmplitude * (windSpeed / LargeWaveReferenceWind);
+        internal float LargeWaveChoppiness => largeWaveChoppiness;
 
         [Header("Water body (multi-instance)")]
         [Tooltip("Renderers driven by THIS body via a MaterialPropertyBlock (surface above/under, " +
@@ -1201,6 +1221,13 @@ namespace AbstractOcclusion.WebGpuWater
 
             height = PoolToWorld(new Vector3(px, poolHeight, pz)).y;
             Vector3 worldFlow = VolumeRotation * new Vector3(poolFlow.x, 0f, poolFlow.y);
+            if (openWater)
+            {
+                Vector3 wave = LargeWaveField.EvaluateAtQuery(worldX, worldZ, _waveTime,
+                                                       LargeWaveAmplitudeEffective, LargeWaveHeadingRad, LargeWaveChoppiness);
+                height += wave.x;
+                worldFlow += new Vector3(-wave.y, 0f, -wave.z) * waveNormalStrength;
+            }
             flow = new Vector2(worldFlow.x, worldFlow.z);
             return true;
         }
@@ -1222,6 +1249,16 @@ namespace AbstractOcclusion.WebGpuWater
 
             depthWorld = (surfaceH - pool.y) * VolumeExtentSafe.y; // pool depth -> world depth along up
             worldFlow = VolumeRotation * new Vector3(poolFlow.x, 0f, poolFlow.y);
+            // Open water: the world-space swell is the wind-wave source (the pool wavebank is
+            // suppressed for these bodies). Raise the surface by the wave height so the point sits
+            // deeper on a crest, and push along the wave slope so the swell carries the object.
+            if (openWater)
+            {
+                Vector3 wave = LargeWaveField.EvaluateAtQuery(worldPoint.x, worldPoint.z, _waveTime,
+                                                       LargeWaveAmplitudeEffective, LargeWaveHeadingRad, LargeWaveChoppiness);
+                depthWorld += wave.x;
+                worldFlow += new Vector3(-wave.y, 0f, -wave.z) * waveNormalStrength;
+            }
             return true;
         }
 
@@ -1286,6 +1323,11 @@ namespace AbstractOcclusion.WebGpuWater
 
             float poolHeight = windWaves ? _waveBank.SampleHeight(px, pz, _waveTime, WaveMetersPerUnit) : 0f;
             height = PoolToWorld(new Vector3(px, poolHeight, pz)).y;
+            // Open water layers the big world-space swell on top of the small wind waves, mirroring
+            // the shader (CPU copy of WaterLargeWaves.hlsl) so floaters ride the rendered surface.
+            if (openWater)
+                height += LargeWaveField.HeightAtQuery(worldX, worldZ, _waveTime,
+                                                LargeWaveAmplitudeEffective, LargeWaveHeadingRad, LargeWaveChoppiness);
             return true;
         }
 

@@ -324,6 +324,9 @@ Shader "WebGLWater/WaterSurface"
                 float3 position : TEXCOORD0; // POOL space ([-1,1]); drives the analytic tracer
                 float4 screenPos: TEXCOORD1;
                 float3 worldPos : TEXCOORD2; // world space; drives depth/SSR/foam-contact
+                float2 largeWaveSourceXZ : TEXCOORD3; // undisplaced world xz of the open-water wave,
+                                                      // so the fragment normal reads the SOURCE point
+                                                      // (not the chop-displaced worldPos)
             };
 
             v2f vert(appdata v)
@@ -342,15 +345,23 @@ Shader "WebGLWater/WaterSurface"
                 float4 info = SampleRipple(poolFlat, worldFlat, fade);
                 float3 position = poolFlat;
                 position.y += info.r;                  // interactive ripple heightfield (windowed: faded)
-                position.y += WaveHeight(poolXZ);      // ambient wind-wave layer (pool xz)
+                position.y += WaveHeight(poolXZ);      // small wind-wave detail (pool xz); open water
+                                                       // layers the big swell on top in world space below
                 o.position = position;                 // keep pool-space position for the tracer
                 float3 worldPos = PoolToWorld(position);
-                // Open water: add the wave HEIGHT in WORLD space (metres), so large bodies get real
-                // 3D waves whose amplitude is NOT shrunk by the depth extent the way the pool-unit
-                // WaveHeight above is. Matches the fragment normal (same field), so shading agrees
-                // with the geometry. No-op for pool/small bodies (_LargeBody = 0).
+                // Open water: add the wave in WORLD space (metres), so large bodies get real 3D waves
+                // whose amplitude is NOT shrunk by the depth extent the way the pool-unit WaveHeight
+                // above is. Height lifts Y; choppiness displaces xz (Gerstner) for sharp crests. The
+                // SOURCE xz (before the xz displacement) is carried to the fragment so its normal reads
+                // the wave at the same point the vertex did. No-op for pool/small bodies (_LargeBody = 0).
+                o.largeWaveSourceXZ = worldPos.xz;
                 if (_LargeBody > 0.5)
-                    worldPos.y += LargeBodyWaveHeight(worldPos.xz);
+                {
+                    float2 sourceXZ = worldPos.xz;
+                    o.largeWaveSourceXZ = sourceXZ;
+                    worldPos.y  += LargeBodyWaveHeight(sourceXZ);
+                    worldPos.xz += LargeBodyWaveDisplacement(sourceXZ); // 0 when choppiness = 0
+                }
                 o.worldPos = worldPos;
                 o.pos = mul(UNITY_MATRIX_VP, float4(worldPos, 1.0));
                 // Nudge the patch a hair toward the camera so it wins the depth test against the
@@ -446,7 +457,7 @@ Shader "WebGLWater/WaterSurface"
                 // WORLD-space wave slope here (after that division) so open water keeps real normals
                 // and refraction holds at any size. No-op for pool/small bodies (_LargeBody = 0).
                 if (_LargeBody > 0.5)
-                    normal = ApplyLargeBodyWaveNormal(normal, i.worldPos.xz, _WaveNormalStrength);
+                    normal = ApplyLargeBodyWaveNormal(normal, i.largeWaveSourceXZ, _WaveNormalStrength);
                 float3 incomingRay = normalize(i.worldPos - _WorldSpaceCameraPos);
 
                 if (_Underwater > 0.5)

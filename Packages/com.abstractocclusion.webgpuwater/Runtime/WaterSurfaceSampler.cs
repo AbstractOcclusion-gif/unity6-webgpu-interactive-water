@@ -91,6 +91,8 @@ namespace AbstractOcclusion.WebGpuWater
             }
             // else: analytic fallback -> rest surface (0) + wind waves added below
 
+            // Small wind-wave detail. Open water keeps this layer AND adds the big swell in world
+            // space (in the WaterVolume callers), so both wind-wave scales are present.
             if (_body.WindWaves)
             {
                 surfaceH += _body.WaveBank.SampleHeight(poolX, poolZ, _body.WaveTime, _body.WaveMetersPerUnit);
