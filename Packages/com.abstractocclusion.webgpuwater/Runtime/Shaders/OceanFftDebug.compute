@@ -1,0 +1,36 @@
+// WebGpuWater - increment-1a STUB compute for the FFT-cascade ocean pipeline.
+//
+// WHY a stub: before writing the spectrum + butterfly FFT math we verify the WebGPU-risky part of
+// the pipeline on the target device - can a random-write half-float TEXTURE ARRAY be allocated and
+// written by a compute dispatch? This kernel writes an animated, in-[0,1] pattern into every cascade
+// slice so a debug view can confirm the array populates and animates. It is replaced wholesale by the
+// real spectrum/FFT kernels in increments 1b/1c; nothing consumes its output yet.
+#pragma kernel WriteTestPattern
+
+// One slice per cascade. RGBA carries (x-displacement, height, z-displacement, foam) in the real
+// pipeline; here it just holds the debug pattern so the channels are visibly distinct.
+RWTexture2DArray<float4> OceanDisplacement;
+
+float OceanFftTime;        // shared wave clock (seconds); the pattern travels with it
+uint  OceanFftResolution;  // texels per side (square grid)
+uint  OceanFftCascades;    // active slice count
+
+#define OCEAN_FFT_TG    8
+#define OCEAN_TWO_PI    6.28318530718
+
+[numthreads(OCEAN_FFT_TG, OCEAN_FFT_TG, 1)]
+void WriteTestPattern(uint3 id : SV_DispatchThreadID)
+{
+    // Guard the grid edge: the dispatch rounds threadgroups up, so tail threads must no-op.
+    if (id.x >= OceanFftResolution || id.y >= OceanFftResolution) return;
+
+    // Normalised cell centre keeps the pattern resolution-independent.
+    float2 uv = (float2(id.xy) + 0.5) / (float)OceanFftResolution;
+    // A travelling diagonal wave, remapped to [0,1] so it displays without any tone-mapping.
+    float phase = (uv.x + uv.y) * OCEAN_TWO_PI - OceanFftTime;
+    float v = sin(phase) * 0.5 + 0.5;
+
+    // Tint per slice so a multi-cascade array reads as visibly distinct layers in the debug view.
+    float sliceTint = (id.z + 1.0) / max(1.0, (float)OceanFftCascades);
+    OceanDisplacement[uint3(id.xy, id.z)] = float4(v * sliceTint, v, v * (1.0 - sliceTint), 0.0);
+}

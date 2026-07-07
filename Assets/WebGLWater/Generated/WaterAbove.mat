@@ -41,7 +41,7 @@ Material:
     - _FoamTexFPS: 10
     - _RealRefraction: 1
     - _ReflectionDistortion: 0.05
-    - _ReflectionStrength: 0.5
+    - _ReflectionStrength: 0.3
     - _RefractionDistortion: 0.05
     - _SSRMaxSteps: 24
     - _SSRStepSize: 0.03

@@ -1,0 +1,300 @@
+// WebGpuWater - FFT-cascade ocean waves: spectrum + butterfly FFT (increment 1c).
+//
+// Reference-first (KWS KWS_WavesSpectrum/KWS_WavesFFT, Crest FFTSpectrum/FFTCompute), written fresh.
+// Pipeline per frame:
+//   SpectrumInit      - static random spectrum H0(k) from a Tessendorf/Phillips density. Wind change only.
+//   SpectrumUpdate    - evolve H0 to the current time into 3 complex displacement spectra (x, height, z).
+//   FftHorizontal     - inverse FFT along each row (in place on the spectra), groupshared butterfly.
+//   FftVertical       - inverse FFT along each column, then (-1)^(x+y) fftshift + per-cascade height
+//                       scale, combining the 3 signals into the spatial displacement cascade.
+//   VisualizePreview  - TEMP: remap displacement to a readable grey/colour image for the debug view.
+//
+// The butterfly (twiddle + index pairs) is precomputed CPU-side into OceanButterfly. Grid is fixed at
+// FFT_SIZE so the groupshared buffers are compile-time sized; the C# side asserts resolution == FFT_SIZE.
+// WebGPU-safe: FFT_SIZE=128 -> 128 threads/group (<256) and 6 KB groupshared (<16 KB); half-float targets.
+#pragma kernel SpectrumInit
+#pragma kernel SpectrumUpdate
+#pragma kernel FftHorizontal
+#pragma kernel FftVertical
+#pragma kernel ComputeNormal
+#pragma kernel BakeHeightField
+#pragma kernel VisualizePreview
+
+RWTexture2DArray<float4> OceanH0;          // .xy = H0(k), .zw = conj(H0(-k))
+RWTexture2DArray<float2> OceanSpecX;       // horizontal x spectrum, then spatial row/col FFT scratch
+RWTexture2DArray<float2> OceanSpecY;       // height spectrum
+RWTexture2DArray<float2> OceanSpecZ;       // horizontal z spectrum
+RWTexture2DArray<float4> OceanDisplacement;// spatial cascade (x, height, z, foam)
+RWTexture2DArray<float4> OceanNormal;      // world normal (xyz) + Jacobian foam (w)
+RWTexture2DArray<float4> OceanPreview;     // TEMP: remapped displacement for the debug view
+Texture2D<float4>        OceanButterfly;   // (twiddle.x, twiddle.y, indexA, indexB) per (stage, element)
+
+uint   OceanFftResolution;
+uint   OceanFftCascades;
+float4 OceanDomainSizes;     // metres per cascade (lane = slice)
+float4 OceanHeightScales;    // per-cascade height multiplier (lane = slice)
+float4 OceanBandMin;         // per-cascade shortest kept wavelength (metres) - disjoint cascade bands
+float4 OceanBandMax;         // per-cascade longest kept wavelength (metres)
+float2 OceanWindDir;
+float  OceanWindSpeed;
+float  OceanSwellWavelength; // metres, peak wavelength of the long-period swell
+float  OceanSwellHeight;     // metres, swell amplitude knob (remote swell, independent of wind speed)
+float  OceanFftTime;
+uint   OceanSpectrumSeed;
+float  OceanPreviewGain;     // TEMP: display gain for VisualizePreview
+
+// --- CPU buoyancy height-field bake (increment 4) ---
+RWTexture2D<float> OceanHeightField; // camera-centred summed height (metres) for async CPU readback
+float2 OceanFieldCenter;             // world XZ centre of the baked region
+float  OceanFieldSize;               // world metres spanned by the (square) region
+uint   OceanFieldRes;                // texels per side of the height field
+float  OceanFieldAmplitude;          // matches the surface shader's _LargeWaveAmplitude height scaling
+
+#define OCEAN_FFT_TG        8
+#define OCEAN_FFT_MAX_CASCADES 4
+#define FFT_SIZE            128   // must equal WaterOceanFft.DefaultResolution
+#define FFT_STAGES          7     // log2(FFT_SIZE)
+#define OCEAN_TWO_PI        6.28318530718
+#define OCEAN_GRAVITY       9.81
+#define OCEAN_KMIN          1e-4
+#define OCEAN_PHILLIPS_A    4e-3
+#define OCEAN_SMALL_WAVE    1e-3
+#define OCEAN_SWELL_WIDTH     0.12  // relative width of the swell peak in k-space (narrow = coherent)
+#define OCEAN_SWELL_DIR_POWER 6.0   // directional coherence: higher = tighter along the wind
+#define OCEAN_SWELL_GAIN      2.0   // maps the swell-height knob to spectral energy (rough calibration)
+
+float2 OceanCMul(float2 a, float2 b) { return float2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
+float2 OceanConj(float2 a) { return float2(a.x, -a.y); }
+
+float2 OceanWaveVector(uint2 xy, uint slice)
+{
+    float2 centred = float2(xy) - (OceanFftResolution * 0.5);
+    float domain = max(OceanDomainSizes[slice], 1e-3);
+    return OCEAN_TWO_PI * centred / domain;
+}
+
+uint OceanWangHash(uint s)
+{
+    s = (s ^ 61u) ^ (s >> 16); s *= 9u; s ^= s >> 4; s *= 0x27d4eb2du; s ^= s >> 15; return s;
+}
+float OceanRandom(inout uint state) { state = OceanWangHash(state); return state * (1.0 / 4294967296.0); }
+float2 OceanGaussian(inout uint state)
+{
+    float u1 = max(1e-6, OceanRandom(state));
+    float u2 = OceanRandom(state);
+    float r = sqrt(-2.0 * log(u1));
+    float theta = OCEAN_TWO_PI * u2;
+    return float2(r * cos(theta), r * sin(theta));
+}
+
+float OceanPhillips(float2 k, float kMag)
+{
+    if (kMag < OCEAN_KMIN) return 0.0;
+    float largest = OceanWindSpeed * OceanWindSpeed / OCEAN_GRAVITY;
+    float k2 = kMag * kMag;
+    float k4 = k2 * k2;
+    float kDotW = dot(k / kMag, OceanWindDir);
+    float directional = kDotW * kDotW;
+    float small = largest * OCEAN_SMALL_WAVE;
+    return OCEAN_PHILLIPS_A * exp(-1.0 / (k2 * largest * largest)) / k4
+           * directional * exp(-k2 * small * small);
+}
+
+// Long-period swell: a narrow peak in |k| around the swell wavelength, biased strongly along the wind
+// (remote-generated, so independent of wind speed). Directional term uses signed k, so it is asymmetric
+// in +k/-k - that one-sidedness is what makes the swell a TRAVELLING wave rather than a standing one.
+float OceanSwell(float2 k, float kMag)
+{
+    if (OceanSwellHeight <= 0.0 || kMag < OCEAN_KMIN) return 0.0;
+    float kSwell = OCEAN_TWO_PI / max(OceanSwellWavelength, 1e-3);
+    float width = kSwell * OCEAN_SWELL_WIDTH;
+    float radial = exp(-((kMag - kSwell) * (kMag - kSwell)) / (2.0 * width * width));
+    float directional = pow(saturate(dot(k / kMag, OceanWindDir)), OCEAN_SWELL_DIR_POWER);
+    return OceanSwellHeight * OceanSwellHeight * radial * directional * OCEAN_SWELL_GAIN;
+}
+
+[numthreads(OCEAN_FFT_TG, OCEAN_FFT_TG, 1)]
+void SpectrumInit(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= OceanFftResolution || id.y >= OceanFftResolution) return;
+    float2 k = OceanWaveVector(id.xy, id.z);
+    float kMag = length(k);
+    // Phillips is symmetric in k; the swell is not, so build +k and -k amplitudes separately.
+    float phillips = OceanPhillips(k, kMag);
+    float ampK  = sqrt((phillips + OceanSwell(k, kMag)) * 0.5);
+    float ampMK = sqrt((phillips + OceanSwell(-k, kMag)) * 0.5);
+    // Disjoint cascade bands: keep only wavelengths this cascade owns, so summing cascades never
+    // double-counts a frequency that a coarser/finer cascade also carries (swell lands in its band).
+    float wavelength = (kMag > OCEAN_KMIN) ? (OCEAN_TWO_PI / kMag) : 1e9;
+    if (wavelength <= OceanBandMin[id.z] || wavelength > OceanBandMax[id.z]) { ampK = 0.0; ampMK = 0.0; }
+    uint state = (id.x * 1973u + id.y * 9277u + id.z * 26699u + OceanSpectrumSeed) | 1u;
+    float2 h0k = OceanGaussian(state) * ampK;
+    float2 h0mk = OceanGaussian(state) * ampMK;
+    OceanH0[id] = float4(h0k, OceanConj(h0mk));
+}
+
+[numthreads(OCEAN_FFT_TG, OCEAN_FFT_TG, 1)]
+void SpectrumUpdate(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= OceanFftResolution || id.y >= OceanFftResolution) return;
+    float4 h0 = OceanH0[id];
+    float2 k = OceanWaveVector(id.xy, id.z);
+    float kMag = length(k);
+    float omega = sqrt(OCEAN_GRAVITY * kMag);
+    float s, c; sincos(omega * OceanFftTime, s, c);
+    float2 h = OceanCMul(h0.xy, float2(c, s)) + OceanCMul(h0.zw, float2(c, -s));
+    float2 nk = (kMag > OCEAN_KMIN) ? k / kMag : float2(0.0, 0.0);
+    float2 iH = float2(-h.y, h.x);
+    OceanSpecX[id] = iH * nk.x;
+    OceanSpecY[id] = h;
+    OceanSpecZ[id] = iH * nk.y;
+}
+
+// ---- Butterfly FFT ---------------------------------------------------------------------------------
+// Three complex signals transformed together in groupshared, ping-ponged across the stages. One
+// threadgroup handles one row (horizontal) or one column (vertical) of length FFT_SIZE.
+groupshared float2 gX[2][FFT_SIZE];
+groupshared float2 gY[2][FFT_SIZE];
+groupshared float2 gZ[2][FFT_SIZE];
+
+// One butterfly stage for output element 'e': out = in[a] + twiddle * in[b], for all three signals.
+void OceanButterflyStage(uint stage, uint e, int src)
+{
+    float4 bf = OceanButterfly[uint2(stage, e)];
+    uint a = (uint)(bf.z + 0.5);
+    uint b = (uint)(bf.w + 0.5);
+    float2 w = bf.xy;
+    gX[1 - src][e] = gX[src][a] + OceanCMul(w, gX[src][b]);
+    gY[1 - src][e] = gY[src][a] + OceanCMul(w, gY[src][b]);
+    gZ[1 - src][e] = gZ[src][a] + OceanCMul(w, gZ[src][b]);
+}
+
+[numthreads(FFT_SIZE, 1, 1)]
+void FftHorizontal(uint3 id : SV_DispatchThreadID)
+{
+    uint col = id.x, row = id.y, slice = id.z;
+    uint3 p = uint3(col, row, slice);
+    gX[0][col] = OceanSpecX[p];
+    gY[0][col] = OceanSpecY[p];
+    gZ[0][col] = OceanSpecZ[p];
+    GroupMemoryBarrierWithGroupSync();
+
+    int src = 0;
+    // Unrolled: a constant-trip loop makes the group barriers provably uniform control flow (WebGPU/Naga
+    // rejects barriers reachable through a loop whose analysis touches the invocation id).
+    [unroll]
+    for (uint stage = 0; stage < FFT_STAGES; stage++)
+    {
+        OceanButterflyStage(stage, col, src);
+        GroupMemoryBarrierWithGroupSync();
+        src = 1 - src;
+    }
+    OceanSpecX[p] = gX[src][col];
+    OceanSpecY[p] = gY[src][col];
+    OceanSpecZ[p] = gZ[src][col];
+}
+
+[numthreads(1, FFT_SIZE, 1)]
+void FftVertical(uint3 id : SV_DispatchThreadID)
+{
+    uint col = id.x, row = id.y, slice = id.z;
+    uint3 p = uint3(col, row, slice);
+    gX[0][row] = OceanSpecX[p];
+    gY[0][row] = OceanSpecY[p];
+    gZ[0][row] = OceanSpecZ[p];
+    GroupMemoryBarrierWithGroupSync();
+
+    int src = 0;
+    [unroll]
+    for (uint stage = 0; stage < FFT_STAGES; stage++)
+    {
+        OceanButterflyStage(stage, row, src);
+        GroupMemoryBarrierWithGroupSync();
+        src = 1 - src;
+    }
+    // Centred spectrum -> multiply the spatial result by (-1)^(x+y) to undo the N/2 shift.
+    float sign = ((col + row) & 1u) ? -1.0 : 1.0;
+    float heightScale = OceanHeightScales[slice];
+    float3 disp = float3(gX[src][row].x, gY[src][row].x * heightScale, gZ[src][row].x) * sign;
+    OceanDisplacement[p] = float4(disp, 0.0);
+}
+
+// Surface normal + Jacobian foam from central differences of the spatial displacement (cascades tile,
+// so neighbour taps wrap). Decoupling the normal into its own cascade is what lets the fragment shader
+// sample crisp ripple detail per pixel later, independent of mesh tessellation.
+[numthreads(OCEAN_FFT_TG, OCEAN_FFT_TG, 1)]
+void ComputeNormal(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= OceanFftResolution || id.y >= OceanFftResolution) return;
+    uint slice = id.z;
+    uint N = OceanFftResolution;
+    float step = max(OceanDomainSizes[slice], 1e-3) / N;    // metres per texel
+    uint xr = (id.x + 1u) % N, xl = (id.x + N - 1u) % N;
+    uint yu = (id.y + 1u) % N, yd = (id.y + N - 1u) % N;
+
+    float3 dr = OceanDisplacement[uint3(xr, id.y, slice)].xyz;
+    float3 dl = OceanDisplacement[uint3(xl, id.y, slice)].xyz;
+    float3 du = OceanDisplacement[uint3(id.x, yu, slice)].xyz;
+    float3 dd = OceanDisplacement[uint3(id.x, yd, slice)].xyz;
+
+    // Tangents of the displaced surface P = (x + Dx, height, z + Dz), then normal = tangentZ x tangentX.
+    float3 tangentX = float3(2.0 * step + dr.x - dl.x, dr.y - dl.y, dr.z - dl.z);
+    float3 tangentZ = float3(du.x - dd.x, du.y - dd.y, 2.0 * step + du.z - dd.z);
+    float3 n = normalize(cross(tangentZ, tangentX));
+
+    // Jacobian of the horizontal displacement; where it folds (< 1) the surface is pinching -> foam.
+    float invTwoStep = 1.0 / (2.0 * step);
+    float jxx = 1.0 + (dr.x - dl.x) * invTwoStep;
+    float jzz = 1.0 + (du.z - dd.z) * invTwoStep;
+    float jxz = (dr.z - dl.z) * invTwoStep;
+    float jzx = (du.x - dd.x) * invTwoStep;
+    float foam = saturate(1.0 - (jxx * jzz - jxz * jzx));
+
+    OceanNormal[id] = float4(n, foam);
+}
+
+// Manual bilinear read of one cascade's height (.y) at a world xz. Cascades tile every 'domain' metres
+// and the FFT is periodic, so the taps wrap around the grid edge seamlessly. Manual (not Sample) because
+// the displacement array is bound as a UAV here, and WebGPU won't hardware-filter it anyway.
+float OceanCascadeHeightBilinear(float2 worldXZ, uint c)
+{
+    int N = (int)OceanFftResolution;
+    float2 texel = frac(worldXZ / max(OceanDomainSizes[c], 1e-3)) * N; // tile-local texel coordinate
+    int x0 = (int)floor(texel.x); int y0 = (int)floor(texel.y);
+    float fx = texel.x - x0; float fy = texel.y - y0;
+    x0 = ((x0 % N) + N) % N; y0 = ((y0 % N) + N) % N;
+    int x1 = (x0 + 1) % N; int y1 = (y0 + 1) % N;
+    float h00 = OceanDisplacement[uint3(x0, y0, c)].y;
+    float h10 = OceanDisplacement[uint3(x1, y0, c)].y;
+    float h01 = OceanDisplacement[uint3(x0, y1, c)].y;
+    float h11 = OceanDisplacement[uint3(x1, y1, c)].y;
+    return lerp(lerp(h00, h10, fx), lerp(h01, h11, fx), fy);
+}
+
+// Bake the summed cascade height over a camera-centred world region into a single-channel field, so the
+// CPU can async-read it and float objects on the exact rendered swell (height is a function of world XZ).
+[numthreads(OCEAN_FFT_TG, OCEAN_FFT_TG, 1)]
+void BakeHeightField(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= OceanFieldRes || id.y >= OceanFieldRes) return;
+    float2 uv = (float2(id.xy) + 0.5) / (float)OceanFieldRes;
+    float2 worldXZ = OceanFieldCenter + (uv - 0.5) * OceanFieldSize;
+    float height = 0.0;
+    for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
+    {
+        if (c >= (int)OceanFftCascades) break;
+        height += OceanCascadeHeightBilinear(worldXZ, (uint)c);
+    }
+    OceanHeightField[id.xy] = height * OceanFieldAmplitude;
+}
+
+// TEMP (1c): remap displacement to a readable image - height as grey around mid, choppiness as tint.
+[numthreads(OCEAN_FFT_TG, OCEAN_FFT_TG, 1)]
+void VisualizePreview(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= OceanFftResolution || id.y >= OceanFftResolution) return;
+    float4 d = OceanDisplacement[id];
+    OceanPreview[id] = float4(0.5 + d.y * OceanPreviewGain,
+                              0.5 + d.x * OceanPreviewGain,
+                              0.5 + d.z * OceanPreviewGain, 1.0);
+}

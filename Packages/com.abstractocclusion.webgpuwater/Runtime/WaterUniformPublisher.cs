@@ -57,6 +57,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SimExtent = Shader.PropertyToID("_SimExtent");
         static readonly int ID_SimEdgeFade = Shader.PropertyToID("_SimEdgeFadeTexels");
         static readonly int ID_LargeBody = Shader.PropertyToID("_LargeBody");
+        static readonly int ID_OceanFftActive = Shader.PropertyToID("_OceanFftActive");
         static readonly int ID_LargeWaveAmp = Shader.PropertyToID("_LargeWaveAmplitude");
         static readonly int ID_LargeWaveWind = Shader.PropertyToID("_LargeWaveWindHeading");
         static readonly int ID_LargeWaveChop = Shader.PropertyToID("_LargeWaveChoppiness");
@@ -154,6 +155,9 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetVector(ID_SimExtent, _body.SimHalfExtent);
             sink.SetFloat(ID_SimEdgeFade, _body.simWindowEdgeFadeTexels);
             sink.SetFloat(ID_LargeBody, _body.openWater ? 1f : 0f);
+            // Per-body: only the FFT-driven ocean samples the cascade textures; every other body (pools,
+            // bounded open water) publishes 0 and keeps the analytic large-wave path unchanged.
+            sink.SetFloat(ID_OceanFftActive, _body.OceanFftActive ? 1f : 0f);
             sink.SetFloat(ID_LargeWaveAmp, _body.LargeWaveAmplitudeEffective);
             sink.SetFloat(ID_LargeWaveWind, _body.LargeWaveHeadingRad);
             sink.SetFloat(ID_LargeWaveChop, _body.LargeWaveChoppiness);

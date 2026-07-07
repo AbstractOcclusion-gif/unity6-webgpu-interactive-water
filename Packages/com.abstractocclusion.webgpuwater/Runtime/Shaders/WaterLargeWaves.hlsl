@@ -143,6 +143,58 @@ LargeBodyWaveField EvaluateLargeBodyWave(float2 worldXZ, float minWavelength)
     return f;
 }
 
+// --- FFT-cascade lookup (step 2) ------------------------------------------------------------------
+// The WaterOceanFft pass publishes these globals for ocean bodies. When _OceanFftActive is 0 (pools,
+// bounded bodies, or an unsupported device) the functions below fall back to the analytic generator
+// above, so nothing but an opted-in ocean changes. Cascades tile across world XZ (Repeat wrap); half-
+// float targets are hardware-filterable on WebGPU, so a plain linear sample is safe.
+Texture2DArray _OceanFftDisplacement;  SamplerState sampler_OceanFftDisplacement; // (x, height, z, foam)
+Texture2DArray _OceanFftNormal;        SamplerState sampler_OceanFftNormal;       // (nx, ny, nz, foam)
+float4 _OceanFftDomainSizes;   // metres per cascade
+float4 _OceanFftVisibleAreas;  // per-cascade view distance (m) at which its detail fully fades out
+float  _OceanFftCascadeCount;  // active cascades (<= 4)
+float  _OceanFftActive;        // 1 when the FFT pass drives this body; 0 -> analytic fallback
+
+#define OCEAN_FFT_MAX_CASCADES 4
+
+// Sum the (x, height, z) displacement across the active cascades at a world xz.
+float3 OceanFftDisplacement(float2 worldXZ)
+{
+    float3 sum = float3(0.0, 0.0, 0.0);
+    for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
+    {
+        float active = (c < (int)_OceanFftCascadeCount) ? 1.0 : 0.0;
+        float slice = min((float)c, _OceanFftCascadeCount - 1.0);   // never index past the array depth
+        float2 uv = worldXZ / max(_OceanFftDomainSizes[c], 1e-3);
+        sum += active * _OceanFftDisplacement.SampleLevel(sampler_OceanFftDisplacement, float3(uv, slice), 0).xyz;
+    }
+    return sum;
+}
+
+// Sum the surface-normal tilt (xz of the per-cascade world normal) across the active cascades. This is
+// the crux of the FFT quality win: the normal is sampled independently of mesh tessellation with trilinear
+// mip selection, so ripple detail stays crisp toward the horizon without aliasing. The mip is chosen by an
+// explicit DISTANCE LOD (not screen derivatives) so the same code is valid in the vertex programs that also
+// call this - e.g. the projected caustic grid - not just the fragment. A cubic distance fade then removes
+// each cascade past its visible range so the finest ripples don't shimmer far away.
+float2 OceanFftNormalTilt(float2 worldXZ)
+{
+    float camDist = distance(worldXZ, _WorldSpaceCameraPos.xz);
+    float2 tilt = float2(0.0, 0.0);
+    for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
+    {
+        float active = (c < (int)_OceanFftCascadeCount) ? 1.0 : 0.0;
+        float slice = min((float)c, _OceanFftCascadeCount - 1.0);
+        float domain = max(_OceanFftDomainSizes[c], 1e-3);
+        float2 uv = worldXZ / domain;
+        float f = saturate(camDist / max(_OceanFftVisibleAreas[c], 1e-3));
+        float fade = 1.0 - f * f * f;   // full near the camera, 0 past the cascade's visible range
+        float lod = log2(1.0 + camDist / domain); // farther -> coarser mip (distance anti-aliasing)
+        tilt += active * fade * _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod).xz;
+    }
+    return tilt;
+}
+
 // Shortest wavelength the mesh can resolve at this world xz: grows with distance from the camera
 // (the clipmap triangles get bigger). 0 when band-limiting is off (bounded bodies, _LargeWaveDetailSlope = 0).
 float LargeBodyWaveMinWavelength(float2 worldXZ)
@@ -150,9 +202,12 @@ float LargeBodyWaveMinWavelength(float2 worldXZ)
     return distance(worldXZ, _WorldSpaceCameraPos.xz) * _LargeWaveDetailSlope;
 }
 
-// Wave HEIGHT (metres) only - for the vertex Y displacement.
+// Wave HEIGHT (metres) only - for the vertex Y displacement. FFT cascades when active; the amplitude
+// knob still scales the swell so the inspector stays live.
 float LargeBodyWaveHeight(float2 worldXZ)
 {
+    if (_OceanFftActive > 0.5)
+        return OceanFftDisplacement(worldXZ).y * _LargeWaveAmplitude;
     return EvaluateLargeBodyWave(worldXZ, LargeBodyWaveMinWavelength(worldXZ)).height;
 }
 
@@ -160,6 +215,8 @@ float LargeBodyWaveHeight(float2 worldXZ)
 // _LargeWaveChoppiness = 0, so the surface reduces to the pure vertical swell (unchanged).
 float2 LargeBodyWaveDisplacement(float2 worldXZ)
 {
+    if (_OceanFftActive > 0.5)
+        return OceanFftDisplacement(worldXZ).xz * _LargeWaveChoppiness * _LargeWaveAmplitude;
     return EvaluateLargeBodyWave(worldXZ, LargeBodyWaveMinWavelength(worldXZ)).disp * _LargeWaveChoppiness;
 }
 
@@ -169,6 +226,14 @@ float2 LargeBodyWaveDisplacement(float2 worldXZ)
 // Gerstner surface; at choppiness = 0 it equals -slope, i.e. the original smooth-swell normal.
 float3 ApplyLargeBodyWaveNormal(float3 worldNormal, float2 sourceXZ, float strength)
 {
+    // FFT path: the cascade normals already encode the surface tilt; blend their xz and lean the base
+    // normal by it. The per-pixel mipmapped detail (crisp ripples to the horizon) arrives in step 3.
+    if (_OceanFftActive > 0.5)
+    {
+        float2 fftTilt = OceanFftNormalTilt(sourceXZ);
+        return normalize(worldNormal + float3(fftTilt.x, 0.0, fftTilt.y) * strength);
+    }
+
     LargeBodyWaveField f = EvaluateLargeBodyWave(sourceXZ, LargeBodyWaveMinWavelength(sourceXZ));
     float q = _LargeWaveChoppiness;
     float dDxdx = f.dispDeriv.x;

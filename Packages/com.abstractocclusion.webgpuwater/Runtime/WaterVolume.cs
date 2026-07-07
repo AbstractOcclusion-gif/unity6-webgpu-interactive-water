@@ -37,6 +37,10 @@ namespace AbstractOcclusion.WebGpuWater
 
         [Header("Assigned by the scene builder")]
         [SerializeField] internal ComputeShader simCompute;
+        // Optional, ocean-only: the FFT-cascade wave compute. Unassigned, or on non-ocean bodies, the
+        // analytic large-wave path (WaterLargeWaves.hlsl) is used unchanged. Deliberately NOT part of
+        // HasRequiredWiring - a body must run without it so pools/bounded bodies are unaffected.
+        [SerializeField] internal ComputeShader oceanFftCompute;
         [SerializeField] internal Shader causticsShader;
         [SerializeField] internal Shader largeBodyCausticsShader; // WebGpuWater/LargeBodyCaustics - near-field ocean caustics in the sim-window frame (optional; oceans only)
         [SerializeField] internal Shader obstacleShader; // WebGLWater/ObstacleDepth - footprint of interactable objects
@@ -585,6 +589,7 @@ namespace AbstractOcclusion.WebGpuWater
         WaterObstacle _obstacle;
         WaterCausticsPass _caustics;
         WaterSurfaceSampler _sampler;
+        WaterOceanFft _oceanFft; // ocean-only FFT wave pass; null on pools/bounded bodies
         WaterSimWindow _simWindow;
         WaterBedBaker _bedBaker;
         WaterUniformPublisher _publisher;
@@ -641,6 +646,11 @@ namespace AbstractOcclusion.WebGpuWater
         internal WaterWaveBank WaveBank => _waveBank;
         internal float WaveTime => _waveTime;
         internal RenderTexture CausticTexture => _caustics?.Texture;
+        // Ocean FFT displacement cascade array (null on non-ocean bodies / before init) - for the debug view.
+        internal RenderTexture OceanFftTexture => _oceanFft?.DisplacementTexture;
+        // True only when this body is an unbounded ocean whose FFT pass is producing cascades. Drives the
+        // per-body _OceanFftActive flag so the surface samples the FFT instead of the analytic generator.
+        internal bool OceanFftActive => _oceanFft != null && _oceanFft.Ready;
         internal Texture2D BedTexture => _bedBaker?.Texture;
         internal bool IsBedBaked => _bedBaker != null && _bedBaker.IsBaked;
         internal int GodRaySteps => _godRaySteps;
@@ -812,6 +822,12 @@ namespace AbstractOcclusion.WebGpuWater
 
             _caustics = new WaterCausticsPass(causticsShader, largeBodyCausticsShader, causticResolution);
 
+            // Ocean-only: build the FFT wave pass when this body is an unbounded ocean AND the compute is
+            // wired. Any other body leaves _oceanFft null and keeps the analytic large-wave path.
+            if (IsOceanClipmap && oceanFftCompute != null)
+                _oceanFft = new WaterOceanFft(oceanFftCompute, WaterOceanFft.DefaultResolution,
+                                              WaterOceanFft.DefaultCascadeCount, WaterOceanFft.DefaultDomainSizes);
+
             // seed the pool with a few ripples. Compensate the strength for extent.y (like
             // AddRipple) so seed splashes keep a fixed world height on a deep pool - PoolToWorld
             // multiplies surface height by extent.y.
@@ -869,6 +885,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (Primary == this) Primary = FindNextPrimary(this);
             Bodies.Remove(this);
             _water?.Dispose(); _water = null;
+            _oceanFft?.Dispose(); _oceanFft = null;
             _obstacle?.Dispose(); _obstacle = null;
             _caustics?.Dispose(); _caustics = null;
             _bedBaker?.Dispose();  // also re-arms the lazy bake gate for the next enable
@@ -1181,6 +1198,18 @@ namespace AbstractOcclusion.WebGpuWater
             // Bounded bodies render the pool caustic; the windowed OCEAN renders the large-body caustic
             // in the sim-window's world frame (other windowed bodies still skip - see RenderCausticsForThisBody).
             // The tier can amortise the pass over N frames (the caustic RT simply holds).
+            // Ocean FFT cascades refresh on the shared wave clock (NOT gated on _simulate: like the analytic
+            // large waves they must animate whenever the body is live, or the surface would sample stale
+            // cascades and render differently in edit vs play, where _simulate follows game-camera culling).
+            // The surface only reads them when _OceanFftActive is published, so this stays ocean-only.
+            if (IsOceanClipmap && !_paused)
+            {
+                Vector2 camXZ = targetCamera != null
+                    ? new Vector2(targetCamera.transform.position.x, targetCamera.transform.position.z)
+                    : new Vector2(VolumeCenter.x, VolumeCenter.z);
+                _oceanFft?.Dispatch(_waveTime, windSpeed, LargeWaveHeadingRad, LargeWaveAmplitudeEffective,
+                                    SwellWavelength, SwellHeight, camXZ);
+            }
             if (_simulate && Time.frameCount % _causticInterval == 0)
                 RenderCausticsForThisBody();
 
@@ -1193,7 +1222,10 @@ namespace AbstractOcclusion.WebGpuWater
             // Tier-amortised readback: buoyancy already tolerates async latency, so weak
             // devices can trade a few frames of it for GPU->CPU bandwidth.
             if (_simulate && Time.frameCount % _readbackInterval == 0)
+            {
                 _sampler.RequestReadback();  // paused bodies keep their last height (objects still float)
+                if (IsOceanClipmap) _oceanFft?.RequestHeightReadback(); // FFT swell height for buoyancy
+            }
         }
 
         // Per-body uniforms pushed to THIS body's own renderers via a property block, so
@@ -1509,9 +1541,7 @@ namespace AbstractOcclusion.WebGpuWater
             Vector3 worldFlow = VolumeRotation * new Vector3(poolFlow.x, 0f, poolFlow.y);
             if (openWater)
             {
-                Vector3 wave = LargeWaveField.EvaluateAtQuery(worldX, worldZ, _waveTime,
-                                                       LargeWaveAmplitudeEffective, LargeWaveHeadingRad,
-                                                       SwellWavelength, SwellHeight, LargeWaveChoppiness);
+                Vector3 wave = SampleLargeWaveField(worldX, worldZ);
                 height += wave.x;
                 worldFlow += new Vector3(-wave.y, 0f, -wave.z) * waveNormalStrength;
             }
@@ -1541,9 +1571,7 @@ namespace AbstractOcclusion.WebGpuWater
             // deeper on a crest, and push along the wave slope so the swell carries the object.
             if (openWater)
             {
-                Vector3 wave = LargeWaveField.EvaluateAtQuery(worldPoint.x, worldPoint.z, _waveTime,
-                                                       LargeWaveAmplitudeEffective, LargeWaveHeadingRad,
-                                                       SwellWavelength, SwellHeight, LargeWaveChoppiness);
+                Vector3 wave = SampleLargeWaveField(worldPoint.x, worldPoint.z);
                 depthWorld += wave.x;
                 worldFlow += new Vector3(-wave.y, 0f, -wave.z) * waveNormalStrength;
             }
@@ -1618,10 +1646,20 @@ namespace AbstractOcclusion.WebGpuWater
             // Open water layers the big world-space swell on top of the small wind waves, mirroring
             // the shader (CPU copy of WaterLargeWaves.hlsl) so floaters ride the rendered surface.
             if (openWater)
-                height += LargeWaveField.HeightAtQuery(worldX, worldZ, _waveTime,
-                                                LargeWaveAmplitudeEffective, LargeWaveHeadingRad,
-                                                SwellWavelength, SwellHeight, LargeWaveChoppiness);
+                height += SampleLargeWaveField(worldX, worldZ).x;
             return true;
+        }
+
+        // Large-body wave field (height, dHeight/dx, dHeight/dz) at a world xz. Prefers the FFT ocean's
+        // async height-field readback (so floaters ride the exact rendered swell) and falls back to the
+        // analytic CPU mirror before the first readback lands or on non-FFT bodies - matching the shader's
+        // own gated fallback in WaterLargeWaves.hlsl.
+        Vector3 SampleLargeWaveField(float worldX, float worldZ)
+        {
+            if (OceanFftActive && _oceanFft.TrySampleField(worldX, worldZ, out Vector3 fft))
+                return fft;
+            return LargeWaveField.EvaluateAtQuery(worldX, worldZ, _waveTime, LargeWaveAmplitudeEffective,
+                LargeWaveHeadingRad, SwellWavelength, SwellHeight, LargeWaveChoppiness);
         }
 
         void Step(float seconds)
