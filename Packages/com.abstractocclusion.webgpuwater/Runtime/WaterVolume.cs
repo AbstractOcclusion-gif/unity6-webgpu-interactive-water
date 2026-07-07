@@ -81,101 +81,172 @@ namespace AbstractOcclusion.WebGpuWater
                  "its border so there is no seam.")]
         [Range(0f, 32f)] [SerializeField] internal float simWindowEdgeFadeTexels = 8f;
 
-        [Header("Open water (lake / ocean) - EXPERIMENTAL")]
-        [Tooltip("Render this body as open water: the surface stands alone with NO analytic pool. " +
-                 "The refracted view falls back to the deep-water colour where there is no scene " +
-                 "geometry, and the mesh god rays are suppressed (the large-body render feature " +
-                 "replaces them). OFF = the original pool / small-body look, byte-for-byte unchanged. " +
-                 "Publishes the _LargeBody shader flag; the clipmap + FFT modules read the same flag.")]
-        [SerializeField] internal bool openWater = false;
-        [Tooltip("Open-water SWELL height multiplier. The big waves' scale and direction come from " +
-                 "the Wind waves settings below (wind speed scales the swell, wind heading steers it); " +
-                 "this is an artistic multiplier on top, like Wave Amplitude Scale is for the small " +
-                 "waves. 0 = no big swell (small wind waves remain).")]
-        [Min(0f)] [SerializeField] internal float largeWaveAmplitude = 1f;
-        [Tooltip("Open-water CHOPPINESS: horizontal Gerstner displacement that sharpens wave crests. " +
-                 "0 = smooth sine swell (byte-for-byte the previous look); higher = sharper, more " +
-                 "ocean-like peaks. Buoyancy inverts it, so floaters still ride the visible crest.")]
-        [Range(0f, LargeWaveChoppinessMax)] [SerializeField] internal float largeWaveChoppiness = 0f;
-        [Tooltip("Long-period SWELL height (metres): tall, slow, rolling waves that keep the open sea " +
-                 "moving toward the horizon, layered on top of the wind chop. 0 = no long swell.")]
-        [Min(0f)] [SerializeField] internal float swellHeight = 0f;
-        [Tooltip("Wavelength (metres) of the longest swell component. Bigger = longer, slower rolls.")]
-        [Min(1f)] [SerializeField] internal float swellWavelength = DefaultSwellWavelength;
-        [Tooltip("Extend this open-water body's surface to the HORIZON with a camera-following clipmap " +
-                 "mesh (an OCEAN, not a bounded lake). Requires Open Water ON and the large-body sim " +
-                 "window (near-field ripples fade to flat past it). OFF = the surface stays the bounded " +
-                 "footprint plane, unchanged. Drawing water past the shore would be wrong for a lake, so " +
-                 "this is opt-in.")]
-        [SerializeField] internal bool unboundedOcean = false;
-        [Header("Ocean clipmap (unbounded open water)")]
-        [Tooltip("Concentric rings in the radial clipmap mesh. More = denser far-field / smoother swell, " +
-                 "at more vertices.")]
-        [Min(ClipmapMinRings)] [SerializeField] internal int clipmapRings = DefaultClipmapRings;
-        [Tooltip("Vertices per ring. More = rounder rings, at more vertices.")]
-        [Min(ClipmapMinSegments)] [SerializeField] internal int clipmapSegments = DefaultClipmapSegments;
-        [Tooltip("Radius (metres) of the outermost ring: push near the camera far plane to reach the horizon.")]
-        [Min(ClipmapMinRadius)] [SerializeField] internal float clipmapOuterRadius = DefaultClipmapOuterRadius;
-        [Tooltip("Far-field band-limit: how fast the shortest DRAWN wavelength grows with camera distance " +
-                 "(metres of wavelength per metre of distance). Keeps the long rolling swell out to the " +
-                 "horizon while dropping short chop the coarse far mesh can't resolve (which would crawl). " +
-                 "Lower = waves reach further (needs denser Clipmap Rings); higher = calms sooner.")]
-        [Min(0f)] [SerializeField] internal float oceanDetailFalloff = DefaultOceanDetailFalloff;
-        [Tooltip("Distance (metres) at which the ocean surface fully dissolves into the horizon sky, so " +
-                 "the far mesh edge has no hard line. 0 = off. A light stopgap - real horizon softening " +
-                 "is the future fog pass. Set near the Clipmap Outer Radius to try it.")]
-        [Min(0f)] [SerializeField] internal float horizonFadeDistance = 0f;
-        [Tooltip("Atmosphere colour the far ocean dissolves toward at the horizon. Alpha controls how much " +
-                 "it overrides the reflected sky: 0 = pure sky (seamless, the natural default), 1 = fully " +
-                 "this colour (a coloured haze band). Only used when Horizon Haze Density > 0.")]
-        [SerializeField] internal Color horizonHazeColor = DefaultHorizonHazeColor;
-        [Tooltip("Exponential distance-haze density (per metre) that dissolves the far ocean surface into " +
-                 "the sky - the real replacement for Horizon Fade Distance. 0 = off. Tiny values fade over " +
-                 "kilometres; raise it to pull the haze nearer.")]
-        [Min(0f)] [SerializeField] internal float horizonHazeDensity = 0f;
+        [Header("Ocean (open water, clipmap, god rays, whitecaps)")]
+        [SerializeField] OceanSettings ocean = new OceanSettings();
 
-        [Header("Ocean god rays (large-body light shafts)")]
-        [Tooltip("Shaft colour, multiplied by the sun colour. Only used when God Ray Density > 0.")]
-        [SerializeField] internal Color largeGodRayColor = DefaultLargeGodRayColor;
-        [Tooltip("Master intensity of the ocean god-ray shafts. 0 = off (also the gate: the fullscreen " +
-                 "shaft pass is skipped entirely). Raise for brighter volumetric beams.")]
-        [Min(0f)] [SerializeField] internal float largeGodRayDensity = 0f;
-        [Tooltip("Raymarch samples per pixel for the ocean shafts - SEPARATE from the pool god-ray steps. " +
-                 "More = smoother beams, higher cost.")]
-        [Range(LargeGodRayMinSteps, LargeGodRayMaxSteps)] [SerializeField] internal int largeGodRaySteps = DefaultLargeGodRaySteps;
-        [Tooltip("Forward-scattering (Mie / Henyey-Greenstein g): 0 = even glow, higher = beams brighten " +
-                 "sharply when looking toward the sun, like real shafts through haze.")]
-        [Range(0f, LargeGodRayMaxAnisotropy)] [SerializeField] internal float largeGodRayAnisotropy = DefaultLargeGodRayAnisotropy;
-        [Tooltip("Distance extinction (per metre) that thins the shafts as they recede, so the far ocean " +
-                 "does not over-glow. 0 = no distance falloff.")]
-        [Min(0f)] [SerializeField] internal float largeGodRayExtinction = 0f;
-        [Tooltip("How strongly the near-field surface caustics brighten and flicker the shafts (the shimmer " +
-                 "close to the camera, inside the sim window). 0 = plain shadow shafts. Needs the Large Body " +
-                 "Caustics Shader assigned.")]
-        [Min(0f)] [SerializeField] internal float largeGodRayCausticStrength = DefaultLargeGodRayCausticStrength;
+        /// <summary>Open-water / ocean look: the standalone surface, its horizon clipmap, large-body god
+        /// rays and FFT whitecap foam. All ocean-only - inert on pools / bounded lakes. Migrated off the
+        /// flat WaterVolume fields into this block (Phase 2); the same-named accessors keep every reader
+        /// and the derived helpers below unchanged. (Consts and derived helpers stay on WaterVolume.)</summary>
+        [System.Serializable]
+        public sealed class OceanSettings
+        {
+            [Header("Open water (lake / ocean) - EXPERIMENTAL")]
+            [Tooltip("Render this body as open water: the surface stands alone with NO analytic pool. " +
+                     "The refracted view falls back to the deep-water colour where there is no scene " +
+                     "geometry, and the mesh god rays are suppressed (the large-body render feature " +
+                     "replaces them). OFF = the original pool / small-body look, byte-for-byte unchanged. " +
+                     "Publishes the _LargeBody shader flag; the clipmap + FFT modules read the same flag.")]
+            public bool openWater = false;
+            [Tooltip("Open-water SWELL height multiplier. The big waves' scale and direction come from " +
+                     "the Wind waves settings below (wind speed scales the swell, wind heading steers it); " +
+                     "this is an artistic multiplier on top, like Wave Amplitude Scale is for the small " +
+                     "waves. 0 = no big swell (small wind waves remain).")]
+            [Min(0f)] public float largeWaveAmplitude = 1f;
+            [Tooltip("Open-water CHOPPINESS: horizontal Gerstner displacement that sharpens wave crests. " +
+                     "0 = smooth sine swell (byte-for-byte the previous look); higher = sharper, more " +
+                     "ocean-like peaks. Buoyancy inverts it, so floaters still ride the visible crest.")]
+            [Range(0f, LargeWaveChoppinessMax)] public float largeWaveChoppiness = 0f;
+            [Tooltip("Long-period SWELL height (metres): tall, slow, rolling waves that keep the open sea " +
+                     "moving toward the horizon, layered on top of the wind chop. 0 = no long swell.")]
+            [Min(0f)] public float swellHeight = 0f;
+            [Tooltip("Wavelength (metres) of the longest swell component. Bigger = longer, slower rolls.")]
+            [Min(1f)] public float swellWavelength = DefaultSwellWavelength;
+            [Tooltip("Extend this open-water body's surface to the HORIZON with a camera-following clipmap " +
+                     "mesh (an OCEAN, not a bounded lake). Requires Open Water ON and the large-body sim " +
+                     "window (near-field ripples fade to flat past it). OFF = the surface stays the bounded " +
+                     "footprint plane, unchanged. Drawing water past the shore would be wrong for a lake, so " +
+                     "this is opt-in.")]
+            public bool unboundedOcean = false;
 
-        [Header("Ocean foam (whitecaps)")]
-        [Tooltip("Wind speed (m/s) below which the FFT ocean grows NO whitecaps (KWS foams above ~4). Tie " +
-                 "to the same Wind Speed that drives the swell: calmer seas stay foam-free. Ocean-only.")]
-        [Min(0f)] [SerializeField] internal float oceanFoamWindThreshold = DefaultOceanFoamWindThreshold;
-        [Tooltip("How readily a folding wave crest turns to foam. 1 = only where the surface actually pinches " +
-                 "(the natural default); higher spreads foam onto gentler folds; lower needs sharper breaks. " +
-                 "Needs Large Wave Choppiness above 0 for crests to fold at all.")]
-        [Range(0f, OceanFoamCoverageMax)] [SerializeField] internal float oceanFoamCoverage = DefaultOceanFoamCoverage;
-        [Tooltip("How fast foam builds up on breaking crests. Higher = denser whitecaps sooner.")]
-        [Range(0f, OceanFoamStrengthMax)] [SerializeField] internal float oceanFoamStrength = DefaultOceanFoamStrength;
-        [Tooltip("How fast foam fades once a crest passes (per second). Lower = foam lingers and streaks; " +
-                 "higher = it dies back quickly. This is what stops whitecaps flickering frame to frame.")]
-        [Range(0f, OceanFoamFadeRateMax)] [SerializeField] internal float oceanFoamFadeRate = DefaultOceanFoamFadeRate;
-        [Tooltip("Whitecap tint (RGB) and overall opacity (alpha) where foam sits on the surface. White is " +
-                 "the natural default; alpha 0 hides the surface foam entirely (accumulation still runs).")]
-        [SerializeField] internal Color oceanFoamColor = Color.white;
-        [Tooltip("Metres per tile of the Foam Pattern texture on the ocean surface. Smaller = finer, more " +
-                 "repeated lace; larger = broader foam shapes. Uses the material's Foam Pattern slot.")]
-        [Min(OceanFoamTileSizeMin)] [SerializeField] internal float oceanFoamTileSize = DefaultOceanFoamTileSize;
-        [Tooltip("How softly the foam texture dissolves in as coverage rises. 0 = hard edges; higher = a " +
-                 "gentle feathered fade from water to foam.")]
-        [Range(0f, 1f)] [SerializeField] internal float oceanFoamFeather = DefaultOceanFoamFeather;
+            [Header("Ocean clipmap (unbounded open water)")]
+            [Tooltip("Concentric rings in the radial clipmap mesh. More = denser far-field / smoother swell, " +
+                     "at more vertices.")]
+            [Min(ClipmapMinRings)] public int clipmapRings = DefaultClipmapRings;
+            [Tooltip("Vertices per ring. More = rounder rings, at more vertices.")]
+            [Min(ClipmapMinSegments)] public int clipmapSegments = DefaultClipmapSegments;
+            [Tooltip("Radius (metres) of the outermost ring: push near the camera far plane to reach the horizon.")]
+            [Min(ClipmapMinRadius)] public float clipmapOuterRadius = DefaultClipmapOuterRadius;
+            [Tooltip("Far-field band-limit: how fast the shortest DRAWN wavelength grows with camera distance " +
+                     "(metres of wavelength per metre of distance). Keeps the long rolling swell out to the " +
+                     "horizon while dropping short chop the coarse far mesh can't resolve (which would crawl). " +
+                     "Lower = waves reach further (needs denser Clipmap Rings); higher = calms sooner.")]
+            [Min(0f)] public float oceanDetailFalloff = DefaultOceanDetailFalloff;
+            [Tooltip("Distance (metres) at which the ocean surface fully dissolves into the horizon sky, so " +
+                     "the far mesh edge has no hard line. 0 = off. A light stopgap - real horizon softening " +
+                     "is the future fog pass. Set near the Clipmap Outer Radius to try it.")]
+            [Min(0f)] public float horizonFadeDistance = 0f;
+            [Tooltip("Atmosphere colour the far ocean dissolves toward at the horizon. Alpha controls how much " +
+                     "it overrides the reflected sky: 0 = pure sky (seamless, the natural default), 1 = fully " +
+                     "this colour (a coloured haze band). Only used when Horizon Haze Density > 0.")]
+            public Color horizonHazeColor = DefaultHorizonHazeColor;
+            [Tooltip("Exponential distance-haze density (per metre) that dissolves the far ocean surface into " +
+                     "the sky - the real replacement for Horizon Fade Distance. 0 = off. Tiny values fade over " +
+                     "kilometres; raise it to pull the haze nearer.")]
+            [Min(0f)] public float horizonHazeDensity = 0f;
+
+            [Header("Ocean god rays (large-body light shafts)")]
+            [Tooltip("Shaft colour, multiplied by the sun colour. Only used when God Ray Density > 0.")]
+            public Color largeGodRayColor = DefaultLargeGodRayColor;
+            [Tooltip("Master intensity of the ocean god-ray shafts. 0 = off (also the gate: the fullscreen " +
+                     "shaft pass is skipped entirely). Raise for brighter volumetric beams.")]
+            [Min(0f)] public float largeGodRayDensity = 0f;
+            [Tooltip("Raymarch samples per pixel for the ocean shafts - SEPARATE from the pool god-ray steps. " +
+                     "More = smoother beams, higher cost.")]
+            [Range(LargeGodRayMinSteps, LargeGodRayMaxSteps)] public int largeGodRaySteps = DefaultLargeGodRaySteps;
+            [Tooltip("Forward-scattering (Mie / Henyey-Greenstein g): 0 = even glow, higher = beams brighten " +
+                     "sharply when looking toward the sun, like real shafts through haze.")]
+            [Range(0f, LargeGodRayMaxAnisotropy)] public float largeGodRayAnisotropy = DefaultLargeGodRayAnisotropy;
+            [Tooltip("Distance extinction (per metre) that thins the shafts as they recede, so the far ocean " +
+                     "does not over-glow. 0 = no distance falloff.")]
+            [Min(0f)] public float largeGodRayExtinction = 0f;
+            [Tooltip("How strongly the near-field surface caustics brighten and flicker the shafts (the shimmer " +
+                     "close to the camera, inside the sim window). 0 = plain shadow shafts. Needs the Large Body " +
+                     "Caustics Shader assigned.")]
+            [Min(0f)] public float largeGodRayCausticStrength = DefaultLargeGodRayCausticStrength;
+
+            [Header("Ocean foam (whitecaps)")]
+            [Tooltip("Wind speed (m/s) below which the FFT ocean grows NO whitecaps (KWS foams above ~4). Tie " +
+                     "to the same Wind Speed that drives the swell: calmer seas stay foam-free. Ocean-only.")]
+            [Min(0f)] public float oceanFoamWindThreshold = DefaultOceanFoamWindThreshold;
+            [Tooltip("How readily a folding wave crest turns to foam. 1 = only where the surface actually pinches " +
+                     "(the natural default); higher spreads foam onto gentler folds; lower needs sharper breaks. " +
+                     "Needs Large Wave Choppiness above 0 for crests to fold at all.")]
+            [Range(0f, OceanFoamCoverageMax)] public float oceanFoamCoverage = DefaultOceanFoamCoverage;
+            [Tooltip("How fast foam builds up on breaking crests. Higher = denser whitecaps sooner.")]
+            [Range(0f, OceanFoamStrengthMax)] public float oceanFoamStrength = DefaultOceanFoamStrength;
+            [Tooltip("How fast foam fades once a crest passes (per second). Lower = foam lingers and streaks; " +
+                     "higher = it dies back quickly. This is what stops whitecaps flickering frame to frame.")]
+            [Range(0f, OceanFoamFadeRateMax)] public float oceanFoamFadeRate = DefaultOceanFoamFadeRate;
+            [Tooltip("Whitecap tint (RGB) and overall opacity (alpha) where foam sits on the surface. White is " +
+                     "the natural default; alpha 0 hides the surface foam entirely (accumulation still runs).")]
+            public Color oceanFoamColor = Color.white;
+            [Tooltip("Metres per tile of the Foam Pattern texture on the ocean surface. Smaller = finer, more " +
+                     "repeated lace; larger = broader foam shapes. Uses the material's Foam Pattern slot.")]
+            [Min(OceanFoamTileSizeMin)] public float oceanFoamTileSize = DefaultOceanFoamTileSize;
+            [Tooltip("How softly the foam texture dissolves in as coverage rises. 0 = hard edges; higher = a " +
+                     "gentle feathered fade from water to foam.")]
+            [Range(0f, 1f)] public float oceanFoamFeather = DefaultOceanFoamFeather;
+        }
+
+        // Same-named forwarding accessors so every reader (WaterUniformPublisher, the derived helpers
+        // below, the clipmap/FFT setup, ShouldWindow/IsOceanClipmap) is unchanged. Names are the exact
+        // former field names; the derived helpers (PascalCase, e.g. LargeWaveChoppiness) read these.
+        internal bool openWater => ocean.openWater;
+        internal float largeWaveAmplitude => ocean.largeWaveAmplitude;
+        internal float largeWaveChoppiness => ocean.largeWaveChoppiness;
+        internal float swellHeight => ocean.swellHeight;
+        internal float swellWavelength => ocean.swellWavelength;
+        internal bool unboundedOcean => ocean.unboundedOcean;
+        internal int clipmapRings => ocean.clipmapRings;
+        internal int clipmapSegments => ocean.clipmapSegments;
+        internal float clipmapOuterRadius => ocean.clipmapOuterRadius;
+        internal float oceanDetailFalloff => ocean.oceanDetailFalloff;
+        internal float horizonFadeDistance => ocean.horizonFadeDistance;
+        internal Color horizonHazeColor => ocean.horizonHazeColor;
+        internal float horizonHazeDensity => ocean.horizonHazeDensity;
+        internal Color largeGodRayColor => ocean.largeGodRayColor;
+        internal float largeGodRayDensity => ocean.largeGodRayDensity;
+        internal int largeGodRaySteps => ocean.largeGodRaySteps;
+        internal float largeGodRayAnisotropy => ocean.largeGodRayAnisotropy;
+        internal float largeGodRayExtinction => ocean.largeGodRayExtinction;
+        internal float largeGodRayCausticStrength => ocean.largeGodRayCausticStrength;
+        internal float oceanFoamWindThreshold => ocean.oceanFoamWindThreshold;
+        internal float oceanFoamCoverage => ocean.oceanFoamCoverage;
+        internal float oceanFoamStrength => ocean.oceanFoamStrength;
+        internal float oceanFoamFadeRate => ocean.oceanFoamFadeRate;
+        internal Color oceanFoamColor => ocean.oceanFoamColor;
+        internal float oceanFoamTileSize => ocean.oceanFoamTileSize;
+        internal float oceanFoamFeather => ocean.oceanFoamFeather;
+
+        // Legacy capture (scenes/prefabs from before this migration) -> copied once by MigrateOceanV2.
+        // Hidden; do not edit.
+        [SerializeField, HideInInspector, FormerlySerializedAs("openWater")] bool _legacyOpenWater = false;
+        [SerializeField, HideInInspector, FormerlySerializedAs("largeWaveAmplitude")] float _legacyLargeWaveAmplitude = 1f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("largeWaveChoppiness")] float _legacyLargeWaveChoppiness = 0f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("swellHeight")] float _legacySwellHeight = 0f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("swellWavelength")] float _legacySwellWavelength = DefaultSwellWavelength;
+        [SerializeField, HideInInspector, FormerlySerializedAs("unboundedOcean")] bool _legacyUnboundedOcean = false;
+        [SerializeField, HideInInspector, FormerlySerializedAs("clipmapRings")] int _legacyClipmapRings = DefaultClipmapRings;
+        [SerializeField, HideInInspector, FormerlySerializedAs("clipmapSegments")] int _legacyClipmapSegments = DefaultClipmapSegments;
+        [SerializeField, HideInInspector, FormerlySerializedAs("clipmapOuterRadius")] float _legacyClipmapOuterRadius = DefaultClipmapOuterRadius;
+        [SerializeField, HideInInspector, FormerlySerializedAs("oceanDetailFalloff")] float _legacyOceanDetailFalloff = DefaultOceanDetailFalloff;
+        [SerializeField, HideInInspector, FormerlySerializedAs("horizonFadeDistance")] float _legacyHorizonFadeDistance = 0f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("horizonHazeColor")] Color _legacyHorizonHazeColor = DefaultHorizonHazeColor;
+        [SerializeField, HideInInspector, FormerlySerializedAs("horizonHazeDensity")] float _legacyHorizonHazeDensity = 0f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("largeGodRayColor")] Color _legacyLargeGodRayColor = DefaultLargeGodRayColor;
+        [SerializeField, HideInInspector, FormerlySerializedAs("largeGodRayDensity")] float _legacyLargeGodRayDensity = 0f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("largeGodRaySteps")] int _legacyLargeGodRaySteps = DefaultLargeGodRaySteps;
+        [SerializeField, HideInInspector, FormerlySerializedAs("largeGodRayAnisotropy")] float _legacyLargeGodRayAnisotropy = DefaultLargeGodRayAnisotropy;
+        [SerializeField, HideInInspector, FormerlySerializedAs("largeGodRayExtinction")] float _legacyLargeGodRayExtinction = 0f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("largeGodRayCausticStrength")] float _legacyLargeGodRayCausticStrength = DefaultLargeGodRayCausticStrength;
+        [SerializeField, HideInInspector, FormerlySerializedAs("oceanFoamWindThreshold")] float _legacyOceanFoamWindThreshold = DefaultOceanFoamWindThreshold;
+        [SerializeField, HideInInspector, FormerlySerializedAs("oceanFoamCoverage")] float _legacyOceanFoamCoverage = DefaultOceanFoamCoverage;
+        [SerializeField, HideInInspector, FormerlySerializedAs("oceanFoamStrength")] float _legacyOceanFoamStrength = DefaultOceanFoamStrength;
+        [SerializeField, HideInInspector, FormerlySerializedAs("oceanFoamFadeRate")] float _legacyOceanFoamFadeRate = DefaultOceanFoamFadeRate;
+        [SerializeField, HideInInspector, FormerlySerializedAs("oceanFoamColor")] Color _legacyOceanFoamColor = Color.white;
+        [SerializeField, HideInInspector, FormerlySerializedAs("oceanFoamTileSize")] float _legacyOceanFoamTileSize = DefaultOceanFoamTileSize;
+        [SerializeField, HideInInspector, FormerlySerializedAs("oceanFoamFeather")] float _legacyOceanFoamFeather = DefaultOceanFoamFeather;
 
         // The open-water swell shares the body's wind settings so one wind drives both wave scales.
         // ReferenceWind maps the default breeze (windSpeed 3) to a x1 swell; stronger wind grows it,
@@ -544,7 +615,7 @@ namespace AbstractOcclusion.WebGpuWater
         // Bumped by one for each feature whose flat fields move into a nested Settings block. A scene
         // serialized before a given version has its old (FormerlySerializedAs) legacy fields copied into
         // the new block once, on load, so tuned values are never lost. The copies are idempotent.
-        const int CurrentSettingsVersion = 1;
+        const int CurrentSettingsVersion = 2;
         [SerializeField, HideInInspector] int _settingsVersion = 0;
 
         void ISerializationCallbackReceiver.OnBeforeSerialize() { }
@@ -553,6 +624,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (_settingsVersion >= CurrentSettingsVersion) return; // new or already-migrated asset
             if (_settingsVersion < 1) MigrateDepthAttenuationV1();
+            if (_settingsVersion < 2) MigrateOceanV2();
             _settingsVersion = CurrentSettingsVersion;
         }
 
@@ -565,6 +637,37 @@ namespace AbstractOcclusion.WebGpuWater
             depthAttenuation.causticDepthFade = _legacyCausticDepthFade;
             depthAttenuation.godRayDepthFade = _legacyGodRayDepthFade;
             depthAttenuation.linkDepthToFog = _legacyLinkDepthToFog;
+        }
+
+        // v2: the four "Ocean ..." headers (open water, clipmap, god rays, whitecaps) moved into OceanSettings.
+        void MigrateOceanV2()
+        {
+            ocean.openWater = _legacyOpenWater;
+            ocean.largeWaveAmplitude = _legacyLargeWaveAmplitude;
+            ocean.largeWaveChoppiness = _legacyLargeWaveChoppiness;
+            ocean.swellHeight = _legacySwellHeight;
+            ocean.swellWavelength = _legacySwellWavelength;
+            ocean.unboundedOcean = _legacyUnboundedOcean;
+            ocean.clipmapRings = _legacyClipmapRings;
+            ocean.clipmapSegments = _legacyClipmapSegments;
+            ocean.clipmapOuterRadius = _legacyClipmapOuterRadius;
+            ocean.oceanDetailFalloff = _legacyOceanDetailFalloff;
+            ocean.horizonFadeDistance = _legacyHorizonFadeDistance;
+            ocean.horizonHazeColor = _legacyHorizonHazeColor;
+            ocean.horizonHazeDensity = _legacyHorizonHazeDensity;
+            ocean.largeGodRayColor = _legacyLargeGodRayColor;
+            ocean.largeGodRayDensity = _legacyLargeGodRayDensity;
+            ocean.largeGodRaySteps = _legacyLargeGodRaySteps;
+            ocean.largeGodRayAnisotropy = _legacyLargeGodRayAnisotropy;
+            ocean.largeGodRayExtinction = _legacyLargeGodRayExtinction;
+            ocean.largeGodRayCausticStrength = _legacyLargeGodRayCausticStrength;
+            ocean.oceanFoamWindThreshold = _legacyOceanFoamWindThreshold;
+            ocean.oceanFoamCoverage = _legacyOceanFoamCoverage;
+            ocean.oceanFoamStrength = _legacyOceanFoamStrength;
+            ocean.oceanFoamFadeRate = _legacyOceanFoamFadeRate;
+            ocean.oceanFoamColor = _legacyOceanFoamColor;
+            ocean.oceanFoamTileSize = _legacyOceanFoamTileSize;
+            ocean.oceanFoamFeather = _legacyOceanFoamFeather;
         }
 
         // Editor-only: a freshly added component starts already-migrated, so the one-time copy never runs
