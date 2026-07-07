@@ -626,12 +626,30 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] internal WaterSplashEmitter splashEmitter;
 
         // runtime collaborators (see the header comment for the responsibility map)
-        WaterSimulation _water;
-        WaterObstacle _obstacle;
-        WaterCausticsPass _caustics;
-        WaterSurfaceSampler _sampler;
-        WaterOceanFft _oceanFft; // ocean-only FFT wave pass; null on pools/bounded bodies
-        WaterSimWindow _simWindow;
+        //
+        // The eagerly-owned collaborators are formalised as IWaterModule lifecycle modules (see
+        // WaterCollaboratorModules.cs): the master constructs and disposes them through the module
+        // registry instead of by hand. The typed accessors below keep the rest of the class - Update,
+        // the sampling/ripple facade, the caustics render - reading them exactly as before.
+        SimulationModule _simulationModule;
+        ObstacleModule _obstacleModule;
+        CausticsModule _causticsModule;
+        SurfaceSamplerModule _surfaceSamplerModule;
+        OceanFftModule _oceanFftModule;
+        SimWindowModule _simWindowModule;
+        IWaterModule[] _modules;   // ordered registry over the six modules above
+        WaterContext _context;     // shared seam handed to the modules at Initialize
+
+        WaterSimulation _water => _simulationModule?.Simulation;
+        WaterObstacle _obstacle => _obstacleModule?.Obstacle;
+        WaterCausticsPass _caustics => _causticsModule?.Caustics;
+        WaterSurfaceSampler _sampler => _surfaceSamplerModule?.Sampler;
+        WaterOceanFft _oceanFft => _oceanFftModule?.OceanFft; // ocean-only FFT wave pass; null on pools/bounded bodies
+        WaterSimWindow _simWindow => _simWindowModule?.SimWindow;
+
+        // The lazy trio stays as-is: each already uses a clean lazy pattern and serves even an
+        // uninitialized body (context-menu rebake, defensive uniform writes), so it is not part of
+        // the eager registry.
         WaterBedBaker _bedBaker;
         WaterUniformPublisher _publisher;
         WaterInputRouter _inputRouter;
@@ -848,30 +866,22 @@ namespace AbstractOcclusion.WebGpuWater
 
             ApplyQuality();     // sets _simRes, causticResolution, _godRaysAllowed + per-body cost knobs
 
-            _water = new WaterSimulation(simCompute, _simRes);
-            _sampler = new WaterSurfaceSampler(this); // probes readback support itself
-            _simWindow = new WaterSimWindow(this);
             _lastEditorTick = 0d;
             _stepDebt = 0f;
             _foamTimeDebt = 0f;
             _windowed = ShouldWindow(); // decided once; volumeExtent is fixed before Play
+
+            // Construct the eagerly-owned collaborators through the module registry. Ordered here (after
+            // _windowed, which the ocean-FFT module gates on; before ApplySimAnisotropy, which needs the
+            // simulation to already exist) so the sequence and the Enabled gates match the former inline
+            // construction byte-for-byte.
+            BuildAndInitializeModules();
+
             ApplySimAnisotropy();       // round ripples on a rectangular pool (no-op for square/windowed)
 #if UNITY_EDITOR
             WarnIfLargeBody();           // editor-only heads-up: large bodies are experimental in this POC
             WarnIfExperimentalTerrain(); // editor-only heads-up: terrain bed-depth is experimental
 #endif
-
-            if (obstacleShader != null)
-                _obstacle = new WaterObstacle(obstacleShader, _simRes,
-                                              VolumeCenter, VolumeRotation, VolumeExtentSafe);
-
-            _caustics = new WaterCausticsPass(causticsShader, largeBodyCausticsShader, causticResolution);
-
-            // Ocean-only: build the FFT wave pass when this body is an unbounded ocean AND the compute is
-            // wired. Any other body leaves _oceanFft null and keeps the analytic large-wave path.
-            if (IsOceanClipmap && oceanFftCompute != null)
-                _oceanFft = new WaterOceanFft(oceanFftCompute, WaterOceanFft.DefaultResolution,
-                                              WaterOceanFft.DefaultCascadeCount, WaterOceanFft.DefaultDomainSizes);
 
             // seed the pool with a few ripples. Compensate the strength for extent.y (like
             // AddRipple) so seed splashes keep a fixed world height on a deep pool - PoolToWorld
@@ -929,10 +939,9 @@ namespace AbstractOcclusion.WebGpuWater
             _initialized = false;
             if (Primary == this) Primary = FindNextPrimary(this);
             Bodies.Remove(this);
-            _water?.Dispose(); _water = null;
-            _oceanFft?.Dispose(); _oceanFft = null;
-            _obstacle?.Dispose(); _obstacle = null;
-            _caustics?.Dispose(); _caustics = null;
+            DisposeModules();      // disposes the six eager collaborator modules (sim, obstacle, caustics,
+                                   // surface sampler, ocean FFT, sim window) - releases the same GPU
+                                   // resources the inline disposal did, and clears the sampler/window refs.
             _bedBaker?.Dispose();  // also re-arms the lazy bake gate for the next enable
             DestroySimWindowPatch(); // before restoring the surface material it borrows
             DestroyOceanClipmap();   // ditto - it borrows the same surface material
@@ -941,10 +950,39 @@ namespace AbstractOcclusion.WebGpuWater
             RestoreMeshDetail();
             RestorePipelineTier();
             // Fresh per-enable state: a re-enable must not float objects on a stale height
-            // field, and the window centre re-primes from the camera.
-            _sampler = null;
-            _simWindow = null;
+            // field, and the window centre re-primes from the camera. (The sampler and sim-window
+            // refs are cleared by DisposeModules above; the lazy input router is cleared here.)
             _inputRouter = null;
+        }
+
+        // Build the ordered collaborator registry for this enable and initialize each enabled module.
+        // Order mirrors the original construction sequence (sim, sampler, sim window, obstacle, caustics,
+        // ocean FFT); the context is the shared seam the modules will read from as their per-frame tick
+        // moves onto IWaterModule.
+        void BuildAndInitializeModules()
+        {
+            _context = new WaterContext(this);
+            _simulationModule = new SimulationModule(this);
+            _surfaceSamplerModule = new SurfaceSamplerModule(this);
+            _simWindowModule = new SimWindowModule(this);
+            _obstacleModule = new ObstacleModule(this);
+            _causticsModule = new CausticsModule(this);
+            _oceanFftModule = new OceanFftModule(this);
+            _modules = new IWaterModule[]
+            {
+                _simulationModule, _surfaceSamplerModule, _simWindowModule,
+                _obstacleModule, _causticsModule, _oceanFftModule,
+            };
+
+            for (int i = 0; i < _modules.Length; i++)
+                if (_modules[i].Enabled) _modules[i].Initialize(_context);
+        }
+
+        // Dispose every collaborator module. Safe on modules that were disabled or never initialized.
+        void DisposeModules()
+        {
+            if (_modules == null) return;
+            for (int i = 0; i < _modules.Length; i++) _modules[i].Dispose();
         }
 
         // ---- Low-tier surface grid swap ----------------------------------------
