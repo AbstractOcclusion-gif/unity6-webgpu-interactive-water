@@ -379,20 +379,37 @@ namespace AbstractOcclusion.WebGpuWater
         public enum EnvironmentSource { ProceduralSky, UrpProbe }
 
         [Header("Reflections (Phase 3c)")]
-        [Tooltip("How THIS body reflects. SSR (screen-space over the procedural sky) scales to many " +
-                 "bodies. Planar is a full extra scene render across this body's plane - use it for at " +
-                 "most ONE 'hero' body. SkyOnly is cheapest (procedural sky only). SSR needs Depth + " +
-                 "Opaque Texture enabled on the active URP asset.")]
-        [SerializeField] private ReflectionMode reflectionMode = ReflectionMode.SSR;
+        [SerializeField] ReflectionSettings reflectionSettings = new ReflectionSettings();
+
+        /// <summary>How this body reflects (mode) and what it reflects (base environment). Migrated off the
+        /// flat WaterVolume fields into this block (Phase 2); the same-named accessors keep every reader
+        /// unchanged.</summary>
+        [System.Serializable]
+        public sealed class ReflectionSettings
+        {
+            [Tooltip("How THIS body reflects. SSR (screen-space over the procedural sky) scales to many " +
+                     "bodies. Planar is a full extra scene render across this body's plane - use it for at " +
+                     "most ONE 'hero' body. SkyOnly is cheapest (procedural sky only). SSR needs Depth + " +
+                     "Opaque Texture enabled on the active URP asset.")]
+            public ReflectionMode reflectionMode = ReflectionMode.SSR;
+            [Tooltip("Reflection base environment. ProceduralSky uses the generated sky cubemap (the demo " +
+                     "look). UrpProbe reflects the scene's active reflection probe / skybox so the water " +
+                     "matches your lit environment. Orthogonal to the mode above and unaffected by the tier.")]
+            public EnvironmentSource environmentSource = EnvironmentSource.ProceduralSky;
+        }
+
+        // Same-named forwarding accessors keep every reader unchanged. Reflections stays a public get/set
+        // (sample scripting API) targeting the settings; the two enums are read by ApplyReflections.
+        ReflectionMode reflectionMode => reflectionSettings.reflectionMode;
+        internal EnvironmentSource environmentSource => reflectionSettings.environmentSource;
 
         /// <summary>How this body reflects (SkyOnly, SSR or Planar). Named 'Reflections'
         /// because the nested <see cref="ReflectionMode"/> enum owns that identifier.</summary>
-        public ReflectionMode Reflections { get => reflectionMode; set => reflectionMode = value; }
+        public ReflectionMode Reflections { get => reflectionSettings.reflectionMode; set => reflectionSettings.reflectionMode = value; }
 
-        [Tooltip("Reflection base environment. ProceduralSky uses the generated sky cubemap (the demo " +
-                 "look). UrpProbe reflects the scene's active reflection probe / skybox so the water " +
-                 "matches your lit environment. Orthogonal to the mode above and unaffected by the tier.")]
-        [SerializeField] internal EnvironmentSource environmentSource = EnvironmentSource.ProceduralSky;
+        // Legacy capture (pre-Phase-2 scenes) -> copied once by MigrateReflectionsV7. Hidden; do not edit.
+        [SerializeField, HideInInspector, FormerlySerializedAs("reflectionMode")] ReflectionMode _legacyReflectionMode = ReflectionMode.SSR;
+        [SerializeField, HideInInspector, FormerlySerializedAs("environmentSource")] EnvironmentSource _legacyEnvironmentSource = EnvironmentSource.ProceduralSky;
 
         /// <summary>The primary water body: the global fallback for objects without a
         /// <see cref="WaterMembership"/>. Per-object association goes through
@@ -524,30 +541,53 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] internal int causticResolution = 1024;
 
         [Header("Object interaction")]
-        [Tooltip("How floating objects disturb the water. MouseLikeDrops clones the mouse " +
-                 "interaction: analytic cosine drops from bobbing and drift (uses Ripple " +
-                 "Radius/Strength below; smooth, zero rasterization noise, slow rotation is " +
-                 "silent). FootprintDelta displaces by the rasterized submerged footprint " +
-                 "(shaped wakes for large hulls; costlier and noisier).")]
-        [SerializeField] internal ObjectInteraction objectInteraction = ObjectInteraction.MouseLikeDrops;
-        [Tooltip("FootprintDelta mode: MASTER strength for how strongly submerged objects " +
-                 "displace the water. Multiplies the per-frame submerged-thickness DELTA " +
-                 "(a much smaller quantity than a mouse drop's unit push), so it reads " +
-                 "higher than Ripple Strength for a comparable wake. " +
-                 "Per-object weighting is WaterInteractable.displaceScale.")]
-        [Range(0f, 1f)] [SerializeField] internal float obstacleStrength = 0.25f;
-        [Tooltip("FootprintDelta mode: soft dead-band (in submerged-thickness world units) " +
-                 "that swallows tiny footprint deltas from drift/rotation rasterization " +
-                 "noise. Raise to kill jitter; LOWER if a slowly moving float's wake is " +
-                 "invisible (its genuine per-frame delta is sub-millimetre).")]
-        [Range(0f, 0.005f)] [SerializeField] internal float obstacleDeadband = 0.0006f;
-        [Tooltip("Temporal smoothing of the object footprint (0 = off). Low-pass filters " +
-                 "the displacement a floater injects, so continuous bobbing/rotation emits " +
-                 "a few long clean waves instead of a dense packet of tight rings. The " +
-                 "total displaced volume is unchanged; higher = calmer but lazier response.")]
-        [Range(0f, 0.95f)] [SerializeField] internal float obstacleSmoothing = 0.65f;
-        [Tooltip("Flip the obstacle map in Z if object ripples appear mirrored.")]
-        [SerializeField] internal bool obstacleFlipY = true;
+        [SerializeField] ObjectInteractionSettings objectInteractionSettings = new ObjectInteractionSettings();
+
+        /// <summary>How floating objects disturb the surface (mouse-like drops vs rasterized footprint).
+        /// Migrated off the flat WaterVolume fields into this block (Phase 2); the same-named accessors
+        /// keep every reader unchanged.</summary>
+        [System.Serializable]
+        public sealed class ObjectInteractionSettings
+        {
+            [Tooltip("How floating objects disturb the water. MouseLikeDrops clones the mouse " +
+                     "interaction: analytic cosine drops from bobbing and drift (uses Ripple " +
+                     "Radius/Strength below; smooth, zero rasterization noise, slow rotation is " +
+                     "silent). FootprintDelta displaces by the rasterized submerged footprint " +
+                     "(shaped wakes for large hulls; costlier and noisier).")]
+            public ObjectInteraction objectInteraction = ObjectInteraction.MouseLikeDrops;
+            [Tooltip("FootprintDelta mode: MASTER strength for how strongly submerged objects " +
+                     "displace the water. Multiplies the per-frame submerged-thickness DELTA " +
+                     "(a much smaller quantity than a mouse drop's unit push), so it reads " +
+                     "higher than Ripple Strength for a comparable wake. " +
+                     "Per-object weighting is WaterInteractable.displaceScale.")]
+            [Range(0f, 1f)] public float obstacleStrength = 0.25f;
+            [Tooltip("FootprintDelta mode: soft dead-band (in submerged-thickness world units) " +
+                     "that swallows tiny footprint deltas from drift/rotation rasterization " +
+                     "noise. Raise to kill jitter; LOWER if a slowly moving float's wake is " +
+                     "invisible (its genuine per-frame delta is sub-millimetre).")]
+            [Range(0f, 0.005f)] public float obstacleDeadband = 0.0006f;
+            [Tooltip("Temporal smoothing of the object footprint (0 = off). Low-pass filters " +
+                     "the displacement a floater injects, so continuous bobbing/rotation emits " +
+                     "a few long clean waves instead of a dense packet of tight rings. The " +
+                     "total displaced volume is unchanged; higher = calmer but lazier response.")]
+            [Range(0f, 0.95f)] public float obstacleSmoothing = 0.65f;
+            [Tooltip("Flip the obstacle map in Z if object ripples appear mirrored.")]
+            public bool obstacleFlipY = true;
+        }
+
+        // Same-named forwarding accessors keep every reader unchanged (objectInteraction is read by Step).
+        internal ObjectInteraction objectInteraction => objectInteractionSettings.objectInteraction;
+        internal float obstacleStrength => objectInteractionSettings.obstacleStrength;
+        internal float obstacleDeadband => objectInteractionSettings.obstacleDeadband;
+        internal float obstacleSmoothing => objectInteractionSettings.obstacleSmoothing;
+        internal bool obstacleFlipY => objectInteractionSettings.obstacleFlipY;
+
+        // Legacy capture (pre-Phase-2 scenes) -> copied once by MigrateInteractionAndRippleV6. Hidden.
+        [SerializeField, HideInInspector, FormerlySerializedAs("objectInteraction")] ObjectInteraction _legacyObjectInteraction = ObjectInteraction.MouseLikeDrops;
+        [SerializeField, HideInInspector, FormerlySerializedAs("obstacleStrength")] float _legacyObstacleStrength = 0.25f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("obstacleDeadband")] float _legacyObstacleDeadband = 0.0006f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("obstacleSmoothing")] float _legacyObstacleSmoothing = 0.65f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("obstacleFlipY")] bool _legacyObstacleFlipY = true;
 
         [Header("Water fog (Beer-Lambert)")]
         [SerializeField] WaterFogSettings waterFogSettings = new WaterFogSettings();
@@ -639,7 +679,7 @@ namespace AbstractOcclusion.WebGpuWater
         // Bumped by one for each feature whose flat fields move into a nested Settings block. A scene
         // serialized before a given version has its old (FormerlySerializedAs) legacy fields copied into
         // the new block once, on load, so tuned values are never lost. The copies are idempotent.
-        const int CurrentSettingsVersion = 5;
+        const int CurrentSettingsVersion = 7;
         [SerializeField, HideInInspector] int _settingsVersion = 0;
 
         void ISerializationCallbackReceiver.OnBeforeSerialize() { }
@@ -652,6 +692,8 @@ namespace AbstractOcclusion.WebGpuWater
             if (_settingsVersion < 3) MigrateWaterFogV3();
             if (_settingsVersion < 4) MigrateWindWavesV4();
             if (_settingsVersion < 5) MigrateFoamV5();
+            if (_settingsVersion < 6) MigrateInteractionAndRippleV6();
+            if (_settingsVersion < 7) MigrateReflectionsV7();
             _settingsVersion = CurrentSettingsVersion;
         }
 
@@ -738,6 +780,32 @@ namespace AbstractOcclusion.WebGpuWater
             foamSettings.foamCoreCut = _legacyFoamCoreCut;
             foamSettings.foamBorderWidth = _legacyFoamBorderWidth;
             foamSettings.foamContactDepth = _legacyFoamContactDepth;
+        }
+
+        // v6: the "Object interaction" and "Ripple tuning" fields moved into their nested Settings blocks.
+        void MigrateInteractionAndRippleV6()
+        {
+            objectInteractionSettings.objectInteraction = _legacyObjectInteraction;
+            objectInteractionSettings.obstacleStrength = _legacyObstacleStrength;
+            objectInteractionSettings.obstacleDeadband = _legacyObstacleDeadband;
+            objectInteractionSettings.obstacleSmoothing = _legacyObstacleSmoothing;
+            objectInteractionSettings.obstacleFlipY = _legacyObstacleFlipY;
+
+            rippleSettings.waveSpeed = _legacyWaveSpeed;
+            rippleSettings.damping = _legacyDamping;
+            rippleSettings.stepsPerFrame = _legacyStepsPerFrame;
+            rippleSettings.rippleStrength = _legacyRippleStrength;
+            rippleSettings.rippleRadius = _legacyRippleRadius;
+            rippleSettings.seedRipplesOnStart = _legacySeedRipplesOnStart;
+            rippleSettings.conserveVolume = _legacyConserveVolume;
+            rippleSettings.conserveMaxCorrection = _legacyConserveMaxCorrection;
+        }
+
+        // v7: the "Reflections" fields (reflection mode + base environment) moved into ReflectionSettings.
+        void MigrateReflectionsV7()
+        {
+            reflectionSettings.reflectionMode = _legacyReflectionMode;
+            reflectionSettings.environmentSource = _legacyEnvironmentSource;
         }
 
         // Editor-only: a freshly added component starts already-migrated, so the one-time copy never runs
@@ -897,32 +965,60 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField, HideInInspector, FormerlySerializedAs("foamContactDepth")] float _legacyFoamContactDepth = 0.06f;
 
         [Header("Ripple tuning")]
-        [Tooltip("Propagation stiffness. Higher = faster waves. Stable up to ~2.0.")]
-        [Range(0.1f, 2.0f)] [SerializeField] internal float waveSpeed = 0.6f;
-        [Tooltip("Velocity damping per step. Lower = ripples die out faster.")]
-        [Range(0.90f, 1.0f)] [SerializeField] internal float damping = 0.99f;
-        [Tooltip("Solver steps per frame AT THE 60 FPS REFERENCE - the sim accumulates real " +
-                 "time and runs this rate regardless of frame rate, so wave speed is identical " +
-                 "in a 30 fps build and a 144 fps editor. More = faster, smoother propagation.")]
-        [Range(1, 8)] [SerializeField] internal int stepsPerFrame = 2;
-        [Tooltip("Height added by a click/drag ripple (world units; volume-scale independent).")]
-        [Range(0.001f, 0.08f)] [SerializeField] private float rippleStrength = 0.025f;
-        [Tooltip("Radius of a click/drag ripple (world units; volume-scale independent).")]
-        [Range(0.005f, 0.2f)] [SerializeField] private float rippleRadius = 0.05f;
-        [Tooltip("Seed the pool with random ripples on start.")]
-        [SerializeField] internal bool seedRipplesOnStart = true;
-        [Tooltip("Keep total water volume constant so the surface doesn't drift up/down.")]
-        [SerializeField] internal bool conserveVolume = true;
+        [SerializeField] RippleSettings rippleSettings = new RippleSettings();
+
+        /// <summary>Interactive ripple solver + click/drag ripple tuning. Migrated off the flat
+        /// WaterVolume fields into this block (Phase 2); the same-named accessors keep every reader
+        /// unchanged.</summary>
+        [System.Serializable]
+        public sealed class RippleSettings
+        {
+            [Tooltip("Propagation stiffness. Higher = faster waves. Stable up to ~2.0.")]
+            [Range(0.1f, 2.0f)] public float waveSpeed = 0.6f;
+            [Tooltip("Velocity damping per step. Lower = ripples die out faster.")]
+            [Range(0.90f, 1.0f)] public float damping = 0.99f;
+            [Tooltip("Solver steps per frame AT THE 60 FPS REFERENCE - the sim accumulates real " +
+                     "time and runs this rate regardless of frame rate, so wave speed is identical " +
+                     "in a 30 fps build and a 144 fps editor. More = faster, smoother propagation.")]
+            [Range(1, 8)] public int stepsPerFrame = 2;
+            [Tooltip("Height added by a click/drag ripple (world units; volume-scale independent).")]
+            [Range(0.001f, 0.08f)] public float rippleStrength = 0.025f;
+            [Tooltip("Radius of a click/drag ripple (world units; volume-scale independent).")]
+            [Range(0.005f, 0.2f)] public float rippleRadius = 0.05f;
+            [Tooltip("Seed the pool with random ripples on start.")]
+            public bool seedRipplesOnStart = true;
+            [Tooltip("Keep total water volume constant so the surface doesn't drift up/down.")]
+            public bool conserveVolume = true;
+            [Tooltip("Safety cap on how far Conserve Volume can shift the whole surface per step " +
+                     "(pool units). The mean is computed exactly, so this only guards against a " +
+                     "diverged transient moving the plane in one step.")]
+            [Range(0.005f, 0.5f)] public float conserveMaxCorrection = 0.05f;
+        }
+
+        // Same-named forwarding accessors keep every reader unchanged. RippleStrength/RippleRadius stay
+        // public get/set (sample scripting API) targeting the settings; the rest are read-only.
+        internal float waveSpeed => rippleSettings.waveSpeed;
+        internal float damping => rippleSettings.damping;
+        internal int stepsPerFrame => rippleSettings.stepsPerFrame;
+        internal bool seedRipplesOnStart => rippleSettings.seedRipplesOnStart;
+        internal bool conserveVolume => rippleSettings.conserveVolume;
+        internal float conserveMaxCorrection => rippleSettings.conserveMaxCorrection;
 
         /// <summary>Height added by a click/drag ripple (world units).</summary>
-        public float RippleStrength { get => rippleStrength; set => rippleStrength = value; }
+        public float RippleStrength { get => rippleSettings.rippleStrength; set => rippleSettings.rippleStrength = value; }
 
         /// <summary>Radius of a click/drag ripple (world units).</summary>
-        public float RippleRadius { get => rippleRadius; set => rippleRadius = value; }
-        [Tooltip("Safety cap on how far Conserve Volume can shift the whole surface per step " +
-                 "(pool units). The mean is computed exactly, so this only guards against a " +
-                 "diverged transient moving the plane in one step.")]
-        [Range(0.005f, 0.5f)] [SerializeField] internal float conserveMaxCorrection = 0.05f;
+        public float RippleRadius { get => rippleSettings.rippleRadius; set => rippleSettings.rippleRadius = value; }
+
+        // Legacy capture (pre-Phase-2 scenes) -> copied once by MigrateInteractionAndRippleV6. Hidden.
+        [SerializeField, HideInInspector, FormerlySerializedAs("waveSpeed")] float _legacyWaveSpeed = 0.6f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("damping")] float _legacyDamping = 0.99f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("stepsPerFrame")] int _legacyStepsPerFrame = 2;
+        [SerializeField, HideInInspector, FormerlySerializedAs("rippleStrength")] float _legacyRippleStrength = 0.025f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("rippleRadius")] float _legacyRippleRadius = 0.05f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("seedRipplesOnStart")] bool _legacySeedRipplesOnStart = true;
+        [SerializeField, HideInInspector, FormerlySerializedAs("conserveVolume")] bool _legacyConserveVolume = true;
+        [SerializeField, HideInInspector, FormerlySerializedAs("conserveMaxCorrection")] float _legacyConserveMaxCorrection = 0.05f;
 
         [Header("Camera")]
         [SerializeField] internal OrbitCamera orbit;
