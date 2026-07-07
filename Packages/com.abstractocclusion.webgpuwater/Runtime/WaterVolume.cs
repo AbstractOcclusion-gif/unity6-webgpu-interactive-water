@@ -550,21 +550,45 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] internal bool obstacleFlipY = true;
 
         [Header("Water fog (Beer-Lambert)")]
-        [Tooltip("Global depth absorption, shared by the surface, objects and pool.")]
-        [SerializeField] private bool waterFog = false;
-        [SerializeField] internal Color fogColor = new Color(0.10f, 0.30f, 0.40f);
-        [Tooltip("Per-channel extinction; red highest so it absorbs first. HDR: push a channel " +
-                 "above 1 for very heavy absorption (fully opaque water on short paths).")]
-        [ColorUsage(false, true)] [SerializeField] internal Color fogExtinction = new Color(0.45f, 0.15f, 0.08f);
-        [Tooltip("Overall fog multiplier. Higher = thicker; crank it (with extinction) for pea-soup water.")]
-        [Range(0f, MaxFogDensity)] [SerializeField] internal float fogDensity = 2f;
+        [SerializeField] WaterFogSettings waterFogSettings = new WaterFogSettings();
+
+        /// <summary>Beer-Lambert depth fog plus art-directed turbidity, shared by the surface, objects
+        /// and pool. Migrated off the flat WaterVolume fields into this block (Phase 2); the same-named
+        /// accessors keep every reader unchanged. (MaxFogDensity const stays on WaterVolume.)</summary>
+        [System.Serializable]
+        public sealed class WaterFogSettings
+        {
+            [Tooltip("Global depth absorption, shared by the surface, objects and pool.")]
+            public bool waterFog = false;
+            public Color fogColor = new Color(0.10f, 0.30f, 0.40f);
+            [Tooltip("Per-channel extinction; red highest so it absorbs first. HDR: push a channel " +
+                     "above 1 for very heavy absorption (fully opaque water on short paths).")]
+            [ColorUsage(false, true)] public Color fogExtinction = new Color(0.45f, 0.15f, 0.08f);
+            [Tooltip("Overall fog multiplier. Higher = thicker; crank it (with extinction) for pea-soup water.")]
+            [Range(0f, MaxFogDensity)] public float fogDensity = 2f;
+            [Tooltip("Art-directed turbidity independent of depth: lerp the view THROUGH the surface " +
+                     "toward the fog colour. 0 = clear, 1 = fully non-transparent water. Reflections " +
+                     "still show on top (tune with the material's Reflection Strength).")]
+            [Range(0f, 1f)] public float waterOpacity = 0f;
+        }
+
+        // Same-named forwarding accessors keep every reader unchanged. WaterFog stays a public get/set
+        // (used by the sample scripting API) but now targets the settings; the rest are read-only.
+        bool waterFog => waterFogSettings.waterFog;
+        internal Color fogColor => waterFogSettings.fogColor;
+        internal Color fogExtinction => waterFogSettings.fogExtinction;
+        internal float fogDensity => waterFogSettings.fogDensity;
+        internal float waterOpacity => waterFogSettings.waterOpacity;
 
         /// <summary>Beer-Lambert depth fog, shared by the surface, objects and pool.</summary>
-        public bool WaterFog { get => waterFog; set => waterFog = value; }
-        [Tooltip("Art-directed turbidity independent of depth: lerp the view THROUGH the surface " +
-                 "toward the fog colour. 0 = clear, 1 = fully non-transparent water. Reflections " +
-                 "still show on top (tune with the material's Reflection Strength).")]
-        [Range(0f, 1f)] [SerializeField] internal float waterOpacity = 0f;
+        public bool WaterFog { get => waterFogSettings.waterFog; set => waterFogSettings.waterFog = value; }
+
+        // Legacy capture (pre-Phase-2 scenes) -> copied once by MigrateWaterFogV3. Hidden; do not edit.
+        [SerializeField, HideInInspector, FormerlySerializedAs("waterFog")] bool _legacyWaterFog = false;
+        [SerializeField, HideInInspector, FormerlySerializedAs("fogColor")] Color _legacyFogColor = new Color(0.10f, 0.30f, 0.40f);
+        [SerializeField, HideInInspector, FormerlySerializedAs("fogExtinction")] Color _legacyFogExtinction = new Color(0.45f, 0.15f, 0.08f);
+        [SerializeField, HideInInspector, FormerlySerializedAs("fogDensity")] float _legacyFogDensity = 2f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("waterOpacity")] float _legacyWaterOpacity = 0f;
 
         [Header("Depth attenuation (downwelling)")]
         [SerializeField] DepthAttenuationSettings depthAttenuation = new DepthAttenuationSettings();
@@ -615,7 +639,7 @@ namespace AbstractOcclusion.WebGpuWater
         // Bumped by one for each feature whose flat fields move into a nested Settings block. A scene
         // serialized before a given version has its old (FormerlySerializedAs) legacy fields copied into
         // the new block once, on load, so tuned values are never lost. The copies are idempotent.
-        const int CurrentSettingsVersion = 2;
+        const int CurrentSettingsVersion = 4;
         [SerializeField, HideInInspector] int _settingsVersion = 0;
 
         void ISerializationCallbackReceiver.OnBeforeSerialize() { }
@@ -625,6 +649,8 @@ namespace AbstractOcclusion.WebGpuWater
             if (_settingsVersion >= CurrentSettingsVersion) return; // new or already-migrated asset
             if (_settingsVersion < 1) MigrateDepthAttenuationV1();
             if (_settingsVersion < 2) MigrateOceanV2();
+            if (_settingsVersion < 3) MigrateWaterFogV3();
+            if (_settingsVersion < 4) MigrateWindWavesV4();
             _settingsVersion = CurrentSettingsVersion;
         }
 
@@ -670,6 +696,29 @@ namespace AbstractOcclusion.WebGpuWater
             ocean.oceanFoamFeather = _legacyOceanFoamFeather;
         }
 
+        // v3: the "Water fog (Beer-Lambert)" fields moved into WaterFogSettings.
+        void MigrateWaterFogV3()
+        {
+            waterFogSettings.waterFog = _legacyWaterFog;
+            waterFogSettings.fogColor = _legacyFogColor;
+            waterFogSettings.fogExtinction = _legacyFogExtinction;
+            waterFogSettings.fogDensity = _legacyFogDensity;
+            waterFogSettings.waterOpacity = _legacyWaterOpacity;
+        }
+
+        // v4: the "Wind waves (spectral)" fields moved into WindWaveSettings.
+        void MigrateWindWavesV4()
+        {
+            windWaveSettings.windWaves = _legacyWindWaves;
+            windWaveSettings.windSpeed = _legacyWindSpeed;
+            windWaveSettings.windFromDegrees = _legacyWindFromDegrees;
+            windWaveSettings.poolHalfExtentMeters = _legacyPoolHalfExtentMeters;
+            windWaveSettings.waveCount = _legacyWaveCount;
+            windWaveSettings.waveAmplitudeScale = _legacyWaveAmplitudeScale;
+            windWaveSettings.waveDirectionSpread = _legacyWaveDirectionSpread;
+            windWaveSettings.waveNormalStrength = _legacyWaveNormalStrength;
+        }
+
         // Editor-only: a freshly added component starts already-migrated, so the one-time copy never runs
         // on new bodies. Only assets serialized before a feature existed (no _settingsVersion -> 0) migrate.
         // (Distinguishing new from pre-migration data is exactly what a field initializer cannot do.)
@@ -694,30 +743,60 @@ namespace AbstractOcclusion.WebGpuWater
         [Range(0f, 1f)] [SerializeField] internal float shorelineStrength = 0.8f;
 
         [Header("Wind waves (spectral)")]
-        [Tooltip("Ambient wind-driven wave layer composited on top of the interactive ripples. " +
-                 "Floating objects ride these waves too.")]
-        [SerializeField] private bool windWaves = true;
-        [Tooltip("Wind speed (m/s). ~3 = light breeze.")]
-        [Range(0f, 15f)] [SerializeField] internal float windSpeed = 3f;
-        [Tooltip("Wind heading in degrees: 0 = blowing toward +X (i.e. coming from the west).")]
-        [Range(0f, 360f)] [SerializeField] internal float windFromDegrees = 0f;
+        [SerializeField] WindWaveSettings windWaveSettings = new WindWaveSettings();
+
+        /// <summary>Ambient wind-driven wave layer composited on top of the interactive ripples (floating
+        /// objects ride these too). Migrated off the flat WaterVolume fields into this block (Phase 2);
+        /// the same-named accessors keep every reader (buoyancy, the wave bank, the ocean swell) unchanged.</summary>
+        [System.Serializable]
+        public sealed class WindWaveSettings
+        {
+            [Tooltip("Ambient wind-driven wave layer composited on top of the interactive ripples. " +
+                     "Floating objects ride these waves too.")]
+            public bool windWaves = true;
+            [Tooltip("Wind speed (m/s). ~3 = light breeze.")]
+            [Range(0f, 15f)] public float windSpeed = 3f;
+            [Tooltip("Wind heading in degrees: 0 = blowing toward +X (i.e. coming from the west).")]
+            [Range(0f, 360f)] public float windFromDegrees = 0f;
+            [Tooltip("Physical size the pool half-extent ([-1,1] -> +/-this) represents, in metres. " +
+                     "Sets wave scale; fetch is twice this.")]
+            [Range(1f, 50f)] public float poolHalfExtentMeters = 10f;
+            [Tooltip("Number of sinusoidal components summed for the wave layer.")]
+            [Range(1, WaterWaveBank.MaxWaves)] public int waveCount = 12;
+            [Tooltip("Artistic multiplier on the physically-derived wave height (a light breeze " +
+                     "on a small lake is physically sub-cm, so some exaggeration reads better).")]
+            [Range(0f, 12f)] public float waveAmplitudeScale = 4f;
+            [Tooltip("Higher = waves cling more tightly to the wind direction (parallel, river-like). " +
+                     "Lower = broader, choppier crossing crests.")]
+            [Range(1f, 12f)] public float waveDirectionSpread = 2f;
+            [Tooltip("Scales how strongly the wind waves tilt the surface normal.")]
+            [Range(0f, 3f)] public float waveNormalStrength = 1f;
+        }
+
+        // Same-named forwarding accessors keep every reader unchanged. WindWaves stays a public get/set
+        // (sample scripting API) targeting the settings; windWaves is the private read for internal use.
+        bool windWaves => windWaveSettings.windWaves;
+        internal float windSpeed => windWaveSettings.windSpeed;
+        internal float windFromDegrees => windWaveSettings.windFromDegrees;
+        internal float poolHalfExtentMeters => windWaveSettings.poolHalfExtentMeters;
+        internal int waveCount => windWaveSettings.waveCount;
+        internal float waveAmplitudeScale => windWaveSettings.waveAmplitudeScale;
+        internal float waveDirectionSpread => windWaveSettings.waveDirectionSpread;
+        internal float waveNormalStrength => windWaveSettings.waveNormalStrength;
 
         /// <summary>Ambient wind-driven wave layer composited on top of the interactive
         /// ripples. Floating objects ride these waves too.</summary>
-        public bool WindWaves { get => windWaves; set => windWaves = value; }
-        [Tooltip("Physical size the pool half-extent ([-1,1] -> +/-this) represents, in metres. " +
-                 "Sets wave scale; fetch is twice this.")]
-        [Range(1f, 50f)] [SerializeField] internal float poolHalfExtentMeters = 10f;
-        [Tooltip("Number of sinusoidal components summed for the wave layer.")]
-        [Range(1, WaterWaveBank.MaxWaves)] [SerializeField] internal int waveCount = 12;
-        [Tooltip("Artistic multiplier on the physically-derived wave height (a light breeze " +
-                 "on a small lake is physically sub-cm, so some exaggeration reads better).")]
-        [Range(0f, 12f)] [SerializeField] internal float waveAmplitudeScale = 4f;
-        [Tooltip("Higher = waves cling more tightly to the wind direction (parallel, river-like). " +
-                 "Lower = broader, choppier crossing crests.")]
-        [Range(1f, 12f)] [SerializeField] internal float waveDirectionSpread = 2f;
-        [Tooltip("Scales how strongly the wind waves tilt the surface normal.")]
-        [Range(0f, 3f)] [SerializeField] internal float waveNormalStrength = 1f;
+        public bool WindWaves { get => windWaveSettings.windWaves; set => windWaveSettings.windWaves = value; }
+
+        // Legacy capture (pre-Phase-2 scenes) -> copied once by MigrateWindWavesV4. Hidden; do not edit.
+        [SerializeField, HideInInspector, FormerlySerializedAs("windWaves")] bool _legacyWindWaves = true;
+        [SerializeField, HideInInspector, FormerlySerializedAs("windSpeed")] float _legacyWindSpeed = 3f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("windFromDegrees")] float _legacyWindFromDegrees = 0f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("poolHalfExtentMeters")] float _legacyPoolHalfExtentMeters = 10f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("waveCount")] int _legacyWaveCount = 12;
+        [SerializeField, HideInInspector, FormerlySerializedAs("waveAmplitudeScale")] float _legacyWaveAmplitudeScale = 4f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("waveDirectionSpread")] float _legacyWaveDirectionSpread = 2f;
+        [SerializeField, HideInInspector, FormerlySerializedAs("waveNormalStrength")] float _legacyWaveNormalStrength = 1f;
 
         [Header("Foam")]
         [SerializeField] private bool foam = false;
