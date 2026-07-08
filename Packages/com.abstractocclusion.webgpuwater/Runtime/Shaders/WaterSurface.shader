@@ -114,7 +114,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             float  _IsPatch;          // 0 = normal full-plane surface, 1 = the window patch
             float2 _PatchPoolCenter;  // window centre in pool xz
             float2 _PatchPoolHalf;    // window half-size in pool units (per axis)
-            float  _PatchDepthBias;   // tiny NDC bias so the patch wins over the coplanar far plane
+            float  _PatchDepthBias;   // view-space metres to pull the patch toward the camera so it wins over the coplanar far plane
             // Unbounded-ocean clipmap: 1 = the camera-following radial mesh authored in WORLD metres
             // (reaches the horizon), 0 = pool-grid surfaces. Inert at the default (_IsClipmap = 0).
             float  _IsClipmap;
@@ -408,14 +408,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     worldPos.xz += LargeBodyWaveDisplacement(sourceXZ); // 0 when choppiness = 0
                 }
                 o.worldPos = worldPos;
-                o.pos = mul(UNITY_MATRIX_VP, float4(worldPos, 1.0));
-                // Nudge the patch a hair toward the camera so it wins the depth test against the
-                // coplanar far plane in the overlap (no z-fighting); inert when bias = 0.
-                #if UNITY_REVERSED_Z
-                    o.pos.z += _PatchDepthBias * o.pos.w;
-                #else
-                    o.pos.z -= _PatchDepthBias * o.pos.w;
-                #endif
+                // Nudge the patch a fixed few centimetres toward the camera IN VIEW SPACE so it wins the
+                // depth test against the coplanar far plane at EVERY distance. The old bias was a constant
+                // NDC offset (bias * pos.w) which, under the non-linear reversed-Z buffer, grew into a huge
+                // world-depth offset far from the camera and let the patch draw OVER opaque geometry. A
+                // fixed view-space (world-metre) offset can never beat opaque more than _PatchDepthBias
+                // metres behind the patch. Inert when bias = 0 (every non-patch surface).
+                float4 viewPos = mul(UNITY_MATRIX_V, float4(worldPos, 1.0));
+                viewPos.z += _PatchDepthBias; // view forward is -Z, so +Z moves toward the camera (nearer)
+                o.pos = mul(UNITY_MATRIX_P, viewPos);
                 o.screenPos = ComputeScreenPos(o.pos);
                 return o;
             }

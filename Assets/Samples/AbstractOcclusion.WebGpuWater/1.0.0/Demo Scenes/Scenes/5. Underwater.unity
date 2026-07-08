@@ -5812,7 +5812,7 @@ GameObject:
   - component: {fileID: 1043721374}
   - component: {fileID: 1043721376}
   - component: {fileID: 1043721375}
-  m_Layer: 0
+  m_Layer: 4
   m_Name: Water (under)
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -5936,19 +5936,75 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterVolume
   simCompute: {fileID: 7200000, guid: a60aa7d5723d3024db489530955aad46, type: 3}
+  oceanFftCompute: {fileID: 0}
   causticsShader: {fileID: 4800000, guid: 888f96058c2d336408ddb9b68453da11, type: 3}
+  largeBodyCausticsShader: {fileID: 0}
   obstacleShader: {fileID: 4800000, guid: f7773dcd41650a8469d01f11390d88e0, type: 3}
   waterMesh: {fileID: 4300000, guid: 9c96c412df7a2564fb77e5eed80cb811, type: 2}
   targetCamera: {fileID: 961739752}
   sun: {fileID: 1624420330}
   tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
   sky: {fileID: 8900000, guid: 90846655472c1354b8fb1a3cb2a47920, type: 2}
+  rippleQuality: 2
   volumeExtent: {x: 2, y: 3, z: 2}
   enableLargeBodyWindow: 1
   largeBodyThreshold: 48
   simWindowMeters: 32
   clampWindowToShore: 0
   simWindowEdgeFadeTexels: 8
+  ocean:
+    openWater: 0
+    largeWaveAmplitude: 1
+    largeWaveChoppiness: 0
+    swellHeight: 0
+    swellWavelength: 140
+    unboundedOcean: 0
+    clipmapRings: 48
+    clipmapSegments: 96
+    clipmapOuterRadius: 10000
+    oceanDetailFalloff: 0.03
+    horizonFadeDistance: 0
+    horizonHazeColor: {r: 0.7, g: 0.8, b: 0.9, a: 0}
+    horizonHazeDensity: 0
+    largeGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
+    largeGodRayDensity: 0
+    largeGodRaySteps: 24
+    largeGodRayAnisotropy: 0.6
+    largeGodRayExtinction: 0
+    largeGodRayCausticStrength: 4
+    oceanFoamWindThreshold: 4
+    oceanFoamCoverage: 1
+    oceanFoamStrength: 1
+    oceanFoamFadeRate: 0.5
+    oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
+    oceanFoamTileSize: 8
+    oceanFoamFeather: 0.25
+  _legacyOpenWater: 0
+  _legacyLargeWaveAmplitude: 1
+  _legacyLargeWaveChoppiness: 0
+  _legacySwellHeight: 0
+  _legacySwellWavelength: 140
+  _legacyUnboundedOcean: 0
+  _legacyClipmapRings: 48
+  _legacyClipmapSegments: 96
+  _legacyClipmapOuterRadius: 10000
+  _legacyOceanDetailFalloff: 0.03
+  _legacyHorizonFadeDistance: 0
+  _legacyHorizonHazeColor: {r: 0.7, g: 0.8, b: 0.9, a: 0}
+  _legacyHorizonHazeDensity: 0
+  _legacyLargeGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
+  _legacyLargeGodRayDensity: 0
+  _legacyLargeGodRaySteps: 24
+  _legacyLargeGodRayAnisotropy: 0.6
+  _legacyLargeGodRayExtinction: 0
+  _legacyLargeGodRayCausticStrength: 4
+  _legacyOceanFoamWindThreshold: 4
+  _legacyOceanFoamCoverage: 1
+  _legacyOceanFoamStrength: 1
+  _legacyOceanFoamFadeRate: 0.5
+  _legacyOceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
+  _legacyOceanFoamTileSize: 8
+  _legacyOceanFoamFeather: 0.25
   surfaceAbove: {fileID: 2123582566}
   surfaceUnder: {fileID: 1043721375}
   poolRenderer: {fileID: 1437453446}
@@ -5958,63 +6014,139 @@ MonoBehaviour:
   quality: {fileID: 11400000, guid: 9ac62b790871b16449e0b1f34b6796e8, type: 2}
   enableCulling: 1
   activationDistance: 100
-  reflectionMode: 1
-  environmentSource: 0
+  reflectionSettings:
+    useScreenSpaceReflection: 1
+    usePlanarReflection: 0
+    reflectUrpProbe: 0
+    realRefraction: 0
+    reflectionStrength: 1
+    reflectionDistortion: 0.05
+    ssrStrength: 1
+    ssrStepSize: 0.03
+    ssrMaxSteps: 24
+    ssrThickness: 0.2
+    refractionDistortion: 0.05
+  _legacyReflectionMode: 1
+  _legacyEnvironmentSource: 0
   lightDir: {x: 0.6666666, y: 0.6666666, z: -0.3333334}
-  causticResolution: 1024
-  objectInteraction: 0
-  obstacleStrength: 0.08
-  obstacleDeadband: 0.0006
-  obstacleSmoothing: 0.65
-  obstacleFlipY: 1
-  waterFog: 1
-  fogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
-  fogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
-  fogDensity: 9.1
-  waterOpacity: 0
-  depthDarken: 1
-  depthExtinction: {r: 0.6377357, g: 0.17837597, b: 0.07099317, a: 1}
-  depthDarkenStrength: 8
-  causticDepthFade: 0.5
-  godRayDepthFade: 0.3
-  linkDepthToFog: 0
-  useBedDepth: 0
-  bedTerrain: {fileID: 0}
-  bedResolution: 256
-  deepWaterColor: {r: 0.02, g: 0.1, b: 0.15, a: 1}
-  shorelineFadeDepth: 6
-  shorelineStrength: 0.8
-  windWaves: 1
-  windSpeed: 3
-  windFromDegrees: 0
-  poolHalfExtentMeters: 10
-  waveCount: 12
-  waveAmplitudeScale: 4
-  waveDirectionSpread: 2
-  waveNormalStrength: 1
-  foam: 0
-  foamGenRate: 0.6
-  foamDecay: 0.97
-  foamDecayResidual: 0.993
-  foamDecayRate: 1
-  foamSpread: 0.2
-  foamAdvect: 3
-  foamFromSpeed: 6
-  foamFromCurvature: 30
-  foamColor: {r: 1, g: 1, b: 1, a: 1}
-  foamStrength: 1
-  foamFeather: 0.15
-  foamCoreCut: 0.5
-  foamBorderWidth: 0.08
-  foamContactDepth: 0.06
-  waveSpeed: 0.6
-  damping: 0.99
-  stepsPerFrame: 2
-  rippleStrength: 0.025
-  rippleRadius: 0.05
-  seedRipplesOnStart: 1
-  conserveVolume: 1
-  conserveMaxCorrection: 0.05
+  causticResolution: 512
+  objectInteractionSettings:
+    objectInteraction: 0
+    obstacleStrength: 0.08
+    obstacleDeadband: 0.0006
+    obstacleSmoothing: 0.65
+    obstacleFlipY: 1
+  _legacyObjectInteraction: 0
+  _legacyObstacleStrength: 0.08
+  _legacyObstacleDeadband: 0.0006
+  _legacyObstacleSmoothing: 0.65
+  _legacyObstacleFlipY: 1
+  waterFogSettings:
+    waterFog: 1
+    fogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
+    fogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
+    fogDensity: 0.1
+    waterOpacity: 0
+  _legacyWaterFog: 1
+  _legacyFogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
+  _legacyFogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
+  _legacyFogDensity: 9.1
+  _legacyWaterOpacity: 0
+  depthAttenuation:
+    depthDarken: 1
+    depthExtinction: {r: 0.6377357, g: 0.17837597, b: 0.07099317, a: 1}
+    depthDarkenStrength: 1.3
+    causticDepthFade: 0.5
+    godRayDepthFade: 0.3
+    linkDepthToFog: 0
+  _legacyDepthDarken: 1
+  _legacyDepthExtinction: {r: 0.6377357, g: 0.17837597, b: 0.07099317, a: 1}
+  _legacyDepthDarkenStrength: 8
+  _legacyCausticDepthFade: 0.5
+  _legacyGodRayDepthFade: 0.3
+  _legacyLinkDepthToFog: 0
+  _settingsVersion: 8
+  bedDepthSettings:
+    useBedDepth: 0
+    bedTerrain: {fileID: 0}
+    bedResolution: 256
+    deepWaterColor: {r: 0.02, g: 0.1, b: 0.15, a: 1}
+    shorelineFadeDepth: 6
+    shorelineStrength: 0.8
+    shoalDepth: 3
+    shorelineFoamDepth: 1
+    shorelineFoamStrength: 0.6
+  _legacyUseBedDepth: 0
+  _legacyBedTerrain: {fileID: 0}
+  _legacyBedResolution: 256
+  _legacyDeepWaterColor: {r: 0.02, g: 0.1, b: 0.15, a: 1}
+  _legacyShorelineFadeDepth: 6
+  _legacyShorelineStrength: 0.8
+  windWaveSettings:
+    windWaves: 1
+    windSpeed: 3
+    windFromDegrees: 0
+    poolHalfExtentMeters: 10
+    waveCount: 12
+    waveAmplitudeScale: 4
+    waveDirectionSpread: 2
+    waveNormalStrength: 1
+  _legacyWindWaves: 1
+  _legacyWindSpeed: 3
+  _legacyWindFromDegrees: 0
+  _legacyPoolHalfExtentMeters: 10
+  _legacyWaveCount: 12
+  _legacyWaveAmplitudeScale: 4
+  _legacyWaveDirectionSpread: 2
+  _legacyWaveNormalStrength: 1
+  foamSettings:
+    foam: 0
+    foamGenRate: 0.6
+    foamDecay: 0.97
+    foamDecayResidual: 0.993
+    foamDecayRate: 1
+    foamSpread: 0.2
+    foamAdvect: 3
+    foamFromSpeed: 6
+    foamFromCurvature: 30
+    foamColor: {r: 1, g: 1, b: 1, a: 1}
+    foamStrength: 1
+    foamFeather: 0.15
+    foamCoreCut: 0.5
+    foamBorderWidth: 0.08
+    foamContactDepth: 0.06
+  _legacyFoam: 0
+  _legacyFoamGenRate: 0.6
+  _legacyFoamDecay: 0.97
+  _legacyFoamDecayResidual: 0.993
+  _legacyFoamDecayRate: 1
+  _legacyFoamSpread: 0.2
+  _legacyFoamAdvect: 3
+  _legacyFoamFromSpeed: 6
+  _legacyFoamFromCurvature: 30
+  _legacyFoamColor: {r: 1, g: 1, b: 1, a: 1}
+  _legacyFoamStrength: 1
+  _legacyFoamFeather: 0.15
+  _legacyFoamCoreCut: 0.5
+  _legacyFoamBorderWidth: 0.08
+  _legacyFoamContactDepth: 0.06
+  rippleSettings:
+    waveSpeed: 0.6
+    damping: 0.99
+    stepsPerFrame: 2
+    rippleStrength: 0.025
+    rippleRadius: 0.05
+    seedRipplesOnStart: 1
+    conserveVolume: 1
+    conserveMaxCorrection: 0.05
+  _legacyWaveSpeed: 0.6
+  _legacyDamping: 0.99
+  _legacyStepsPerFrame: 2
+  _legacyRippleStrength: 0.025
+  _legacyRippleRadius: 0.05
+  _legacySeedRipplesOnStart: 1
+  _legacyConserveVolume: 1
+  _legacyConserveMaxCorrection: 0.05
   orbit: {fileID: 961739754}
   configureCamera: 0
   splashEmitter: {fileID: 828585373}
@@ -11082,7 +11214,7 @@ GameObject:
   - component: {fileID: 2123582565}
   - component: {fileID: 2123582567}
   - component: {fileID: 2123582566}
-  m_Layer: 0
+  m_Layer: 4
   m_Name: Water (above)
   m_TagString: Untagged
   m_Icon: {fileID: 0}

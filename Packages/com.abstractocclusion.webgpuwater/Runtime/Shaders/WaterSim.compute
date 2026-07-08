@@ -134,9 +134,18 @@ float _UseBedDepth;        // 1 = bed active
 float _ShoalDepthPool;     // column depth (pool units) below which ripples shoal (slow + steepen)
 float _ShoreFoamDepthPool; // column depth (pool units) band over which shore foam fades in
 float _ShoreFoamStrength;  // strength of the standing shore-foam band
+float _BreakFoamStrength;  // strength of dynamic breaking foam (Froude + convergence + crest)
 
 // "Deep" column depth used when no bed is active, so shoal/shore terms are no-ops there.
 static const float BED_DEEP_DEPTH = 1000.0;
+
+// Phase 2a shore-dynamics heuristics (bed-active bodies only). These are detection tunings, not a
+// physical solve: FLOW_SPEED_SCALE turns the surface slope (normal.xz = -grad h) into a flow-speed
+// proxy, BREAK_G scales the Froude denominator, and DRAIN_BAND is the outer UV band over which the
+// open-shore boundary drain absorbs outgoing ripples (so they don't reflect or pile at the edge).
+static const float FLOW_SPEED_SCALE = 4.0;
+static const float BREAK_G = 1.0;
+static const float DRAIN_BAND = 0.08;
 
 // Still-water column depth (pool units) at a sim cell: the rest surface sits at pool y = 0 and the
 // bed below it, so depth = -bedPoolY. Point-sampled (r32 isn't filterable on WebGPU; the bed is
@@ -211,6 +220,16 @@ void Update(uint3 id : SV_DispatchThreadID)
     info.g += force * (_WaveSpeed * shoal);
     info.g *= _Damping;
     info.r += info.g;
+
+    // Open-shore boundary drain: absorb ripples over the outer band so they don't reflect off the
+    // domain edge or pile up (this replaces volume-conserve, which biases against a dry shore).
+    // Displacement only (rest = 0), so the water level is untouched. No-op away from the edge.
+    if (_UseBedDepth > 0.5)
+    {
+        float2 uvE = ((float2)p + 0.5) * _Delta;
+        float edge = min(min(uvE.x, 1.0 - uvE.x), min(uvE.y, 1.0 - uvE.y));
+        info.r *= smoothstep(0.0, DRAIN_BAND, edge);
+    }
 
     Dst[p] = Sanitize(info);
 }
@@ -309,6 +328,31 @@ void Foam(uint3 id : SV_DispatchThreadID)
                  Read(p + int2(0,-1)).r + Read(p + int2(0,1)).r) * 0.25 - info.r;
     float gen = saturate(speed * _FoamFromSpeed + max(0.0, -lap) * _FoamFromCurv);
     foam += gen * (_FoamGenRate * _FoamDtSteps);
+
+    // Breaking foam (bed-active shorelines): whitecaps where the flow is fast (Froude), CONVERGING
+    // (piling up), and cresting - the KWS/Crest breaking criterion. The surface slope (normal.xz =
+    // -grad h, in .ba) is our flow proxy; its divergence gives convergence, and -lap gives the crest.
+    if (_UseBedDepth > 0.5 && _BreakFoamStrength > 0.0)
+    {
+        float depthB = BedColumnDepth(((float2)p + 0.5) * _Delta);
+        if (depthB > 0.0)
+        {
+            float2 flow = info.ba * FLOW_SPEED_SCALE;
+            float froude = length(flow) / sqrt(max(BREAK_G * depthB, 1e-4));
+            float fastFlow = smoothstep(0.15, 0.65, froude);
+
+            float2 fL2 = Read(p + int2(-1, 0)).ba;
+            float2 fR2 = Read(p + int2( 1, 0)).ba;
+            float2 fD2 = Read(p + int2( 0,-1)).ba;
+            float2 fU2 = Read(p + int2( 0, 1)).ba;
+            float divergence = ((fR2.x - fL2.x) + (fU2.y - fD2.y)) * 0.5 * FLOW_SPEED_SCALE;
+            float convergence = smoothstep(0.02, 0.25, -divergence);
+
+            float crest = smoothstep(0.004, 0.03, -lap);
+            float breaking = max(crest, convergence) * fastFlow;
+            foam += breaking * (_BreakFoamStrength * _FoamDtSteps);
+        }
+    }
 
     // Bi-exponential decay: thick foam dies at the fresh rate, thin foam at the
     // (slower) residual rate, so bursts collapse fast but leave lingering lace.

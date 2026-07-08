@@ -66,6 +66,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_ShoalDepthPool = Shader.PropertyToID("_ShoalDepthPool");
         static readonly int ID_ShoreFoamDepthPool = Shader.PropertyToID("_ShoreFoamDepthPool");
         static readonly int ID_ShoreFoamStrength = Shader.PropertyToID("_ShoreFoamStrength");
+        static readonly int ID_BreakFoamStrength = Shader.PropertyToID("_BreakFoamStrength");
 
         /// <summary>Grid resolution of the heightfield RTs (per side). Set per quality tier.</summary>
         public int Resolution { get; }
@@ -89,6 +90,7 @@ namespace AbstractOcclusion.WebGpuWater
         float _shoalDepthPool;      // pool-unit depth below which ripples shoal
         float _shoreFoamDepthPool;  // pool-unit depth band for standing shore foam
         float _shoreFoamStrength;
+        float _breakFoamStrength;   // dynamic breaking-foam strength (Phase 2a)
 
         RenderTexture _a; // current state (height, velocity, normal.x, normal.z)
         RenderTexture _b; // scratch
@@ -212,13 +214,15 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>Bed-depth shoreline coupling (Phase 1): the pool-space bed-height map plus the
         /// shoal and shore-foam depths (pool units). With <paramref name="enabled"/> false (or a null
         /// map) the sim runs as a bottomless pool, unchanged. Bound on the Update + Foam kernels.</summary>
-        public void SetBedDepth(Texture bed, bool enabled, float shoalDepthPool, float shoreFoamDepthPool, float shoreFoamStrength)
+        public void SetBedDepth(Texture bed, bool enabled, float shoalDepthPool, float shoreFoamDepthPool,
+                                float shoreFoamStrength, float breakFoamStrength)
         {
             _bedTex = bed;
             _useBedDepth = (enabled && bed != null) ? 1f : 0f;
             _shoalDepthPool = shoalDepthPool;
             _shoreFoamDepthPool = shoreFoamDepthPool;
             _shoreFoamStrength = shoreFoamStrength;
+            _breakFoamStrength = breakFoamStrength;
         }
 
         // Bind the bed map + shoreline uniforms onto a kernel. A texture is always bound (black when
@@ -229,6 +233,7 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetFloat(ID_ShoalDepthPool, _shoalDepthPool);
             _cs.SetFloat(ID_ShoreFoamDepthPool, _shoreFoamDepthPool);
             _cs.SetFloat(ID_ShoreFoamStrength, _shoreFoamStrength);
+            _cs.SetFloat(ID_BreakFoamStrength, _breakFoamStrength);
             _cs.SetTexture(kernel, ID_BedTex, _bedTex != null ? _bedTex : Texture2D.blackTexture);
         }
 

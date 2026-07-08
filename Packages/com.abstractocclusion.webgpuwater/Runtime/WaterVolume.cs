@@ -899,6 +899,9 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0f, 10f)] public float shorelineFoamDepth = 1f;
             [Tooltip("Strength of the standing shoreline foam band.")]
             [Range(0f, 1f)] public float shorelineFoamStrength = 0.6f;
+            [Tooltip("Strength of dynamic breaking foam - whitecaps where fast, converging, cresting " +
+                     "flow piles up toward shore (Froude + convergence + crest). 0 = off.")]
+            [Range(0f, 1f)] public float breakingFoamStrength = 0.5f;
         }
 
         // Same-named forwarding accessors keep every reader unchanged (WaterBedBaker, the publisher).
@@ -911,6 +914,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal float shoalDepth => bedDepthSettings.shoalDepth;
         internal float shorelineFoamDepth => bedDepthSettings.shorelineFoamDepth;
         internal float shorelineFoamStrength => bedDepthSettings.shorelineFoamStrength;
+        internal float breakingFoamStrength => bedDepthSettings.breakingFoamStrength;
 
         // Legacy capture (pre-Phase-2 scenes) -> copied once by MigrateBedDepthV8. Hidden; do not edit.
         [SerializeField, HideInInspector, FormerlySerializedAs("useBedDepth")] bool _legacyUseBedDepth = false;
@@ -1160,8 +1164,9 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_PatchPoolCenter = Shader.PropertyToID("_PatchPoolCenter");
         static readonly int ID_PatchPoolHalf = Shader.PropertyToID("_PatchPoolHalf");
         static readonly int ID_PatchDepthBias = Shader.PropertyToID("_PatchDepthBias");
-        const float PatchDepthBiasNdc = 5e-4f;      // nudge toward the camera so the dense patch wins the overlap
-                                                    // (beats the coplanar far plane AND the coarser ocean clipmap)
+        const float PatchDepthBiasMeters = 0.02f;   // view-space nudge toward the camera so the dense patch wins the
+                                                    // overlap (beats the coplanar far plane AND the coarser ocean
+                                                    // clipmap). World metres, so it can't draw over opaque at distance.
         const string PatchObjectName = "Sim Window Patch";
         // Underside twin of the near-field patch: the SAME dense grid drawn with the under-water
         // material, so the submerged near field is sampled as finely as the above one and the two line
@@ -1892,7 +1897,7 @@ namespace AbstractOcclusion.WebGpuWater
 
             Vector3 poolCenter = WorldToPool(SimWindowCenter);
             block.SetFloat(ID_IsPatch, 1f);
-            block.SetFloat(ID_PatchDepthBias, PatchDepthBiasNdc);
+            block.SetFloat(ID_PatchDepthBias, PatchDepthBiasMeters);
             block.SetVector(ID_PatchPoolCenter, new Vector4(poolCenter.x, poolCenter.z, 0f, 0f));
             block.SetVector(ID_PatchPoolHalf, new Vector4(
                 SimHorizontalExtent / VolumeExtentSafe.x, SimHorizontalExtent / VolumeExtentSafe.z, 0f, 0f));
@@ -1971,7 +1976,7 @@ namespace AbstractOcclusion.WebGpuWater
         // against each other (the clipmap's hole stays locked over the patch). The ocean is unbounded, so
         // the window is not clamped to the footprint. No depth bias: the far rings sit near the far plane
         // and any push would clip them (the horizon would vanish); the near-field patch is nudged toward
-        // the camera instead (PatchDepthBiasNdc), and being always near it never clips.
+        // the camera instead (PatchDepthBiasMeters), and being always near it never clips.
         void PositionClipmap(Renderer clipmap, ref MaterialPropertyBlock block)
         {
             if (clipmap == null) return;
@@ -2349,14 +2354,16 @@ namespace AbstractOcclusion.WebGpuWater
             float poolPerWorldY = 1f / VolumeExtentSafe.y;
             _water.SetBedDepth(bedActive ? BedTexture : null, bedActive,
                                shoalDepth * poolPerWorldY, shorelineFoamDepth * poolPerWorldY,
-                               shorelineFoamStrength);
+                               shorelineFoamStrength, breakingFoamStrength);
 
             for (int i = 0; i < steps; i++)
                 _water.StepSimulation(waveSpeed, damping);
 
             // Exact GPU-reduced mean (no more Blit + GenerateMips: the float-mip mean silently
-            // point-sampled in WebGPU builds and popped the plane; see WaterSim.compute).
-            if (conserveVolume) _water.ConserveVolume(conserveMaxCorrection);
+            // point-sampled in WebGPU builds and popped the plane; see WaterSim.compute). Skipped on
+            // shoreline bodies: the open-shore boundary drain handles the edge, and averaging in the
+            // zeroed dry cells would bias the "mean" and slowly sink the wet surface.
+            if (conserveVolume && !bedActive) _water.ConserveVolume(conserveMaxCorrection);
 
             _water.UpdateNormals();
 
