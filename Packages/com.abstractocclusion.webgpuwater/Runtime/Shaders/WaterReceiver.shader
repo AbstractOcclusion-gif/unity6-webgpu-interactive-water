@@ -241,5 +241,33 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
             half4 frag(V IN) : SV_Target { return 0; }
             ENDHLSL
         }
+
+        // Depth-normals prepass so the receiver populates _CameraDepthTexture when a depth-NORMALS
+        // (SSAO) prepass is active - with only DepthOnly it vanished from that texture and the
+        // volumetric god rays drew over the floor. Depth is what the god-ray occlusion needs.
+        Pass
+        {
+            Name "DepthNormals"
+            Tags { "LightMode"="DepthNormals" }
+            ZWrite On Cull Back
+
+            HLSLPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+            struct A { float4 positionOS:POSITION; float3 normalOS:NORMAL; };
+            struct V { float4 positionCS:SV_POSITION; float3 normalWS:TEXCOORD0; };
+
+            V vert(A IN)
+            {
+                V o;
+                o.positionCS = TransformObjectToHClip(IN.positionOS.xyz);
+                o.normalWS = TransformObjectToWorldNormal(IN.normalOS);
+                return o;
+            }
+            half4 frag(V IN) : SV_Target { return half4(normalize(IN.normalWS), 0.0); }
+            ENDHLSL
+        }
     }
 }

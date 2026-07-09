@@ -84,10 +84,13 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_UnderwaterUnbounded = Shader.PropertyToID("_UnderwaterUnbounded");
         static readonly int ID_PeakedRefine = Shader.PropertyToID("_PeakedRefineSteps");
         static readonly int ID_UsePlanar = Shader.PropertyToID("_UsePlanar");
+        static readonly int ID_PlanarTex = Shader.PropertyToID("_PlanarReflectionTex");
         static readonly int ID_UseSSR = Shader.PropertyToID("_UseSSR");
         static readonly int ID_UseUrpProbe = Shader.PropertyToID("_UseUrpProbe");
         static readonly int ID_RealRefraction = Shader.PropertyToID("_RealRefraction");
+        static readonly int ID_ProceduralPool = Shader.PropertyToID("_ProceduralPool");
         static readonly int ID_ReflectionStrength = Shader.PropertyToID("_ReflectionStrength");
+        static readonly int ID_EnvReflectionIntensity = Shader.PropertyToID("_EnvReflectionIntensity");
         static readonly int ID_ReflectionDistortion = Shader.PropertyToID("_ReflectionDistortion");
         static readonly int ID_SSRStrength = Shader.PropertyToID("_SSRStrength");
         static readonly int ID_SSRStepSize = Shader.PropertyToID("_SSRStepSize");
@@ -113,7 +116,30 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalColor(ID_SunColor, _body.sun != null ? _body.sun.color * _body.sun.intensity : Color.white);
             Shader.SetGlobalFloat(ID_WaveTime, _body.WaveTime);
             if (_body.tiles != null) Shader.SetGlobalTexture(ID_Tiles, _body.tiles);
-            if (_body.sky != null) Shader.SetGlobalTexture(ID_Sky, _body.sky);
+            // NOTE: the reflection cube (_Sky) is published PER BODY in WriteBodyUniforms, not here -
+            // a global would be stomped by the last body each frame when bodies use different skies.
+        }
+
+        // Reflection base cube for Reflect URP Probe: the scene skybox's cubemap if it exposes one, else
+        // the body's Sky slot. NOTE: Camera.RenderToCubemap is NOT used - it forces URP to rebuild its
+        // pipeline (Blitter double-init exception). A "Skybox/Cubemap" material exposes _Tex; other skybox
+        // types (panoramic HDRI, 6-sided, procedural) have no directly-samplable cubemap, so assign a
+        // cubemap to the water's Sky slot for those.
+        Cubemap ResolveReflectionCube()
+        {
+            if (_body.ReflectUrpProbe)
+            {
+                Cubemap scene = SceneSkyboxCubemap();
+                if (scene != null) return scene;
+            }
+            return _body.sky;
+        }
+
+        static Cubemap SceneSkyboxCubemap()
+        {
+            Material skybox = RenderSettings.skybox;
+            if (skybox == null || !skybox.HasProperty("_Tex")) return null;
+            return skybox.GetTexture("_Tex") as Cubemap;
         }
 
         /// <summary>Overwrite the block with the body's per-renderer uniforms.</summary>
@@ -218,10 +244,23 @@ namespace AbstractOcclusion.WebGpuWater
 
             // Reflection: uniform-driven and live. Tier-capped toggles + the look, per body per frame.
             sink.SetFloat(ID_UsePlanar, _body.EffectiveUsePlanar ? 1f : 0f);
+            // This body's OWN planar mirror, bound per body (was a single shared global that only one plane
+            // could be correct for). Null until the first mirror render / when planar is off - the shader
+            // only samples it when _UsePlanar is set, which tracks the same EffectiveUsePlanar gate.
+            Texture planarTex = _body.PlanarReflectionTexture;
+            if (planarTex != null) sink.SetTexture(ID_PlanarTex, planarTex);
             sink.SetFloat(ID_UseSSR, _body.EffectiveUseSSR ? 1f : 0f);
             sink.SetFloat(ID_UseUrpProbe, _body.ReflectUrpProbe ? 1f : 0f);
             sink.SetFloat(ID_RealRefraction, _body.EffectiveRealRefraction ? 1f : 0f);
+            sink.SetFloat(ID_ProceduralPool, _body.HasProceduralPool ? 1f : 0f);
             sink.SetFloat(ID_ReflectionStrength, _body.ReflectionStrength);
+            sink.SetFloat(ID_EnvReflectionIntensity, _body.EnvReflectionIntensity);
+
+            // Reflection base cubemap, PER BODY (via the property block) so multiple bodies with
+            // different Sky slots / reflection modes never stomp a shared global. Procedural sky = the
+            // body's Sky slot; Reflect URP Probe = the scene skybox cube (SceneSkyboxCubemap).
+            Cubemap reflectionCube = ResolveReflectionCube();
+            if (reflectionCube != null) sink.SetTexture(ID_Sky, reflectionCube);
             sink.SetFloat(ID_ReflectionDistortion, _body.ReflectionDistortion);
             sink.SetFloat(ID_SSRStrength, _body.SSRStrength);
             sink.SetFloat(ID_SSRStepSize, _body.SSRStepSize);

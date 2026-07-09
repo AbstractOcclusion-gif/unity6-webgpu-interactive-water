@@ -16,6 +16,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
         // defaults + variants and the component can seed from / publish to them, without cluttering
         // the material inspector.
         [HideInInspector] _ReflectionStrength ("Reflection Strength", Range(0,1)) = 1.0
+        [HideInInspector] _EnvReflectionIntensity ("Env Reflection Intensity", Range(0,4)) = 1.0
         [HideInInspector] _UsePlanar ("Use Planar Reflection", Float) = 0
         [HideInInspector] _UseSSR ("Use Screen Space Reflection", Float) = 0
         [HideInInspector] _UseUrpProbe ("Reflect URP Environment Probe (else procedural sky)", Float) = 0
@@ -148,6 +149,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             float _RefractionDistortion;
             // Reflection mode flags (0/1), driven per body via the property block.
             float _UsePlanar, _UseSSR, _UseUrpProbe, _RealRefraction;
+            float _ProceduralPool; // 1 = this body draws the analytic/procedural pool (tiles); 0 = surface only
+            float _EnvReflectionIntensity; // brightness of the reflected sky / URP probe (not the sun glint)
 
             // Pool-space terrain bed height (R = bed height in pool units), baked by WaterVolume.
             sampler2D _BedTex;
@@ -455,18 +458,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // plus the sun glint. This is what the water REFLECTS - never the analytic pool tiles.
             float3 SampleEnvironment(float3 worldRay)
             {
-                float3 color;
-                if (_UseUrpProbe > 0.5)
-                {
-                    // The scene's active reflection probe / skybox (URP binds it to unity_SpecCube0),
-                    // so the water matches the user's lit environment. Mip 0 keeps it mirror-sharp.
-                    half4 encodedProbe = UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, worldRay, 0);
-                    color = DecodeHDR(encodedProbe, unity_SpecCube0_HDR).rgb;
-                }
-                else
-                {
-                    color = texCUBE(_Sky, worldRay).rgb;
-                }
+                // Reflection base is ALWAYS a plain cubemap in _Sky: the assigned Sky slot for procedural
+                // sky, or the scene's skybox cubemap when Reflect URP Probe is on (WaterUniformPublisher
+                // picks which). Sampling a cubemap works in EVERY render path - unlike unity_SpecCube0,
+                // which URP Forward+ (used on WebGPU) does not bind per-object, so the old probe path read
+                // the default/skybox and the plane showed no reflection.
+                float3 color = texCUBE(_Sky, worldRay).rgb;
+                // Art-directed brightness of the reflected environment (sky OR probe). Applied before the
+                // sun glint so the glint stays a fixed specular regardless of the mirror intensity.
+                color *= _EnvReflectionIntensity;
                 // sun glint - direction from _LightDir, tint/brightness from the Unity sun
                 color += SUN_GLINT_TINT * _SunColor * pow(max(0.0, dot(_LightDir, worldRay)), SUN_GLINT_SHARPNESS);
                 return color;
@@ -486,6 +486,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     // pool tiles. The _REAL_REFRACTION path (in frag) samples the actual scene where
                     // geometry exists and overrides this; this is the no-geometry fallback.
                     if (_LargeBody > 0.5)
+                        return _WaterFogColor.rgb * waterColor;
+
+                    // Pool tiles only when this body draws the PROCEDURAL (analytic) pool AND real
+                    // refraction isn't already sampling the actual scene. Surface-only bodies (no pool)
+                    // and the real-refraction path fall back to the deep-water/fog colour, never tiles.
+                    if (_ProceduralPool < 0.5 || _RealRefraction > 0.5)
                         return _WaterFogColor.rgb * waterColor;
 
                     float3 po = WorldToPool(worldOrigin);
@@ -608,7 +614,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     float3 refractedRay = refract(incomingRay, normal, IOR_AIR / IOR_WATER);
                     float fresnel = lerp(FRESNEL_MIN_ABOVE, 1.0, pow(saturate(1.0 - dot(normal, -incomingRay)), FRESNEL_POWER));
 
-                    float3 reflectedColor = getSurfaceRayColor(i.worldPos, reflectedRay, ABOVEWATER_COLOR);
+                    // Reflection samples the environment (sky / URP probe) for ANY reflected direction.
+                    // getSurfaceRayColor would route a below-horizon ray - common at grazing angles and on
+                    // wave slopes, exactly where Fresnel makes the reflection strongest - into the pool
+                    // floor and return the TILES, which showed up as tile "highlights" and hid the probe.
+                    // The underwater branch already samples the environment directly; match it here.
+                    float3 reflectedColor = SampleEnvironment(reflectedRay);
                     float3 refractedColor = getSurfaceRayColor(i.worldPos, refractedRay, ABOVEWATER_COLOR);
 
                     // ---- Reflection: analytic -> planar -> SSR (SSR wins where it hits). The toggles

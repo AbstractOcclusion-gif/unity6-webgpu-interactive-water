@@ -1,0 +1,56 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!21 &2100000
+Material:
+  serializedVersion: 8
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: WaterAbove
+  m_Shader: {fileID: 4800000, guid: ade3013e5124d694a90e4273d5c4c938, type: 3}
+  m_Parent: {fileID: 0}
+  m_ModifiedSerializedProperties: 0
+  m_ValidKeywords: []
+  m_InvalidKeywords:
+  - _REAL_REFRACTION
+  m_LightmapFlags: 4
+  m_EnableInstancingVariants: 0
+  m_DoubleSidedGI: 0
+  m_CustomRenderQueue: -1
+  stringTagMap: {}
+  disabledShaderPasses: []
+  m_LockedProperties: 
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs:
+    - _FoamNormalTex:
+        m_Texture: {fileID: 2800000, guid: 704d645b388fb464686854f6645dc921, type: 3}
+        m_Scale: {x: 5, y: 5}
+        m_Offset: {x: 0, y: 0}
+    - _FoamTex:
+        m_Texture: {fileID: 2800000, guid: 324dfaf81cac65a42ad21a18b6b1d0a4, type: 3}
+        m_Scale: {x: 5, y: 5}
+        m_Offset: {x: 0, y: 0}
+    m_Ints: []
+    m_Floats:
+    - _Cull: 2
+    - _EnvReflectionIntensity: 1
+    - _FoamNormalStrength: 1
+    - _FoamTexFPS: 10
+    - _RealRefraction: 1
+    - _ReflectionDistortion: 0.05
+    - _ReflectionStrength: 1
+    - _RefractionDistortion: 0.05
+    - _SSRMaxSteps: 24
+    - _SSRStepSize: 0.03
+    - _SSRStrength: 1
+    - _SSRThickness: 0.2
+    - _Underwater: 0
+    - _UsePlanar: 0
+    - _UseSSR: 0
+    - _UseUrpProbe: 0
+    m_Colors:
+    - _FoamTexFrames: {r: 4, g: 4, b: 0, a: 0}
+  m_BuildTextureStacks: []
+  m_AllowLocking: 1

@@ -28,6 +28,6 @@ Material:
     - _GodRayDensity: 3
     - _GodRaySteps: 24
     m_Colors:
-    - _GodRayColor: {r: 0.27735847, g: 0.64337176, b: 1, a: 1}
+    - _GodRayColor: {r: 0.41320753, g: 0.7097927, b: 1, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

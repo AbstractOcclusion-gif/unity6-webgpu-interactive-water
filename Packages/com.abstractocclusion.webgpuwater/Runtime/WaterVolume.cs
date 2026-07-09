@@ -347,6 +347,10 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] internal Renderer surfaceUnder;
         [SerializeField] internal Renderer poolRenderer;
         [SerializeField] internal Renderer godRayRenderer;
+
+        // True when this body draws the analytic/procedural pool (tiles). Surface-only bodies have no
+        // pool renderer, so the surface shader must not sample pool tiles in their refraction.
+        internal bool HasProceduralPool => poolRenderer != null;
         [Tooltip("The primary body also mirrors its data to global shader state, the fallback " +
                  "for objects that don't carry a WaterMembership (which otherwise resolves each " +
                  "object's own containing body). Exactly one body should be primary.")]
@@ -414,6 +418,10 @@ namespace AbstractOcclusion.WebGpuWater
             // distortion for its total-internal-reflection view). Ranges mirror the shader.
             [Tooltip("Overall strength of the reflected term (0 = none, 1 = full).")]
             [Range(0f, 1f)] public float reflectionStrength = 1f;
+            [Tooltip("Brightness of the reflected environment - the procedural sky OR the URP reflection " +
+                     "probe (whichever is active). Boost to make a dim baked probe / dark skybox read on " +
+                     "the water; lower to calm a bright reflection. Does not affect the sun glint.")]
+            [Range(0f, 4f)] public float envReflectionIntensity = 1f;
             [Tooltip("Wave-normal distortion of the reflection.")]
             [Range(0f, 0.2f)] public float reflectionDistortion = 0.05f;
             [Tooltip("Screen-space reflection strength (used when SSR is on).")]
@@ -433,10 +441,16 @@ namespace AbstractOcclusion.WebGpuWater
         // are the priciest paths, so a tier that disallows them (Low) forces them off; the URP-probe
         // base is never capped.
         internal bool EffectiveUseSSR => _richReflectionsAllowed && reflectionSettings.useScreenSpaceReflection;
-        internal bool EffectiveUsePlanar => _richReflectionsAllowed && reflectionSettings.usePlanarReflection;
+        // Planar is split in two: WantsPlanar is the body's own opt-in (tier-capped); EffectiveUsePlanar
+        // adds the per-frame budget grant (WaterReflections) so only the nearest few pools actually render
+        // a mirror and the rest degrade to SSR / sky. Both the _UsePlanar publish and the mirror pass read
+        // EffectiveUsePlanar, so they can never disagree within a frame.
+        internal bool WantsPlanar => _richReflectionsAllowed && reflectionSettings.usePlanarReflection;
+        internal bool EffectiveUsePlanar => WantsPlanar && WaterReflections.IsPlanarGranted(this);
         internal bool EffectiveRealRefraction => _realRefractionAllowed && reflectionSettings.realRefraction;
         internal bool ReflectUrpProbe => reflectionSettings.reflectUrpProbe;
         internal float ReflectionStrength => reflectionSettings.reflectionStrength;
+        internal float EnvReflectionIntensity => reflectionSettings.envReflectionIntensity;
         internal float ReflectionDistortion => reflectionSettings.reflectionDistortion;
         internal float SSRStrength => reflectionSettings.ssrStrength;
         internal float SSRStepSize => reflectionSettings.ssrStepSize;
@@ -953,7 +967,7 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0f, 360f)] public float windFromDegrees = 0f;
             [Tooltip("Physical size the pool half-extent ([-1,1] -> +/-this) represents, in metres. " +
                      "Sets wave scale; fetch is twice this.")]
-            [Range(1f, 50f)] public float poolHalfExtentMeters = 10f;
+            [Range(1f, 500f)] public float poolHalfExtentMeters = 10f;
             [Tooltip("Number of sinusoidal components summed for the wave layer.")]
             [Range(1, WaterWaveBank.MaxWaves)] public int waveCount = 12;
             [Tooltip("Artistic multiplier on the physically-derived wave height (a light breeze " +
@@ -1493,6 +1507,8 @@ namespace AbstractOcclusion.WebGpuWater
             _bedBaker?.Dispose();  // also re-arms the lazy bake gate for the next enable
             DestroySimWindowPatch(); // before restoring the surface material it borrows
             DestroyOceanClipmap();   // ditto - it borrows the same surface material
+            _planarMirror?.Dispose(); // frees this body's planar mirror camera + RT
+            _planarMirror = null;
             RestoreSurfaceMaterial(surfaceAbove, ref _surfaceAboveInstance, ref _surfaceAboveOriginal);
             RestoreSurfaceMaterial(surfaceUnder, ref _surfaceUnderInstance, ref _surfaceUnderOriginal);
             RestoreMeshDetail();
@@ -1754,7 +1770,8 @@ namespace AbstractOcclusion.WebGpuWater
             _surfaceAboveInstance = InstanceSurfaceMaterial(surfaceAbove, out _surfaceAboveOriginal);
             _surfaceUnderInstance = InstanceSurfaceMaterial(surfaceUnder, out _surfaceUnderOriginal);
 
-            if (EffectiveUsePlanar) WaterReflections.BindHeroPlanar(targetCamera, transform.position.y);
+            // Planar reflection is self-driven per body now (see RenderPlanarMirror in OnBeginCameraRender);
+            // no hero binding here.
         }
 
         // Put water surfaces on the built-in "Water" layer so the planar reflection - configured to
@@ -2522,9 +2539,51 @@ namespace AbstractOcclusion.WebGpuWater
         // target camera so the reflection and scene-view cameras never drive the gate.
         void OnBeginCameraRender(ScriptableRenderContext context, Camera cam)
         {
-            if (!isPrimary || !_initialized) return;
-            if (cam != targetCamera) return;
+            if (!_initialized) return;
+            if (cam != targetCamera) return; // ignore reflection / scene-view cameras
+
+            RenderPlanarMirror(cam); // per-body planar: every planar body mirrors its OWN plane, not just primary
+
+            if (!isPrimary) return;
             UpdateUnderwaterState();
+        }
+
+        // Fraction of screen resolution + clip-plane push for the per-body planar mirror. Constants (not
+        // per-body inspector fields yet) to keep the Reflections block small - the budget, not resolution,
+        // is the cost lever. KEEP in sync with PlanarReflection's inspector defaults.
+        const float PlanarMirrorResolutionScale = 0.5f;
+        const float PlanarMirrorClipPlaneOffset = 0.02f;
+
+        PlanarMirror _planarMirror;
+
+        /// <summary>This body's most recent planar mirror, or null when it isn't rendering planar.</summary>
+        internal Texture PlanarReflectionTexture => _planarMirror?.Texture;
+
+        // Render THIS body's planar mirror across its own surface plane into its own RT (bound per body by
+        // the publisher as _PlanarReflectionTex). WHY per body: a single shared mirror can only be correct
+        // for one plane, so multiple planar pools used to collide onto one hero plane. Gated by the frame
+        // budget via EffectiveUsePlanar, so an over-budget (or planar-off) pool frees its mirror and
+        // degrades to SSR / sky.
+        void RenderPlanarMirror(Camera cam)
+        {
+            if (!EffectiveUsePlanar)
+            {
+                _planarMirror?.Dispose();
+                _planarMirror = null;
+                return;
+            }
+            _planarMirror ??= new PlanarMirror(name + "_PlanarMirror");
+            _planarMirror.Render(cam, transform.position.y, PlanarMirrorResolutionScale,
+                                 PlanarMirrorClipPlaneOffset, PlanarReflectLayers());
+        }
+
+        // Reflect everything the camera sees EXCEPT this body's own water surface layer, so the mirror
+        // never contains the surface it feeds (a feedback smear). Matches AssignSurfaceLayers, which puts
+        // the surface on its own layer precisely so planar can exclude it.
+        LayerMask PlanarReflectLayers()
+        {
+            int surfaceLayer = surfaceAbove != null ? surfaceAbove.gameObject.layer : gameObject.layer;
+            return ~(1 << surfaceLayer);
         }
 
         // Detect whether the camera is submerged in THIS (primary) body and publish the globals the

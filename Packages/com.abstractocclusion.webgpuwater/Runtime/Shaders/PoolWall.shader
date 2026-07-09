@@ -147,5 +147,60 @@ Shader "AbstractOcclusion/WebGpuWater/PoolWall"
             }
             ENDHLSL
         }
+
+        // Depth prepass passes so the walls populate _CameraDepthTexture under EITHER a depth or a
+        // depth-normals (SSAO) prepass - without them the volumetric god rays, which occlude per marched
+        // step against the camera depth, drew straight over the walls. CRITICAL: the pool mesh is authored
+        // in POOL space [-1,1] and placed by the volume frame (PoolToWorld), NOT the object transform, so
+        // these passes MUST place it the same way as ForwardLit. Using TransformObjectToHClip writes a
+        // stale 1x1 box that the god-ray depth then reads. Caustics live in ForwardLit and are unaffected.
+        // (No ShadowCaster: the pool box does not cast scene shadows, matching the original behaviour.)
+        Pass
+        {
+            Name "DepthOnly"
+            Tags { "LightMode"="DepthOnly" }
+            ZWrite On ColorMask 0 Cull [_Cull]
+
+            HLSLPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "WaterCommon.hlsl"
+            #include "WaterVolume.hlsl" // PoolToWorld: place the pool-space mesh through the volume frame
+
+            struct A { float4 positionOS:POSITION; };
+            struct V { float4 positionCS:SV_POSITION; };
+
+            V vert(A IN) { V o; o.positionCS = TransformWorldToHClip(PoolToWorld(IN.positionOS.xyz)); return o; }
+            half4 frag(V IN) : SV_Target { return 0; }
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Name "DepthNormals"
+            Tags { "LightMode"="DepthNormals" }
+            ZWrite On Cull [_Cull]
+
+            HLSLPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "WaterCommon.hlsl"
+            #include "WaterVolume.hlsl" // PoolToWorld / PoolNormalToWorld: the volume frame
+
+            struct A { float4 positionOS:POSITION; float3 normalOS:NORMAL; };
+            struct V { float4 positionCS:SV_POSITION; float3 normalWS:TEXCOORD0; };
+
+            V vert(A IN)
+            {
+                V o;
+                o.positionCS = TransformWorldToHClip(PoolToWorld(IN.positionOS.xyz));
+                o.normalWS = PoolNormalToWorld(IN.normalOS);
+                return o;
+            }
+            half4 frag(V IN) : SV_Target { return half4(normalize(IN.normalWS), 0.0); }
+            ENDHLSL
+        }
     }
 }

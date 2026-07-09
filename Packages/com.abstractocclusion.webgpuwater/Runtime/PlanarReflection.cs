@@ -1,19 +1,17 @@
-// WebGpuWater - planar reflection (Unity 6 / URP)
-// Renders the scene mirrored across the water plane (y = 0) into a RenderTexture
-// and publishes it as the global _PlanarReflectionTex, sampled by WaterSurface.
+// WebGpuWater - standalone planar reflection component (Unity 6 / URP).
 //
-// This is the "planar" half of the hybrid reflection. It is fully optional: if
-// disabled (or unsupported on the target backend) the surface shader falls back
-// to SSR and then the sky cubemap, so nothing breaks.
+// Renders the scene mirrored across a single water plane and publishes it as the GLOBAL
+// _PlanarReflectionTex. This is the camera-level, whole-scene planar path (one plane, one mirror).
+// WaterVolume now drives planar PER BODY (each pool renders its own mirror into its own property
+// block), so this component is optional and only useful for a single global mirror; both paths reuse
+// the same PlanarMirror renderer, so the matrix math lives in exactly one place.
 //
-// URP-only: the rendering path uses URP's single-camera render request, so its body
-// compiles only when the Universal Render Pipeline is present (WEBGPUWATER_URP). The
-// class and its inspector fields always exist, so callers that toggle it still compile
-// on projects without URP - the component simply does nothing there.
+// URP-only: the render path uses URP's single-camera render request, so its body compiles only when
+// the Universal Render Pipeline is present (WEBGPUWATER_URP). The class and its inspector fields
+// always exist, so callers that toggle it still compile on projects without URP - it simply does nothing.
 using UnityEngine;
 #if WEBGPUWATER_URP
 using UnityEngine.Rendering;
-using UnityEngine.Rendering.Universal;
 #endif
 
 namespace AbstractOcclusion.WebGpuWater
@@ -41,150 +39,30 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] internal bool enableReflection = true;
 
 #if WEBGPUWATER_URP
-        const int MinReflectionSize = 8;     // don't allocate a sub-8px reflection target
-        const int ReflectionDepthBits = 24;  // depth buffer for the mirrored scene render
-
         static readonly int ID_PlanarTex = Shader.PropertyToID("_PlanarReflectionTex");
 
-        Camera _reflectionCamera;
-        RenderTexture _rt;
-        Vector2Int _rtSize;
-        bool _rendering; // re-entrancy guard
+        PlanarMirror _mirror;
 
-        void OnEnable()  { RenderPipelineManager.beginCameraRendering += OnBeginCamera; }
+        void OnEnable() { RenderPipelineManager.beginCameraRendering += OnBeginCamera; }
+
         void OnDisable()
         {
             RenderPipelineManager.beginCameraRendering -= OnBeginCamera;
-            Cleanup();
+            _mirror?.Dispose();
+            _mirror = null;
             Shader.SetGlobalTexture(ID_PlanarTex, Texture2D.blackTexture);
-        }
-
-        void Cleanup()
-        {
-            if (_reflectionCamera != null)
-            {
-                if (Application.isPlaying) Destroy(_reflectionCamera.gameObject);
-                else DestroyImmediate(_reflectionCamera.gameObject);
-                _reflectionCamera = null;
-            }
-            ReleaseAndDestroy(ref _rt);
-        }
-
-        // Release frees the GPU surface; Destroy frees the wrapper object, which otherwise
-        // accumulates across disable cycles and resolution changes until scene unload.
-        static void ReleaseAndDestroy(ref RenderTexture rt)
-        {
-            if (rt == null) return;
-            rt.Release();
-            if (Application.isPlaying) Destroy(rt); else DestroyImmediate(rt);
-            rt = null;
         }
 
         void OnBeginCamera(ScriptableRenderContext ctx, Camera cam)
         {
-            if (!enableReflection || _rendering) return;
+            if (!enableReflection) return;
 
             var src = sourceCamera != null ? sourceCamera : Camera.main;
             if (src == null || cam != src) return; // only mirror the main camera
 
-            EnsureResources(src);
-
-            // Mirror the camera transform across the plane y = waterHeight.
-            Vector3 normal = Vector3.up;
-            Vector3 pos = src.transform.position;
-            Vector3 mirroredPos = pos;
-            mirroredPos.y = 2f * waterHeight - pos.y;
-
-            // Reflect the world-to-camera matrix through the plane.
-            Matrix4x4 reflection = CalculateReflectionMatrix(new Vector4(normal.x, normal.y, normal.z, -waterHeight));
-            _reflectionCamera.worldToCameraMatrix = src.worldToCameraMatrix * reflection;
-
-            // Oblique projection so the near plane sits on the water surface.
-            Vector4 clipPlane = CameraSpacePlane(_reflectionCamera, new Vector3(0, waterHeight, 0), normal, clipPlaneOffset);
-            _reflectionCamera.projectionMatrix = src.CalculateObliqueMatrix(clipPlane);
-
-            _reflectionCamera.transform.position = mirroredPos;
-
-            // Reflections invert winding order. try/finally: if the render request throws
-            // (e.g. device loss on the experimental WebGPU editor backend), leaked state
-            // would otherwise render the whole scene inside-out and permanently disable
-            // reflections via the stuck re-entrancy guard.
-            GL.invertCulling = true;
-            _rendering = true;
-            try
-            {
-#if UNITY_2022_1_OR_NEWER
-                UnityEngine.Rendering.RenderPipeline.SubmitRenderRequest(
-                    _reflectionCamera,
-                    new UniversalRenderPipeline.SingleCameraRequest { destination = _rt });
-#else
-                _reflectionCamera.targetTexture = _rt;
-                _reflectionCamera.Render();
-#endif
-            }
-            finally
-            {
-                _rendering = false;
-                GL.invertCulling = false;
-            }
-
-            Shader.SetGlobalTexture(ID_PlanarTex, _rt);
-        }
-
-        void EnsureResources(Camera src)
-        {
-            int width = Mathf.Max(MinReflectionSize, Mathf.RoundToInt(src.pixelWidth * resolutionScale));
-            int height = Mathf.Max(MinReflectionSize, Mathf.RoundToInt(src.pixelHeight * resolutionScale));
-            if (_rt == null || _rtSize.x != width || _rtSize.y != height)
-            {
-                ReleaseAndDestroy(ref _rt); // a resolution change must not leak the old wrapper
-                _rt = new RenderTexture(width, height, ReflectionDepthBits, RenderTextureFormat.DefaultHDR)
-                {
-                    name = "PlanarReflectionTex",
-                    wrapMode = TextureWrapMode.Clamp,
-                    filterMode = FilterMode.Bilinear,
-                    hideFlags = HideFlags.HideAndDontSave
-                };
-                _rt.Create();
-                _rtSize = new Vector2Int(width, height);
-            }
-
-            if (_reflectionCamera == null)
-            {
-                var go = new GameObject("PlanarReflectionCamera")
-                {
-                    hideFlags = HideFlags.HideAndDontSave
-                };
-                _reflectionCamera = go.AddComponent<Camera>();
-                _reflectionCamera.enabled = false; // we drive it manually
-            }
-
-            // Copy the important settings each frame so editor tweaks track live.
-            _reflectionCamera.CopyFrom(src);
-            _reflectionCamera.targetTexture = _rt;
-            _reflectionCamera.cullingMask = reflectLayers & src.cullingMask;
-            _reflectionCamera.enabled = false;
-        }
-
-        // Householder reflection matrix for the plane (n, d).
-        static Matrix4x4 CalculateReflectionMatrix(Vector4 plane)
-        {
-            Matrix4x4 m = Matrix4x4.identity;
-            m.m00 = 1f - 2f * plane.x * plane.x; m.m01 = -2f * plane.x * plane.y; m.m02 = -2f * plane.x * plane.z; m.m03 = -2f * plane.x * plane.w;
-            m.m10 = -2f * plane.y * plane.x; m.m11 = 1f - 2f * plane.y * plane.y; m.m12 = -2f * plane.y * plane.z; m.m13 = -2f * plane.y * plane.w;
-            m.m20 = -2f * plane.z * plane.x; m.m21 = -2f * plane.z * plane.y; m.m22 = 1f - 2f * plane.z * plane.z; m.m23 = -2f * plane.z * plane.w;
-            m.m30 = 0f; m.m31 = 0f; m.m32 = 0f; m.m33 = 1f;
-            return m;
-        }
-
-        // Plane in the reflection camera's space, for the oblique near clip.
-        static Vector4 CameraSpacePlane(Camera cam, Vector3 pos, Vector3 normal, float offset)
-        {
-            Vector3 offsetPos = pos + normal * offset;
-            Matrix4x4 m = cam.worldToCameraMatrix;
-            Vector3 cpos = m.MultiplyPoint(offsetPos);
-            Vector3 cnormal = m.MultiplyVector(normal).normalized;
-            return new Vector4(cnormal.x, cnormal.y, cnormal.z, -Vector3.Dot(cpos, cnormal));
+            _mirror ??= new PlanarMirror("PlanarReflectionTex");
+            _mirror.Render(src, waterHeight, resolutionScale, clipPlaneOffset, reflectLayers);
+            if (_mirror.Texture != null) Shader.SetGlobalTexture(ID_PlanarTex, _mirror.Texture);
         }
 #endif
     }

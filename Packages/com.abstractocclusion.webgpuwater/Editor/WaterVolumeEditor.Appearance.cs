@@ -21,6 +21,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 WaterEditorUI.SubHeading("Look");
                 DrawFields(
                     "reflectionSettings.reflectionStrength",
+                    "reflectionSettings.envReflectionIntensity",
                     "reflectionSettings.reflectionDistortion",
                     "reflectionSettings.ssrStrength",
                     "reflectionSettings.ssrStepSize",

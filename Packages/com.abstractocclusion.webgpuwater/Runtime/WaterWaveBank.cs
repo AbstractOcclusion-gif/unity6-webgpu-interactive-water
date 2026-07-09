@@ -36,6 +36,14 @@ namespace AbstractOcclusion.WebGpuWater
         // Hs = HsToRms * sqrt(sum A_i^2) with HsToRms = 4 / sqrt(2).
         const float HsToRms = 2.8284271f;
 
+        // Reference pool half-extent (metres) the wind-wave amplitude is calibrated against. The metre
+        // -> pool amplitude conversion uses sqrt(reference * metersPerUnit) instead of the live
+        // metersPerUnit, which cancels the sqrt(fetch) growth (fetch = 2 * metersPerUnit) so the WORLD
+        // wave height depends on wind but NOT on the plane's horizontal scale - a given wind reads as the
+        // same chop on a 10 m pond or a 500 m plane. Equals the default poolHalfExtentMeters, so at the
+        // default scale the conversion is 1/metersPerUnit exactly as before (existing scenes unchanged).
+        const float ScaleReferenceMeters = 10f;
+
         // --- spectral sampling band --------------------------------------------
         const float BandLowFactor = 0.5f;         // shortest sampled wavelength = peak * this
         const float BandHighFactor = 2.5f;        // longest sampled wavelength  = peak * this
@@ -162,7 +170,10 @@ namespace AbstractOcclusion.WebGpuWater
 
             float currentRms = Mathf.Sqrt(sumAmpSquared);
             float targetRms = hsMeters / HsToRms;             // metres
-            float metersToPool = 1f / metersPerUnit;
+            // Scale-independent amplitude: sqrt(reference * metersPerUnit) cancels the sqrt(fetch) growth
+            // so world wave height tracks wind, not plane size (see ScaleReferenceMeters). At the default
+            // scale this is 1/metersPerUnit, unchanged.
+            float metersToPool = 1f / Mathf.Sqrt(ScaleReferenceMeters * metersPerUnit);
             // Pre-divide by the vertical extent so PoolToWorld's height * extent.y leaves the
             // world crest height fixed as the pool deepens (see verticalWorldPerUnit). This
             // mirrors how click-ripples compensate on injection.
