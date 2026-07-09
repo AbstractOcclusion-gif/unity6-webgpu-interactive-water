@@ -32,6 +32,24 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         float _UnderwaterUnbounded; // 1 = ocean half-space, 0 = clip to this body's box (pond)
         float _OceanWorldWaves;     // 1 = sample wind waves in WORLD metres (ocean); 0 = pool xz (pond)
 
+        sampler2D _BedTex; // pool-space bed height (global); for the shoreline swell-shoaling factor
+        float _SwellShoalDepth;    // world depth over which the swell ramps to full height
+        float _SwellShoalStrength; // 0 = no reduction, 1 = flattened at the waterline
+
+        // Swell shoaling at a WORLD xz from the baked bed: 1 in deep water, ramping toward
+        // (1 - strength) as the still-water column thins over _SwellShoalDepth, so the waterline follows
+        // the shoaled render surface. 1 when no bed. KEEP IN SYNC with the same factor in WaterSurface /
+        // FoamParticles / LargeBodyCaustics and LargeWaveField (CPU).
+        float SwellShoalFactor(float2 worldXZ)
+        {
+            if (_UseBedDepth < 0.5 || _BedValid < 0.5) return 1.0;
+            float2 bedUV = WorldToPool(float3(worldXZ.x, _VolumeCenter.y, worldXZ.y)).xz * 0.5 + 0.5;
+            float bedPoolY = tex2Dlod(_BedTex, float4(bedUV, 0, 0)).r;
+            float stillDepth = max(0.0, -bedPoolY * VolumeExtentSafe().y);
+            float t = saturate(stillDepth / max(_SwellShoalDepth, 1e-3));
+            return lerp(1.0 - _SwellShoalStrength, 1.0, t);
+        }
+
         // Per-pixel wavy-waterline crossing search (U2). The camera->scene ray meets the DISPLACED surface
         // at a height that follows crests/troughs, so we bracket the FIRST sign change of
         // (rayY - SurfaceHeightAtXZ) with a constant-step coarse scan and refine by bisection. Constant
@@ -74,8 +92,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // exactly as the vertex path does (PoolToWorld of the displaced pool point).
             float surfaceY = PoolToWorld(float3(poolXZ.x, WaveHeight(windSampleXZ), poolXZ.y)).y;
 
-            // Open-water swell/FFT is authored in WORLD metres and layered on top (no-op for pools).
-            if (_LargeBody > 0.5) surfaceY += LargeBodyWaveHeight(worldXZ);
+            // Open-water swell/FFT is authored in WORLD metres and layered on top (no-op for pools),
+            // shoaled by the bed so the waterline matches the shoaled render surface near shore.
+            if (_LargeBody > 0.5) surfaceY += LargeBodyWaveHeight(worldXZ) * SwellShoalFactor(worldXZ);
             return surfaceY;
         }
 

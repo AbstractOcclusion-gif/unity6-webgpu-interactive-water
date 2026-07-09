@@ -31,6 +31,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_BedTex = Shader.PropertyToID("_BedTex");
         static readonly int ID_BedValid = Shader.PropertyToID("_BedValid");
         static readonly int ID_UseBedDepth = Shader.PropertyToID("_UseBedDepth");
+        static readonly int ID_SwellShoalDepth = Shader.PropertyToID("_SwellShoalDepth");
+        static readonly int ID_SwellShoalStrength = Shader.PropertyToID("_SwellShoalStrength");
         static readonly int ID_DeepWaterColor = Shader.PropertyToID("_DeepWaterColor");
         static readonly int ID_ShorelineScale = Shader.PropertyToID("_ShorelineDepthScale");
         static readonly int ID_ShorelineStrength = Shader.PropertyToID("_ShorelineStrength");
@@ -230,6 +232,8 @@ namespace AbstractOcclusion.WebGpuWater
             if (_body.BedTexture != null) sink.SetTexture(ID_BedTex, _body.BedTexture);
             sink.SetFloat(ID_BedValid, _body.IsBedBaked ? 1f : 0f);
             sink.SetFloat(ID_UseBedDepth, _body.useBedDepth ? 1f : 0f);
+            sink.SetFloat(ID_SwellShoalDepth, _body.swellShoalDepth);
+            sink.SetFloat(ID_SwellShoalStrength, _body.swellShoalStrength);
             sink.SetColor(ID_DeepWaterColor, _body.deepWaterColor);
             sink.SetFloat(ID_ShorelineScale, 1f / Mathf.Max(WaterVolume.MinShorelineFadeDepth, _body.shorelineFadeDepth));
             sink.SetFloat(ID_ShorelineStrength, _body.shorelineStrength);

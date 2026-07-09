@@ -902,6 +902,15 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("Strength of dynamic breaking foam - whitecaps where fast, converging, cresting " +
                      "flow piles up toward shore (Froude + convergence + crest). 0 = off.")]
             [Range(0f, 1f)] public float breakingFoamStrength = 0.5f;
+
+            [Header("Swell shoaling (open water)")]
+            [Tooltip("WORLD-unit column depth over which the open-water SWELL ramps from flattened (at " +
+                     "the waterline) to full height. Larger = the swell starts shrinking further out.")]
+            [Range(0.5f, 40f)] public float swellShoalDepth = 8f;
+            [Tooltip("How much the swell is reduced in shallow water: 1 = flattened to nothing at the " +
+                     "waterline, 0 = no reduction. Also fades the ocean whitecap foam so flattened swell " +
+                     "stops foaming.")]
+            [Range(0f, 1f)] public float swellShoalStrength = 1f;
         }
 
         // Same-named forwarding accessors keep every reader unchanged (WaterBedBaker, the publisher).
@@ -915,6 +924,8 @@ namespace AbstractOcclusion.WebGpuWater
         internal float shorelineFoamDepth => bedDepthSettings.shorelineFoamDepth;
         internal float shorelineFoamStrength => bedDepthSettings.shorelineFoamStrength;
         internal float breakingFoamStrength => bedDepthSettings.breakingFoamStrength;
+        internal float swellShoalDepth => bedDepthSettings.swellShoalDepth;
+        internal float swellShoalStrength => bedDepthSettings.swellShoalStrength;
 
         // Legacy capture (pre-Phase-2 scenes) -> copied once by MigrateBedDepthV8. Hidden; do not edit.
         [SerializeField, HideInInspector, FormerlySerializedAs("useBedDepth")] bool _legacyUseBedDepth = false;
@@ -2293,10 +2304,27 @@ namespace AbstractOcclusion.WebGpuWater
         // own gated fallback in WaterLargeWaves.hlsl.
         Vector3 SampleLargeWaveField(float worldX, float worldZ)
         {
+            // Shoal the swell by the baked bed so CPU buoyancy + splashes match the shoaled RENDER
+            // surface near shore (the GPU applies the same factor). No-op without a bed.
+            float shoal = SwellShoalFactorCpu(worldX, worldZ);
             if (OceanFftActive && _oceanFft.TrySampleField(worldX, worldZ, out Vector3 fft))
-                return fft;
+                return fft * shoal;
             return LargeWaveField.EvaluateAtQuery(worldX, worldZ, _waveTime, LargeWaveAmplitudeEffective,
-                LargeWaveHeadingRad, SwellWavelength, SwellHeight, LargeWaveChoppiness);
+                LargeWaveHeadingRad, SwellWavelength, SwellHeight, LargeWaveChoppiness) * shoal;
+        }
+
+        // CPU mirror of the shaders' SwellShoalFactor: 1 in deep water, ramping to 0 as the still-water
+        // column thins toward shore (saturate(2*depth/wavelength)). Samples the pool-space bed bake.
+        // KEEP IN SYNC with SwellShoalFactor in WaterSurface / WaterUnderwaterFog / FoamParticles /
+        // LargeBodyCaustics.
+        float SwellShoalFactorCpu(float worldX, float worldZ)
+        {
+            if (!useBedDepth || !IsBedBaked || BedTexture == null) return 1f;
+            Vector3 pool = WorldToPool(new Vector3(worldX, VolumeCenter.y, worldZ));
+            float bedPoolY = BedTexture.GetPixelBilinear(pool.x * 0.5f + 0.5f, pool.z * 0.5f + 0.5f).r;
+            float stillDepth = Mathf.Max(0f, -bedPoolY * VolumeExtentSafe.y);
+            float t = Mathf.Clamp01(stillDepth / Mathf.Max(swellShoalDepth, 1e-3f));
+            return Mathf.Lerp(1f - swellShoalStrength, 1f, t);
         }
 
         void Step(float seconds)

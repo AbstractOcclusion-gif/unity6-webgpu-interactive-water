@@ -151,6 +151,23 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
             // Pool-space terrain bed height (R = bed height in pool units), baked by WaterVolume.
             sampler2D _BedTex;
+            float _SwellShoalDepth;    // world depth over which the swell ramps to full height
+            float _SwellShoalStrength; // 0 = no reduction, 1 = flattened at the waterline
+
+            // Swell shoaling at a WORLD xz from the baked bed: 1 in deep water, ramping toward
+            // (1 - strength) as the still-water column thins over _SwellShoalDepth. Used to shoal the
+            // swell height/chop (vertex) AND to fade the whitecap coverage (fragment) so flattened swell
+            // stops foaming. 1 when no bed. KEEP IN SYNC with WaterUnderwaterFog / FoamParticles /
+            // LargeBodyCaustics and LargeWaveField (CPU).
+            float SwellShoalFactor(float2 worldXZ)
+            {
+                if (_UseBedDepth < 0.5 || _BedValid < 0.5) return 1.0;
+                float2 bedUV = WorldToPool(float3(worldXZ.x, _VolumeCenter.y, worldXZ.y)).xz * 0.5 + 0.5;
+                float bedPoolY = tex2Dlod(_BedTex, float4(bedUV, 0, 0)).r;
+                float stillDepth = max(0.0, -bedPoolY * VolumeExtentSafe().y);
+                float t = saturate(stillDepth / max(_SwellShoalDepth, 1e-3));
+                return lerp(1.0 - _SwellShoalStrength, 1.0, t);
+            }
 
             // Foam: _FoamMask (sim buffer) + globals from the controller; _FoamTex
             // is an optional per-material pattern (defaults white = flat foam).
@@ -401,11 +418,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 {
                     float2 sourceXZ = worldPos.xz;
                     o.largeWaveSourceXZ = sourceXZ;
+                    // Shoaling: attenuate the open-water swell by the still-water column depth so it
+                    // flattens toward shore instead of marching onto the beach at full height (controlled
+                    // by Swell Shoal Depth/Strength). No-op without a baked bed.
+                    float swellAtten = SwellShoalFactor(sourceXZ);
                     // Height + chop. The far-field band-limit (dropping short waves the coarse mesh can't
                     // resolve, keeping the long swell) lives INSIDE these functions now, driven by
                     // camera distance - no-op for bounded bodies (_LargeWaveDetailSlope = 0).
-                    worldPos.y  += LargeBodyWaveHeight(sourceXZ);
-                    worldPos.xz += LargeBodyWaveDisplacement(sourceXZ); // 0 when choppiness = 0
+                    worldPos.y  += LargeBodyWaveHeight(sourceXZ) * swellAtten;
+                    worldPos.xz += LargeBodyWaveDisplacement(sourceXZ) * swellAtten; // 0 when choppiness = 0
                 }
                 o.worldPos = worldPos;
                 // Nudge the patch a fixed few centimetres toward the camera IN VIEW SPACE so it wins the
@@ -640,7 +661,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     float3 oceanFoamPattern = float3(1.0, 1.0, 1.0);
                     if (_OceanFftActive > 0.5)
                     {
-                        float coverage = OceanFftFoam(i.largeWaveSourceXZ);
+                        // Fade the whitecap coverage by the swell shoaling so flattened swell near shore
+                        // stops foaming (the height is shoaled to match, above).
+                        float coverage = OceanFftFoam(i.largeWaveSourceXZ) * SwellShoalFactor(i.largeWaveSourceXZ);
                         if (coverage > FOAM_MASK_EPSILON)
                         {
                             // Stock white _FoamTex -> pattern ~= 1 -> solid coverage (no regression); a real
@@ -662,6 +685,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         float2 bedUV = i.position.xz * 0.5 + 0.5;
                         float bedPoolY = tex2Dlod(_BedTex, float4(bedUV, 0, 0)).r;
                         float colDepth = BedColumnDepthWorld(bedPoolY, i.position.y, VolumeExtentSafe().y);
+                        // Terrain mask: cut the water where the bed rises above the surface (dry beach)
+                        // so the plane doesn't draw over the sand. clip() discards the fragment; the small
+                        // positive bias keeps a hair of water right at the waterline (no shimmer gap).
+                        const float SHORE_CLIP_BIAS = 0.02; // metres of water kept past the waterline
+                        clip(colDepth + SHORE_CLIP_BIAS);
                         float shore = 1.0 - exp(-_ShorelineDepthScale * colDepth);
                         outColor = lerp(outColor, _DeepWaterColor.rgb, saturate(shore * _ShorelineStrength));
                     }
