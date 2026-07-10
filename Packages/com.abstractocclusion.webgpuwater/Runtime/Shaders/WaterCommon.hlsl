@@ -162,11 +162,21 @@ float GetWallShade(float3 p, float3 normal)
     return scale + causticTerm * WALL_CAUSTIC_LEGACY_STRENGTH;
 }
 
-float3 GetWallColor(float3 p)
+// Analytic wall colour with the projected caustic gated by an externally supplied main-light shadow
+// term (0 = fully shadowed -> no caustic, 1 = lit -> legacy look). The caller (WaterSurface) samples
+// the shadow at the floor's world position; a caustic is refracted sun, so it must vanish under a
+// caster like the geometry paths (PoolWall / WaterReceiver) already do.
+float3 GetWallColorShadowed(float3 p, float causticShadow)
 {
     float2 uv; float3 normal, tangent, bitangent;
     WallSurface(p, uv, normal, tangent, bitangent);
-    return tex2D(_Tiles, uv).rgb * GetWallShade(p, normal);
+    float causticTerm;
+    float scale = GetWallShadeSplit(p, normal, causticTerm);
+    float shade = scale + causticTerm * WALL_CAUSTIC_LEGACY_STRENGTH * causticShadow;
+    return tex2D(_Tiles, uv).rgb * shade;
 }
+
+// Unshadowed analytic wall colour (causticShadow = 1): byte-identical to the legacy path.
+float3 GetWallColor(float3 p) { return GetWallColorShadowed(p, 1.0); }
 
 #endif // WEBGL_WATER_COMMON_INCLUDED

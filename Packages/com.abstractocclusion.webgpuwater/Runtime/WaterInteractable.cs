@@ -48,6 +48,13 @@ namespace AbstractOcclusion.WebGpuWater
                  "ripple. Scales radius only - amplitude is displaceScale.")]
         [Range(1f, 20f)] [SerializeField] internal float rippleRadiusScale = 1f;
 
+        [Header("Passive reflection")]
+        [Tooltip("When on, this object's submerged footprint acts as a SOLID WALL: ripples that " +
+                 "reach it bounce off instead of passing through (KWS ObstacleObject behaviour). " +
+                 "Independent of the emission above - a static reflector can sit still and simply " +
+                 "reflect. Off (default) leaves the sim byte-identical.")]
+        public bool reflectsWaves = false;
+
         Vector3 _lastDropPosition;
         float _prevRelDepth;
         bool _tracking;

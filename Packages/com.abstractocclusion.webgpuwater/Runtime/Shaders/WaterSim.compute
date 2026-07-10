@@ -110,6 +110,16 @@ float _ObstacleStrength;
 float _ObstacleFlipY;   // 1 = flip V to match the sim's coordinate convention
 float _ObstacleDeadband; // soft dead-band on the blurred delta (submerged-thickness world units)
 
+// Static reflection (opt-in): submerged footprint of REFLECTOR-flagged objects only. A cell whose
+// coverage exceeds _ObstacleSolidThreshold is "solid" - the object occupies it. In Update a water
+// cell mirrors its OWN height across a solid neighbour (zero-gradient Neumann wall) so ripples bounce
+// instead of transmitting; solid cells hold flat (with an optional resting dip). _ObstacleReflect 0 =
+// disabled -> ObstacleSolid is never sampled, sim byte-identical. Shares _ObstacleFlipY's convention.
+Texture2D<float4> ObstacleSolid;
+float _ObstacleReflect;         // 1 = reflection on
+float _ObstacleSolidThreshold;  // coverage above which a solid-mask cell reflects
+float _ObstacleRestDip;         // resting depression at solid cells (pool units); 0 = flat
+
 // Foam buffer (R = foam amount per column). Advected/diffused, generated from
 // surface turbulence, and decayed over time. Separate ping-pong from the height.
 Texture2D<float>    FoamSrc;   // RFloat (r32) - WebGPU-safe single channel
@@ -190,6 +200,33 @@ void Drop(uint3 id : SV_DispatchThreadID)
     Dst[p] = Sanitize(info);
 }
 
+// Solid-mask coverage at sim texel p, matching the obstacle map's flip convention and clamped so an
+// edge neighbour never reads out of bounds.
+float ObstacleSolidCover(int2 p)
+{
+    int hi = (int)_Size - 1;
+    int2 q = p;
+    if (_ObstacleFlipY > 0.5) q.y = hi - p.y;
+    q = clamp(q, int2(0, 0), int2(hi, hi));
+    return ObstacleSolid.Load(int3(q, 0)).r;
+}
+
+// True when cell p is occupied by a reflector. Early-outs when reflection is off so ObstacleSolid is
+// never sampled (the sim then behaves exactly as before this feature).
+bool ObstacleSolidAt(int2 p)
+{
+    if (_ObstacleReflect <= 0.5) return false;
+    return ObstacleSolidCover(p) > _ObstacleSolidThreshold;
+}
+
+// Neighbour height for the Laplacian: mirror the centre height across a solid neighbour (zero-gradient
+// Neumann wall) so ripples reflect; otherwise read the neighbour normally.
+float ReflectiveNeighbour(int2 neighbour, float centreHeight)
+{
+    if (ObstacleSolidAt(neighbour)) return centreHeight;
+    return Read(neighbour).r;
+}
+
 [numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
 void Update(uint3 id : SV_DispatchThreadID)
 {
@@ -201,13 +238,19 @@ void Update(uint3 id : SV_DispatchThreadID)
     float depth = BedColumnDepth(((float2)p + 0.5) * _Delta);
     if (depth <= 0.0) { Dst[p] = Sanitize(float4(0.0, 0.0, info.b, info.a)); return; }
 
+    // Static reflection: a cell the object occupies holds flat (optionally a small resting dip).
+    // Neighbouring water mirrors off it rather than reading it (see ReflectiveNeighbour), so this held
+    // value never drains their ripples - it only defines the object's own footprint on the surface.
+    if (ObstacleSolidAt(p)) { Dst[p] = Sanitize(float4(-_ObstacleRestDip, 0.0, info.b, info.a)); return; }
+
     // Per-axis weighted Laplacian: the x- and z-neighbour curvatures are weighted separately
     // (_WaveAxisWeight) so waves travel at equal WORLD speed on a rectangular pool. With the
     // default (0.25, 0.25) this is exactly the old isotropic form: 0.25*(hL+hR+hD+hU) - h.
-    float hL = Read(p + int2(-1, 0)).r;
-    float hR = Read(p + int2( 1, 0)).r;
-    float hD = Read(p + int2( 0,-1)).r;
-    float hU = Read(p + int2( 0, 1)).r;
+    // Neighbours read through ReflectiveNeighbour so a solid cell reflects instead of transmitting.
+    float hL = ReflectiveNeighbour(p + int2(-1, 0), info.r);
+    float hR = ReflectiveNeighbour(p + int2( 1, 0), info.r);
+    float hD = ReflectiveNeighbour(p + int2( 0,-1), info.r);
+    float hU = ReflectiveNeighbour(p + int2( 0, 1), info.r);
     float force = _WaveAxisWeight.x * (hL + hR - 2.0 * info.r)
                 + _WaveAxisWeight.y * (hD + hU - 2.0 * info.r);
 

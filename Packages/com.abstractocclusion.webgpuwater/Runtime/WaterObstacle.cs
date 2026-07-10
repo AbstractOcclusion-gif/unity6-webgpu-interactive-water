@@ -11,6 +11,17 @@ namespace AbstractOcclusion.WebGpuWater
     {
         public RenderTexture Prev => _prev;
         public RenderTexture Curr => _curr;
+        // Submerged footprint of REFLECTOR-flagged objects only (passive reflection solid mask).
+        public RenderTexture Solid => _solid;
+
+#if UNITY_EDITOR
+        // Editor-only taps for the footprint inspector: the direct draw target (before any blit) and
+        // the box-filtered footprint (before temporal smoothing), to isolate a draw/projection fault
+        // from a downsample/smooth one. Not part of the runtime API.
+        internal RenderTexture DebugHiRes => _hiRes;
+        internal RenderTexture DebugRaw => _raw;
+        internal RenderTexture DebugSolid => _solid;
+#endif
 
         const float MinExtent = 1e-4f;        // floor so a zero extent can't collapse the frustum
         const float EyeHeightInExtents = 2f;  // ortho camera sits this many depth-extents above the surface
@@ -26,23 +37,22 @@ namespace AbstractOcclusion.WebGpuWater
         // same crossing becomes a smooth 1/16-step coverage ramp.
         const int SupersampleFactor = 4;
 
-        // Shader passes in ObstacleDepth.shader.
+        // Footprint pass in ObstacleDepth.shader. (Pass 1, the temporal-EMA blit, is disabled -
+        // it doesn't run on this URP/WebGPU backend; see Render's plain-copy comment.)
         const int PassFootprint = 0;
-        const int PassTemporalSmooth = 1;
 
         readonly Material _mat;
         readonly CommandBuffer _cb;
         readonly MaterialPropertyBlock _mpb;
         readonly int _resolution;
-        RenderTexture _prev, _curr;    // temporally SMOOTHED footprints (what the sim diffs)
+        RenderTexture _prev, _curr;    // consecutive-frame footprints (what the sim diffs)
         RenderTexture _hiRes, _midRes; // supersample chain: hi (4x) -> mid (2x) -> raw (1x)
-        RenderTexture _raw;            // this frame's box-filtered footprint, pre-smoothing
+        RenderTexture _raw;            // this frame's box-filtered footprint
+        RenderTexture _solid;          // footprint of reflector-flagged objects only (reflection mask)
         Matrix4x4 _view, _gpuProj;
 
         static readonly int ID_Waterline = Shader.PropertyToID("_WaterlineY");
         static readonly int ID_DisplaceScale = Shader.PropertyToID("_DisplaceScale");
-        static readonly int ID_SmoothedPrev = Shader.PropertyToID("_SmoothedPrev");
-        static readonly int ID_TemporalBlend = Shader.PropertyToID("_TemporalBlend");
 
         public WaterObstacle(Shader obstacleShader, int resolution, Vector3 volumeCenter,
                              Quaternion volumeRotation, Vector3 volumeExtent)
@@ -59,6 +69,7 @@ namespace AbstractOcclusion.WebGpuWater
             _prev = Create(_resolution);
             _curr = Create(_resolution);
             _raw = Create(_resolution);
+            _solid = Create(_resolution);
             _hiRes = Create(_resolution * SupersampleFactor);
             _midRes = Create(_resolution * SupersampleFactor / 2);
 
@@ -106,11 +117,12 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         /// <summary>Render the current submerged footprint of all interactables at the
-        /// supersampled resolution, box-filter it down to the sim grid, temporally smooth
-        /// it (EMA against last frame's result), and ping-pong so Prev holds last frame's
-        /// smoothed footprint and Curr holds this frame's. <paramref name="temporalBlend"/>
-        /// is the EMA weight of the fresh footprint: 1 = no smoothing, smaller = heavier
-        /// low-pass (fewer, longer waves from continuous bobbing/rotation noise).</summary>
+        /// supersampled resolution, box-filter it down to the sim grid, and ping-pong so Prev
+        /// holds last frame's footprint and Curr holds this frame's (the sim diffs the two).
+        /// <paramref name="temporalBlend"/> is currently unused: the temporal-EMA smoothing pass
+        /// is disabled because its custom-material blit doesn't run on this URP/WebGPU backend
+        /// (see the plain-copy note below). Kept in the signature for the planned compute-based
+        /// EMA re-add.</summary>
         public void Render(float waterY, float temporalBlend)
         {
             (_prev, _curr) = (_curr, _prev);
@@ -145,13 +157,45 @@ namespace AbstractOcclusion.WebGpuWater
             _cb.Blit(_hiRes, _midRes);
             _cb.Blit(_midRes, _raw);
 
-            // Temporal EMA: curr = lerp(prev-smoothed, raw, blend). The wave equation is
-            // linear, so decimating/accumulating injections changes nothing (superposition);
-            // filtering the FREQUENCY content of the forcing is what removes the dense
-            // packets of tight rings while keeping the total displaced volume intact.
-            _mat.SetTexture(ID_SmoothedPrev, _prev);
-            _mat.SetFloat(ID_TemporalBlend, Mathf.Clamp01(temporalBlend));
-            _cb.Blit(_raw, _curr, _mat, PassTemporalSmooth);
+            // Copy the fresh footprint into _curr with a PLAIN blit. The previous temporal-EMA
+            // used a custom-material blit (ObstacleDepth Pass 1, a CG vert_img/tex2D fullscreen
+            // pass); on this URP/WebGPU backend that pass never runs, so _curr stayed frozen at
+            // its initial value and every footprint read back as a uniform constant - the real
+            // "FootprintDelta works weird" bug. A plain Blit (the same call the downsamples use,
+            // proven to work here) actually lands _raw in _curr. Trade-off: temporal anti-flicker
+            // smoothing is disabled; re-add it as a COMPUTE kernel (the codebase's WebGPU-proven
+            // path) if moving-object flicker returns. 'temporalBlend' is unused until then.
+            _cb.Blit(_raw, _curr);
+
+            Graphics.ExecuteCommandBuffer(_cb);
+        }
+
+        /// <summary>Rasterize the submerged footprint of ONLY the reflector-flagged interactables into
+        /// the solid mask (sim resolution, no supersample - a reflecting wall tolerates a hard edge).
+        /// The Update kernel thresholds this to decide which cells bounce ripples. Separate from the
+        /// emission footprint so ordinary floaters never become walls.</summary>
+        public void RenderSolid(float waterY)
+        {
+            _cb.Clear();
+            _cb.SetRenderTarget(_solid);
+            _cb.ClearRenderTarget(false, true, Color.clear);
+            _cb.SetViewProjectionMatrices(_view, _gpuProj);
+
+            var list = WaterInteractable.Active;
+            for (int i = 0; i < list.Count; i++)
+            {
+                var it = list[i];
+                if (it == null || it.Renderer == null || !it.reflectsWaves) continue;
+
+                float waterlineY = it.WaterlineY(waterY);
+                if (!it.IsSubmerged(waterlineY)) continue;
+
+                it.Renderer.GetPropertyBlock(_mpb);
+                _mpb.SetFloat(ID_Waterline, waterlineY);
+                _mpb.SetFloat(ID_DisplaceScale, it.displaceScale);
+                it.Renderer.SetPropertyBlock(_mpb);
+                _cb.DrawRenderer(it.Renderer, _mat, 0, PassFootprint);
+            }
 
             Graphics.ExecuteCommandBuffer(_cb);
         }
@@ -161,6 +205,7 @@ namespace AbstractOcclusion.WebGpuWater
             ReleaseAndDestroy(ref _prev);
             ReleaseAndDestroy(ref _curr);
             ReleaseAndDestroy(ref _raw);
+            ReleaseAndDestroy(ref _solid);
             ReleaseAndDestroy(ref _hiRes);
             ReleaseAndDestroy(ref _midRes);
             _cb?.Release();

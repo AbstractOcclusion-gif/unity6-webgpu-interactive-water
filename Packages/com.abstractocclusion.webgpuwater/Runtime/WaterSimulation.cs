@@ -44,6 +44,10 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_ObstacleStrength = Shader.PropertyToID("_ObstacleStrength");
         static readonly int ID_ObstacleFlipY = Shader.PropertyToID("_ObstacleFlipY");
         static readonly int ID_ObstacleDeadband = Shader.PropertyToID("_ObstacleDeadband");
+        static readonly int ID_ObstacleSolid = Shader.PropertyToID("ObstacleSolid");
+        static readonly int ID_ObstacleReflect = Shader.PropertyToID("_ObstacleReflect");
+        static readonly int ID_ObstacleSolidThreshold = Shader.PropertyToID("_ObstacleSolidThreshold");
+        static readonly int ID_ObstacleRestDip = Shader.PropertyToID("_ObstacleRestDip");
         static readonly int ID_WaveSpeed = Shader.PropertyToID("_WaveSpeed");
         static readonly int ID_Damping = Shader.PropertyToID("_Damping");
         static readonly int ID_FoamGenRate = Shader.PropertyToID("_FoamGenRate");
@@ -91,6 +95,14 @@ namespace AbstractOcclusion.WebGpuWater
         float _shoreFoamDepthPool;  // pool-unit depth band for standing shore foam
         float _shoreFoamStrength;
         float _breakFoamStrength;   // dynamic breaking-foam strength (Phase 2a)
+
+        // Static reflection (opt-in). Inactive by default so the Update kernel is byte-identical.
+        // Bound onto the Update kernel each frame (black solid mask when inactive).
+        Texture _solidTex;
+        float _reflectActive;          // 1 = reflection on
+        float _reflectSolidThreshold;  // coverage above which a solid-mask cell reflects
+        float _reflectRestDip;         // resting depression at solid cells (pool units)
+        float _reflectFlipY;           // 1 = flip V (same convention as the obstacle map)
 
         RenderTexture _a; // current state (height, velocity, normal.x, normal.z)
         RenderTexture _b; // scratch
@@ -237,6 +249,30 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetTexture(kernel, ID_BedTex, _bedTex != null ? _bedTex : Texture2D.blackTexture);
         }
 
+        /// <summary>Static reflection: the solid mask (submerged footprint of reflector objects) plus its
+        /// threshold and resting dip. With <paramref name="enabled"/> false (or a null mask) the Update
+        /// kernel is byte-identical to a non-reflecting sim. <paramref name="solidThreshold"/> is in the
+        /// mask's coverage units (submerged thickness, world); <paramref name="restDip"/> is pool units.</summary>
+        public void SetObstacleReflection(Texture solid, bool enabled, float solidThreshold, float restDip, bool flipY)
+        {
+            _solidTex = solid;
+            _reflectActive = (enabled && solid != null) ? 1f : 0f;
+            _reflectSolidThreshold = solidThreshold;
+            _reflectRestDip = restDip;
+            _reflectFlipY = flipY ? 1f : 0f;
+        }
+
+        // Bind the solid mask + reflection uniforms onto a kernel. A texture is always bound (black when
+        // inactive) so the backend never sees an unbound sampler; the shader early-outs on _ObstacleReflect.
+        void BindObstacleReflection(int kernel)
+        {
+            _cs.SetFloat(ID_ObstacleReflect, _reflectActive);
+            _cs.SetFloat(ID_ObstacleSolidThreshold, _reflectSolidThreshold);
+            _cs.SetFloat(ID_ObstacleRestDip, _reflectRestDip);
+            _cs.SetFloat(ID_ObstacleFlipY, _reflectFlipY);
+            _cs.SetTexture(kernel, ID_ObstacleSolid, _solidTex != null ? _solidTex : Texture2D.blackTexture);
+        }
+
         public void AddDrop(float x, float y, float radius, float strength)
         {
             radius = Mathf.Max(radius, MinDropTexelRadius / Resolution);
@@ -265,6 +301,7 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetFloat(ID_Damping, damping);
             _cs.SetVector(ID_WaveAxisWeight, _waveAxisWeight);
             BindBed(_kUpdate);
+            BindObstacleReflection(_kUpdate);
             Dispatch(_kUpdate);
         }
 

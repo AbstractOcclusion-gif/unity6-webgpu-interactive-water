@@ -25,7 +25,9 @@ namespace AbstractOcclusion.WebGpuWater
 {
     [ExecuteAlways]
     [DefaultExecutionOrder(-50)]
-    public class WaterVolume : MonoBehaviour, ISerializationCallbackReceiver
+    // partial: the editor-only obstacle-footprint PNG dumper lives in WaterVolume.ObstacleDebug.cs
+    // so debug instrumentation stays isolated from the runtime body and is trivial to delete.
+    public partial class WaterVolume : MonoBehaviour, ISerializationCallbackReceiver
     {
         /// <summary>How WaterInteractable objects disturb the surface.</summary>
         public enum ObjectInteraction
@@ -587,6 +589,18 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         [Header("Simulation")]
+        [Tooltip("Master animation speed for THIS body's surface: multiplies the wave clock and the " +
+                 "ripple solver timestep. 1 = real time, 0 = frozen, 2 = double speed. Foam and splash " +
+                 "particles keep real time (surface only).")]
+        [Range(0f, MaxTimeScale)] [SerializeField] float timeScale = 1f;
+
+        // Upper bound for timeScale + the inspector slider max. Kept modest so the CFL-bounded ripple
+        // solver (waveSpeed is stable only to ~2) still integrates sanely when time is sped up.
+        const float MaxTimeScale = 8f;
+
+        /// <summary>Per-body master animation speed (wave clock + ripple timestep). Clamped to [0, MaxTimeScale].</summary>
+        public float TimeScale { get => timeScale; set => timeScale = Mathf.Clamp(value, 0f, MaxTimeScale); }
+
         [Tooltip("Direction TOWARD the light. Auto-driven from 'sun' when one is assigned.")]
         [SerializeField] internal Vector3 lightDir = new Vector3(2f, 2f, -1f);
         [SerializeField] internal int causticResolution = 1024;
@@ -1841,6 +1855,7 @@ namespace AbstractOcclusion.WebGpuWater
             // Edit-mode ticks arrive from the editor loop, so the preview integrates real
             // elapsed (clamped) time instead of the play-mode frame delta.
             float dt = Application.isPlaying ? Time.deltaTime : EditorDeltaSeconds();
+            dt *= Mathf.Max(0f, timeScale); // per-body master animation speed: scales the wave clock + ripple step (surface only)
             if (!_paused)
             {
                 // The analytic wind waves are driven by the shared clock, so they keep moving
@@ -2344,6 +2359,25 @@ namespace AbstractOcclusion.WebGpuWater
             return Mathf.Lerp(1f - swellShoalStrength, 1f, t);
         }
 
+        // Static-reflection tuning (fixed for v1; promote to per-body settings if scene tuning is needed).
+        // Threshold is in the solid mask's coverage units (submerged thickness, world); a low floor just
+        // rejects faint silhouette edges. Rest dip is a world depression shown under a reflector, 0 = flat.
+        const float ObstacleReflectSolidThreshold = 0.02f;
+        const float ObstacleReflectRestDip = 0f;
+
+        // True when at least one enabled interactable is flagged as a wave reflector. The solid mask clips
+        // to this body's frame, so a reflector living in another body contributes nothing here.
+        static bool AnyReflectorActive()
+        {
+            var list = WaterInteractable.Active;
+            for (int i = 0; i < list.Count; i++)
+            {
+                WaterInteractable it = list[i];
+                if (it != null && it.reflectsWaves && it.isActiveAndEnabled) return true;
+            }
+            return false;
+        }
+
         void Step(float seconds)
         {
             if (seconds > MaxStepSeconds) return; // hitch/breakpoint guard, see the const
@@ -2390,6 +2424,19 @@ namespace AbstractOcclusion.WebGpuWater
                                      obstacleStrength / VolumeExtentSafe.y, obstacleFlipY,
                                      obstacleDeadband);
             }
+
+            // Static reflection (opt-in per WaterInteractable.reflectsWaves, independent of the emission
+            // mode above): build a solid mask from the reflector objects and feed it to the Update kernel
+            // so ripples bounce off them. No reflectors -> a null mask, so the sim stays byte-identical.
+            bool anyReflector = _obstacle != null && AnyReflectorActive();
+            if (anyReflector)
+            {
+                if (_windowed) _obstacle.SetFrame(SimWindowCenter, VolumeRotation, SimHalfExtent);
+                _obstacle.RenderSolid(VolumeCenter.y);
+            }
+            _water.SetObstacleReflection(
+                anyReflector ? _obstacle.Solid : null, anyReflector,
+                ObstacleReflectSolidThreshold, ObstacleReflectRestDip / VolumeExtentSafe.y, obstacleFlipY);
 
             // Shoreline (bed depth): couple the baked terrain bed into the sim so ripples shoal and a
             // shore-foam band forms near the waterline. Bounded bodies only - a windowed ocean's sim is

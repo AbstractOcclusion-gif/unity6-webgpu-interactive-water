@@ -113,7 +113,16 @@ Shader "AbstractOcclusion/WebGpuWater/PoolWall"
                 float wallCaustic;
                 float wallShade = GetWallShadeSplit(i.position, wallN, wallCaustic);
                 float3 color = albedo * wallShade;
-                color += albedo * _CausticTint.rgb * (wallCaustic * _CausticStrength);
+
+                // Main light + shadow fetched up front so caustics can be gated by it below.
+                float4 shadowCoord = TransformWorldToShadowCoord(i.worldPos);
+                Light mainLight = GetMainLight(shadowCoord);
+                // Soft, art-directed object shadow on the base pool colour (unchanged in full sun).
+                color *= lerp(1.0, mainLight.shadowAttenuation, _ObjectShadowStrength);
+                // Caustics are refracted SUNLIGHT: gate them by the FULL shadow attenuation so they
+                // vanish under a caster (matching WaterReceiver) instead of leaking through the soft
+                // base term at ~40%.
+                color += albedo * _CausticTint.rgb * (wallCaustic * _CausticStrength * mainLight.shadowAttenuation);
 
                 // Water shading gates on the footprint so geometry beyond the pool box (a wall
                 // that overhangs, or an oversized user mesh) doesn't pick up the underwater
@@ -129,11 +138,6 @@ Shader "AbstractOcclusion/WebGpuWater/PoolWall"
                 // against it rather than the flat _VolumeCenter.y plane (so a pool at any Y
                 // is handled by its own volume frame, and cut/fog never disagree).
                 float surfaceY = PoolToWorld(float3(i.position.x, info.r, i.position.z)).y;
-
-                // receive real object shadows from the scene's directional light
-                float4 shadowCoord = TransformWorldToShadowCoord(i.worldPos);
-                Light mainLight = GetMainLight(shadowCoord);
-                color *= lerp(1.0, mainLight.shadowAttenuation, _ObjectShadowStrength);
 
                 // Downwelling darkening: deeper walls/floor read darker and hue-shifted.
                 // This also fades the floor caustics baked into the wall colour with depth.

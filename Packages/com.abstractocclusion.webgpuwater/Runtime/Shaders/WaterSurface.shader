@@ -54,6 +54,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             #pragma vertex vert
             #pragma fragment frag
             #pragma target 4.0
+            // Main-light shadow keywords: this pass samples the shadow map BY HAND (it is CGPROGRAM, so
+            // it can't include URP's Shadows.hlsl) to gate the analytic floor caustic. Needs "Transparent
+            // Receive Shadows" ON in the active Renderer asset, else the keyword is never set (caustic
+            // stays lit, i.e. the old behaviour).
+            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
             // Reflection mode (planar / SSR / URP-probe base / real refraction) is UNIFORM-driven,
             // published per body every frame via the MaterialPropertyBlock (WaterUniformPublisher),
             // so it updates live in the editor and needs no shader variants.
@@ -472,6 +477,49 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 return color;
             }
 
+            // ---- Manual URP main-light shadow tap (this pass is CGPROGRAM and cannot include URP's
+            // Shadows.hlsl). Mirrors URP's cascade select + a single hard depth compare - enough to GATE
+            // the analytic floor caustic (a soft multiply), NOT to draw crisp shadows. Returns 1 (lit)
+            // when shadows are off/unsupported, so the caustic falls back to its legacy look. ----
+#if defined(_MAIN_LIGHT_SHADOWS) || defined(_MAIN_LIGHT_SHADOWS_CASCADE)
+            sampler2D _MainLightShadowmapTexture;
+            float4x4  _MainLightWorldToShadow[5];
+            float4    _CascadeShadowSplitSpheres0;
+            float4    _CascadeShadowSplitSpheres1;
+            float4    _CascadeShadowSplitSpheres2;
+            float4    _CascadeShadowSplitSpheres3;
+            float4    _CascadeShadowSplitSphereRadii;
+            float4    _MainLightShadowParams; // x = shadow strength
+
+            float WaterMainLightShadow(float3 worldPos)
+            {
+                // Cascade index from distance to the four split spheres (URP ComputeCascadeIndex).
+                float3 f0 = worldPos - _CascadeShadowSplitSpheres0.xyz;
+                float3 f1 = worldPos - _CascadeShadowSplitSpheres1.xyz;
+                float3 f2 = worldPos - _CascadeShadowSplitSpheres2.xyz;
+                float3 f3 = worldPos - _CascadeShadowSplitSpheres3.xyz;
+                float4 d2 = float4(dot(f0, f0), dot(f1, f1), dot(f2, f2), dot(f3, f3));
+                float4 w  = float4(d2 < _CascadeShadowSplitSphereRadii);
+                w.yzw = saturate(w.yzw - w.xyz);
+                int cascade = min(3, (int)(4.0 - dot(w, float4(4.0, 3.0, 2.0, 1.0))));
+
+                float4 c = mul(_MainLightWorldToShadow[cascade], float4(worldPos, 1.0));
+                c.xyz /= c.w;
+                if (c.z <= 0.0 || c.z >= 1.0) return 1.0; // outside the atlas -> treat as lit
+
+                float occluder = tex2Dlod(_MainLightShadowmapTexture, float4(c.xy, 0.0, 0.0)).r;
+                // In shadow when the fragment is FARTHER from the light than the stored occluder.
+            #if defined(UNITY_REVERSED_Z)
+                float lit = c.z < occluder ? 0.0 : 1.0;
+            #else
+                float lit = c.z > occluder ? 0.0 : 1.0;
+            #endif
+                return lerp(1.0, lit, _MainLightShadowParams.x); // fold in shadow strength
+            }
+#else
+            float WaterMainLightShadow(float3 worldPos) { return 1.0; }
+#endif
+
             // Shade a WORLD-space ray: a DOWN ray refracts into the pool and samples the analytic
             // floor/walls (the tiles seen THROUGH the water); an UP ray is a reflection and samples
             // the environment only. Reflections never return the pool tiles - the floor is seen via
@@ -497,7 +545,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     float3 po = WorldToPool(worldOrigin);
                     float3 pd = WorldDirToPool(worldRay);
                     float2 t = IntersectCube(po, pd, POOL_BOX_MIN, POOL_BOX_MAX);
-                    return GetWallColor(po + pd * t.y) * waterColor;
+                    // Gate the floor caustic by the main-light shadow at the FLOOR's world position, so
+                    // a caster's shadow on the pool bottom kills the caustic there (like the geometry paths).
+                    float3 floorPool = po + pd * t.y;
+                    float causticShadow = WaterMainLightShadow(PoolToWorld(floorPool));
+                    return GetWallColorShadowed(floorPool, causticShadow) * waterColor;
                 }
                 return SampleEnvironment(worldRay);
             }

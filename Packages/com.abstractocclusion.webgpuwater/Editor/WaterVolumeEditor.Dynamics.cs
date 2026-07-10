@@ -11,7 +11,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         void DrawSimulationSection()
         {
             _showSimulation = WaterEditorUI.Section("Simulation", _showSimulation, () =>
-                DrawFields("lightDir", "causticResolution"));
+                DrawFields("timeScale", "lightDir", "causticResolution"));
         }
 
         void DrawRippleSection()
