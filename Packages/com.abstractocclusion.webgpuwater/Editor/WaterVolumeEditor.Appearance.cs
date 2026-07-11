@@ -42,6 +42,28 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "waterFogSettings.waterOpacity"));
         }
 
+        void DrawVolumeScatterSection()
+        {
+            _showScatter = WaterEditorUI.SectionWithToggle(
+                "Volume Scattering", _showScatter, Prop("volumeScatterSettings.volumeScatter"), () =>
+            {
+                DrawFields(
+                    "volumeScatterSettings.scatterColor",
+                    "volumeScatterSettings.scatterIntensity",
+                    "volumeScatterSettings.scatterAnisotropy",
+                    "volumeScatterSettings.scatterAmbientTerm",
+                    "volumeScatterSettings.scatterSunTerm");
+                WaterEditorUI.SubHeading("Wave-crest subsurface glow");
+                DrawFields(
+                    "volumeScatterSettings.crestScatter",
+                    "volumeScatterSettings.sssIntensity",
+                    "volumeScatterSettings.sssSunFalloff",
+                    "volumeScatterSettings.sssPinchMin",
+                    "volumeScatterSettings.sssPinchMax",
+                    "volumeScatterSettings.sssPinchFalloff");
+            });
+        }
+
         void DrawDepthAttenuationSection()
         {
             _showDepth = WaterEditorUI.SectionWithToggle(

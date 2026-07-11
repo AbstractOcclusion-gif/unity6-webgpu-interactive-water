@@ -89,6 +89,12 @@ namespace AbstractOcclusion.WebGpuWater
                  "window may overhang the edge and water beyond the footprint is analytic-only " +
                  "(natural for open water).")]
         [SerializeField] internal bool clampWindowToShore = false;
+        [Tooltip("Optional: the sim window follows THIS transform instead of the target camera (e.g. the " +
+                 "boat), so the interactive ripples centre on it. Leave empty to follow the camera.")]
+        [SerializeField] internal Transform simWindowFocus;
+        [Tooltip("Optional offset for the sim window centre, in the follow target's horizontal frame: " +
+                 "X = right, Y = forward. Use it to lead the window ahead of the camera/boat.")]
+        [SerializeField] internal Vector2 simWindowOffset = Vector2.zero;
         [Tooltip("Width, in sim texels, over which the window's ripple fades to analytic-only at " +
                  "its border so there is no seam.")]
         [Range(0f, 32f)] [SerializeField] internal float simWindowEdgeFadeTexels = 8f;
@@ -719,6 +725,63 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField, HideInInspector, FormerlySerializedAs("fogDensity")] float _legacyFogDensity = 2f;
         [SerializeField, HideInInspector, FormerlySerializedAs("waterOpacity")] float _legacyWaterOpacity = 0f;
 
+        [Header("Volume scattering")]
+        [SerializeField] VolumeScatterSettings volumeScatterSettings = new VolumeScatterSettings();
+
+        /// <summary>Lit in-scatter colour layered on top of the Beer-Lambert fog. When off, the fog
+        /// in-scatters the flat fog colour exactly as before, so this is opt-in per body. Absorption
+        /// authoring converts a transmission colour to per-channel extinction; the crest SSS boosts sun
+        /// scatter at steep wave peaks.</summary>
+        [System.Serializable]
+        public sealed class VolumeScatterSettings
+        {
+            [Tooltip("Light the water volume (a body colour scaled by intensity and lit by sun + ambient " +
+                     "through a phase function) instead of in-scattering a flat picked colour. Makes the " +
+                     "open ocean respond to the sun. Off = unchanged flat fog colour.")]
+            public bool volumeScatter = false;
+            [Tooltip("The water body colour, shown directly. HDR.")]
+            [ColorUsage(false, true)] public Color scatterColor = new Color(0.05f, 0.22f, 0.32f);
+            [Tooltip("Master brightness of the in-scattered colour. Raise this if the water reads too dark.")]
+            [Range(0f, 8f)] public float scatterIntensity = 2f;
+            [Tooltip("Phase anisotropy g: 0 scatters evenly, higher concentrates a forward glow toward the " +
+                     "sun (Schlick/Henyey-Greenstein).")]
+            [Range(0f, 0.95f)] public float scatterAnisotropy = 0.5f;
+            [Tooltip("Weight of the ambient (sky) contribution to the in-scattered colour.")]
+            [Range(0f, 4f)] public float scatterAmbientTerm = 1f;
+            [Tooltip("Weight of the direct sun contribution to the in-scattered colour.")]
+            [Range(0f, 4f)] public float scatterSunTerm = 1f;
+
+            [Tooltip("Add a subsurface glow at steep wave crests, brightest when looking toward the sun. " +
+                     "Ocean bodies only.")]
+            public bool crestScatter = false;
+            [Tooltip("Strength of the crest subsurface glow.")]
+            [Range(0f, 8f)] public float sssIntensity = 3f;
+            [Tooltip("How tightly the crest glow concentrates toward the sun (higher = tighter highlight).")]
+            [Range(0.5f, 8f)] public float sssSunFalloff = 2f;
+            [Tooltip("Crest fold amount (0 = flat water, 1 = breaking) where the glow starts to ramp in. " +
+                     "Raise to keep the glow off the gentler swell and onto steeper crests.")]
+            [Range(0f, 1f)] public float sssPinchMin = 0.1f;
+            [Tooltip("Fold amount where the glow reaches full strength (folds seed the whitecaps, so keep " +
+                     "this below full break to let foam take over the very tips).")]
+            [Range(0f, 1f)] public float sssPinchMax = 0.6f;
+            [Tooltip("Power curve on the fold ramp: >1 concentrates the glow onto the sharpest folds.")]
+            [Range(0.5f, 6f)] public float sssPinchFalloff = 1.5f;
+        }
+
+        // Same-named forwarding accessors keep the publisher readable and every reader stable.
+        internal bool volumeScatter => volumeScatterSettings.volumeScatter;
+        internal Color scatterColor => volumeScatterSettings.scatterColor;
+        internal float scatterIntensity => volumeScatterSettings.scatterIntensity;
+        internal float scatterAnisotropy => volumeScatterSettings.scatterAnisotropy;
+        internal float scatterAmbientTerm => volumeScatterSettings.scatterAmbientTerm;
+        internal float scatterSunTerm => volumeScatterSettings.scatterSunTerm;
+        internal bool crestScatter => volumeScatterSettings.crestScatter;
+        internal float sssIntensity => volumeScatterSettings.sssIntensity;
+        internal float sssSunFalloff => volumeScatterSettings.sssSunFalloff;
+        internal float sssPinchMin => volumeScatterSettings.sssPinchMin;
+        internal float sssPinchMax => volumeScatterSettings.sssPinchMax;
+        internal float sssPinchFalloff => volumeScatterSettings.sssPinchFalloff;
+
         [Header("Depth attenuation (downwelling)")]
         [SerializeField] DepthAttenuationSettings depthAttenuation = new DepthAttenuationSettings();
 
@@ -1275,6 +1338,8 @@ namespace AbstractOcclusion.WebGpuWater
         internal bool OceanFftActive => _oceanFft != null && _oceanFft.Ready;
         // Cascade whitecap data for the foam-particle spawn compute (crest foam source).
         internal RenderTexture OceanFftNormalTexture => _oceanFft?.NormalTexture;
+        // Spatial displacement cascade for the foam-particle density splat (swell-height glue).
+        internal RenderTexture OceanFftSpatialTexture => _oceanFft?.SpatialTexture;
         internal Vector4 OceanFftDomainSizes => _oceanFft != null ? _oceanFft.DomainSizes : Vector4.one;
         internal float OceanFftCascadeCount => _oceanFft != null ? _oceanFft.CascadeCount : 0f;
         internal Texture2D BedTexture => _bedBaker?.Texture;
@@ -1468,6 +1533,9 @@ namespace AbstractOcclusion.WebGpuWater
             // scrolling window, so it keeps the quality-tier resolution.
             if (!_windowed)
                 _simRes = ResolveDensitySimResolution();
+            // With _windowed and the final _simRes known, measure how far the grid falls short of the
+            // tier's texels-per-metre (1 = no shortfall; drives the scale-invariance corrections).
+            ResolveSimDensityRatio();
 
             // Construct the eagerly-owned collaborators through the module registry. Ordered here (after
             // _windowed, which the ocean-FFT module gates on; before ApplySimAnisotropy, which needs the
@@ -1790,6 +1858,48 @@ namespace AbstractOcclusion.WebGpuWater
             int target = Mathf.CeilToInt(fullWidth * setting.TexelsPerMeter);
             target = Mathf.CeilToInt(target / (float)group) * group;
             return Mathf.Clamp(target, setting.MinResolution, setting.MaxResolution);
+        }
+
+        // ---- Scale-invariant ripples on cap-limited grids (KWS/Crest-informed) ----------------------
+        // How coarse the sim grid actually is versus the tier's authored texels-per-metre: 1 while the
+        // grid holds tier density (every body below the resolution cap - their look is untouched), < 1
+        // once the cap forces metres-per-texel to grow (bounded bodies wider than cap/texelsPerMeter,
+        // and windowed bodies whose window outgrows the tier resolution). Feeds three corrections that
+        // are all identity at 1: wave-speed dispersion, damping-per-world-metre, and drop-floor energy.
+        // Without them the integrator's fixed texel-space units make world propagation speed, energy
+        // persistence and injected footprints all drift with extent - the "harsh above 5 m, intensity
+        // needs re-tweaking per size" complaint.
+        float _simDensityRatio = 1f;
+
+        void ResolveSimDensityRatio()
+        {
+            RippleQualitySetting setting = RippleQualityTable[rippleQuality];
+            float fullWidth = 2f * (_windowed ? SimHorizontalExtent
+                                              : Mathf.Max(VolumeExtentSafe.x, VolumeExtentSafe.z));
+            float actualTexelsPerMeter = _simRes / Mathf.Max(fullWidth, MinVolumeExtent);
+            // Never > 1: a small body clamped UP to the tier's minimum resolution is denser than
+            // authored, which needs no correction (and boosting wave speed there would break CFL).
+            _simDensityRatio = Mathf.Min(1f, actualTexelsPerMeter / setting.TexelsPerMeter);
+        }
+
+        // Energy-conserving strength compensation for the sim's minimum drop footprint. The sim floors
+        // every drop to MinDropTexelRadius texels so it stays a smooth bump; once the grid is
+        // cap-limited that floor is physically WIDER, and an uncompensated splash reads far stronger on
+        // a big body (same peak height over a much larger bump). Scale strength by the area ratio
+        // between the floor at tier density and the actual floor, so the injected VOLUME matches what
+        // the same call produces on a tier-density grid. Identity when the requested radius already
+        // exceeds the actual floor, or when the grid holds tier density. (Crest analog: interaction
+        // inputs are skipped/renormalised on LOD slices too coarse for the feature.)
+        float DropFloorEnergyScale(float worldRadius)
+        {
+            if (_simDensityRatio >= 1f) return 1f;
+            RippleQualitySetting setting = RippleQualityTable[rippleQuality];
+            float floorRefMetres = WaterSimulation.MinDropTexelRadius / setting.TexelsPerMeter;
+            float floorActualMetres = floorRefMetres / _simDensityRatio;
+            float refRadius = Mathf.Max(worldRadius, floorRefMetres);
+            float actualRadius = Mathf.Max(worldRadius, floorActualMetres);
+            float scale = refRadius / actualRadius;
+            return scale * scale;
         }
 
         // Give the surface renderers per-body material instances and set their reflection
@@ -2204,6 +2314,10 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (_water == null) return;
 
+            // Keep the injected VOLUME extent-stable when the sim's minimum drop footprint widens on
+            // a cap-limited grid (identity on tier-density grids and for radii above the floor).
+            strength *= DropFloorEnergyScale(radius);
+
             // Windowed bodies inject into the sim WINDOW frame; ripples outside it are dropped.
             if (_windowed)
             {
@@ -2218,6 +2332,79 @@ namespace AbstractOcclusion.WebGpuWater
             _water.AddDrop(px, pz, radius / VolumeHorizontalExtent, strength / VolumeExtentSafe.y);
         }
 
+        /// <summary>Inject a moving sphere's wake into THIS body (Crest-style velocity dipole). Unlike
+        /// <see cref="AddRipple"/>, which stamps an isotropic HEIGHT drop, this accelerates the water's
+        /// velocity field with a directional dipole - pushed ahead of travel, pulled behind - so a
+        /// travelling object lays a V-wake. <paramref name="worldStep"/> is the sphere's world-space
+        /// displacement THIS physics step (position delta, not a rate), so the wake is frame-rate
+        /// independent; <paramref name="radius"/> and <paramref name="strength"/> are world radius and a
+        /// master gain. Out-of-footprint or fully-clear-of-water calls are ignored. Coordinate mapping
+        /// mirrors <see cref="AddRipple"/> (affine, so velocity maps exactly under rotation).</summary>
+        public void AddSphereInteraction(Vector3 worldPos, Vector3 worldStep, float radius, float strength)
+        {
+            if (_water == null) return;
+
+            // Submersion weight from the ANALYTIC waterline (rest + wind + swell, never the live ripples),
+            // so the object's own wake can't feed back into how hard it pushes.
+            float weight = SphereSubmersionWeight(worldPos, radius);
+            if (weight <= 0f) return;
+
+            // Same footprint-floor energy compensation as AddRipple: a small interactor on a
+            // cap-limited grid gets its dipole widened to the texel floor, so scale the gain
+            // down by the area ratio to keep the imparted wake extent-stable.
+            strength *= DropFloorEnergyScale(radius);
+
+            float velY = worldStep.y / VolumeExtentSafe.y; // world vertical motion -> pool-height units
+
+            // Windowed bodies inject into the scrolling sim WINDOW frame; wakes outside it are dropped.
+            if (_windowed)
+            {
+                Vector3 c = WorldToSim(new Vector3(worldPos.x, SimWindowCenter.y, worldPos.z));
+                if (c.x < -1f || c.x > 1f || c.z < -1f || c.z > 1f) return;
+                Vector3 cNext = WorldToSim(new Vector3(worldPos.x + worldStep.x, SimWindowCenter.y,
+                                                       worldPos.z + worldStep.z));
+                Vector2 velXZ = new Vector2(cNext.x - c.x, cNext.z - c.z);
+                _water.AddSphereInteraction(new Vector2(c.x, c.z), radius / SimHorizontalExtent,
+                                            velXZ, velY, weight, strength);
+                return;
+            }
+
+            Vector3 pool = WorldToPool(new Vector3(worldPos.x, VolumeCenter.y, worldPos.z));
+            if (pool.x < -1f || pool.x > 1f || pool.z < -1f || pool.z > 1f) return;
+            Vector3 poolNext = WorldToPool(new Vector3(worldPos.x + worldStep.x, VolumeCenter.y,
+                                                       worldPos.z + worldStep.z));
+            Vector2 velXZb = new Vector2(poolNext.x - pool.x, poolNext.z - pool.z);
+            _water.AddSphereInteraction(new Vector2(pool.x, pool.z), radius / VolumeHorizontalExtent,
+                                        velXZb, velY, weight, strength);
+        }
+
+        // Submersion weight for the sphere interactor: 1 at the waterline, a Gaussian fade as the sphere
+        // sinks (a deep sphere barely dents the surface), and a sqrt fade to 0 as it lifts a radius clear.
+        // Mirrors Crest's SphereWaterInteraction weighting. Uses the analytic waterline (valid from frame 0).
+        float SphereSubmersionWeight(Vector3 worldPos, float radius)
+        {
+            if (!TryGetAnalyticWaterline(worldPos.x, worldPos.z, out float surfaceY)) return 0f;
+            float r = Mathf.Max(radius, 1e-3f);
+            float below = surfaceY - worldPos.y; // > 0 submerged, < 0 above the surface
+            if (below >= 0f)
+            {
+                float t = 0.5f * below / r;
+                return Mathf.Exp(-t * t);
+            }
+            return Mathf.Sqrt(Mathf.Clamp01(1f + below / r));
+        }
+
+        /// <summary>Inject a moving sphere's wake at a world position on whichever body contains it
+        /// (Crest-style velocity dipole). <paramref name="worldStep"/> is the displacement this physics
+        /// step. Returns false if no water body contains the point.</summary>
+        public static bool TrySphereInteractionAt(Vector3 worldPos, Vector3 worldStep, float radius, float strength)
+        {
+            WaterVolume body = BodyContaining(worldPos);
+            if (body == null) return false;
+            body.AddSphereInteraction(worldPos, worldStep, radius, strength);
+            return true;
+        }
+
         /// <summary>World-space height (Y) of the water surface above WORLD (x,z).
         /// Returns false until the first readback lands or if outside the footprint.</summary>
         public bool TryGetWaterHeight(float worldX, float worldZ, out float height)
@@ -2225,10 +2412,15 @@ namespace AbstractOcclusion.WebGpuWater
             height = 0f;
             if (_sampler == null) return false; // not initialized yet
             Vector3 probe = new Vector3(worldX, VolumeCenter.y, worldZ);
-            if (!WorldToPoolXZ(probe, out float px, out float pz)) return false;
+            if (!QueryPoolXZ(probe, out float px, out float pz)) return false;
             if (!_sampler.TrySamplePoolSurface(probe, px, pz, out float poolHeight, out _)) return false;
 
             height = PoolToWorld(new Vector3(px, poolHeight, pz)).y; // pool -> world Y
+            // Open water layers the big world-space swell on top of the wind waves (the pool wavebank is
+            // suppressed for these bodies), same as TryGetSurface / TrySampleSubmersion - without this an
+            // ocean's height query under-reports by the whole swell.
+            if (openWater)
+                height += SampleLargeWaveField(worldX, worldZ).x;
             return true;
         }
 
@@ -2241,7 +2433,7 @@ namespace AbstractOcclusion.WebGpuWater
             flow = Vector2.zero;
             if (_sampler == null) return false; // not initialized yet
             Vector3 probe = new Vector3(worldX, VolumeCenter.y, worldZ);
-            if (!WorldToPoolXZ(probe, out float px, out float pz)) return false;
+            if (!QueryPoolXZ(probe, out float px, out float pz)) return false;
             if (!_sampler.TrySamplePoolSurface(probe, px, pz, out float poolHeight, out Vector2 poolFlow)) return false;
 
             height = PoolToWorld(new Vector3(px, poolHeight, pz)).y;
@@ -2268,7 +2460,8 @@ namespace AbstractOcclusion.WebGpuWater
             if (_sampler == null) return false; // not initialized yet
 
             Vector3 pool = WorldToPool(worldPoint);
-            if (pool.x < -1f || pool.x > 1f || pool.z < -1f || pool.z > 1f) return false;
+            // An unbounded ocean spans everywhere; bounded bodies still reject out-of-footprint points.
+            if (!IsOceanClipmap && (pool.x < -1f || pool.x > 1f || pool.z < -1f || pool.z > 1f)) return false;
             if (!_sampler.TrySamplePoolSurface(worldPoint, pool.x, pool.z, out float surfaceH, out Vector2 poolFlow)) return false;
 
             depthWorld = (surfaceH - pool.y) * VolumeExtentSafe.y; // pool depth -> world depth along up
@@ -2342,7 +2535,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             height = 0f;
             Vector3 probe = new Vector3(worldX, VolumeCenter.y, worldZ);
-            if (!WorldToPoolXZ(probe, out float px, out float pz)) return false;
+            if (!QueryPoolXZ(probe, out float px, out float pz)) return false;
 
             // Oceans sample the wind-wave layer in WORLD metres (extent-independent) to match the shader.
             float mpu = WaveMetersPerUnit;
@@ -2479,8 +2672,23 @@ namespace AbstractOcclusion.WebGpuWater
                                shoalDepth * poolPerWorldY, shorelineFoamDepth * poolPerWorldY,
                                shorelineFoamStrength, breakingFoamStrength);
 
+            // Scale-invariance for cap-limited grids (identity at density ratio 1, i.e. every body
+            // whose grid holds the tier's texels-per-metre - small bodies are byte-identical):
+            //  - WAVE SPEED: the integrator propagates a fixed ~sqrt(waveSpeed) TEXELS per step, so
+            //    once metres-per-texel grows, world speed grows linearly with it (a 40 m pool ran
+            //    ~6-8x faster than a 5 m pool - the frantic, harsh look). Physically a coarse grid
+            //    resolves only longer wavelengths, whose speed grows like sqrt(metres-per-texel)
+            //    (Crest: c = sqrt(g * 2*texel / 2pi) per LOD slice). Scaling the texel-space speed
+            //    by the density ratio lands exactly on c_world ∝ sqrt(metres-per-texel).
+            //  - DAMPING: authored per STEP; a coarse grid crosses 1/sqrt(ratio) more world-metres
+            //    per step (after the speed fix), so re-base the survival exponent to keep the
+            //    attenuation PER WORLD METRE constant - big pools stop ringing with leftover energy.
+            float effectiveWaveSpeed = waveSpeed * _simDensityRatio;
+            float effectiveDamping = (_simDensityRatio < 1f)
+                ? Mathf.Pow(damping, 1f / Mathf.Sqrt(_simDensityRatio))
+                : damping;
             for (int i = 0; i < steps; i++)
-                _water.StepSimulation(waveSpeed, damping);
+                _water.StepSimulation(effectiveWaveSpeed, effectiveDamping);
 
             // Exact GPU-reduced mean (no more Blit + GenerateMips: the float-mip mean silently
             // point-sampled in WebGPU builds and popped the plane; see WaterSim.compute). Skipped on
@@ -2847,6 +3055,18 @@ namespace AbstractOcclusion.WebGpuWater
             Vector3 p = WorldToPool(world);
             poolX = p.x; poolZ = p.z;
             return poolX >= -1f && poolX <= 1f && poolZ >= -1f && poolZ <= 1f;
+        }
+
+        // World point -> pool for the surface QUERIES (height/submersion/flow). Same as WorldToPoolXZ, except
+        // an unbounded ocean has no footprint edge - its surface spans everywhere (clipmap to the horizon) -
+        // so points beyond the bounded extent are accepted. Without this a floater (or the boat's propulsion,
+        // which gates on IsSubmerged) cuts out at the extent edge. BodyContaining still uses the strict
+        // footprint so per-body membership stays bounded.
+        bool QueryPoolXZ(Vector3 world, out float poolX, out float poolZ)
+        {
+            Vector3 p = WorldToPool(world);
+            poolX = p.x; poolZ = p.z;
+            return IsOceanClipmap || (poolX >= -1f && poolX <= 1f && poolZ >= -1f && poolZ <= 1f);
         }
 
         // Intersect a camera ray with the (possibly tilted) surface plane through the

@@ -35,6 +35,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
 
         float _UnderwaterSurfaceY;
         float _UnderwaterUnbounded; // 1 = ocean half-space, 0 = clip to this body's box (pond)
+        // Sun globals (published by WaterUniformPublisher) - not in this shader's include chain otherwise.
+        // Needed so the underwater in-scatter can use the same lit WaterInscatterColor as the surface, for a
+        // continuous colour crossing the waterline.
+        float3 _LightDir;
+        float3 _SunColor;
         float _OceanWorldWaves;     // 1 = sample wind waves in WORLD metres (ocean); 0 = pool xz (pond)
 
         sampler2D _BedTex; // pool-space bed height (global); for the shoreline swell-shoaling factor
@@ -308,7 +313,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             {
                 float3 depthAttenuation;
                 float3 pathTransmittance = UnderwaterFog(input.uv, depthAttenuation);
-                float3 inscatter = _WaterFogColor.rgb * (1.0 - pathTransmittance);
+                // Lit in-scatter target: the same WaterInscatterColor the surface uses, so the fog colour
+                // seen from below matches the water colour seen from above (continuous across the waterline).
+                // The view ray is surface->camera, reconstructed from the scene depth. WaterInscatterColor
+                // returns the flat _WaterFogColor when scattering is off, so this is a no-op until enabled.
+                float3 sceneWorld = SceneWorldPos(input.uv);
+                float3 viewDirWS = normalize(_WorldSpaceCameraPos - sceneWorld);
+                float3 fogColor = WaterInscatterColor(viewDirWS, _LightDir, _SunColor, 0.0);
+                float3 inscatter = fogColor * (1.0 - pathTransmittance);
                 return half4(inscatter * depthAttenuation + FogDither(input.positionCS.xy), 1.0);
             }
             ENDHLSL

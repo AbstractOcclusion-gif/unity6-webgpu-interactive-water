@@ -17,6 +17,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "largeBodyThreshold",
                     "simWindowMeters",
                     "clampWindowToShore",
+                    "simWindowFocus",
+                    "simWindowOffset",
                     "simWindowEdgeFadeTexels"));
         }
 

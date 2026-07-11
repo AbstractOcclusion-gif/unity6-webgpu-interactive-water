@@ -19,7 +19,10 @@ namespace AbstractOcclusion.WebGpuWater
         // Compute kernel names (must match WaterFoamParticles.compute).
         const string KernelBeginFrame = "BeginFrame";
         const string KernelSpawn = "Spawn";
+        const string KernelSpawnBurst = "SpawnBurst";
         const string KernelUpdate = "Update";
+        const string KernelClearDensity = "ClearDensity";
+        const string KernelRasterizeDensity = "RasterizeDensity";
 
         // Thread-group sizes. MUST equal the [numthreads] in WaterFoamParticles.compute.
         const int SpawnThreadGroupSize = 8;
@@ -27,6 +30,40 @@ namespace AbstractOcclusion.WebGpuWater
 
         const int VerticesPerParticle = 6;
         const int CounterCount = 2; // ring cursor + per-frame spawn count
+
+        // ---- Screen-space density foam (KWS). MUST match WaterFoamParticles.compute. ----
+        const int TileGrid = 16;                    // spray-budget screen tiles per axis
+        const int TileCount = TileGrid * TileGrid;
+        const int SprayTileCap = 6;                 // max spray spawns per tile per frame
+        const int DensityDownscale = 2;             // density buffer = camera target / this
+        const float DensityWeightScale = 64f;       // fixed-point units per 1.0 of foam weight
+        const float SpawnMaxDistance = 80f;         // stochastic distance LOD range (metres)
+        const int CompositeVertexCount = 3;         // one fullscreen triangle
+
+        // ---- CPU-event splash bursts (spray unification). MUST match BurstRequest in
+        // WaterFoamParticles.compute (48 bytes) and MAX_BURST_DROPLETS there. ----
+        const int MaxBurstsPerFrame = 16;
+        const int MaxBurstDroplets = 64;
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct BurstRequest
+        {
+            public Vector3 center;
+            public float radius, strength, upSpeed, outSpeed, seed, count;
+            public Vector3 _pad;
+        }
+        static readonly int BurstStride = Marshal.SizeOf<BurstRequest>();
+
+        /// <summary>How the floating (surface) foam is rendered. Spray is always textured quads.</summary>
+        public enum FoamRenderMode
+        {
+            /// <summary>KWS-style: particles accumulate into a screen-space density buffer;
+            /// a fullscreen composite turns density into connected, lit foam.</summary>
+            ScreenSpaceDensity,
+            /// <summary>Classic per-particle textured quads (fallback; also used automatically
+            /// when the device can't read structured buffers in the fragment stage).</summary>
+            Quads
+        }
 
         // Knuth's multiplicative-hash constant (2^32 / golden ratio): decorrelates the
         // per-frame GPU random seed from the plain frame counter.
@@ -72,6 +109,27 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_CrestRoll = Shader.PropertyToID("_CrestRoll");
         static readonly int ID_FlipbookGrid = Shader.PropertyToID("_ParticleFlipbookGrid");
         static readonly int ID_FlipbookFps = Shader.PropertyToID("_ParticleFlipbookFps");
+        static readonly int ID_SurfaceQuadsEnabled = Shader.PropertyToID("_SurfaceQuadsEnabled");
+
+        // Density foam + spawn quality (compute + composite shader).
+        static readonly int ID_DensityBuffer = Shader.PropertyToID("DensityBuffer");
+        static readonly int ID_DensityDepth = Shader.PropertyToID("DensityDepth");
+        static readonly int ID_TileCounts = Shader.PropertyToID("TileCounts");
+        static readonly int ID_DensitySize = Shader.PropertyToID("_DensitySize");
+        static readonly int ID_DensityViewProj = Shader.PropertyToID("_DensityViewProj");
+        static readonly int ID_DensityProj11 = Shader.PropertyToID("_DensityProj11");
+        static readonly int ID_DensityWeightScale = Shader.PropertyToID("_DensityWeightScale");
+        static readonly int ID_SpawnCameraXZ = Shader.PropertyToID("_SpawnCameraXZ");
+        static readonly int ID_SpawnMaxDistance = Shader.PropertyToID("_SpawnMaxDistance");
+        static readonly int ID_TileBudgetEnabled = Shader.PropertyToID("_TileBudgetEnabled");
+        static readonly int ID_SprayTileCap = Shader.PropertyToID("_SprayTileCap");
+        static readonly int ID_OceanFftSpatial = Shader.PropertyToID("_OceanFftSpatial");
+        static readonly int ID_OceanFftAmplitude = Shader.PropertyToID("_OceanFftAmplitude");
+        static readonly int ID_FoamDensityShader = Shader.PropertyToID("_FoamDensity");
+        static readonly int ID_FoamDensityDepthShader = Shader.PropertyToID("_FoamDensityDepth");
+        static readonly int ID_BurstRequests = Shader.PropertyToID("BurstRequests");
+        static readonly int ID_BurstRequestCount = Shader.PropertyToID("_BurstRequestCount");
+        static readonly int ID_FoamTime = Shader.PropertyToID("_FoamTime");
 
         // Local compute keyword: turns on the FFT-crest spawn source for the ocean body only.
         const string KeywordOceanCrest = "OCEAN_CREST_FOAM";
@@ -85,6 +143,13 @@ namespace AbstractOcclusion.WebGpuWater
                  "Wizard (Window > AbstractOcclusion > WebGpuWater > Water Wizard) saves a tweakable " +
                  "material asset and assigns it here.")]
         [SerializeField] internal Material particleMaterial;
+        [Tooltip("How the floating foam is rendered. Screen Space Density (KWS-style) accumulates " +
+                 "particles into a density field and shades it as connected foam; Quads draws every " +
+                 "particle as its own textured billboard. Spray droplets are always billboards.")]
+        [SerializeField] internal FoamRenderMode renderMode = FoamRenderMode.ScreenSpaceDensity;
+        [Tooltip("Material using the AbstractOcclusion/WebGpuWater/FoamDensityComposite shader. Required " +
+                 "for Screen Space Density mode; the Water Wizard creates and assigns it.")]
+        [SerializeField] internal Material densityMaterial;
 
         [Header("Pool")]
         [Tooltip("Particle pool size; rounded up to a power of two. Oldest particles are recycled when full.")]
@@ -132,9 +197,23 @@ namespace AbstractOcclusion.WebGpuWater
 
         GraphicsBuffer _particles;
         GraphicsBuffer _counters;
-        int _kBeginFrame, _kSpawn, _kUpdate;
+        GraphicsBuffer _tileCounts;
+        GraphicsBuffer _density;
+        GraphicsBuffer _densityDepth;
+        GraphicsBuffer _burstRequests;
+        readonly System.Collections.Generic.List<BurstRequest> _pendingBursts =
+            new System.Collections.Generic.List<BurstRequest>(MaxBurstsPerFrame);
+        BurstRequest[] _burstUpload;
+        int _kBeginFrame, _kSpawn, _kSpawnBurst, _kUpdate, _kClearDensity, _kRasterizeDensity;
         int _capacityPow2;
+        Vector2Int _densitySize;
+        bool _densitySupported;
+        bool _densityValidThisFrame; // rasterized this frame (a camera was available)
         MaterialPropertyBlock _mpb;
+        MaterialPropertyBlock _densityMpb;
+
+        bool DensityModeActive => renderMode == FoamRenderMode.ScreenSpaceDensity
+                                  && _densitySupported && densityMaterial != null;
 
         void OnEnable()
         {
@@ -177,7 +256,20 @@ namespace AbstractOcclusion.WebGpuWater
 
             _kBeginFrame = particleCompute.FindKernel(KernelBeginFrame);
             _kSpawn = particleCompute.FindKernel(KernelSpawn);
+            _kSpawnBurst = particleCompute.FindKernel(KernelSpawnBurst);
             _kUpdate = particleCompute.FindKernel(KernelUpdate);
+            _kClearDensity = particleCompute.FindKernel(KernelClearDensity);
+            _kRasterizeDensity = particleCompute.FindKernel(KernelRasterizeDensity);
+
+            // Density mode reads structured buffers in the FRAGMENT stage (density + depth).
+            // Devices that can't (WebGPU compatibility mode) silently fall back to quads.
+            _densitySupported = SystemInfo.maxComputeBufferInputsFragment >= 2;
+            if (renderMode == FoamRenderMode.ScreenSpaceDensity && !_densitySupported)
+                Debug.LogWarning("WaterFoamParticles: fragment-stage structured buffers unsupported " +
+                                 "on this device; density foam falls back to quads.", this);
+            if (renderMode == FoamRenderMode.ScreenSpaceDensity && densityMaterial == null)
+                Debug.LogWarning("WaterFoamParticles: densityMaterial not assigned (run the Water " +
+                                 "Wizard to create it); density foam falls back to quads.", this);
 
             // Tier cap first: the whole pool is drawn every frame (dead slots emit degenerate
             // quads), so weak devices pay for capacity whether particles are alive or not.
@@ -188,14 +280,37 @@ namespace AbstractOcclusion.WebGpuWater
             _particles.SetData(new FoamParticle[_capacityPow2]); // life = 0 -> every slot dead
             _counters = new GraphicsBuffer(GraphicsBuffer.Target.Structured, CounterCount, sizeof(uint));
             _counters.SetData(new uint[CounterCount]);
+            _tileCounts = new GraphicsBuffer(GraphicsBuffer.Target.Structured, TileCount, sizeof(uint));
+            _tileCounts.SetData(new uint[TileCount]);
+            _burstRequests = new GraphicsBuffer(GraphicsBuffer.Target.Structured, MaxBurstsPerFrame, BurstStride);
+            _burstUpload = new BurstRequest[MaxBurstsPerFrame];
 
             _mpb = new MaterialPropertyBlock();
+            _densityMpb = new MaterialPropertyBlock();
         }
 
         void OnDisable()
         {
             _particles?.Dispose(); _particles = null;
             _counters?.Dispose(); _counters = null;
+            _tileCounts?.Dispose(); _tileCounts = null;
+            _density?.Dispose(); _density = null;
+            _densityDepth?.Dispose(); _densityDepth = null;
+            _burstRequests?.Dispose(); _burstRequests = null;
+            _pendingBursts.Clear();
+            _densitySize = Vector2Int.zero;
+        }
+
+        // (Re)allocate the per-camera density buffers when the target size changes.
+        void EnsureDensityBuffers(Vector2Int size)
+        {
+            if (size == _densitySize && _density != null) return;
+            _density?.Dispose();
+            _densityDepth?.Dispose();
+            _densitySize = size;
+            int count = Mathf.Max(1, size.x * size.y);
+            _density = new GraphicsBuffer(GraphicsBuffer.Target.Structured, count, sizeof(uint));
+            _densityDepth = new GraphicsBuffer(GraphicsBuffer.Target.Structured, count, sizeof(uint));
         }
 
         // LateUpdate so the volume's Update has already stepped the sim and refreshed its
@@ -207,14 +322,20 @@ namespace AbstractOcclusion.WebGpuWater
             // Spawn when the 2D foam sim is on OR this is an ocean (whose FFT crests are the source).
             if (!volume.Foam && !volume.OceanFftActive) return;
 
+            // The density splat + spawn-quality projections follow the main camera. In views
+            // without one (or with the sim paused) the density field would be stale/unanchored,
+            // so those frames fall back to reprojectable quads automatically.
+            Camera densityCamera = Camera.main;
+            _densityValidThisFrame = false;
+
             if (volume.IsSimulating && Time.deltaTime > 0f)
-                DispatchSimulation(Time.deltaTime);
+                DispatchSimulation(Time.deltaTime, densityCamera);
 
             if (volume.IsVisibleToCamera)
                 Draw();
         }
 
-        void DispatchSimulation(float dt)
+        void DispatchSimulation(float dt, Camera densityCamera)
         {
             ComputeShader cs = particleCompute;
             volume.WriteSimFrameUniforms(cs);
@@ -223,6 +344,7 @@ namespace AbstractOcclusion.WebGpuWater
             cs.SetInt(ID_Capacity, _capacityPow2);
             cs.SetInt(ID_FrameSeed, unchecked((int)(Time.frameCount * FrameSeedHashPrime)));
             cs.SetFloat(ID_DeltaTime, dt);
+            cs.SetFloat(ID_FoamTime, Time.time); // slow clock for the curl/clump noise drift
 
             cs.SetFloat(ID_SpawnThreshold, spawnThreshold);
             cs.SetFloat(ID_SpawnRate, spawnRate);
@@ -240,11 +362,33 @@ namespace AbstractOcclusion.WebGpuWater
             cs.SetVector(ID_WindDrift, WindDriftWorld());
             cs.SetFloat(ID_Drag, drag);
 
+            // Camera-driven spawn quality (stochastic distance LOD + spray tile budget) and the
+            // density projection. Without a camera both are disabled and spawning is unchanged.
+            if (densityCamera != null)
+            {
+                Matrix4x4 gpuProj = GL.GetGPUProjectionMatrix(densityCamera.projectionMatrix, false);
+                Matrix4x4 viewProj = gpuProj * densityCamera.worldToCameraMatrix;
+                cs.SetMatrix(ID_DensityViewProj, viewProj);
+                cs.SetFloat(ID_DensityProj11, Mathf.Abs(gpuProj.m11));
+                Vector3 camPos = densityCamera.transform.position;
+                cs.SetVector(ID_SpawnCameraXZ, new Vector2(camPos.x, camPos.z));
+                cs.SetFloat(ID_SpawnMaxDistance, SpawnMaxDistance);
+                cs.SetFloat(ID_TileBudgetEnabled, 1f);
+                cs.SetInt(ID_SprayTileCap, SprayTileCap);
+            }
+            else
+            {
+                cs.SetFloat(ID_SpawnMaxDistance, 0f);
+                cs.SetFloat(ID_TileBudgetEnabled, 0f);
+            }
+
             cs.SetBuffer(_kBeginFrame, ID_Counters, _counters);
-            cs.Dispatch(_kBeginFrame, 1, 1, 1);
+            cs.SetBuffer(_kBeginFrame, ID_TileCounts, _tileCounts);
+            cs.Dispatch(_kBeginFrame, TileCount / UpdateThreadGroupSize, 1, 1);
 
             cs.SetBuffer(_kSpawn, ID_Particles, _particles);
             cs.SetBuffer(_kSpawn, ID_Counters, _counters);
+            cs.SetBuffer(_kSpawn, ID_TileCounts, _tileCounts);
             cs.SetTexture(_kSpawn, ID_Sim, volume.SimStateTexture);
             cs.SetTexture(_kSpawn, ID_FoamTex, volume.FoamMaskTexture);
 
@@ -267,11 +411,84 @@ namespace AbstractOcclusion.WebGpuWater
             int spawnGroups = volume.SimResolution / SpawnThreadGroupSize;
             cs.Dispatch(_kSpawn, spawnGroups, spawnGroups, 1);
 
+            // CPU-queued splash bursts (rigidbody impacts, mouse splashes): one thread group per
+            // request throws KIND_SPRAY droplets from the same pool, unifying all airborne spray
+            // on one tech path (the Shuriken emitter keeps only the crown flipbook).
+            if (_pendingBursts.Count > 0)
+            {
+                int burstCount = Mathf.Min(_pendingBursts.Count, MaxBurstsPerFrame);
+                for (int i = 0; i < burstCount; i++) _burstUpload[i] = _pendingBursts[i];
+                _pendingBursts.Clear();
+                _burstRequests.SetData(_burstUpload, 0, 0, burstCount);
+                cs.SetInt(ID_BurstRequestCount, burstCount);
+                cs.SetBuffer(_kSpawnBurst, ID_Particles, _particles);
+                cs.SetBuffer(_kSpawnBurst, ID_Counters, _counters);
+                cs.SetBuffer(_kSpawnBurst, ID_BurstRequests, _burstRequests);
+                cs.Dispatch(_kSpawnBurst, burstCount, 1, 1);
+            }
+
             // Only the resources the Update kernel actually reads: binding an unused
             // slot is a hard error on some backends.
             cs.SetBuffer(_kUpdate, ID_Particles, _particles);
             cs.SetTexture(_kUpdate, ID_Sim, volume.SimStateTexture);
             cs.Dispatch(_kUpdate, _capacityPow2 / UpdateThreadGroupSize, 1, 1);
+
+            // ---- Screen-space density splat (KWS): clear, then rasterize every floating
+            // particle into the density + min-depth buffers for this camera. ----
+            if (DensityModeActive && densityCamera != null)
+            {
+                var size = new Vector2Int(
+                    Mathf.Max(1, densityCamera.pixelWidth / DensityDownscale),
+                    Mathf.Max(1, densityCamera.pixelHeight / DensityDownscale));
+                EnsureDensityBuffers(size);
+
+                cs.SetInts(ID_DensitySize, size.x, size.y);
+                cs.SetFloat(ID_DensityWeightScale, DensityWeightScale);
+
+                int texelCount = size.x * size.y;
+                cs.SetBuffer(_kClearDensity, ID_DensityBuffer, _density);
+                cs.SetBuffer(_kClearDensity, ID_DensityDepth, _densityDepth);
+                cs.Dispatch(_kClearDensity,
+                            (texelCount + UpdateThreadGroupSize - 1) / UpdateThreadGroupSize, 1, 1);
+
+                cs.SetBuffer(_kRasterizeDensity, ID_Particles, _particles);
+                cs.SetBuffer(_kRasterizeDensity, ID_DensityBuffer, _density);
+                cs.SetBuffer(_kRasterizeDensity, ID_DensityDepth, _densityDepth);
+                // The surface-height glue reads the FFT cascade on oceans and the 2D sim on
+                // pools; bind only what this variant declares (unused binds hard-error on
+                // some backends, mirroring the Spawn kernel's pattern).
+                if (oceanCrest && volume.OceanFftSpatialTexture != null)
+                {
+                    cs.SetTexture(_kRasterizeDensity, ID_OceanFftSpatial, volume.OceanFftSpatialTexture);
+                    cs.SetFloat(ID_OceanFftAmplitude, volume.LargeWaveAmplitudeEffective);
+                }
+                else
+                {
+                    cs.SetTexture(_kRasterizeDensity, ID_Sim, volume.SimStateTexture);
+                }
+                cs.Dispatch(_kRasterizeDensity, _capacityPow2 / UpdateThreadGroupSize, 1, 1);
+                _densityValidThisFrame = true;
+            }
+        }
+
+        /// <summary>Queue a splash burst of ballistic spray droplets at a surface point (world).
+        /// Consumed next simulation dispatch; requests beyond the per-frame cap are dropped
+        /// (soft budget, like the turbulence spawns). Droplet look/motion is this system's
+        /// spray path, so event splashes match turbulence-thrown spray exactly.</summary>
+        public void QueueSplashBurst(Vector3 surfacePos, float strength, float radius,
+                                     int dropletCount, float upSpeed, float outSpeed)
+        {
+            if (!isActiveAndEnabled || _pendingBursts.Count >= MaxBurstsPerFrame) return;
+            _pendingBursts.Add(new BurstRequest
+            {
+                center = surfacePos,
+                radius = Mathf.Max(0f, radius),
+                strength = Mathf.Clamp01(strength),
+                upSpeed = Mathf.Max(0f, upSpeed),
+                outSpeed = Mathf.Max(0f, outSpeed),
+                seed = Random.value,
+                count = Mathf.Clamp(dropletCount, 1, MaxBurstDroplets)
+            });
         }
 
         // Constant downwind drift in world space: the wave bank's heading convention is
@@ -303,6 +520,9 @@ namespace AbstractOcclusion.WebGpuWater
             // Flipbook atlas + speed are driven from here (the single control point), not material sliders.
             _mpb.SetVector(ID_FlipbookGrid, new Vector4(Mathf.Max(1, flipbookGrid.x), Mathf.Max(1, flipbookGrid.y), 0f, 0f));
             _mpb.SetFloat(ID_FlipbookFps, flipbookFps); // 0 = static variant (unchanged); >0 animates the atlas
+            // When the density field was rasterized this frame, the quad draw carries ONLY the
+            // ballistic spray; otherwise (quads mode, no camera, paused sim) it draws everything.
+            _mpb.SetFloat(ID_SurfaceQuadsEnabled, _densityValidThisFrame ? 0f : 1f);
 
             var rp = new RenderParams(particleMaterial)
             {
@@ -310,6 +530,27 @@ namespace AbstractOcclusion.WebGpuWater
                 matProps = _mpb
             };
             Graphics.RenderPrimitives(rp, MeshTopology.Triangles, _capacityPow2 * VerticesPerParticle);
+
+            if (_densityValidThisFrame)
+                DrawDensityComposite();
+        }
+
+        // Fullscreen triangle that shades the splatted density as connected foam. The bounds
+        // keep it culled with the body; queue Transparent+5 draws it over the water surface
+        // but under the spray/splash billboards.
+        void DrawDensityComposite()
+        {
+            _densityMpb.SetBuffer(ID_FoamDensityShader, _density);
+            _densityMpb.SetBuffer(ID_FoamDensityDepthShader, _densityDepth);
+            _densityMpb.SetVector(ID_DensitySize, new Vector4(_densitySize.x, _densitySize.y, 0f, 0f));
+            _densityMpb.SetFloat(ID_DensityWeightScale, DensityWeightScale);
+
+            var rp = new RenderParams(densityMaterial)
+            {
+                worldBounds = volume.SimWorldBounds,
+                matProps = _densityMpb
+            };
+            Graphics.RenderPrimitives(rp, MeshTopology.Triangles, CompositeVertexCount);
         }
     }
 }

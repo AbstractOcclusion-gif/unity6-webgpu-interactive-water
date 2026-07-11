@@ -23,6 +23,19 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FogDensity = Shader.PropertyToID("_WaterFogDensity");
         static readonly int ID_FogEnabled = Shader.PropertyToID("_WaterFogEnabled");
         static readonly int ID_WaterOpacity = Shader.PropertyToID("_WaterOpacity");
+        static readonly int ID_ScatterEnabled = Shader.PropertyToID("_ScatterEnabled");
+        static readonly int ID_ScatterColor = Shader.PropertyToID("_ScatterColor");
+        static readonly int ID_ScatterIntensity = Shader.PropertyToID("_ScatterIntensity");
+        static readonly int ID_ScatterAmbient = Shader.PropertyToID("_ScatterAmbient");
+        static readonly int ID_ScatterAmbientTerm = Shader.PropertyToID("_ScatterAmbientTerm");
+        static readonly int ID_ScatterSunTerm = Shader.PropertyToID("_ScatterSunTerm");
+        static readonly int ID_ScatterAnisotropy = Shader.PropertyToID("_ScatterAnisotropy");
+        static readonly int ID_SssEnabled = Shader.PropertyToID("_SssEnabled");
+        static readonly int ID_SssIntensity = Shader.PropertyToID("_SssIntensity");
+        static readonly int ID_SssSunFalloff = Shader.PropertyToID("_SssSunFalloff");
+        static readonly int ID_SssPinchMin = Shader.PropertyToID("_SssPinchMin");
+        static readonly int ID_SssPinchMax = Shader.PropertyToID("_SssPinchMax");
+        static readonly int ID_SssPinchFalloff = Shader.PropertyToID("_SssPinchFalloff");
         static readonly int ID_DepthExt = Shader.PropertyToID("_DepthExtinction");
         static readonly int ID_DepthStrength = Shader.PropertyToID("_DepthDarkenStrength");
         static readonly int ID_DepthEnabled = Shader.PropertyToID("_DepthDarkenEnabled");
@@ -114,6 +127,9 @@ namespace AbstractOcclusion.WebGpuWater
             if (_body.sun != null) _body.lightDir = -_body.sun.transform.forward;
             Shader.SetGlobalVector(ID_Light, _body.lightDir.normalized);
             Shader.SetGlobalColor(ID_SunColor, _body.sun != null ? _body.sun.color * _body.sun.intensity : Color.white);
+            // Scene ambient feeds the volume-scatter in-scatter so shaded (away-from-sun) water isn't black.
+            // Genuinely shared (scene lighting, not per body), so it rides with the sun here.
+            Shader.SetGlobalColor(ID_ScatterAmbient, RenderSettings.ambientLight);
             Shader.SetGlobalFloat(ID_WaveTime, _body.WaveTime);
             if (_body.tiles != null) Shader.SetGlobalTexture(ID_Tiles, _body.tiles);
             // NOTE: the reflection cube (_Sky) is published PER BODY in WriteBodyUniforms, not here -
@@ -231,6 +247,20 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_FogDensity, _body.fogDensity);
             sink.SetFloat(ID_FogEnabled, _body.WaterFog ? 1f : 0f);
             sink.SetFloat(ID_WaterOpacity, _body.waterOpacity);
+
+            // Crest-style lit volume scattering: turns the flat fog colour into a sun-lit in-scatter.
+            sink.SetFloat(ID_ScatterEnabled, _body.volumeScatter ? 1f : 0f);
+            sink.SetColor(ID_ScatterColor, _body.scatterColor);
+            sink.SetFloat(ID_ScatterIntensity, _body.scatterIntensity);
+            sink.SetFloat(ID_ScatterAmbientTerm, _body.scatterAmbientTerm);
+            sink.SetFloat(ID_ScatterSunTerm, _body.scatterSunTerm);
+            sink.SetFloat(ID_ScatterAnisotropy, _body.scatterAnisotropy);
+            sink.SetFloat(ID_SssEnabled, _body.crestScatter ? 1f : 0f);
+            sink.SetFloat(ID_SssIntensity, _body.sssIntensity);
+            sink.SetFloat(ID_SssSunFalloff, _body.sssSunFalloff);
+            sink.SetFloat(ID_SssPinchMin, _body.sssPinchMin);
+            sink.SetFloat(ID_SssPinchMax, _body.sssPinchMax);
+            sink.SetFloat(ID_SssPinchFalloff, _body.sssPinchFalloff);
 
             sink.SetColor(ID_DepthExt, _body.EffectiveDepthExtinction);
             sink.SetFloat(ID_DepthStrength, _body.depthDarkenStrength);

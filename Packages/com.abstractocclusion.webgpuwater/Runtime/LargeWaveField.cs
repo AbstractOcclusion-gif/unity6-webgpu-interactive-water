@@ -47,6 +47,7 @@ namespace AbstractOcclusion.WebGpuWater
         struct BandAccum
         {
             public float Height;
+            public float HeightVelocity; // d(Height)/dt (m/s); physics-only, no shader counterpart
             public float SlopeX;
             public float SlopeZ;
             public float DisplacementX;
@@ -78,6 +79,7 @@ namespace AbstractOcclusion.WebGpuWater
                 float amp = amplitudeScale * amplitude;
 
                 a.Height += amp * sinP;
+                a.HeightVelocity += amp * -angularSpeed * cosP; // d/dt sin(phase) = -angularSpeed*cos(phase)
                 float slopeMagnitude = amp * wavenumber * cosP;
                 a.SlopeX += slopeMagnitude * directionX;
                 a.SlopeZ += slopeMagnitude * directionZ;
@@ -159,5 +161,17 @@ namespace AbstractOcclusion.WebGpuWater
         internal static float HeightAtQuery(float worldX, float worldZ, float time, float amplitudeScale,
             float windHeadingRadians, float swellWavelength, float swellHeight, float choppiness)
             => EvaluateAtQuery(worldX, worldZ, time, amplitudeScale, windHeadingRadians, swellWavelength, swellHeight, choppiness).x;
+
+        /// <summary>
+        /// Vertical surface velocity d(height)/dt (m/s) at a QUERY world (x, z), chop-inverted: the swell's
+        /// contribution to buoyancy drag velocity. Closed-form time derivative of the band sum, evaluated at
+        /// the inverted source (same point the height is read from). Physics-only, so no shader mirror.
+        /// </summary>
+        internal static float VerticalVelocityAtQuery(float worldX, float worldZ, float time, float amplitudeScale,
+            float windHeadingRadians, float swellWavelength, float swellHeight, float choppiness)
+        {
+            Vector2 source = InvertToSource(worldX, worldZ, time, amplitudeScale, windHeadingRadians, swellWavelength, swellHeight, choppiness);
+            return EvaluateBands(source.x, source.y, time, amplitudeScale, windHeadingRadians, swellWavelength, swellHeight).HeightVelocity;
+        }
     }
 }

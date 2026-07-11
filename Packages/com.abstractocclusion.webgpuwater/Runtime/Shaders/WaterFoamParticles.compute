@@ -15,13 +15,17 @@
 
 #pragma kernel BeginFrame
 #pragma kernel Spawn
+#pragma kernel SpawnBurst
 #pragma kernel Update
+#pragma kernel ClearDensity
+#pragma kernel RasterizeDensity
 
 // Ocean-only: adds the FFT whitecap cascade as a second spawn source (breaking-crest foam). Off for
 // pools/bounded bodies, so the cascade texture is never declared or bound on those dispatches.
 #pragma multi_compile _ OCEAN_CREST_FOAM
 
-#include "WaterVolume.hlsl" // pool/window <-> world frame (same uniforms as the render side)
+#include "WaterVolume.hlsl"     // pool/window <-> world frame (same uniforms as the render side)
+#include "WaterFoamCommon.hlsl" // FoamParticleEnvelope: shared with the quad render
 
 // MUST equal WaterFoamParticles.SpawnThreadGroupSize / UpdateThreadGroupSize (C#).
 #define SPAWN_THREAD_GROUP_SIZE  8
@@ -83,6 +87,82 @@ float _Gravity;           // world units/sec^2 (positive down)
 float _FlowDrift;         // world units/sec of drift per unit of surface slope
 float2 _WindDrift;        // constant world-space xz drift from the wind
 float _Drag;              // 1/sec velocity relaxation toward the driven speed
+
+// ---- Screen-space density foam (KWS: particles accumulate into a density buffer instead of
+// drawing overlapping quads; a fullscreen composite turns density into connected, lit foam). ----
+RWStructuredBuffer<uint> DensityBuffer; // per density texel: fixed-point accumulated foam weight
+RWStructuredBuffer<uint> DensityDepth;  // per density texel: min eye depth (millimetres) for occlusion
+RWStructuredBuffer<uint> TileCounts;    // per screen tile: spray spawns this frame (budget)
+
+uint2    _DensitySize;       // density buffer dimensions (a fraction of the camera target)
+float4x4 _DensityViewProj;   // camera GPU view-projection (same matrix family the render uses)
+float    _DensityProj11;     // projection [1][1]: vertical focal term for projected-size estimates
+float    _DensityWeightScale;// fixed-point units per 1.0 of foam weight
+
+// Spawn quality (KWS trio)
+float2 _SpawnCameraXZ;       // camera ground position for the stochastic distance LOD
+float  _SpawnMaxDistance;    // metres; beyond this no particles spawn. 0 = LOD disabled
+float  _TileBudgetEnabled;   // 1 when a camera is available to project spray spawns
+uint   _SprayTileCap;        // max spray spawns per screen tile per frame
+
+// Depth quantisation for the InterlockedMin buffer: millimetres in uint.
+static const float DEPTH_TO_MM = 1000.0;
+// Density buffer cleared depth (no particle) - uint max.
+static const uint DEPTH_CLEAR = 0xFFFFFFFFu;
+// Splat footprint clamp (density texels). Small pool sizes keep the per-particle loop bounded;
+// the composite's dilation closes any remaining pinholes between splats.
+static const int SPLAT_RADIUS_MAX = 3;
+// Screen tile grid for the spray budget (KWS buckets splash into 64px tiles; a fixed 16x16
+// grid is resolution-independent and keeps the counter buffer tiny).
+static const uint TILE_GRID = 16;
+// Spawn-probability boost per unit of local velocity shear (wake edges emit more).
+static const float SPAWN_SHEAR_BOOST = 4.0;
+
+// ---- CPU-event splash bursts (spray unification): rigidbody impacts and mouse splashes
+// queue burst requests on the CPU; the SpawnBurst kernel throws KIND_SPRAY droplets from
+// the same pool, so ALL airborne droplets share one tech path + one look (the Shuriken
+// system keeps only the one-shot crown flipbook). MUST match BurstRequest in
+// WaterFoamParticles.cs (48 bytes) and MAX_BURST_DROPLETS <= the kernel thread count. ----
+struct BurstRequest
+{
+    float3 center;   // world surface position of the impact
+    float  radius;   // world ring radius droplets spawn on
+    float  strength; // 0..1 impact strength: scales opacity via particle.strength
+    float  upSpeed;  // world units/sec base upward pop
+    float  outSpeed; // world units/sec base outward throw
+    float  seed;     // per-burst random salt
+    float  count;    // droplets requested (<= MAX_BURST_DROPLETS)
+    float3 _pad;
+};
+StructuredBuffer<BurstRequest> BurstRequests;
+uint _BurstRequestCount;
+
+static const uint  MAX_BURST_DROPLETS = 64;   // one thread group per request
+// Per-droplet jitters, matching the retired Shuriken burst's feel (WaterSplashEmitter).
+static const float BURST_OUT_JITTER_MIN = 0.4;
+static const float BURST_OUT_JITTER_MAX = 1.0;
+static const float BURST_UP_JITTER_MIN = 0.5;
+static const float BURST_UP_JITTER_MAX = 1.2;
+static const float BURST_SPAWN_HEIGHT = 0.01;  // just above the surface, never submerged
+static const float BURST_RING_RADIUS_SCALE = 0.5; // spawn inside half the impact radius
+
+// ---- Foam motion richness (KWS curl + clumping): floating foam is swirled by a
+// divergence-free curl field and gently attracted toward noise maxima, so it gathers
+// into streaks/patches instead of staying a uniform sprinkle. ----
+float _FoamTime; // slow world clock for the noise drift
+static const float FOAM_NOISE_SCALE   = 0.7;   // noise features per world metre
+static const float FOAM_NOISE_DRIFT   = 0.05;  // field drift speed (keeps clumps alive)
+static const float FOAM_CURL_SPEED    = 0.06;  // world units/sec of swirl
+static const float FOAM_CLUMP_SPEED   = 0.04;  // world units/sec of attraction
+static const float FOAM_NOISE_EPSILON = 0.35;  // finite-difference step (world metres)
+
+#ifdef OCEAN_CREST_FOAM
+// FFT spatial cascade (.y = height) + amplitude, so the density splat can place foam on the
+// real swell height the way FoamParticles.shader's vertex glue does with LargeBodyWaveHeight.
+Texture2DArray<float4> _OceanFftSpatial;
+SamplerState sampler_OceanFftSpatial;
+float _OceanFftAmplitude;
+#endif
 
 #ifdef OCEAN_CREST_FOAM
 // Ocean whitecap cascade (bound per-frame from WaterFoamParticles.cs; same array the surface samples).
@@ -154,11 +234,74 @@ float4 SampleSim(float2 simNorm)
     return lerp(lerp(c00, c10, t.x), lerp(c01, c11, t.x), t.y);
 }
 
+// Smooth value noise from the shared PCG hash (no texture needed at particle counts):
+// hashed lattice corners, hermite-blended. Range [0,1).
+float FoamValueNoise(float2 p)
+{
+    float2 cell = floor(p);
+    float2 f = p - cell;
+    f = f * f * (3.0 - 2.0 * f);
+    uint2 c = (uint2)(int2)cell; // negative cells wrap deterministically
+    float n00 = Rand01(c, 0x51ED270Bu);
+    float n10 = Rand01(c + uint2(1u, 0u), 0x51ED270Bu);
+    float n01 = Rand01(c + uint2(0u, 1u), 0x51ED270Bu);
+    float n11 = Rand01(c + uint2(1u, 1u), 0x51ED270Bu);
+    return lerp(lerp(n00, n10, f.x), lerp(n01, n11, f.x), f.y);
+}
+
+// Central-difference gradient of the value noise (noise-space units).
+float2 FoamNoiseGrad(float2 p)
+{
+    const float eps = 0.25;
+    float gx = FoamValueNoise(p + float2(eps, 0.0)) - FoamValueNoise(p - float2(eps, 0.0));
+    float gy = FoamValueNoise(p + float2(0.0, eps)) - FoamValueNoise(p - float2(0.0, eps));
+    return float2(gx, gy) / (2.0 * eps);
+}
+
+// Project a world position through the camera. Returns false when behind the camera.
+// uv is OUR OWN convention (ndc * 0.5 + 0.5, no platform flip): the density composite
+// derives its uv from the SAME ndc math, so the two sides agree on every backend by
+// construction. eyeDepth = clip.w (linear metres, perspective).
+bool ProjectToScreen(float3 world, out float2 uv, out float eyeDepth)
+{
+    float4 clip = mul(_DensityViewProj, float4(world, 1.0));
+    uv = 0.0; eyeDepth = 0.0;
+    if (clip.w <= 1e-4) return false;
+    uv = (clip.xy / clip.w) * 0.5 + 0.5;
+    eyeDepth = clip.w;
+    return true;
+}
+
+// World-space surface height under a floating particle: the same "glue to the animated
+// surface" the quad vertex does, minus the small analytic wind-wave layer (cm-scale;
+// compute has no wave globals). Pond: sim heightfield. Ocean: summed FFT cascades.
+float SurfaceWorldY(float3 worldPos, float2 simNorm)
+{
+#ifdef OCEAN_CREST_FOAM
+    float height = 0.0;
+    for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
+    {
+        float active = (c < (int)_OceanFftCascadeCount) ? 1.0 : 0.0;
+        float slice = min((float)c, _OceanFftCascadeCount - 1.0);
+        float2 uv = worldPos.xz / max(_OceanFftDomainSizes[c], 1e-3);
+        height += active * _OceanFftSpatial.SampleLevel(sampler_OceanFftSpatial, float3(uv, slice), 0).y;
+    }
+    return _VolumeCenter.y + height * _OceanFftAmplitude;
+#else
+    // Sim height is stored in pool units; the volume's vertical extent maps it to metres.
+    float poolY = SampleSim(simNorm).r;
+    return _VolumeCenter.y + poolY * VolumeExtentSafe().y;
+#endif
+}
+
 // ---------------------------------------------------------------- kernels
-[numthreads(1, 1, 1)]
+// 64 threads x 4 groups = 256: clears the spray tile budget; thread 0 also resets the
+// per-frame spawn counter. MUST be dispatched with TILE_GRID*TILE_GRID/64 groups.
+[numthreads(64, 1, 1)]
 void BeginFrame(uint3 id : SV_DispatchThreadID)
 {
-    Counters[COUNTER_FRAME_SPAWNS] = 0;
+    if (id.x == 0) Counters[COUNTER_FRAME_SPAWNS] = 0;
+    if (id.x < TILE_GRID * TILE_GRID) TileCounts[id.x] = 0;
 }
 
 // One thread per sim texel: roll a spawn where foam exceeds the threshold. The
@@ -177,7 +320,27 @@ void Spawn(uint3 id : SV_DispatchThreadID)
     float excess = foam - _SpawnThreshold;
     if (excess <= 0.0) return;
 
-    float probability = excess * _SpawnRate * _TexelWorldArea * _DeltaTime;
+    float3 texelWorld = TexelToWorld(texel);
+
+    // Stochastic distance LOD (KWS): spawn probability falls with camera distance, dithered
+    // by an independent random so density thins smoothly instead of cutting at a ring.
+    if (_SpawnMaxDistance > 0.0)
+    {
+        float distNorm = saturate(distance(texelWorld.xz, _SpawnCameraXZ) / _SpawnMaxDistance);
+        float rLod = Rand01(id.xy, _FrameSeed ^ 0x27D4EB2Du);
+        if (distNorm > rLod * rLod) return;
+    }
+
+    // Shear boost: wake edges / interactor rims (where moving water borders still water)
+    // emit more than uniformly-moving patches. Same measure the sim's foam gen uses.
+    float vL = Sim.Load(int3(ClampTexel(texel + int2(-1, 0)), 0)).g;
+    float vR = Sim.Load(int3(ClampTexel(texel + int2( 1, 0)), 0)).g;
+    float vD = Sim.Load(int3(ClampTexel(texel + int2( 0,-1)), 0)).g;
+    float vU = Sim.Load(int3(ClampTexel(texel + int2( 0, 1)), 0)).g;
+    float shear = length(float2(vR - vL, vU - vD)) * 0.5;
+
+    float probability = excess * (1.0 + shear * SPAWN_SHEAR_BOOST)
+                      * _SpawnRate * _TexelWorldArea * _DeltaTime;
     if (Rand01(id.xy, _FrameSeed) >= probability) return;
 
     // Per-frame budget: count first, back out if over. A few threads may race past
@@ -196,11 +359,27 @@ void Spawn(uint3 id : SV_DispatchThreadID)
     float r2 = Rand01(id.xy, _FrameSeed ^ 0xC2B2AE35u);
 
     bool spray = r0 < _SprayChance;
+
+    // Per-screen-tile spray budget (KWS): spray clumping in one screen region is capped by
+    // reserving a slot in a coarse tile grid; over-budget spawns demote to floating foam
+    // rather than being lost. Offscreen spawns skip the budget (they cost no overdraw).
+    if (spray && _TileBudgetEnabled > 0.5)
+    {
+        float2 uv; float eyeDepth;
+        if (ProjectToScreen(texelWorld, uv, eyeDepth) && all(uv >= 0.0) && all(uv <= 1.0))
+        {
+            uint2 tile = min((uint2)(uv * TILE_GRID), TILE_GRID - 1);
+            uint before;
+            InterlockedAdd(TileCounts[tile.y * TILE_GRID + tile.x], 1, before);
+            if (before >= _SprayTileCap) spray = false;
+        }
+    }
+
     // Surface flow: normal.xz = -gradient(height) = downhill = flow direction.
     float3 flowWorld = mul(VolumeRot(), float3(info.b, 0.0, info.a)) * _FlowDrift;
 
     FoamParticle particle;
-    particle.worldPos = TexelToWorld(texel);
+    particle.worldPos = texelWorld;
     particle.worldPos.y = 0.0;
     particle.velocity = flowWorld + float3(_WindDrift.x, 0.0, _WindDrift.y);
     if (spray) particle.velocity.y = _SprayLaunchSpeed * (0.6 + 0.4 * r1);
@@ -210,6 +389,49 @@ void Spawn(uint3 id : SV_DispatchThreadID)
     particle.seed = r2;
     particle.kind = spray ? KIND_SPRAY : KIND_SURFACE;
     particle.strength = saturate(foam);
+    Particles[slot] = particle;
+}
+
+// One thread group per CPU-queued burst request, one thread per droplet candidate: throws
+// KIND_SPRAY droplets on a ring around an impact (rigidbody splash, mouse splash). They
+// integrate ballistically in Update and land as surface foam, so event splashes share the
+// exact tech + look of turbulence-thrown spray - the Shuriken system keeps only the crown.
+[numthreads(MAX_BURST_DROPLETS, 1, 1)]
+void SpawnBurst(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID)
+{
+    uint request = gid.x;
+    if (request >= _BurstRequestCount) return;
+    BurstRequest burst = BurstRequests[request];
+    if ((float)tid.x >= burst.count) return;
+
+    uint salt = (uint)(burst.seed * 4294967295.0);
+    uint2 key = uint2(tid.x, request);
+    float r0 = Rand01(key, salt);
+    float r1 = Rand01(key, salt ^ 0x9E3779B9u);
+    float r2 = Rand01(key, salt ^ 0x85EBCA6Bu);
+    float r3 = Rand01(key, salt ^ 0xC2B2AE35u);
+
+    uint cursor;
+    InterlockedAdd(Counters[COUNTER_RING_CURSOR], 1, cursor);
+    uint slot = cursor & (_Capacity - 1u);
+
+    float angle = r0 * 6.2831853;
+    float2 dir = float2(cos(angle), sin(angle));
+    float ring = burst.radius * BURST_RING_RADIUS_SCALE * r1;
+
+    FoamParticle particle;
+    particle.worldPos = float3(burst.center.x + dir.x * ring,
+                               BURST_SPAWN_HEIGHT, // y = height ABOVE the local surface
+                               burst.center.z + dir.y * ring);
+    float outSpeed = burst.outSpeed * lerp(BURST_OUT_JITTER_MIN, BURST_OUT_JITTER_MAX, r2);
+    float upSpeed = burst.upSpeed * lerp(BURST_UP_JITTER_MIN, BURST_UP_JITTER_MAX, r3);
+    particle.velocity = float3(dir.x * outSpeed, upSpeed, dir.y * outSpeed);
+    particle.age = 0.0;
+    particle.life = lerp(_LifeMin, _LifeMax, r1);
+    particle.size = lerp(_SizeMin, _SizeMax, r2);
+    particle.seed = r0;
+    particle.kind = KIND_SPRAY;
+    particle.strength = saturate(burst.strength);
     Particles[slot] = particle;
 }
 
@@ -258,6 +480,14 @@ void Update(uint3 id : SV_DispatchThreadID)
         // crest instead of sitting still (the near-field 2D flow is ~0 on open ocean).
         driven += float3(_CrestRoll.x, 0.0, _CrestRoll.y);
 #endif
+        // Curl + clumping (KWS): a divergence-free swirl (gradient rotated 90 degrees) keeps
+        // floating foam alive, and a gentle pull UP the noise gradient gathers it into
+        // streaks/patches instead of a uniform sprinkle. The field drifts slowly so clumps
+        // form, wander and dissolve.
+        float2 noiseGrad = FoamNoiseGrad(particle.worldPos.xz * FOAM_NOISE_SCALE
+                                         + _FoamTime * FOAM_NOISE_DRIFT);
+        driven += float3(noiseGrad.y, 0.0, -noiseGrad.x) * FOAM_CURL_SPEED
+                + float3(noiseGrad.x, 0.0, noiseGrad.y) * FOAM_CLUMP_SPEED;
         particle.velocity = lerp(particle.velocity, driven, saturate(_Drag * _DeltaTime));
         particle.velocity.y = 0.0;
         particle.worldPos += particle.velocity * _DeltaTime;
@@ -265,4 +495,61 @@ void Update(uint3 id : SV_DispatchThreadID)
     }
 
     Particles[slot] = particle;
+}
+
+// One thread per density texel: reset for this frame's splats.
+[numthreads(UPDATE_THREAD_GROUP_SIZE, 1, 1)]
+void ClearDensity(uint3 id : SV_DispatchThreadID)
+{
+    uint texelCount = _DensitySize.x * _DensitySize.y;
+    if (id.x >= texelCount) return;
+    DensityBuffer[id.x] = 0u;
+    DensityDepth[id.x] = DEPTH_CLEAR;
+}
+
+// One thread per pool slot (KWS RenderParticlesToScreenSpaceBuffer): every live FLOATING
+// particle splats its life-enveloped weight into the screen-space density buffer with
+// InterlockedAdd, and its eye depth with InterlockedMin (occlusion + soft fade in the
+// composite). Spray stays on the textured-quad draw. Thousands of particles become one
+// cheap density field instead of overlapping transparent quads.
+[numthreads(UPDATE_THREAD_GROUP_SIZE, 1, 1)]
+void RasterizeDensity(uint3 id : SV_DispatchThreadID)
+{
+    uint slot = id.x;
+    if (slot >= _Capacity) return;
+
+    FoamParticle particle = Particles[slot];
+    if (particle.life <= 0.0 || particle.age >= particle.life) return;
+    if (particle.kind == KIND_SPRAY) return;
+
+    float2 simNorm = WorldToSimNorm(particle.worldPos);
+    float3 world = particle.worldPos;
+    world.y = SurfaceWorldY(world, simNorm);
+
+    float2 uv; float eyeDepth;
+    if (!ProjectToScreen(world, uv, eyeDepth)) return;
+    if (any(uv < 0.0) || any(uv > 1.0)) return;
+
+    float weight = FoamParticleEnvelope(particle.age, particle.life) * particle.strength;
+    if (weight <= 0.0) return;
+    uint fixedWeight = max(1u, (uint)(weight * _DensityWeightScale));
+    uint depthMm = (uint)(eyeDepth * DEPTH_TO_MM);
+
+    // Projected footprint in density texels (vertical focal term / eye depth), clamped so
+    // the loop stays bounded; the composite's dilation closes pinholes beyond the clamp.
+    float radiusPx = particle.size * _DensityProj11 * (float)_DensitySize.y * 0.5 / eyeDepth;
+    int radius = clamp((int)radiusPx, 1, SPLAT_RADIUS_MAX);
+    int radiusSq = radius * radius;
+
+    int2 centre = (int2)(uv * (float2)_DensitySize);
+    for (int dy = -radius; dy <= radius; dy++)
+        for (int dx = -radius; dx <= radius; dx++)
+        {
+            if (dx * dx + dy * dy > radiusSq) continue;
+            int2 p = centre + int2(dx, dy);
+            if (any(p < 0) || p.x >= (int)_DensitySize.x || p.y >= (int)_DensitySize.y) continue;
+            uint index = (uint)p.y * _DensitySize.x + (uint)p.x;
+            InterlockedAdd(DensityBuffer[index], fixedWeight);
+            InterlockedMin(DensityDepth[index], depthMm);
+        }
 }

@@ -365,6 +365,10 @@ MonoBehaviour:
   floatRadiusScale: 0.5
   waveDriftStrength: 0.1
   verticalSettleDamping: 1.8
+  objectWidth: 0
+  maxBuoyancyForce: 0
+  surfaceRelativeDrag: 0
+  dragCoefficients: {x: 1, y: 1, z: 1}
 --- !u!114 &111454623
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -573,6 +577,10 @@ MonoBehaviour:
   floatRadiusScale: 0.5
   waveDriftStrength: 0.1
   verticalSettleDamping: 1.8
+  objectWidth: 0
+  maxBuoyancyForce: 0
+  surfaceRelativeDrag: 0
+  dragCoefficients: {x: 1, y: 1, z: 1}
 --- !u!114 &154778801
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -875,6 +883,9 @@ MonoBehaviour:
     oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
     oceanFoamTileSize: 8
     oceanFoamFeather: 0.25
+    oceanFoamDeposit: 0.85
+    oceanFoamDrift: 0.08
+    oceanFoamMaxBuildup: 1
   _legacyOpenWater: 0
   _legacyLargeWaveAmplitude: 1
   _legacyLargeWaveChoppiness: 0
@@ -914,7 +925,7 @@ MonoBehaviour:
     useScreenSpaceReflection: 0
     usePlanarReflection: 1
     reflectUrpProbe: 0
-    realRefraction: 0
+    realRefraction: 1
     reflectionStrength: 1
     envReflectionIntensity: 1
     reflectionDistortion: 0.05
@@ -950,6 +961,19 @@ MonoBehaviour:
   _legacyFogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
   _legacyFogDensity: 2
   _legacyWaterOpacity: 0
+  volumeScatterSettings:
+    volumeScatter: 0
+    scatterColor: {r: 0.05, g: 0.22, b: 0.32, a: 1}
+    scatterIntensity: 2
+    scatterAnisotropy: 0.5
+    scatterAmbientTerm: 1
+    scatterSunTerm: 1
+    crestScatter: 0
+    sssIntensity: 3
+    sssSunFalloff: 2
+    sssPinchMin: 0.1
+    sssPinchMax: 0.6
+    sssPinchFalloff: 1.5
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
@@ -1137,6 +1161,10 @@ MonoBehaviour:
   floatRadiusScale: 0.5
   waveDriftStrength: 0.1
   verticalSettleDamping: 1.8
+  objectWidth: 0
+  maxBuoyancyForce: 0
+  surfaceRelativeDrag: 0
+  dragCoefficients: {x: 1, y: 1, z: 1}
 --- !u!114 &574514630
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2068,6 +2096,10 @@ MonoBehaviour:
   floatRadiusScale: 0.5
   waveDriftStrength: 0.1
   verticalSettleDamping: 1.8
+  objectWidth: 0
+  maxBuoyancyForce: 0
+  surfaceRelativeDrag: 0
+  dragCoefficients: {x: 1, y: 1, z: 1}
 --- !u!114 &2079153531
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -28,6 +28,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         bool _showOceanFoam = false;
         bool _showObjectInteraction = false;
         bool _showWaterFog = false;
+        bool _showScatter = false;
         bool _showDepth = false;
         bool _showBedDepth = false;
         bool _showFoam = false;
@@ -50,6 +51,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             // Surface look + light transport
             DrawReflectionsSection();
             DrawWaterFogSection();
+            DrawVolumeScatterSection();
             DrawDepthAttenuationSection();
             DrawBedDepthSection();
 

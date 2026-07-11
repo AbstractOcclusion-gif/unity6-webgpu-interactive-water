@@ -91,6 +91,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         // GPU foam particles (compute + procedural-quad shader + sprite atlas).
         internal const string ShaderFoamParticles = "AbstractOcclusion/WebGpuWater/FoamParticles";
+        internal const string ShaderFoamDensityComposite = "AbstractOcclusion/WebGpuWater/FoamDensityComposite";
         internal const string FoamParticleComputePath = PackageShadersRoot + "/WaterFoamParticles.compute";
         internal const string FoamParticleAtlasPath = Gen + "/FoamParticleAtlas_2x2.png";
 
@@ -99,7 +100,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string SplashDropletMaterialPath = Gen + "/SplashDroplet.mat";
         internal const string SplashCrownMaterialPath = Gen + "/SplashCrown.mat";
         internal const string SplashCrownSheetPath = Gen + "/SplashFlipbook_8x8.png";
-        internal const string DropletTexturePath = Gen + "/Droplet.png";
+        // KWS-style packed droplet (R mass / G shine / B dissolve noise / A thickness). The
+        // legacy Gen/Droplet.png (RGB white, shape in A) is left on disk untouched for old
+        // materials still on the legacy shader path.
+        internal const string DropletTexturePath = Gen + "/DropletPacked.png";
 
         // Foam pattern flipbook (frames laid out in a grid; the surface shader
         // cross-fades frames over time so the foam churns internally) and its
@@ -271,10 +275,19 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 if (atlas != null) m.SetTexture(PropParticleTex, atlas);
             });
 
+            // Screen-space density composite (KWS-style connected foam). Optional: when the
+            // shader is missing the component warns and falls back to quads at runtime.
+            Material densityMaterial = null;
+            var densityShader = Shader.Find(ShaderFoamDensityComposite);
+            if (densityShader != null)
+                densityMaterial = LoadOrCreateMaterial(materialFolder + "/FoamDensityComposite.mat",
+                                                       densityShader, m => { });
+
             var particles = volume.gameObject.AddComponent<WaterFoamParticles>();
             particles.volume = volume;
             particles.particleCompute = compute;
             particles.particleMaterial = material;
+            particles.densityMaterial = densityMaterial;
             EditorUtility.SetDirty(particles);
             return particles;
         }
@@ -410,7 +423,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var splashPSR = splashGO.GetComponent<ParticleSystemRenderer>();
             splashPSR.sharedMaterial = LoadOrCreateSplashMaterial(
                 SplashDropletMaterialPath, LoadOrBuildDroplet(DropletTexturePath));
-            splashPSR.renderMode = ParticleSystemRenderMode.Billboard;
+            // Render mode is owned by ConfigureForDrift (stretched billboards: fast droplets
+            // streak along their motion) - no override here.
             var splashEmitter = splashGO.AddComponent<WaterSplashEmitter>();
             splashEmitter.particles = splashPS;
 
@@ -422,7 +436,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             crownPSR.renderMode = ParticleSystemRenderMode.VerticalBillboard;
             crownPSR.pivot = new Vector3(0f, 0.5f, 0f);
             crownPSR.sharedMaterial = LoadOrCreateSplashMaterial(
-                SplashCrownMaterialPath, LoadFlipbook(SplashCrownSheetPath, TextureWrapMode.Clamp, false));
+                SplashCrownMaterialPath,
+                LoadFlipbook(SplashCrownSheetPath, TextureWrapMode.Clamp, false, linear: true));
             splashEmitter.crownParticles = crownPS;
             return splashEmitter;
         }
@@ -433,7 +448,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             EnsureGenFolder();
             LoadOrCreateSplashMaterial(SplashDropletMaterialPath, LoadOrBuildDroplet(DropletTexturePath));
-            LoadOrCreateSplashMaterial(SplashCrownMaterialPath, LoadFlipbook(SplashCrownSheetPath, TextureWrapMode.Clamp, false));
+            LoadOrCreateSplashMaterial(SplashCrownMaterialPath,
+                LoadFlipbook(SplashCrownSheetPath, TextureWrapMode.Clamp, false, linear: true));
             AssetDatabase.SaveAssets();
         }
 
@@ -456,7 +472,21 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             if (material.shader != shader)
             {
                 material.shader = shader; // upgrade in place; _MainTex carries over by name
-                if (material.mainTexture == null && sprite != null) material.mainTexture = sprite;
+                EditorUtility.SetDirty(material);
+            }
+            // This creator is only ever handed the KWS-packed textures now, so force both the
+            // texture and the packed-channel flag every call: it doubles as the one-click
+            // upgrade for materials created before the packed format existed.
+            if (sprite != null && material.mainTexture != sprite)
+            {
+                material.mainTexture = sprite;
+                EditorUtility.SetDirty(material);
+            }
+            const string PackedChannelsProperty = "_PackedChannels";
+            if (material.HasProperty(PackedChannelsProperty) &&
+                !Mathf.Approximately(material.GetFloat(PackedChannelsProperty), 1f))
+            {
+                material.SetFloat(PackedChannelsProperty, 1f);
                 EditorUtility.SetDirty(material);
             }
             return material;
@@ -619,12 +649,18 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             return AssetDatabase.LoadAssetAtPath<Texture2D>(path);
         }
 
+        // Packed droplet sprite (KWS channel layout, consumed by SplashParticles' packed path):
+        // R = mass (round falloff), G = shine (tight hot core, cubed in the shader),
+        // B = dissolve noise (lifetime burn threshold), A = thickness (soft-fade band).
         static Texture2D LoadOrBuildDroplet(string path)
         {
             var existing = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
             if (existing != null) return existing;
 
             const int s = 64;
+            const float ShineFalloffPower = 6f;   // hot core confined near the centre
+            const float NoiseFrequency = 9f;      // dissolve-noise feature size across the sprite
+            const float NoiseFloor = 0.15f;       // keeps every texel erodable (never sticks at 0)
             var tex = new Texture2D(s, s, TextureFormat.RGBA32, true);
             for (int y = 0; y < s; y++)
                 for (int x = 0; x < s; x++)
@@ -632,14 +668,19 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     float dx = (x + 0.5f) / s * 2f - 1f;
                     float dy = (y + 0.5f) / s * 2f - 1f;
                     float a = Mathf.Clamp01(1f - Mathf.Sqrt(dx * dx + dy * dy));
-                    a *= a;
-                    tex.SetPixel(x, y, new Color(1f, 1f, 1f, a));
+                    float mass = a * a;
+                    float shine = Mathf.Pow(a, ShineFalloffPower);
+                    float noise = NoiseFloor + (1f - NoiseFloor)
+                                * Mathf.PerlinNoise(x / (float)s * NoiseFrequency,
+                                                    y / (float)s * NoiseFrequency);
+                    tex.SetPixel(x, y, new Color(mass, shine, noise, mass));
                 }
             tex.Apply();
             File.WriteAllBytes(path, tex.EncodeToPNG());
             AssetDatabase.ImportAsset(path);
             var imp = (TextureImporter)AssetImporter.GetAtPath(path);
-            imp.alphaIsTransparency = true;
+            imp.sRGBTexture = false;          // channel-packed DATA, not color
+            imp.alphaIsTransparency = false;  // A is thickness, not coverage
             imp.wrapMode = TextureWrapMode.Clamp;
             imp.SaveAndReimport();
             return AssetDatabase.LoadAssetAtPath<Texture2D>(path);

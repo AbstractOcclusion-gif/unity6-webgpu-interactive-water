@@ -10562,6 +10562,7 @@ GameObject:
   m_Component:
   - component: {fileID: 2082625727}
   - component: {fileID: 2082625729}
+  - component: {fileID: 2082625730}
   m_Layer: 0
   m_Name: Frame (WaterVolume)
   m_TagString: Untagged
@@ -10612,6 +10613,8 @@ MonoBehaviour:
   largeBodyThreshold: 48
   simWindowMeters: 32
   clampWindowToShore: 0
+  simWindowFocus: {fileID: 0}
+  simWindowOffset: {x: 0, y: 0}
   simWindowEdgeFadeTexels: 8
   ocean:
     openWater: 1
@@ -10709,15 +10712,28 @@ MonoBehaviour:
   _legacyObstacleFlipY: 1
   waterFogSettings:
     waterFog: 1
-    fogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
+    fogColor: {r: 0.043410465, g: 0.18118669, b: 0.2528302, a: 1}
     fogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
-    fogDensity: 2.6
-    waterOpacity: 0.102
+    fogDensity: 10.1
+    waterOpacity: 0
   _legacyWaterFog: 0
   _legacyFogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
   _legacyFogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
   _legacyFogDensity: 2
   _legacyWaterOpacity: 0
+  volumeScatterSettings:
+    volumeScatter: 1
+    scatterColor: {r: 0.082698405, g: 0.381132, b: 0.35075817, a: 1}
+    scatterIntensity: 0.56
+    scatterAnisotropy: 0.651
+    scatterAmbientTerm: 2.03
+    scatterSunTerm: 3.27
+    crestScatter: 1
+    sssIntensity: 6.28
+    sssSunFalloff: 5.04
+    sssPinchMin: 0
+    sssPinchMax: 0.617
+    sssPinchFalloff: 0.72
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
@@ -10819,6 +10835,36 @@ MonoBehaviour:
   orbit: {fileID: 0}
   configureCamera: 0
   splashEmitter: {fileID: 316513282}
+--- !u!114 &2082625730
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2082625726}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7c2b6569e97b14744848833682c436b7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterFoamParticles
+  volume: {fileID: 2082625729}
+  particleCompute: {fileID: 7200000, guid: 60b46151fe09abd4b97f5f1feaa54593, type: 3}
+  particleMaterial: {fileID: 2100000, guid: 4d23231ea0481ee4b81b7bf6286f854e, type: 2}
+  capacity: 4096
+  spawnThreshold: 0.25
+  spawnRate: 30
+  maxSpawnPerFrame: 256
+  sprayChance: 0.394
+  sprayLaunchSpeed: 0.6
+  lifeRange: {x: 1.5, y: 4}
+  sizeRange: {x: 0.02, y: 0.06}
+  gravity: 4
+  flowDrift: 0.25
+  windDriftSpeed: 0.02
+  drag: 2
+  crestRollSpeed: 0.6
+  flipbookGrid: {x: 2, y: 2}
+  flipbookFps: 0
 --- !u!1 &2096792538
 GameObject:
   m_ObjectHideFlags: 0

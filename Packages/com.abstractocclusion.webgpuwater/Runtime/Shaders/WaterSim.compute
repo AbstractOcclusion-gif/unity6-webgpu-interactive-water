@@ -4,7 +4,10 @@
 // Texture channels (per texel): (height, velocity, normal.x, normal.z)
 // Ping-pong between two RGBAFloat RenderTextures (Src -> Dst), swapped in C#.
 
+#include "WaterFoamCommon.hlsl" // FoamDecayBlend: split decay shared with OceanFft.compute
+
 #pragma kernel Drop
+#pragma kernel SphereInteract
 #pragma kernel Update
 #pragma kernel Normal
 #pragma kernel Obstacle
@@ -40,6 +43,10 @@ static const float4 REST_STATE = float4(0.0, 0.0, 0.0, 0.0);
 // Cap the per-step foam backtrace so a steep ripple can't fling foam across the
 // pool in a single step (keeps the semi-Lagrangian advection stable).
 static const float FOAM_MAX_ADVECT_TEXELS = 4.0;
+
+// Shear foam: fraction of the speed response given to the spatial gradient of the
+// sim velocity (wake edges / dipole rims whiten where moving water borders still).
+static const float FOAM_SHEAR_FRACTION = 1.0;
 
 // Foam level at which decay is fully the FRESH rate. Real foam collapses quickly
 // while thick and bright, then the thin residual lace lingers much longer; a single
@@ -93,6 +100,44 @@ float  _Strength;
 // sim grid is square over pool space, so without this a circular pool-space stamp is stretched
 // to the extent ratio in world. Default (1,1) = square (unchanged). Set from C# per body.
 float2 _DropAxisScale;
+
+// SphereInteract (velocity-dipole interactor, ported from Crest's SphereWaterInteraction).
+// A moving sphere accelerates the water's VELOCITY channel (not height) with a directional
+// dipole: pushed AHEAD of travel, pulled BEHIND, plus a symmetric vertical term for bobbing.
+// The wave solver then integrates that velocity into height, so a continuous path lays a
+// Kelvin V-wake instead of the isotropic rings a height splat (Drop) produces. All coords are
+// pool/sim-normalised: centre matches _Center's [-1,1] convention, radius/velocity are in the
+// same normalised space so the field stays round-in-world on rectangular pools via _SphereAxisScale.
+float2 _SphereCenter;    // sphere centre, sim space [-1, 1] (matches _Center)
+float  _SphereRadius;    // radius as a half-extent fraction (matches Drop's normalised radius)
+float2 _SphereVelXZ;     // horizontal motion this step, sim-normalised (front/back dipole axis)
+float  _SphereVelY;      // vertical motion this step, pool-height units (bobbing term)
+float  _SphereWeight;    // submersion x user weight (0 = no effect)
+float  _SphereStrength;  // master gain on the injected acceleration
+float2 _SphereAxisScale; // per-axis world-round squash (mirrors _DropAxisScale)
+
+// Dipole tightness: the falloff peaks near ~0.7/a, so a ~ TIGHTNESS/radius places the deposited
+// energy around the sphere rim. Vertical is slightly tighter than horizontal, mirroring Crest's
+// 1.67 vs 1.43 minimum-wavelength ratio.
+static const float SPHERE_FALLOFF_VERT  = 1.6;
+static const float SPHERE_FALLOFF_HORIZ = 1.4;
+// Nested-sphere shaping (Crest values): the inner region (deeper than radius*OFFSET inside the
+// surface) also drives horizontal force, weighted up by MULT, so the dipole wraps the hull
+// instead of collapsing to a single ring.
+static const float SPHERE_INNER_OFFSET = 0.109;
+static const float SPHERE_INNER_MULT   = 1.55;
+// Cull radius (in sphere radii): beyond this the sphere contributes nothing.
+static const float SPHERE_CULL_RADII = 4.0;
+
+// Band-limited interaction falloff (Ottosson): ~a*x near 0, decays like 1/x^5 far out. Odd in x,
+// so it flips sign across the surface - the inside/outside sign change the dipole model relies on.
+float InteractionFalloff(float a, float x)
+{
+    float ax = a * x;
+    float ax2 = ax * ax;
+    float ax4 = ax2 * ax2;
+    return ax / (1.0 + ax2 * ax4);
+}
 
 // Update (wave equation tuning)
 float  _WaveSpeed; // stiffness ~ propagation speed (stable for 0 < x <= 2.0)
@@ -207,6 +252,51 @@ void Drop(uint3 id : SV_DispatchThreadID)
     drop = 0.5 - cos(drop * PI) * 0.5;
     info.r += drop * _Strength;
 
+    Dst[p] = Sanitize(info);
+}
+
+// Moving-sphere interactor: accelerate the water's velocity channel with a directional dipole so a
+// travelling object lays a wake. Ported from Crest's SphereWaterInteraction.compute, adapted to this
+// port's single-grid (height, velocity, normal.xz) field: Crest writes acceleration into its velocity
+// slice, we write into info.g the same way, and the Update kernel integrates it into height next step.
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
+void SphereInteract(uint3 id : SV_DispatchThreadID)
+{
+    int2 p = int2(id.xy);
+    float4 info = Read(p);
+
+    // Offset from the sphere centre in the SAME normalised [0,1] space as Drop, squashed per axis so
+    // the interaction is round in WORLD on a rectangular pool.
+    float2 coord = (p + 0.5) * _Delta;
+    float2 centre = _SphereCenter * 0.5 + 0.5;
+    float2 d = (coord - centre) * _SphereAxisScale;
+    float dist = length(d);
+
+    // Copy-through outside the region of influence: this kernel ping-pongs the whole field, so every
+    // texel must write its (possibly unchanged) state to Dst.
+    if (dist > _SphereRadius * SPHERE_CULL_RADII) { Dst[p] = info; return; }
+
+    float sdf = dist - _SphereRadius;                 // signed distance to the sphere in the plane
+    float2 nrm = dist > 1e-5 ? d / dist : float2(0.0, 0.0); // outward normal
+
+    float a = 1.0 / max(_SphereRadius, 1e-4);         // scale falloff to the sphere size
+
+    // Vertical (bobbing) term: symmetric about the sphere, driven by vertical motion. Signed sdf keeps
+    // Crest's inside/outside sign flip.
+    float verticalForce = -_SphereVelY * InteractionFalloff(SPHERE_FALLOFF_VERT * a, sdf);
+
+    // Horizontal (wake) term: +push ahead of motion, -pull behind -> a dipole that, smeared along a
+    // path, becomes the V-wake. Gated to the outside plus the inner nested sphere (Crest's model).
+    float horizontalForce = 0.0;
+    if (sdf > 0.0 || sdf < -_SphereRadius * SPHERE_INNER_OFFSET)
+    {
+        float forceSign = sign(sdf);
+        horizontalForce = forceSign * dot(nrm, _SphereVelXZ)
+                                    * InteractionFalloff(SPHERE_FALLOFF_HORIZ * a, abs(sdf));
+        if (sdf < 0.0) horizontalForce *= SPHERE_INNER_MULT;
+    }
+
+    info.g += _SphereWeight * (verticalForce + horizontalForce) * _SphereStrength;
     Dst[p] = Sanitize(info);
 }
 
@@ -385,14 +475,27 @@ void Foam(uint3 id : SV_DispatchThreadID)
     float fU = FoamSrc.Load(int3(ClampC(p + int2( 0, 1)), 0));
     float foam = lerp(advected, (fL + fR + fD + fU) * 0.25, _FoamSpread);
 
-    // generation from turbulence: speed + negative curvature (crests / chop).
+    // generation from turbulence: speed + negative curvature (crests / chop) + shear.
     // Kept LINEAR on purpose: a hermite knee here amplifies every response above
     // 0.5 and floods the pool with foam. Edge softening is a render-side concern
     // (_FoamFeather in WaterSurface.shader), not a sim-side one.
+    // One fetch per neighbour: .r feeds the curvature, .g the shear, .ba the
+    // breaking-foam flow divergence below.
+    float4 nL = Read(p + int2(-1, 0));
+    float4 nR = Read(p + int2( 1, 0));
+    float4 nD = Read(p + int2( 0,-1));
+    float4 nU = Read(p + int2( 0, 1));
+
     float speed = abs(info.g);
-    float lap = (Read(p + int2(-1,0)).r + Read(p + int2(1,0)).r +
-                 Read(p + int2(0,-1)).r + Read(p + int2(0,1)).r) * 0.25 - info.r;
-    float gen = saturate(speed * _FoamFromSpeed + max(0.0, -lap) * _FoamFromCurv);
+    float lap = (nL.r + nR.r + nD.r + nU.r) * 0.25 - info.r;
+    // Shear (KWS turbulence analog - theirs is |curl|+shear of a 2D flow field; our sim
+    // velocity is the column's VERTICAL rate, whose spatial gradient marks where moving
+    // water borders still water: wake edges, the rim of an interactor's dipole - exactly
+    // where real water shears and whitens). Rides the speed knob at a fixed fraction so
+    // it adds no new control.
+    float shear = length(float2(nR.g - nL.g, nU.g - nD.g)) * 0.5;
+    float gen = saturate((speed + shear * FOAM_SHEAR_FRACTION) * _FoamFromSpeed
+                         + max(0.0, -lap) * _FoamFromCurv);
     foam += gen * (_FoamGenRate * _FoamDtSteps);
 
     // Breaking foam (bed-active shorelines): whitecaps where the flow is fast (Froude), CONVERGING
@@ -407,11 +510,7 @@ void Foam(uint3 id : SV_DispatchThreadID)
             float froude = length(flow) / sqrt(max(BREAK_G * depthB, 1e-4));
             float fastFlow = smoothstep(0.15, 0.65, froude);
 
-            float2 fL2 = Read(p + int2(-1, 0)).ba;
-            float2 fR2 = Read(p + int2( 1, 0)).ba;
-            float2 fD2 = Read(p + int2( 0,-1)).ba;
-            float2 fU2 = Read(p + int2( 0, 1)).ba;
-            float divergence = ((fR2.x - fL2.x) + (fU2.y - fD2.y)) * 0.5 * FLOW_SPEED_SCALE;
+            float divergence = ((nR.b - nL.b) + (nU.a - nD.a)) * 0.5 * FLOW_SPEED_SCALE;
             float convergence = smoothstep(0.02, 0.25, -divergence);
 
             float crest = smoothstep(0.004, 0.03, -lap);
@@ -426,8 +525,10 @@ void Foam(uint3 id : SV_DispatchThreadID)
     // (frame-rate independence) and _FoamDecayRate rescales fade speed linearly -
     // a far gentler tuning handle than the survival factors, which compound ~60x
     // per second and swing the look violently within a few hundredths.
-    float freshness = saturate(foam / FOAM_FRESH_THRESHOLD);
-    float survival = lerp(_FoamDecayResidual, _FoamDecayFresh, freshness);
+    // Shared blend (FoamDecayBlend, WaterFoamCommon.hlsl); NOTE this path blends
+    // SURVIVAL factors (fresh/thick = FASTER decay) while OceanFft blends decay
+    // RATES (dense = SLOWER) - opposite semantics, both deliberate, documented there.
+    float survival = FoamDecayBlend(foam, FOAM_FRESH_THRESHOLD, _FoamDecayResidual, _FoamDecayFresh);
     foam *= pow(survival, _FoamDtSteps * _FoamDecayRate);
 
     // Standing shoreline foam: a band that grows as the water column thins near the waterline

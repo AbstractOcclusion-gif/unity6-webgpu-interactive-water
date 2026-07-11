@@ -90,6 +90,16 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         InteractionMode _objectMode = InteractionMode.Floatable;
         BuoyancyPreset _buoyancyPreset = BuoyancyPreset.Normal;
+
+        // Advanced floater tuning (big / complex objects). Defaults match WaterBuoyancy's own field defaults,
+        // so leaving the foldout untouched wires a floater identically to the preset-only path.
+        bool _advancedFloater;
+        float _floaterObjectWidth;                       // 0 = sample every ripple
+        float _floaterMaxBuoyancyForce;                  // 0 = uncapped
+        bool _floaterSurfaceRelativeDrag;
+        Vector3 _floaterDragCoefficients = Vector3.one;
+        bool _floaterIgnoreRipples;
+
         readonly List<GameObject> _objects = new List<GameObject>();
         Vector2 _scroll;
 
@@ -345,6 +355,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 _buoyancyPreset = (BuoyancyPreset)EditorGUILayout.EnumPopup(
                     new GUIContent("Buoyancy", "Light rides high, Heavy sits low. Splash follows the Options toggle above."),
                     _buoyancyPreset);
+                DrawAdvancedFloaterOptions();
                 EditorGUI.indentLevel--;
             }
 
@@ -403,7 +414,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             EnsureComponent<Rigidbody>(go);
             EnsureComponent<WaterInteractable>(go);
-            ApplyBuoyancyPreset(EnsureComponent<WaterBuoyancy>(go));
+            WaterBuoyancy buoyancy = EnsureComponent<WaterBuoyancy>(go);
+            ApplyBuoyancyPreset(buoyancy);
+            ApplyAdvancedBuoyancy(buoyancy);
             if (_splash) EnsureComponent<WaterSplash>(go);
             EnsureComponent<WaterMembership>(go);
         }
@@ -414,6 +427,53 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             buoyancy.buoyancy = tuning.Buoyancy;
             buoyancy.waterLinearDamping = tuning.LinearDamping;
             buoyancy.waterAngularDamping = tuning.AngularDamping;
+        }
+
+        // The opt-in tuning for large / complex floaters. Values default to WaterBuoyancy's own defaults, so
+        // this is a no-op unless the user opened the Advanced foldout and changed something.
+        void ApplyAdvancedBuoyancy(WaterBuoyancy buoyancy)
+        {
+            buoyancy.objectWidth = Mathf.Max(0f, _floaterObjectWidth);
+            buoyancy.maxBuoyancyForce = Mathf.Max(0f, _floaterMaxBuoyancyForce);
+            buoyancy.surfaceRelativeDrag = _floaterSurfaceRelativeDrag;
+            buoyancy.dragCoefficients = _floaterDragCoefficients;
+            buoyancy.ignoreInteractiveRipples = _floaterIgnoreRipples;
+        }
+
+        // Advanced foldout for big / complex objects: ripple LOD, force cap, and wave-carrying drag.
+        void DrawAdvancedFloaterOptions()
+        {
+            _advancedFloater = EditorGUILayout.Foldout(_advancedFloater, "Advanced (big / complex objects)", toggleOnLabelClick: true);
+            if (!_advancedFloater)
+                return;
+
+            EditorGUI.indentLevel++;
+            _floaterObjectWidth = EditorGUILayout.FloatField(
+                new GUIContent("Object width (LOD)", "Ignore wind-wave ripples shorter than this width (m) so a " +
+                                                     "large float rides the swell without buzzing. 0 = sample every wave."),
+                _floaterObjectWidth);
+            _floaterMaxBuoyancyForce = EditorGUILayout.FloatField(
+                new GUIContent("Max buoyant accel", "Cap on per-point buoyant acceleration so a deeply plunged " +
+                                                    "float doesn't erupt. 0 = uncapped."),
+                _floaterMaxBuoyancyForce);
+            _floaterSurfaceRelativeDrag = EditorGUILayout.Toggle(
+                new GUIContent("Surface-relative drag", "Drag against the water's own velocity (waves carry the " +
+                                                        "object) instead of braking toward world rest."),
+                _floaterSurfaceRelativeDrag);
+            using (new EditorGUI.DisabledScope(!_floaterSurfaceRelativeDrag))
+            {
+                EditorGUI.indentLevel++;
+                _floaterDragCoefficients = EditorGUILayout.Vector3Field(
+                    new GUIContent("Drag coefficients", "Per-axis (object-local) drag scale for surface-relative drag."),
+                    _floaterDragCoefficients);
+                EditorGUI.indentLevel--;
+            }
+            _floaterIgnoreRipples = EditorGUILayout.Toggle(
+                new GUIContent("Ignore interactive ripples", "Sample the analytic surface (rest + wind + swell) only, " +
+                                                             "so a self-emitting body (e.g. a boat) isn't carried by its " +
+                                                             "own wake. Leave off so pool floaters bob on ripples."),
+                _floaterIgnoreRipples);
+            EditorGUI.indentLevel--;
         }
 
         // A static interactable displaces the surface but stays put (no Rigidbody).

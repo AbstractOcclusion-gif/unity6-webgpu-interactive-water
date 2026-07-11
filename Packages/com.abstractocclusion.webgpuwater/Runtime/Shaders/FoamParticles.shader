@@ -39,6 +39,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             #include "WaterWaves.hlsl"  // WaveHeight (ambient wind-wave layer)
             #include "WaterVolume.hlsl" // pool/window <-> world frame
             #include "WaterLargeWaves.hlsl" // FFT ocean surface: LargeBodyWaveHeight, OceanFftNormalTilt, _OceanFftActive
+            #include "WaterFoamCommon.hlsl" // shared foam lighting + erosion (FOAM_LIGHT_WRAP, EROSION_SOFTNESS...)
 
             // Bed shoaling (globals; this shader doesn't include WaterFog). Lets foam spray sit on the
             // shoaled surface near shore instead of the full-height swell.
@@ -63,17 +64,10 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             // Atlas layout is a uniform now (_ParticleFlipbookGrid): (1,1) = a plain non-atlas texture,
             // (2,2) etc. = a flipbook. Optional, like the surface foam's _FoamTexFrames.
 
-            // Life envelope: quick fade-in, erosion-driven fade-out beginning at this
-            // fraction of the particle's life.
-            #define FADE_IN_SECONDS      0.25
-            #define FADE_OUT_START       0.55
-            // As the envelope decays the sprite ERODES (thin regions drop out first)
-            // instead of uniformly ghosting; same trick as the surface lace.
-            #define EROSION_SOFTNESS     0.35
-
-            // Foam lighting, matched to the surface foam so particles sit in the same light.
-            #define FOAM_LIGHT_WRAP      0.4
-            #define FOAM_AMBIENT         0.35
+            // Life envelope (FoamParticleEnvelope) is shared via WaterFoamCommon.hlsl with the
+            // density-splat compute, so screen-space foam weight always matches the quad look.
+            // Erosion dissolve + foam lighting constants come from WaterFoamCommon.hlsl,
+            // shared with the surface foam and the splash particles.
 
             // Below this speed a quad is not stretched (avoids jitter around zero).
             #define STRETCH_MIN_SPEED    0.02
@@ -102,6 +96,10 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             StructuredBuffer<FoamParticle> _Particles;
 
             sampler2D _ParticleTex;
+            // 0 when the screen-space density pass renders the floating foam (this draw then only
+            // shows KIND_SPRAY droplets); 1 = classic quads for everything. Set per draw by
+            // WaterFoamParticles.cs, never a material slider.
+            float _SurfaceQuadsEnabled;
             float3 _SunColor; // Unity directional light color * intensity (global, from WaterVolume)
             float4 _Tint;
             float _ParticleOpacity;
@@ -133,6 +131,9 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             {
                 FoamParticle particle = _Particles[vid / 6];
                 if (particle.life <= 0.0 || particle.age >= particle.life) return Dead();
+                // Density mode: floating foam is rendered by the screen-space density composite;
+                // this draw keeps only the ballistic spray as textured billboards.
+                if (particle.kind != KIND_SPRAY && _SurfaceQuadsEnabled < 0.5) return Dead();
 
                 float2 corner = QUAD_CORNERS[QUAD_INDICES[vid % 6]];
 
@@ -205,9 +206,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                                    + axisY * (corner.y * particle.size);
 
                 // ---- life envelope ----
-                float fadeIn = saturate(particle.age / FADE_IN_SECONDS);
-                float fadeOut = 1.0 - smoothstep(particle.life * FADE_OUT_START, particle.life, particle.age);
-                float envelope = fadeIn * fadeOut * particle.strength;
+                float envelope = FoamParticleEnvelope(particle.age, particle.life) * particle.strength;
 
                 // ---- sprite cell from the atlas: a fixed per-seed variant, or an animated flipbook (foam
                 // churn) when _ParticleFlipbookFps > 0. The seed offsets each particle's phase so they never
@@ -221,13 +220,13 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 float2 uv = (corner * 0.5 + 0.5 + cell) / grid;
 
                 // ---- lighting, matched to the surface foam ----
-                float wrapped = saturate(dot(surfaceNormal, _LightDir) * (1.0 - FOAM_LIGHT_WRAP) + FOAM_LIGHT_WRAP);
+                float wrapped = FoamWrappedDiffuse(surfaceNormal, _LightDir);
 
                 v2f o;
                 o.pos = mul(UNITY_MATRIX_VP, float4(worldVertex, 1.0));
                 o.uv = uv;
                 o.screenPos = ComputeScreenPos(o.pos);
-                o.litColor = _Tint.rgb * (FOAM_AMBIENT + _SunColor * wrapped);
+                o.litColor = FoamLitColor(_Tint.rgb, _SunColor, wrapped);
                 o.fade = float2(envelope, -mul(UNITY_MATRIX_V, float4(worldVertex, 1.0)).z);
                 return o;
             }
@@ -238,7 +237,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 float envelope = i.fade.x;
 
                 // erosion fade: the sprite's thin regions dissolve first as the envelope decays
-                float alpha = saturate((sprite.a - (1.0 - envelope)) / EROSION_SOFTNESS);
+                float alpha = FoamErosionAlpha(sprite.a, envelope);
                 alpha *= envelope * _ParticleOpacity;
 
                 // soft fade against the opaque scene (pool walls, floating objects)

@@ -35,7 +35,11 @@ sample is close to `sceneEye`.
 
 ## Ocean foam — multi-scale detail (Crest-style)
 
-**Noted:** 2026-07-07, during ocean whitecap foam work.
+**Noted:** 2026-07-07, during ocean whitecap foam work. **Partly superseded 2026-07-10:** the
+shipped whitecap path now blends a SECOND rotated/rescaled octave by distance
+(`SampleOceanWhitecapPattern`, `OCEAN_WHITECAP_OCTAVE2_*` in `WaterSurface.shader`), which covers
+the anti-tiling goal. Crest's per-LOD dual-scale sampling remains a possible upgrade if the near
+field still reads repetitive — see `FOAM_SYSTEMS_AUDIT_2026-07-11.md` (C1.x).
 
 Increment 2b adds a single world-tiled foam texture thresholded by coverage. Crest samples TWO
 tiling scales and blends them by distance/LOD (`WhiteFoamTexture` + `d_Crest_FoamMultiScale`) so
@@ -46,3 +50,29 @@ repetitive up close or mushy far away.
 blended by camera distance (reuse the same distance term the cascade fade already computes). Gate it
 so single-scale stays the default. Only worth doing if the single-scale look reads too repetitive
 near the camera or too soft toward the horizon.
+
+---
+
+## Ocean FFT debug leftovers
+
+**Noted:** 2026-07-11, foam-systems Batch 1 cleanup.
+
+`OceanFft.compute` still ships the TEMP `VisualizePreview` kernel + `OceanPreview` target +
+`OceanPreviewGain`, and `OceanFftDebug.compute` is debug-only. Left in place (the C# side
+FindKernel/dispatch wiring would need an editor pass to gate safely). To tackle during cleanup:
+strip them or gate behind a `WEBGPUWATER_DEBUG` define together with their C# dispatch sites.
+Also: `_HorizonFadeDistance` legacy path in `WaterSurface.shader` is retired-but-kept behind
+`_HorizonHazeDensity == 0` — remove once scenes are migrated.
+
+---
+
+## Pond foam decay knobs — remap to (fadeRate, deposit)
+
+**Noted:** 2026-07-11, foam-systems Batch 1 (audit C0.5).
+
+Pond foam exposes THREE decay controls (`foamDecay` fresh-survival, `foamDecayResidual`,
+`foamDecayRate`) while ocean foam exposes a (fadeRate, deposit) pair — same user intent, different
+parameterization. Shader-side the blend is now shared (`FoamDecayBlend`, `WaterFoamCommon.hlsl`,
+with deliberately OPPOSITE semantics documented there). Remapping the pond inspector to a
+(fadeRate, deposit) pair needs a serialized-field migration + editor verification — do WITH the
+editor open, same rule as the WaterVolume settings migration (Phase 2).

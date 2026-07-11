@@ -12,6 +12,8 @@
 // The butterfly (twiddle + index pairs) is precomputed CPU-side into OceanButterfly. Grid is fixed at
 // FFT_SIZE so the groupshared buffers are compile-time sized; the C# side asserts resolution == FFT_SIZE.
 // WebGPU-safe: FFT_SIZE=128 -> 128 threads/group (<256) and 6 KB groupshared (<16 KB); half-float targets.
+#include "WaterFoamCommon.hlsl" // FoamDecayBlend: split decay shared with WaterSim.compute
+
 #pragma kernel SpectrumInit
 #pragma kernel SpectrumUpdate
 #pragma kernel FftHorizontal
@@ -25,7 +27,12 @@ RWTexture2DArray<float2> OceanSpecX;       // horizontal x spectrum, then spatia
 RWTexture2DArray<float2> OceanSpecY;       // height spectrum
 RWTexture2DArray<float2> OceanSpecZ;       // horizontal z spectrum
 RWTexture2DArray<float4> OceanDisplacement;// spatial cascade (x, height, z, foam)
-RWTexture2DArray<float4> OceanNormal;      // world normal (xyz) + Jacobian foam (w)
+// CHANNEL CONTRACT - OceanNormal repurposes two lanes; every consumer must honour this:
+//   .xz = surface normal tilt          (OceanFftNormalTilt, WaterLargeWaves.hlsl)
+//   .y  = crest pinch saturate(1 - J)  (OceanFftJacobian -> SSS crest glow) - NOT the normal's up-component,
+//         which no consumer reads; reconstruct up as sqrt(1 - dot(xz, xz)) if ever needed.
+//   .w  = accumulated whitecap foam    (OceanFftFoam -> surface shading + particle spawns)
+RWTexture2DArray<float4> OceanNormal;
 RWTexture2DArray<float4> OceanPreview;     // TEMP: remapped displacement for the debug view
 Texture2D<float4>        OceanButterfly;   // (twiddle.x, twiddle.y, indexA, indexB) per (stage, element)
 
@@ -82,6 +89,11 @@ float  OceanFieldAmplitude;          // matches the surface shader's _LargeWaveA
 // slowly dense foam decays relative to it, and OceanFoamDriftFraction rolls it downwind. DENSE_REFERENCE
 // is the accumulated-foam value treated as "fully dense" for the fast/slow blend.
 #define OCEAN_FOAM_DENSE_REFERENCE    0.6
+// Crest's "_FilterWaves" analog: the FINEST cascade folds everywhere at high frequency, which reads as
+// uniform near-camera foam soup rather than discrete whitecaps (Crest excludes its finest LODs from foam
+// generation entirely by default; KWS damps per cascade). Damp - don't silence - so close-up crests still
+// seed some fine lace.
+#define OCEAN_FOAM_FINEST_DAMP        0.5
 
 float2 OceanCMul(float2 a, float2 b) { return float2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
 float2 OceanConj(float2 a) { return float2(a.x, -a.y); }
@@ -292,9 +304,11 @@ void ComputeNormal(uint3 id : SV_DispatchThreadID)
     float jacobian = jxx * jzz - jxz * jzx;
 
     // Fresh foam only where the surface folds, only above the whitecap wind threshold, silenced on the
-    // coarsest cascade (no breaking detail) and damped on the next (KWS skips 0, quarters 1).
+    // coarsest cascade (no breaking detail), damped on the next (KWS skips 0, quarters 1), and damped on
+    // the FINEST cascade (Crest FilterWaves: fine detail folds constantly and would foam-soup the near field).
     float fresh = saturate(OceanFoamCoverage - jacobian);
     fresh *= (slice == 0u) ? 0.0 : ((slice == 1u) ? OCEAN_FOAM_CASCADE1_DAMP : 1.0);
+    fresh *= (slice == OceanFftCascades - 1u && OceanFftCascades > 2u) ? OCEAN_FOAM_FINEST_DAMP : 1.0;
     fresh *= (OceanWindSpeed > OceanFoamMinWind) ? 1.0 : 0.0;
 
     // Advection ("roll and deposit"): carry the persistent foam downwind and resample it, instead of
@@ -309,16 +323,28 @@ void ComputeNormal(uint3 id : SV_DispatchThreadID)
 
     // Split decay + accumulation (framerate-independent, Crest-style): dense deposited foam lingers as
     // windrows while thin lace fades fast, then add the fresh fold so whitecaps build up and streak
-    // instead of flickering per frame.
+    // instead of flickering per frame. Shared blend (FoamDecayBlend, WaterFoamCommon.hlsl); NOTE this
+    // path blends decay RATES (dense = SLOWER) while WaterSim's foam blends SURVIVAL factors
+    // (fresh/thick = FASTER) - opposite semantics, both deliberate, documented at the helper.
+    // Prewarm (Crest): on the very first dispatch (no history) substitute dt with the decay's
+    // steady-state time constant 1/fadeRate, so the accumulation term lands directly at its
+    // equilibrium (gain/decay) and the ocean loads with settled whitecaps instead of visibly
+    // building foam up over the first seconds. History is zero on that frame, so only the
+    // accumulation term sees the substituted dt.
+    float foamDt = (OceanFoamHistoryValid < 0.5) ? (1.0 / max(OceanFoamFadeRate, 1e-3))
+                                                 : OceanFoamDeltaTime;
     float slowFade = OceanFoamFadeRate * OceanFoamSlowFadeFraction;
-    float density = saturate(advectedFoam / OCEAN_FOAM_DENSE_REFERENCE);
-    float fadeRate = lerp(OceanFoamFadeRate, slowFade, density);
+    float fadeRate = FoamDecayBlend(advectedFoam, OCEAN_FOAM_DENSE_REFERENCE, OceanFoamFadeRate, slowFade);
     float foam = advectedFoam * saturate(1.0 - fadeRate * OceanFoamDeltaTime)
-               + OCEAN_FOAM_ACCUM_RATE * OceanFoamStrength * OceanFoamDeltaTime * fresh;
+               + OCEAN_FOAM_ACCUM_RATE * OceanFoamStrength * foamDt * fresh;
     foam = min(foam, OceanFoamMax);
 
     OceanFoamNext[id] = foam;           // history the next frame decays from
-    OceanNormal[id] = float4(n, foam);  // mip 0 the surface samples once the fragment consumes .w
+    // Store the raw fold amount (crest "pinch" = saturate(1 - Jacobian)) in .y. The normal's up-component
+    // is never sampled by any consumer (they read .xz for tilt, .w for foam), so .y is free real estate,
+    // and this target is mipped so the pinch gets distance anti-aliasing for free. The surface reads it
+    // as the TRUE wave-crest steepness for the subsurface glow, instead of proxying it with wave height.
+    OceanNormal[id] = float4(n.x, saturate(1.0 - jacobian), n.z, foam);
 }
 
 // Manual bilinear read of one cascade's height (.y) at a world xz. Cascades tile every 'domain' metres

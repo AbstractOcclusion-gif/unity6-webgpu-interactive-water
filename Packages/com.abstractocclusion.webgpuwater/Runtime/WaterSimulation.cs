@@ -14,11 +14,13 @@ namespace AbstractOcclusion.WebGpuWater
         // Interactive ripples are authored in WORLD radius, converted to a grid fraction by the caller.
         // On a large plane that fraction can fall below one texel and inject an aliased spike, so floor
         // it to a few texels: every drop stays a smooth bump regardless of body size. _Radius is a
-        // fraction of the grid side, so N texels correspond to N / Resolution.
-        const float MinDropTexelRadius = 2.5f;
+        // fraction of the grid side, so N texels correspond to N / Resolution. Internal so WaterVolume
+        // can energy-compensate strength when this floor WIDENS a drop on a cap-limited coarse grid.
+        internal const float MinDropTexelRadius = 2.5f;
 
         // Compute kernel names (must match WaterSim.compute).
         const string KernelDrop = "Drop";
+        const string KernelSphereInteract = "SphereInteract";
         const string KernelUpdate = "Update";
         const string KernelNormal = "Normal";
         const string KernelObstacle = "Obstacle";
@@ -39,6 +41,13 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_Radius = Shader.PropertyToID("_Radius");
         static readonly int ID_Strength = Shader.PropertyToID("_Strength");
         static readonly int ID_DropAxisScale = Shader.PropertyToID("_DropAxisScale");
+        static readonly int ID_SphereCenter = Shader.PropertyToID("_SphereCenter");
+        static readonly int ID_SphereRadius = Shader.PropertyToID("_SphereRadius");
+        static readonly int ID_SphereVelXZ = Shader.PropertyToID("_SphereVelXZ");
+        static readonly int ID_SphereVelY = Shader.PropertyToID("_SphereVelY");
+        static readonly int ID_SphereWeight = Shader.PropertyToID("_SphereWeight");
+        static readonly int ID_SphereStrength = Shader.PropertyToID("_SphereStrength");
+        static readonly int ID_SphereAxisScale = Shader.PropertyToID("_SphereAxisScale");
         static readonly int ID_WaveAxisWeight = Shader.PropertyToID("_WaveAxisWeight");
         static readonly int ID_ObstaclePrev = Shader.PropertyToID("ObstaclePrev");
         static readonly int ID_ObstacleCurr = Shader.PropertyToID("ObstacleCurr");
@@ -81,7 +90,7 @@ namespace AbstractOcclusion.WebGpuWater
         public int Resolution { get; }
 
         readonly ComputeShader _cs;
-        readonly int _kDrop, _kUpdate, _kNormal, _kObstacle, _kObstacleSmooth, _kFoam, _kConserve, _kScroll, _kScrollFoam;
+        readonly int _kDrop, _kSphereInteract, _kUpdate, _kNormal, _kObstacle, _kObstacleSmooth, _kFoam, _kConserve, _kScroll, _kScrollFoam;
         readonly int _kReduceMean, _kReduceMeanFinal;
         readonly int _groups;
         readonly Vector4 _delta; // (1/Resolution, 1/Resolution, 0, 0), precomputed once
@@ -135,6 +144,7 @@ namespace AbstractOcclusion.WebGpuWater
             _delta = new Vector4(1f / Resolution, 1f / Resolution, 0f, 0f);
             _cs = cs;
             _kDrop = cs.FindKernel(KernelDrop);
+            _kSphereInteract = cs.FindKernel(KernelSphereInteract);
             _kUpdate = cs.FindKernel(KernelUpdate);
             _kNormal = cs.FindKernel(KernelNormal);
             _kObstacle = cs.FindKernel(KernelObstacle);
@@ -287,6 +297,29 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetFloat(ID_Strength, strength);
             _cs.SetVector(ID_DropAxisScale, _dropAxisScale);
             Dispatch(_kDrop);
+        }
+
+        /// <summary>Inject a moving sphere's velocity-dipole into the field (Crest-style wake). Unlike
+        /// <see cref="AddDrop"/>, which stamps HEIGHT, this accelerates the VELOCITY channel with a
+        /// directional dipole, so a travelling object lays a V-wake rather than isotropic rings. All
+        /// arguments are pool/sim-normalised (mapped by the caller): <paramref name="center"/> in [-1,1]
+        /// like a drop, <paramref name="radius"/> as a half-extent fraction, <paramref name="velXZ"/> the
+        /// horizontal motion this step and <paramref name="velY"/> the vertical motion (pool-height units),
+        /// <paramref name="weight"/> the submersion x user weight, <paramref name="strength"/> the master
+        /// gain. No-op look when weight is 0. Dispatched only when a sphere interactor is present, so a
+        /// scene without one is byte-identical.</summary>
+        public void AddSphereInteraction(Vector2 center, float radius, Vector2 velXZ, float velY,
+                                         float weight, float strength)
+        {
+            radius = Mathf.Max(radius, MinDropTexelRadius / Resolution);
+            _cs.SetVector(ID_SphereCenter, new Vector4(center.x, center.y, 0f, 0f));
+            _cs.SetFloat(ID_SphereRadius, radius);
+            _cs.SetVector(ID_SphereVelXZ, new Vector4(velXZ.x, velXZ.y, 0f, 0f));
+            _cs.SetFloat(ID_SphereVelY, velY);
+            _cs.SetFloat(ID_SphereWeight, weight);
+            _cs.SetFloat(ID_SphereStrength, strength);
+            _cs.SetVector(ID_SphereAxisScale, _dropAxisScale);
+            Dispatch(_kSphereInteract);
         }
 
         /// <summary>Forces the surface by the change in submerged footprint

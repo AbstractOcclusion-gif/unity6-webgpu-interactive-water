@@ -1,13 +1,26 @@
 """Generates Generated/SplashFlipbook_8x8.png: a 64-frame crown-splash flipbook,
-128px per frame in an 8x8 grid (read left-to-right, top-to-bottom), RGBA with
-the splash shape in alpha. Plays once over a particle's lifetime (see
-WaterSplashEmitter.ConfigureCrown) and ends on empty frames so the particle
-vanishes cleanly.
+128px per frame in an 8x8 grid (read left-to-right, top-to-bottom), KWS-style
+CHANNEL-PACKED data (import LINEAR, not sRGB):
+
+  R = mass      - splash opacity shape (what used to live in alpha)
+  G = shine     - the large rim-droplet cores only; the shader CUBES this for
+                  tight sun sparkle
+  B = dissolve  - static smooth noise; the lifetime-erosion burn threshold, so
+                  the splash disintegrates into organic patches instead of
+                  fading uniformly
+  A = thickness - blurred mass; stretches the soft-particle fade band on thick
+                  parts so edges dissolve first at intersections
+
+Consumed by SplashParticles.shader with _PackedChannels = 1 (materials on the
+legacy path still read old-style alpha sheets). Plays once over a particle's
+lifetime (see WaterSplashEmitter.ConfigureCrown) and ends on empty frames so
+the particle vanishes cleanly.
 
 Built from a tiny ballistic particle sim viewed as a billboard projection:
 - a dense "sheet" of fine droplets spawned on a ring forms the crown curtain
   (azimuthal lobes give the classic crown rim),
-- fewer, larger rim droplets detach later with velocity-stretched stamps,
+- fewer, larger rim droplets detach later with velocity-stretched stamps
+  (these alone feed the shine channel),
 - back-of-ring particles are dimmed for depth,
 - a soft-knee tonemap keeps mid-life frames readable, and a floor cut removes
   background speckle.
@@ -30,8 +43,11 @@ SHEET_COUNT = 4200      # fine curtain droplets
 DROPLET_COUNT = 460     # large detaching rim droplets
 SPECKLE_FLOOR = 0.02    # subtracted before the tonemap: kills background dust
 TONEMAP_KNEE = 0.30
+SHINE_KNEE = 0.15       # harder knee: shine stays confined to the bright cores
 END_FADE_START = 0.75   # fraction of the sequence where the global fade-out begins
-TINT = (242, 250, 255)  # cool white
+THICKNESS_SIGMA = 4.0   # blur that turns mass into the fake-depth thickness channel
+NOISE_SIGMA = 2.5       # feature size of the dissolve noise
+NOISE_FLOOR = 0.05      # keeps every texel erodable (never sticks at 0)
 OUTPUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "SplashFlipbook_8x8.png")
 
 rng = np.random.default_rng(SEED)
@@ -73,10 +89,12 @@ def stamp(img, xs, ys, weights, sigma):
     img += gaussian_filter(acc, sigma)
 
 
-frames = []
+mass_frames = []
+shine_frames = []
 for i in range(FRAME_COUNT):
     t = (i + 0.5) / FRAME_COUNT * DURATION
     img = np.zeros((FRAME_SIZE, FRAME_SIZE))
+    img_shine = np.zeros((FRAME_SIZE, FRAME_SIZE))
 
     x, y, depth, age, alive = project(sheet_az, sheet_r0, sheet_vout, sheet_vup, sheet_birth, t)
     fade = np.clip(1.15 - age / DURATION, 0, 1) ** 0.8
@@ -91,25 +109,53 @@ for i in range(FRAME_COUNT):
     for k in (-1, 0, 1):  # velocity stretch: 3 sub-stamps along the motion direction
         dt = k * 0.014
         stamp(img, xd + np.sin(drop_az) * drop_vout * dt, yd + vy * dt, wd * drop_size * 0.5, 2.0)
+    # shine: only the droplet CORES (single unstretched stamp, tight blur) so the
+    # cubed-shine sparkle lands on discrete droplets, not the whole curtain
+    stamp(img_shine, xd, yd, wd * drop_size * 0.5, 1.2)
 
     frac = (i + 0.5) / FRAME_COUNT
     envelope = min(t / 0.04, 1.0) * \
         (1.0 - np.clip((frac - END_FADE_START) / (1.0 - END_FADE_START), 0, 1) ** 1.3)
-    frames.append(img * envelope)
+    mass_frames.append(img * envelope)
+    shine_frames.append(img_shine * envelope)
 
-stack = np.array(frames)
-stack = np.maximum(stack - SPECKLE_FLOOR, 0.0)
-stack = stack / (stack + TONEMAP_KNEE)                     # soft knee lifts mid-life frames
-stack = np.clip(stack / np.percentile(stack, 99.9), 0, 1)
+mass = np.array(mass_frames)
+mass = np.maximum(mass - SPECKLE_FLOOR, 0.0)
+mass = mass / (mass + TONEMAP_KNEE)                        # soft knee lifts mid-life frames
+mass = np.clip(mass / np.percentile(mass, 99.9), 0, 1)
 
-sheet = np.zeros((FRAME_SIZE * ROWS, FRAME_SIZE * COLS))
-for i, frame in enumerate(stack):
-    r, c = divmod(i, COLS)
-    sheet[r * FRAME_SIZE:(r + 1) * FRAME_SIZE, c * FRAME_SIZE:(c + 1) * FRAME_SIZE] = frame
+shine = np.array(shine_frames)
+shine = np.maximum(shine - SPECKLE_FLOOR, 0.0)
+shine = shine / (shine + SHINE_KNEE)
+shine = np.clip(shine / max(np.percentile(shine, 99.9), 1e-6), 0, 1)
 
-alpha = (sheet * 255).astype(np.uint8)
-rgba = np.dstack([(sheet * TINT[0]).astype(np.uint8),
-                  (sheet * TINT[1]).astype(np.uint8),
-                  (sheet * TINT[2]).astype(np.uint8), alpha])
+# thickness: per-frame blurred mass, normalized once across the sequence
+thickness = np.array([gaussian_filter(f, THICKNESS_SIGMA) for f in mass])
+thickness = np.clip(thickness / max(thickness.max(), 1e-6), 0, 1)
+
+# dissolve noise: ONE static smooth field tiled into every frame cell, so the
+# erosion eats each frame in the same organic patches (texture-space burn)
+noise_cell = gaussian_filter(rng.uniform(0.0, 1.0, (FRAME_SIZE, FRAME_SIZE)), NOISE_SIGMA)
+noise_cell = (noise_cell - noise_cell.min()) / max(noise_cell.max() - noise_cell.min(), 1e-6)
+noise_cell = NOISE_FLOOR + (1.0 - NOISE_FLOOR) * noise_cell
+
+
+def assemble(stack):
+    sheet = np.zeros((FRAME_SIZE * ROWS, FRAME_SIZE * COLS))
+    for i, frame in enumerate(stack):
+        r, c = divmod(i, COLS)
+        sheet[r * FRAME_SIZE:(r + 1) * FRAME_SIZE, c * FRAME_SIZE:(c + 1) * FRAME_SIZE] = frame
+    return sheet
+
+
+mass_sheet = assemble(mass)
+shine_sheet = assemble(shine)
+thickness_sheet = assemble(thickness)
+noise_sheet = np.tile(noise_cell, (ROWS, COLS))
+
+rgba = np.dstack([(mass_sheet * 255).astype(np.uint8),
+                  (shine_sheet * 255).astype(np.uint8),
+                  (noise_sheet * 255).astype(np.uint8),
+                  (thickness_sheet * 255).astype(np.uint8)])
 Image.fromarray(rgba, "RGBA").save(os.path.abspath(OUTPUT))
 print("wrote", os.path.abspath(OUTPUT))

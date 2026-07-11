@@ -38,6 +38,11 @@ namespace AbstractOcclusion.WebGpuWater
         const float MinOutwardStrength = 0.4f;        // horizontal throw floor for soft splashes
         const float SizeJitterMin = 0.6f;             // per-droplet size randomisation
         const float SizeJitterMax = 1.3f;
+        // Droplet opacity scales with impact strength (DWP2's velocity-proportional spray:
+        // emission AND alpha ride the object's speed) - a slow entry dribbles faint droplets,
+        // a hard slam throws an opaque sheet. Floor keeps soft splashes visible.
+        const float AlphaStrengthFloor = 0.45f;
+        const float AlphaStrengthGain = 0.55f;
 
         // ---- drift particle-system defaults (ConfigureForDrift) ----
         const float DriftGravityModifier = 0.4f;      // low gravity: droplets drift rather than dive
@@ -48,6 +53,11 @@ namespace AbstractOcclusion.WebGpuWater
         const float DriftVelocityDampen = 0.2f;       // slows droplets so they settle onto the surface
         const float DriftVelocityDrag = 1.5f;
         const float DriftFadeStartFraction = 0.6f;    // alpha holds until this fraction of life, then fades
+        // Stretched-billboard droplets (KWS splash): fast droplets elongate along their motion
+        // into streaks/jets while settled drifters stay near-round. velocityScale adds length
+        // per unit speed; lengthScale keeps the at-rest sprite unstretched.
+        const float DropletStretchVelocityScale = 0.06f;
+        const float DropletStretchLengthScale = 1f;
 
         // ---- crown particle-system defaults (ConfigureCrown) ----
         const float CrownStartLifetime = 0.5f;
@@ -149,13 +159,29 @@ namespace AbstractOcclusion.WebGpuWater
             droplet.velocity = velocity;
         }
 
-        /// <summary>Emit a splash at a surface point. strength is 0..1.</summary>
+        /// <summary>Emit a splash at a surface point. strength is 0..1. Droplets are thrown by
+        /// the body's GPU foam-particle system when one is present (spray unification: every
+        /// airborne droplet shares the KIND_SPRAY tech + look); the Shuriken system here then
+        /// only plays the crown flipbook. Bodies without a GPU system keep the legacy
+        /// Shuriken droplet burst.</summary>
         public void EmitSplash(Vector3 surfacePos, float strength, float radius)
         {
             if (particles == null) return;
             strength = Mathf.Clamp01(strength);
             int count = Mathf.Clamp(Mathf.RoundToInt(strength * maxParticlesPerBurst),
                                     MinBurstCount, maxParticlesPerBurst);
+
+            WaterVolume body = WaterVolume.BodyContaining(surfacePos);
+            WaterFoamParticles gpuSpray = body != null ? body.GetComponent<WaterFoamParticles>() : null;
+            if (gpuSpray != null && gpuSpray.isActiveAndEnabled)
+            {
+                // Map the burst shaping onto the GPU request; per-droplet jitter runs in-kernel.
+                float upSpeed = upwardBias * (UpwardStrengthFloor + UpwardStrengthGain * strength);
+                float outSpeed = radius * outwardSpread * Mathf.Max(MinOutwardStrength, strength);
+                gpuSpray.QueueSplashBurst(surfacePos, strength, radius, count, upSpeed, outSpeed);
+                EmitCrown(surfacePos, strength, radius);
+                return;
+            }
 
             var ep = new ParticleSystem.EmitParams();
             for (int i = 0; i < count; i++)
@@ -172,6 +198,11 @@ namespace AbstractOcclusion.WebGpuWater
                 ep.velocity = outward * Mathf.Max(MinOutwardStrength, strength) + new Vector3(0f, up, 0f);
                 ep.startLifetime = Random.Range(lifetime.x, lifetime.y);
                 ep.startSize = dropletSize * Random.Range(SizeJitterMin, SizeJitterMax);
+                // Velocity-proportional opacity (DWP2): faint droplets on a soft entry,
+                // near-opaque on a hard slam. colorOverLifetime multiplies on top.
+                Color dropletColor = DriftStartColor;
+                dropletColor.a *= AlphaStrengthFloor + AlphaStrengthGain * strength;
+                ep.startColor = dropletColor;
                 particles.Emit(ep, 1);
             }
 
@@ -224,6 +255,18 @@ namespace AbstractOcclusion.WebGpuWater
             var colorOverLifetime = ps.colorOverLifetime;
             colorOverLifetime.enabled = true;
             colorOverLifetime.color = FadeTailGradient(DriftFadeStartFraction);
+
+            // Stretched billboards: fast droplets read as streaks along their motion (KWS
+            // splash look); settled drifters are slow, so they stay effectively round.
+            // The crown system is left as plain billboards - its flipbook is directional.
+            var renderer = ps.GetComponent<ParticleSystemRenderer>();
+            if (renderer != null)
+            {
+                renderer.renderMode = ParticleSystemRenderMode.Stretch;
+                renderer.velocityScale = DropletStretchVelocityScale;
+                renderer.lengthScale = DropletStretchLengthScale;
+                renderer.cameraVelocityScale = 0f;
+            }
 
             ps.Play();
         }

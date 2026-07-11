@@ -73,23 +73,27 @@ namespace AbstractOcclusion.WebGpuWater
         // queries keep working (interactive ripples / obstacle displacement are simply absent there).
         // Returns false only when readback is supported but hasn't landed yet (first frames).
         internal bool TrySamplePoolSurface(Vector3 world, float poolX, float poolZ,
-                                           out float surfaceH, out Vector2 poolFlow)
+                                           out float surfaceH, out Vector2 poolFlow,
+                                           float minWavelengthMeters = 0f, bool excludeRipples = false)
         {
             surfaceH = 0f;
             poolFlow = Vector2.zero;
 
-            bool haveReadback = _heightReady && _heightCpu != null;
+            // A self-emitting floater (one with a WaterInteractable wake) reads its OWN ripples back and
+            // gets pushed by them - it self-propels. excludeRipples serves such a body the analytic surface
+            // (rest + wind + swell) only, breaking the feedback loop; it stays valid from frame 0.
+            bool haveReadback = !excludeRipples && _heightReady && _heightCpu != null;
             if (haveReadback)
             {
                 Color sample = SampleRipple(world, poolX, poolZ);
                 surfaceH = sample.r;
                 poolFlow = new Vector2(sample.b, sample.a); // (normal.x, normal.z)
             }
-            else if (!_analyticFallback)
+            else if (!excludeRipples && !_analyticFallback)
             {
                 return false; // readback supported but not ready yet
             }
-            // else: analytic fallback -> rest surface (0) + wind waves added below
+            // else: analytic surface -> rest (0) + wind waves added below
 
             // Small wind-wave detail. Open water keeps this layer AND adds the big swell in world
             // space (in the WaterVolume callers), so both wind-wave scales are present.
@@ -100,8 +104,8 @@ namespace AbstractOcclusion.WebGpuWater
                 float mpu = _body.WaveMetersPerUnit;
                 float waveX = _body.IsOceanClipmap ? world.x / mpu : poolX;
                 float waveZ = _body.IsOceanClipmap ? world.z / mpu : poolZ;
-                surfaceH += _body.WaveBank.SampleHeight(waveX, waveZ, _body.WaveTime, mpu);
-                poolFlow -= _body.WaveBank.SampleSlope(waveX, waveZ, _body.WaveTime, mpu)
+                surfaceH += _body.WaveBank.SampleHeight(waveX, waveZ, _body.WaveTime, mpu, minWavelengthMeters);
+                poolFlow -= _body.WaveBank.SampleSlope(waveX, waveZ, _body.WaveTime, mpu, minWavelengthMeters)
                             * _body.waveNormalStrength;
             }
             return true;

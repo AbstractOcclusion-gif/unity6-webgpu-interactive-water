@@ -39,7 +39,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
         [Header(Ocean Wave Foam)]
         _OceanWhitecapTex ("Ocean Whitecap (single tiling texture)", 2D) = "white" {}
-        _OceanWhitecapNormalTex ("Ocean Whitecap Normal (raw RGB, linear)", 2D) = "bump" {}
+        // Whitecap relief is now derived procedurally from the albedo (Crest-style finite
+        // differences), so no whitecap normal-map slot; materials that still serialize
+        // _OceanWhitecapNormalTex keep it as inert data.
     }
     SubShader
     {
@@ -72,6 +74,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             #include "WaterWaves.hlsl"
             #include "WaterVolume.hlsl" // brings WaterShared (via WaterCommon): POOL_RIM_HEIGHT etc.
             #include "WaterLargeWaves.hlsl" // open-water world-space wave normal (large-body path)
+            #include "WaterFoamCommon.hlsl" // shared foam lighting constants/helpers (FOAM_LIGHT_WRAP etc.)
 
             // Look constants local to this surface pass (single-use here).
             #define SUN_GLINT_TINT          float3(10.0, 8.0, 6.0)
@@ -80,6 +83,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             #define FRESNEL_POWER           3.0
             #define FRESNEL_MIN_ABOVE       0.25
             #define FRESNEL_MIN_BELOW       0.5
+            #define SSS_AMPLITUDE_EPSILON   1e-3   // guards the crest/amplitude ratio when the swell is flat
 
             // Peaked-look refine: short steps along the ripple normal sharpen wave crests.
             // The step COUNT is tier-driven (_PeakedRefineSteps via the body's property
@@ -106,10 +110,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // Pattern-erosion band for the core cut: wider than the lace band so the
             // core rim breaks into chunkier pieces than the thin filaments.
             #define FOAM_CORE_CUT_SOFTNESS 0.35
-            // Foam lighting: wrapped diffuse keeps the unlit side from going black
-            // (foam scatters light), plus a flat ambient floor from the sky.
-            #define FOAM_LIGHT_WRAP     0.4
-            #define FOAM_AMBIENT        0.35
+            // Foam lighting (FOAM_LIGHT_WRAP / FOAM_AMBIENT) lives in WaterFoamCommon.hlsl,
+            // shared with FoamParticles/SplashParticles so every foam element shades alike.
             // Seen from BELOW, dense foam blocks the sky transmitted through the surface,
             // while thin lace scatters a faint sunlit glow through.
             #define FOAM_UNDERSIDE_DARKEN 0.6
@@ -123,6 +125,19 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             #define OCEAN_WHITECAP_OCTAVE2_ROT_SIN   0.5        // sin(30 deg)
             #define OCEAN_WHITECAP_OCTAVE_BLEND_DIST 60.0       // metres over which the 2nd octave fades in (near water keeps one crisp tile)
             #define OCEAN_WHITECAP_CONTRAST          1.6        // >1 sharpens the pattern so foam breaks into crisper shapes, less round
+            #define OCEAN_WHITECAP_CONTRAST_DENSE    1.0        // contrast relaxes toward this as coverage saturates (KWS), so dense foam goes SOLID instead of staying lacy
+            // Whitecap parallax (SW3-style fake height): the foam pattern is sampled where a layer floating
+            // PARALLAX_HEIGHT metres above the surface would intersect the view ray, so foam visually sits
+            // on top of the water instead of being painted into it. The view-ray Y is floored so grazing
+            // angles can't stretch the offset to infinity.
+            #define OCEAN_FOAM_PARALLAX_HEIGHT 0.04
+            #define OCEAN_FOAM_PARALLAX_MIN_VIEW_Y 0.25
+            // Procedural whitecap relief (Crest MultiScaleFoamNormal): finite-difference the albedo
+            // tile instead of shipping a normal map. DELTA = tap offset as a fraction of the tile
+            // (4 texels of the 1024px source); GAIN calibrated so the default tilt is comparable to
+            // the retired normal map at strength 1.
+            #define OCEAN_FOAM_NORMAL_DELTA (4.0 / 1024.0)
+            #define OCEAN_FOAM_NORMAL_GAIN  2.5
 
             float _Underwater;
             // Camera-following high-detail patch (windowed large bodies): a dense [-1,1] grid
@@ -200,7 +215,6 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // (white / bump) keep the look unchanged when unassigned. Decoupled from _FoamTex so the ocean
             // whitecap and the interactive/shoreline foam can be art-directed independently.
             sampler2D _OceanWhitecapTex;
-            sampler2D _OceanWhitecapNormalTex;
             float4 _FoamTex_ST;
             // Auto-populated by Unity as (1/w, 1/h, w, h). Drives the flipbook half-texel inset that
             // stops bilinear filtering bleeding across cell/tile edges.
@@ -415,11 +429,19 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 return lerp(octave0, min(octave0, octave1), blend);
             }
 
-            // Relief tilt (xy) of the dedicated whitecap normal, raw-RGB encoded like the foam normal.
-            // Single tiling texture, so a plain wrapped sample - no flipbook seam handling needed.
+            // Relief tilt (xy) of the whitecap, derived PROCEDURALLY from the albedo tile by finite
+            // differences (Crest's MultiScaleFoamNormal): brightness reads as bubble height, so the
+            // negated gradient tilts the shading normal away from raised foam. Self-flattening - where
+            // there is no foam the gradient is ~0 - and it retires the separate normal-map texture
+            // (_OceanWhitecapNormalTex kept only as an unused asset on disk).
             float2 SampleOceanWhitecapTilt(float2 worldXZ)
             {
-                return tex2D(_OceanWhitecapNormalTex, worldXZ / max(_OceanFoamTileSize, 1e-3)).rg * 2.0 - 1.0;
+                float tile = max(_OceanFoamTileSize, 1e-3);
+                float dd = tile * OCEAN_FOAM_NORMAL_DELTA;
+                float c  = tex2D(_OceanWhitecapTex, worldXZ / tile).r;
+                float cx = tex2D(_OceanWhitecapTex, (worldXZ + float2(dd, 0.0)) / tile).r;
+                float cz = tex2D(_OceanWhitecapTex, (worldXZ + float2(0.0, dd)) / tile).r;
+                return -OCEAN_FOAM_NORMAL_GAIN * float2(cx - c, cz - c);
             }
 
             struct appdata { float4 vertex : POSITION; };
@@ -591,6 +613,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // the environment only. Reflections never return the pool tiles - the floor is seen via
             // refraction alone. The pool box is intersected in POOL space so rotation / non-uniform
             // extent is handled exactly, while the environment uses the WORLD ray.
+            // Deep-water in-scatter for the refracted ray: the lit body colour (the crest SSS is added
+            // emissively after compositing, not here). The view direction is reconstructed from the camera
+            // to this fragment so the scatter phase tracks the real view.
+            float3 DeepWaterColor(float3 worldOrigin, float3 waterColor)
+            {
+                float3 viewDirWS = normalize(_WorldSpaceCameraPos - worldOrigin);
+                return WaterInscatterColor(viewDirWS, _LightDir, _SunColor, 0.0) * waterColor;
+            }
+
             float3 getSurfaceRayColor(float3 worldOrigin, float3 worldRay, float3 waterColor)
             {
                 if (worldRay.y < 0.0)
@@ -600,13 +631,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     // pool tiles. The _REAL_REFRACTION path (in frag) samples the actual scene where
                     // geometry exists and overrides this; this is the no-geometry fallback.
                     if (_LargeBody > 0.5)
-                        return _WaterFogColor.rgb * waterColor;
+                        return DeepWaterColor(worldOrigin, waterColor);
 
                     // Pool tiles only when this body draws the PROCEDURAL (analytic) pool AND real
                     // refraction isn't already sampling the actual scene. Surface-only bodies (no pool)
                     // and the real-refraction path fall back to the deep-water/fog colour, never tiles.
                     if (_ProceduralPool < 0.5 || _RealRefraction > 0.5)
-                        return _WaterFogColor.rgb * waterColor;
+                        return DeepWaterColor(worldOrigin, waterColor);
 
                     float3 po = WorldToPool(worldOrigin);
                     float3 pd = WorldDirToPool(worldRay);
@@ -681,7 +712,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         refractedColor = tex2D(_CameraOpaqueTexture, saturate(ruvU)).rgb * UNDERWATER_REFRACT_TINT;
                     }
 
-                    refractedColor = ApplyWaterOpacity(refractedColor); // turbidity from below too
+                    float3 bodyInscatterUnder = WaterInscatterColor(-incomingRay, _LightDir, _SunColor, 0.0);
+                    refractedColor = ApplyWaterOpacityTinted(refractedColor, bodyInscatterUnder); // turbidity from below too
 
                     float tUnder = (1.0 - fresnel) * length(refractedRay);
                     tUnder = lerp(1.0, tUnder, _ReflectionStrength); // strength 0 = fully refracted
@@ -738,6 +770,31 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     // floor and return the TILES, which showed up as tile "highlights" and hid the probe.
                     // The underwater branch already samples the environment directly; match it here.
                     float3 reflectedColor = SampleEnvironment(reflectedRay);
+
+                    // ---- Wave-crest subsurface glow: steep crests scatter sunlight toward the viewer,
+                    // brightest looking INTO the sun. Crest steepness is the TRUE displacement-Jacobian fold
+                    // exported by the FFT compute (saturate(1 - J), the same fold that seeds whitecaps), so
+                    // the glow tracks the actual breaking crests. Remapped through [min,max] and raised to a
+                    // power so it concentrates on the sharp folds. Added emissively after compositing (see
+                    // below) so it reads regardless of what is behind the crest. Ocean-FFT only + gated. ----
+                    float sssBoost = 0.0;
+                    if (_SssEnabled > 0.5 && _OceanFftActive > 0.5)
+                    {
+                        float fold = OceanFftJacobian(i.largeWaveSourceXZ);
+                        float ramp = saturate((fold - _SssPinchMin)
+                                              / max(_SssPinchMax - _SssPinchMin, SSS_AMPLITUDE_EPSILON));
+                        float pinch = pow(ramp, _SssPinchFalloff);
+                        float sunFacing = pow(saturate(dot(-incomingRay, _LightDir)), _SssSunFalloff);
+                        sssBoost = pinch * sunFacing * _SssIntensity;
+                    }
+
+                    // The water's lit body colour (picked scatter colour + sun/ambient), or the flat fog
+                    // colour when scattering is off. Used as the in-scatter target for EVERY path below (deep
+                    // water, scene refraction, pool, turbidity) so the scatter actually shows. The crest glow
+                    // is NOT folded in here - as a volume target it only shows where the water behind the
+                    // crest is deep (sky/far behind), so it is added emissively after compositing instead.
+                    float3 bodyInscatter = WaterInscatterColor(-incomingRay, _LightDir, _SunColor, 0.0);
+
                     float3 refractedColor = getSurfaceRayColor(i.worldPos, refractedRay, ABOVEWATER_COLOR);
 
                     // ---- Reflection: analytic -> planar -> SSR (SSR wins where it hits). The toggles
@@ -764,7 +821,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         // (scene eye-depth - surface eye-depth), so heavy fog reads through too.
                         float sceneEyeR = LinearEyeDepth(SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(saturate(ruv), 0, 0)));
                         float surfEyeR  = -mul(UNITY_MATRIX_V, float4(i.worldPos, 1.0)).z;
-                        refractedColor = ApplyWaterFog(refractedColor, max(0.0, sceneEyeR - surfEyeR));
+                        refractedColor = ApplyWaterVolume(refractedColor, max(0.0, sceneEyeR - surfEyeR), bodyInscatter);
                     }
                     else if (_LargeBody < 0.5)
                     {
@@ -775,10 +832,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         float3 pdFog = WorldDirToPool(refractedRay);
                         float2 tfog = IntersectCube(i.position, pdFog, POOL_BOX_MIN, POOL_BOX_MAX);
                         float3 exitWorld = PoolToWorld(i.position + pdFog * max(0.0, tfog.y));
-                        refractedColor = ApplyWaterFog(refractedColor, length(exitWorld - i.worldPos));
+                        refractedColor = ApplyWaterVolume(refractedColor, length(exitWorld - i.worldPos), bodyInscatter);
                     }
 
-                    refractedColor = ApplyWaterOpacity(refractedColor); // art-directed turbidity floor
+                    refractedColor = ApplyWaterOpacityTinted(refractedColor, bodyInscatter); // turbidity toward the body colour
 
                     // ---- Ocean FFT whitecap foam: coverage sampled per pixel from the cascade (.w), on the
                     // same crests as the normal tilt, then broken into moving lace by the foam flipbook -
@@ -788,6 +845,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     // term). Ocean-only; the analytic/pool path leaves this at 0. ----
                     float oceanFoam = 0.0;                       // textured coverage: drives matte + blend
                     float3 oceanFoamPattern = float3(1.0, 1.0, 1.0);
+                    float2 oceanFoamSampleXZ = i.largeWaveSourceXZ; // parallax-lifted pattern-sample point
                     if (_OceanFftActive > 0.5)
                     {
                         // Fade the whitecap coverage by the swell shoaling so flattened swell near shore
@@ -795,48 +853,50 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         float coverage = OceanFftFoam(i.largeWaveSourceXZ) * SwellShoalFactor(i.largeWaveSourceXZ);
                         if (coverage > FOAM_MASK_EPSILON)
                         {
+                            // Parallax: sample the PATTERN where a layer floating just above the surface
+                            // meets the view ray (coverage stays at the true surface point - foam is still
+                            // WHERE the sim says, it just reads as sitting on top of the water).
+                            float3 viewToCam = -incomingRay;
+                            oceanFoamSampleXZ = i.largeWaveSourceXZ + viewToCam.xz
+                                * (OCEAN_FOAM_PARALLAX_HEIGHT / max(viewToCam.y, OCEAN_FOAM_PARALLAX_MIN_VIEW_Y));
+
                             // Stock white _FoamTex -> pattern ~= 1 -> solid coverage (no regression); a real
                             // foam texture dissolves in as lace. Distance anti-tiling (second rotated octave)
                             // hides the repeat toward the horizon; the contrast sharpen breaks round blobs.
                             float foamCamDist = distance(i.largeWaveSourceXZ, _WorldSpaceCameraPos.xz);
-                            oceanFoamPattern = SampleOceanWhitecapPattern(i.largeWaveSourceXZ, foamCamDist);
-                            float sharpened = pow(saturate(oceanFoamPattern.r), OCEAN_WHITECAP_CONTRAST);
-                            float threshold = 1.0 - coverage;
+                            oceanFoamPattern = SampleOceanWhitecapPattern(oceanFoamSampleXZ, foamCamDist);
+                            // KWS contrast law: dense coverage RELAXES the contrast (heavy foam stops
+                            // being eroded into lace and goes solid) and the dissolve threshold falls
+                            // with sqrt(coverage) so mid coverage reaches further into the pattern.
+                            float coverageSat = saturate(coverage);
+                            float contrast = lerp(OCEAN_WHITECAP_CONTRAST, OCEAN_WHITECAP_CONTRAST_DENSE, coverageSat);
+                            float sharpened = pow(saturate(oceanFoamPattern.r), contrast);
+                            float threshold = 1.0 - sqrt(coverageSat);
                             oceanFoam = smoothstep(threshold, threshold + max(_OceanFoamFeather, 1e-3), sharpened);
                         }
                     }
-                    float3 outColor = lerp(refractedColor, reflectedColor,
-                                           fresnel * _ReflectionStrength * (1.0 - oceanFoam));
 
-                    // ---- Shoreline gradient from the real terrain depth (baked bed map).
-                    // Tint toward the deep-water colour by the water-column depth, so the surface
-                    // reads clear over shallows and dark over the drop-off. No-op until a bed is
-                    // baked and the toggle is on. ----
-                    if (_UseBedDepth > 0.5 && _BedValid > 0.5)
-                    {
-                        float2 bedUV = i.position.xz * 0.5 + 0.5;
-                        float bedPoolY = tex2Dlod(_BedTex, float4(bedUV, 0, 0)).r;
-                        float colDepth = BedColumnDepthWorld(bedPoolY, i.position.y, VolumeExtentSafe().y);
-                        // Terrain mask: cut the water where the bed rises above the surface (dry beach)
-                        // so the plane doesn't draw over the sand. clip() discards the fragment; the small
-                        // positive bias keeps a hair of water right at the waterline (no shimmer gap).
-                        const float SHORE_CLIP_BIAS = 0.02; // metres of water kept past the waterline
-                        clip(colDepth + SHORE_CLIP_BIAS);
-                        float shore = 1.0 - exp(-_ShorelineDepthScale * colDepth);
-                        outColor = lerp(outColor, _DeepWaterColor.rgb, saturate(shore * _ShorelineStrength));
-                    }
+                    // ---- Foam layers, evaluated BEFORE the reflection composite so the combined foam
+                    // can matte the specular (foam breaks the mirror sheet - previously only the ocean
+                    // layer did; pond/wake foam stayed glossy, which read as painted-on). Evaluated
+                    // separately (different sources + art direction), composited exclusively after the
+                    // shoreline gradient below. ----
+                    float oceanFoamAlpha = 0.0;
+                    float3 oceanFoamLook = float3(0.0, 0.0, 0.0);
+                    float pondFoamAlpha = 0.0;
+                    float3 pondFoamLook = float3(0.0, 0.0, 0.0);
 
-                    // ---- Ocean whitecap blend: lay the lit foam colour over the water by the sampled
-                    // coverage. Lit with the same wrapped-sun + ambient model as the pond foam so crests
-                    // shade with the waves instead of reading as flat paint. Separate from the pond
-                    // _FoamMask path below and gated on the FFT ocean, so pools stay unchanged. ----
+                    // ---- Ocean whitecap look: lit with the same wrapped-sun + ambient model as the pond
+                    // foam so crests shade with the waves instead of reading as flat paint. Gated on the
+                    // FFT ocean, so pools stay unchanged. ----
                     if (oceanFoam > FOAM_MASK_EPSILON)
                     {
                         // ---- Foam relief: emboss the lighting normal by the foam normal map (same flipbook,
                         // frame-synced to the pattern) so the lace shades three-dimensionally and its specular
                         // breakup matches the texture. Built as a LOCAL normal - the base wave normal that the
-                        // pond foam / haze below rely on is left untouched. Default "bump" map = zero tilt. ----
-                        float2 oceanFoamTilt = SampleOceanWhitecapTilt(i.largeWaveSourceXZ)
+                        // pond foam / haze below rely on is left untouched. Default "bump" map = zero tilt.
+                        // Tilt is sampled at the SAME parallax-lifted point as the pattern so they stay glued. ----
+                        float2 oceanFoamTilt = SampleOceanWhitecapTilt(oceanFoamSampleXZ)
                                              * (_FoamNormalStrength * oceanFoam);
                         float3 oceanFoamTangent = normalize(cross(normal, float3(0.0, 0.0, 1.0)));
                         float3 oceanFoamBitangent = cross(normal, oceanFoamTangent);
@@ -845,13 +905,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
                         // Modulate the tint by the pattern so the foam carries internal light/dark detail
                         // instead of reading as a flat wash; whiten toward the peaks so dense foam stays bright.
-                        float oceanWrap = saturate(dot(oceanFoamNormal, _LightDir) * (1.0 - FOAM_LIGHT_WRAP) + FOAM_LIGHT_WRAP);
+                        float oceanWrap = FoamWrappedDiffuse(oceanFoamNormal, _LightDir);
                         float3 oceanTint = _OceanFoamColor.rgb * lerp(oceanFoamPattern, float3(1.0, 1.0, 1.0), oceanFoam);
-                        float3 oceanFoamLook = oceanTint * (FOAM_AMBIENT + _SunColor * oceanWrap);
-                        outColor = lerp(outColor, oceanFoamLook, oceanFoam * _OceanFoamColor.a);
+                        oceanFoamLook = FoamLitColor(oceanTint, _SunColor, oceanWrap);
+                        oceanFoamAlpha = oceanFoam * _OceanFoamColor.a;
                     }
 
-                    // ---- Foam: advected buffer + shoreline border + waterline contact ----
+                    // ---- Interactive/pond foam look: advected buffer + shoreline border + contact ----
                     if (_FoamEnabled > 0.5)
                     {
                         // Windowed bodies read the foam buffer in the window frame too.
@@ -891,12 +951,59 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
                             // ---- Lit foam: wrapped diffuse from the sun over an ambient
                             // floor, so foam shades with the waves instead of flat white. ----
-                            float wrapped = saturate(dot(foamNormal, _LightDir) * (1.0 - FOAM_LIGHT_WRAP) + FOAM_LIGHT_WRAP);
+                            float wrapped = FoamWrappedDiffuse(foamNormal, _LightDir);
                             float3 albedo = _FoamColor.rgb * lerp(pattern, float3(1.0, 1.0, 1.0), core * FOAM_CORE_WHITEN);
-                            float3 foamLook = albedo * (FOAM_AMBIENT + _SunColor * wrapped);
-
-                            outColor = lerp(outColor, foamLook, foamAlpha);
+                            pondFoamLook = FoamLitColor(albedo, _SunColor, wrapped);
+                            pondFoamAlpha = foamAlpha;
                         }
+                    }
+
+                    // Foam is matte: the combined coverage knocks the specular reflection down before
+                    // compositing (this surface expresses gloss as the reflection term, so this IS the
+                    // "foam roughens the surface" cue - Crest lerps smoothness down the same way).
+                    float foamMatte = max(oceanFoam, pondFoamAlpha);
+
+                    float3 outColor = lerp(refractedColor, reflectedColor,
+                                           fresnel * _ReflectionStrength * (1.0 - foamMatte));
+
+                    // ---- Wave-crest subsurface glow, added emissively so it reads on EVERY sun-facing
+                    // crest regardless of what is behind it (the earlier in-scatter form only showed where
+                    // the volume behind the crest was deep, i.e. sky/far behind). Tinted by the scatter
+                    // body colour and lit by the sun; sssBoost already carries the crest pinch, sun-facing
+                    // and intensity. Knocked down by foam so whitecaps stay matte over the glow. ----
+                    if (sssBoost > 0.0)
+                        outColor += _ScatterColor.rgb * _SunColor * (sssBoost * (1.0 - foamMatte));
+
+                    // ---- Shoreline gradient from the real terrain depth (baked bed map).
+                    // Tint toward the deep-water colour by the water-column depth, so the surface
+                    // reads clear over shallows and dark over the drop-off. No-op until a bed is
+                    // baked and the toggle is on. ----
+                    if (_UseBedDepth > 0.5 && _BedValid > 0.5)
+                    {
+                        float2 bedUV = i.position.xz * 0.5 + 0.5;
+                        float bedPoolY = tex2Dlod(_BedTex, float4(bedUV, 0, 0)).r;
+                        float colDepth = BedColumnDepthWorld(bedPoolY, i.position.y, VolumeExtentSafe().y);
+                        // Terrain mask: cut the water where the bed rises above the surface (dry beach)
+                        // so the plane doesn't draw over the sand. clip() discards the fragment; the small
+                        // positive bias keeps a hair of water right at the waterline (no shimmer gap).
+                        const float SHORE_CLIP_BIAS = 0.02; // metres of water kept past the waterline
+                        clip(colDepth + SHORE_CLIP_BIAS);
+                        float shore = 1.0 - exp(-_ShorelineDepthScale * colDepth);
+                        outColor = lerp(outColor, _DeepWaterColor.rgb, saturate(shore * _ShorelineStrength));
+                    }
+
+                    // ---- Exclusive foam composite (looks evaluated above, before the reflection
+                    // composite, so the combined coverage could matte the specular): ONE write into
+                    // outColor, after the shoreline gradient so foam sits over it. Coverage is the max of the
+                    // two layers (never their stack) and the colour is their alpha-weighted blend, so a
+                    // lone layer is bit-identical to the old per-layer lerp while overlap can no longer
+                    // double-lay foam. ----
+                    float foamCombinedAlpha = max(oceanFoamAlpha, pondFoamAlpha);
+                    if (foamCombinedAlpha > 0.0)
+                    {
+                        float3 foamCombinedLook = (oceanFoamLook * oceanFoamAlpha + pondFoamLook * pondFoamAlpha)
+                                                / max(oceanFoamAlpha + pondFoamAlpha, 1e-5);
+                        outColor = lerp(outColor, foamCombinedLook, foamCombinedAlpha);
                     }
 
                     // ---- Horizon haze: dissolve the far ocean surface into the sky so the outer mesh

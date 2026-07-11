@@ -165,6 +165,9 @@ namespace AbstractOcclusion.WebGpuWater
         // Cascade data for consumers outside the render globals (e.g. the foam-particle spawn compute,
         // which samples the whitecap .w to emit crest foam).
         internal RenderTexture NormalTexture => _normal;
+        // Raw spatial displacement cascade (.y = height, per-cascade scale baked in). The foam-particle
+        // density splat sums it to place foam on the real swell (mirrors BakeHeightField's math).
+        internal RenderTexture SpatialTexture => _displacement;
         internal Vector4 DomainSizes => _domainSizes;
         internal int CascadeCount => _cascades;
 

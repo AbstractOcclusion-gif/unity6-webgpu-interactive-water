@@ -193,27 +193,55 @@ namespace AbstractOcclusion.WebGpuWater
             }
         }
 
-        /// <summary>Height (pool/world units) of the wave layer at pool xz in [-1, 1].</summary>
-        public float SampleHeight(float poolX, float poolZ, float time, float metersPerPoolUnit)
+        /// <summary>Height (pool/world units) of the wave layer at pool xz in [-1, 1].
+        /// <paramref name="minWavelengthMeters"/> > 0 skips components shorter than it, so a large
+        /// floater rides the swell without buzzing on ripples finer than the object (LOD filtering).</summary>
+        public float SampleHeight(float poolX, float poolZ, float time, float metersPerPoolUnit, float minWavelengthMeters = 0f)
         {
             float mx = poolX * metersPerPoolUnit, mz = poolZ * metersPerPoolUnit;
             float height = 0f;
             for (int i = 0; i < _count; i++)
             {
                 Wave w = _waves[i];
+                if (IsFilteredOut(w, minWavelengthMeters)) continue;
                 height += w.amp * Mathf.Sin((w.dir.x * mx + w.dir.y * mz) * w.k - w.omega * time + w.phase);
             }
             return height;
         }
 
-        /// <summary>Gradient d(height)/d(poolXZ) of the wave layer (pool units).</summary>
-        public Vector2 SampleSlope(float poolX, float poolZ, float time, float metersPerPoolUnit)
+        // A component is dropped when its wavelength (2*pi / wavenumber) is shorter than the requested
+        // minimum - the LOD cut that lets big objects ignore small ripples. 0 keeps every component.
+        static bool IsFilteredOut(Wave w, float minWavelengthMeters)
+            => minWavelengthMeters > 0f && TwoPi / w.k < minWavelengthMeters;
+
+        /// <summary>Vertical surface velocity d(height)/dt (pool units / s) of the wave layer at pool
+        /// xz. Closed-form time derivative of <see cref="SampleHeight"/> (d/dt sin(...) = -omega*cos(...)),
+        /// so buoyancy gets an exact wave velocity with no cross-frame state. Not uploaded to the shader
+        /// (velocity is physics-only, never rendered), so there is no HLSL mirror to keep in lockstep.</summary>
+        public float SampleVerticalVelocity(float poolX, float poolZ, float time, float metersPerPoolUnit, float minWavelengthMeters = 0f)
+        {
+            float mx = poolX * metersPerPoolUnit, mz = poolZ * metersPerPoolUnit;
+            float rate = 0f;
+            for (int i = 0; i < _count; i++)
+            {
+                Wave w = _waves[i];
+                if (IsFilteredOut(w, minWavelengthMeters)) continue;
+                float c = Mathf.Cos((w.dir.x * mx + w.dir.y * mz) * w.k - w.omega * time + w.phase);
+                rate += w.amp * -w.omega * c;
+            }
+            return rate;
+        }
+
+        /// <summary>Gradient d(height)/d(poolXZ) of the wave layer (pool units).
+        /// <paramref name="minWavelengthMeters"/> > 0 skips components shorter than it (LOD filtering).</summary>
+        public Vector2 SampleSlope(float poolX, float poolZ, float time, float metersPerPoolUnit, float minWavelengthMeters = 0f)
         {
             float mx = poolX * metersPerPoolUnit, mz = poolZ * metersPerPoolUnit;
             float gx = 0f, gz = 0f;
             for (int i = 0; i < _count; i++)
             {
                 Wave w = _waves[i];
+                if (IsFilteredOut(w, minWavelengthMeters)) continue;
                 float c = Mathf.Cos((w.dir.x * mx + w.dir.y * mz) * w.k - w.omega * time + w.phase);
                 float common = w.amp * c * w.k * metersPerPoolUnit;
                 gx += common * w.dir.x;

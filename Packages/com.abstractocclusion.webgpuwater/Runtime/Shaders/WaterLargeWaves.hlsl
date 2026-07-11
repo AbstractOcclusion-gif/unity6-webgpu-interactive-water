@@ -149,7 +149,7 @@ LargeBodyWaveField EvaluateLargeBodyWave(float2 worldXZ, float minWavelength)
 // above, so nothing but an opted-in ocean changes. Cascades tile across world XZ (Repeat wrap); half-
 // float targets are hardware-filterable on WebGPU, so a plain linear sample is safe.
 Texture2DArray _OceanFftDisplacement;  SamplerState sampler_OceanFftDisplacement; // (x, height, z, foam)
-Texture2DArray _OceanFftNormal;        SamplerState sampler_OceanFftNormal;       // (nx, ny, nz, foam)
+Texture2DArray _OceanFftNormal;        SamplerState sampler_OceanFftNormal;       // (nx, pinch, nz, foam)
 float4 _OceanFftDomainSizes;   // metres per cascade
 float4 _OceanFftVisibleAreas;  // per-cascade view distance (m) at which its detail fully fades out
 float  _OceanFftCascadeCount;  // active cascades (<= 4)
@@ -219,6 +219,28 @@ float OceanFftFoam(float2 worldXZ)
         foam += active * fade * _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod).w;
     }
     return saturate(foam);
+}
+
+// Sample the TRUE wave-crest "pinch" - the raw displacement-Jacobian fold, saturate(1 - J), written to
+// _OceanFftNormal.y by the FFT compute. Peaks on steep / breaking crests (the same fold that seeds foam),
+// so it drives the subsurface glow exactly where the surface is folding, rather than proxying it with
+// wave height. Same distance fade + mip LOD as the foam/tilt so it anti-aliases identically.
+float OceanFftJacobian(float2 worldXZ)
+{
+    float camDist = distance(worldXZ, _WorldSpaceCameraPos.xz);
+    float pinch = 0.0;
+    for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
+    {
+        float active = (c < (int)_OceanFftCascadeCount) ? 1.0 : 0.0;
+        float slice = min((float)c, _OceanFftCascadeCount - 1.0);
+        float domain = max(_OceanFftDomainSizes[c], 1e-3);
+        float2 uv = worldXZ / domain;
+        float f = saturate(camDist / max(_OceanFftVisibleAreas[c], 1e-3));
+        float fade = 1.0 - f * f * f;
+        float lod = log2(1.0 + camDist / domain);
+        pinch += active * fade * _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod).y;
+    }
+    return saturate(pinch);
 }
 
 // Shortest wavelength the mesh can resolve at this world xz: grows with distance from the camera

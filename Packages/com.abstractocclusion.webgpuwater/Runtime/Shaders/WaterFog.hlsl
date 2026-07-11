@@ -27,6 +27,76 @@ float3 ApplyWaterOpacity(float3 color)
     return lerp(color, _WaterFogColor.rgb, saturate(_WaterOpacity));
 }
 
+// ---- Volume scattering (lit in-scatter) ---------------------------------
+// The flat _WaterFogColor is a picked colour that never responds to the sun. This instead lights a
+// picked body colour: _ScatterColor scaled by _ScatterIntensity and modulated by ambient + a sun
+// term shaped by a Schlick phase function, so the water glows toward the sun and shifts with the
+// lighting while the colour you pick stays predictable. When _ScatterEnabled is 0 the helpers below
+// fall back to the exact flat-colour behaviour, so every existing scene is byte-identical until on.
+float  _ScatterEnabled;     // 0 -> flat _WaterFogColor in-scatter (unchanged); 1 -> lit volume colour
+float4 _ScatterColor;       // the water body colour, shown directly (art-directable), HDR
+float  _ScatterIntensity;   // master brightness of the in-scattered colour
+float4 _ScatterAmbient;     // ambient light feeding the volume (published from the scene ambient)
+float  _ScatterAmbientTerm; // weight of the ambient in-scatter
+float  _ScatterSunTerm;     // weight of the sun in-scatter
+float  _ScatterAnisotropy;  // Schlick phase g: 0 isotropic .. ~0.9 strong forward glow
+
+// Wave-crest subsurface scattering (Crest PinchSSS): boosts the sun in-scatter at steep crests. The
+// surface shader supplies the crest "pinch" and view/sun geometry; these are the shared tunables.
+float  _SssEnabled;      // 0 -> no crest glow (unchanged); 1 -> add the SSS sun boost at crests
+float  _SssIntensity;    // strength of the crest sun boost
+float  _SssSunFalloff;   // how tightly the glow concentrates when looking toward the sun
+float  _SssPinchMin;     // crest height (normalised) where the glow starts to ramp in
+float  _SssPinchMax;     // crest height (normalised) where the glow reaches full strength
+float  _SssPinchFalloff; // power curve on the ramp: >1 concentrates the glow onto the sharp peaks
+
+#define SCATTER_PHASE_FLOOR 1e-4  // keeps the phase denominator finite at grazing angles
+
+// Schlick approximation to the Henyey-Greenstein phase, normalised so isotropic (g = 0) returns 1 - a
+// RELATIVE directional weight rather than Crest's sphere-normalised value (whose 1/4pi made the sun
+// glow vanish here). cosTheta is between the light travel direction and the view; g biases forward.
+float VolumeSchlickPhase(float g, float cosTheta)
+{
+    float k = 1.5 * g - 0.5 * g * g * g;
+    float denom = 1.0 + k * cosTheta;
+    return (1.0 - k * k) / max(denom * denom, SCATTER_PHASE_FLOOR);
+}
+
+// In-scatter colour for the water volume. Falls back to the flat _WaterFogColor when scattering is
+// disabled, so callers stay unchanged until opted in. The picked _ScatterColor IS the body colour
+// (direct, art-directable), scaled by intensity and lit by ambient + a sun term shaped by the phase.
+// viewDirWS points from the surface TOWARD the camera and sunDir from the surface TOWARD the sun
+// (Unity _LightDir), so the phase peaks when looking toward the sun. sunBoost is the wave-crest SSS.
+float3 WaterInscatterColor(float3 viewDirWS, float3 sunDir, float3 sunColor, float sunBoost)
+{
+    if (_ScatterEnabled < 0.5) return _WaterFogColor.rgb;
+
+    float phase = VolumeSchlickPhase(_ScatterAnisotropy, dot(sunDir, viewDirWS));
+    float3 lighting = _ScatterAmbientTerm * _ScatterAmbient.rgb
+                    + _ScatterSunTerm * (1.0 + sunBoost) * phase * sunColor;
+    return _ScatterColor.rgb * _ScatterIntensity * lighting;
+}
+
+// Blend a transmitted colour toward the water's in-scatter colour over 'dist' of water. Like
+// ApplyWaterFog but (a) toward a supplied lit in-scatter colour and (b) active when EITHER the fog or
+// the scattering feature is on - so turning on Volume Scattering alone still tints the transmitted
+// scene by depth (the whole point of a scattering volume). Transmittance stays on _WaterExtinction /
+// _WaterFogDensity, which are published every frame regardless of the toggles, so with both features
+// off this returns the colour unchanged - identical to the old ApplyWaterFog no-op.
+float3 ApplyWaterVolume(float3 color, float dist, float3 inscatter)
+{
+    if (_WaterFogEnabled < 0.5 && _ScatterEnabled < 0.5) return color;
+    float3 absorb = exp(-_WaterExtinction.rgb * (_WaterFogDensity * max(0.0, dist)));
+    return lerp(inscatter, color, absorb);
+}
+
+// Turbidity floor toward the water's in-scatter colour (the lit body colour when scattering is on,
+// else the flat fog colour, since 'inscatter' already carries that fallback). Mirrors ApplyWaterOpacity.
+float3 ApplyWaterOpacityTinted(float3 color, float3 inscatter)
+{
+    return lerp(color, inscatter, saturate(_WaterOpacity));
+}
+
 // ---- Downwelling depth attenuation --------------------------------------
 // Separate from the view-path fog above: this models the light LOST travelling straight
 // DOWN from the surface, so a point reads darker the DEEPER it sits, independent of how

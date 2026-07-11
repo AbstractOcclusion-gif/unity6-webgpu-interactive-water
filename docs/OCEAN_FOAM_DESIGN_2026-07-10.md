@@ -1,7 +1,12 @@
 # Ocean Wave Foam — Analysis & Design
 
 **Date:** 2026-07-10
-**Status:** DESIGN / PLAN ONLY — no code written. Awaiting approval per project rule ("ask before touch code").
+**Status:** SUPERSEDED (2026-07-11). The shipped implementation diverged from this plan: the
+foam advection was built IN-CASCADE inside `OceanFft.compute → ComputeNormal` on r32f
+ping-pong history (`OceanFoamPrev/Next`) — there is NO separate `OceanFoamField.compute`
+and NO RG16 target as proposed in Increment 3. Increments 1 (anti-tiling/whitecap texture)
+and 2 (split decay / crest handling) are done. Current audit + forward plan:
+`FOAM_SYSTEMS_AUDIT_2026-07-11.md`. Kept for the analysis sections only.
 **Scope:** Ocean FFT *surface whitecap* foam only. Not interactive/pond foam (`_FoamMask` path), not the GPU foam particles (`WaterFoamParticles`), not shoreline contact foam.
 
 ---
