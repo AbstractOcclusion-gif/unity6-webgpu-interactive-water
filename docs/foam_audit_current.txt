@@ -1,0 +1,1170 @@
+﻿.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBoatDemoBuilder.cs:46: primary: true, withPool: false, withGodRays: false, withFoamParticles: true);
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:87: internal const string PropFoamTex = "_FoamTex";
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:88: internal const string PropFoamTexFrames = "_FoamTexFrames";
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:89: internal const string PropFoamNormalTex = "_FoamNormalTex";
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:92: // GPU foam particles (compute + procedural-quad shader + sprite atlas).
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:93: internal const string ShaderFoamParticles = "AbstractOcclusion/WebGpuWater/FoamParticles";
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:94: internal const string ShaderFoamDensityComposite = "AbstractOcclusion/WebGpuWater/FoamDensityComposite";
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:95: internal const string FoamParticleComputePath = PackageShadersRoot + "/WaterFoamParticles.compute";
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:96: internal const string FoamParticleAtlasPath = Gen + "/FoamParticleAtlas_2x2.png";
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:108: // Foam pattern flipbook (frames laid out in a grid; the surface shader
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:109: // cross-fades frames over time so the foam churns internally) and its
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:111: const string FoamFlipbookPath = Gen + "/FoamFlipbook_4x4.png";
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:112: const string FoamNormalFlipbookPath = Gen + "/FoamFlipbookNormal_4x4.png";
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:113: const int FoamFlipbookCols = 4;
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:114: const int FoamFlipbookRows = 4;
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:203: bool withFoamParticles = true)
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:251: if (withFoamParticles) AddFoamParticles(volume, ctx.Folder);
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:257: // GPU foam/spray particles alongside the body's WaterVolume. The component idles
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:258: // until the body's foam toggle is on, so bodies without foam pay nothing. Skipped
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:260: internal static WaterFoamParticles AddFoamParticles(WaterVolume volume, string materialFolder)
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:264: var compute = AssetDatabase.LoadAssetAtPath<ComputeShader>(FoamParticleComputePath);
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:265: var shader = Shader.Find(ShaderFoamParticles);
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:268: Debug.LogWarning("WebGL Water: foam particle compute/shader missing; skipping particle setup.");
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:272: var material = LoadOrCreateMaterial(materialFolder + "/FoamParticles.mat", shader, m =>
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:274: var atlas = LoadFlipbook(FoamParticleAtlasPath, TextureWrapMode.Clamp, true);
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:278: // Screen-space density composite (KWS-style connected foam). Optional: when the
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:281: var densityShader = Shader.Find(ShaderFoamDensityComposite);
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:283: densityMaterial = LoadOrCreateMaterial(materialFolder + "/FoamDensityComposite.mat",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:286: var particles = volume.gameObject.AddComponent<WaterFoamParticles>();
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:318: m => { m.SetFloat(PropUnderwater, 0f); m.SetFloat(PropCull, cullBack); EnableRealRefraction(m); AssignFoamFlipbook(m); });
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:335: // Give a water surface material the animated foam pattern. Skipped silently when the
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:336: // flipbook asset is absent: the shader's white default degrades to flat foam. Relief
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:338: // no normal-map assignment; the generated FoamFlipbookNormal asset stays on disk for
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:340: internal static void AssignFoamFlipbook(Material m)
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:342: var flipbook = LoadFlipbook(FoamFlipbookPath, TextureWrapMode.Repeat, true);
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:344: m.SetTexture(PropFoamTex, flipbook);
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:345: m.SetVector(PropFoamTexFrames, new Vector4(FoamFlipbookCols, FoamFlipbookRows, 0f, 0f));
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:415: // survives rebuilds (same convention as the water/foam-particle materials).
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterBuildKit.cs:688: // 'linear' is for data textures (e.g. the raw-RGB foam normal map): sRGB sampling
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterEditorPreviewDriver.cs:5: // editor tick while a water body is alive, so the ripple sim, waves, caustics and foam run
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterSceneBuilder.cs:64: // Retrofit GPU foam particles onto an existing body. Demo scenes are create-once,
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterSceneBuilder.cs:67: internal static void AddFoamParticlesToSelection()
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterSceneBuilder.cs:76: if (volume.GetComponent<WaterFoamParticles>() != null)
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterSceneBuilder.cs:78: Debug.LogWarning("[WebGL Water] That body already has foam particles.");
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterSceneBuilder.cs:82: AddFoamParticles(volume, MaterialFolderForActiveScene());
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterSceneBuilder.cs:95: // Assign the animated foam flipbook + relief normal map to every water surface
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterSceneBuilder.cs:97: // so new foam textures don't reach them automatically; this is the retrofit.
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterSceneBuilder.cs:98: internal static void AssignFoamTexturesToSceneWater()
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterSceneBuilder.cs:110: touched += AssignFoamTextures(volume.surfaceAbove);
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterSceneBuilder.cs:111: touched += AssignFoamTextures(volume.surfaceUnder);
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterSceneBuilder.cs:114: Debug.Log($"[WebGL Water] Foam flipbook + normal map assigned to {touched} water material(s).");
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterSceneBuilder.cs:117: static int AssignFoamTextures(Renderer surface)
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterSceneBuilder.cs:120: AssignFoamFlipbook(surface.sharedMaterial);
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterStressTestBuilder.cs:42: primary: true, withPool: false, withGodRays: false, withFoamParticles: false);
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:2: // Beer-Lambert water fog, depth attenuation, real-bed depth, turbulence foam). Toggle-gated blocks
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:89: "bedDepthSettings.shoalDepth",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:90: "bedDepthSettings.shorelineFoamDepth",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:91: "bedDepthSettings.shorelineFoamStrength",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:92: "bedDepthSettings.breakingFoamStrength"));
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:95: void DrawFoamSection()
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:97: _showFoam = WaterEditorUI.SectionWithToggle(
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:98: "Foam (turbulence)", _showFoam, Prop("foamSettings.foam"), () =>
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:102: "foamSettings.foamGenRate",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:103: "foamSettings.foamGenThreshold",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:104: "foamSettings.foamMinWaveHeight",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:105: "foamSettings.foamDecay",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:106: "foamSettings.foamDecayResidual",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:107: "foamSettings.foamDecayRate",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:108: "foamSettings.foamSpread",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:109: "foamSettings.foamAdvect",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:110: "foamSettings.foamFromSpeed",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:111: "foamSettings.foamFromCurvature");
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:114: "foamSettings.foamColor",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:115: "foamSettings.foamPatternSize",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:116: "foamSettings.foamStrength",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:117: "foamSettings.foamFeather",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:118: "foamSettings.foamCoreCut",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:119: "foamSettings.foamBorderWidth",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Appearance.cs:120: "foamSettings.foamContactDepth");
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Inspector.cs:28: bool _showOceanFoam = false;
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Inspector.cs:34: bool _showFoam = false;
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Inspector.cs:63: DrawFoamSection();
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Inspector.cs:70: DrawOceanFoamSection();
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Ocean.cs:2: // open water, horizon clipmap, ocean god rays, whitecap foam). The clipmap/god-ray/foam blocks are
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Ocean.cs:65: void DrawOceanFoamSection()
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Ocean.cs:67: _showOceanFoam = WaterEditorUI.Section("Ocean · Foam (whitecaps)", _showOceanFoam, () =>
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Ocean.cs:69: "ocean.oceanFoamWindThreshold",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Ocean.cs:70: "ocean.oceanFoamCoverage",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Ocean.cs:71: "ocean.oceanFoamStrength",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Ocean.cs:72: "ocean.oceanFoamFadeRate",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Ocean.cs:73: "ocean.oceanFoamColor",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Ocean.cs:74: "ocean.oceanFoamTileSize",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Ocean.cs:75: "ocean.oceanFoamFeather",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Ocean.cs:76: "ocean.oceanFoamDeposit",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Ocean.cs:77: "ocean.oceanFoamDrift",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterVolumeEditor.Ocean.cs:78: "ocean.oceanFoamMaxBuildup")));
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:7: //      layering the shared look options (reflection, foam, splash) on top of whichever type is chosen.
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:30: // WaterVolume.foamBorderWidth default; applied when edge foam is enabled, zeroed otherwise.
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:31: const float EdgeFoamBorderWidth = 0.08f;
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:85: bool _foam;
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:86: bool _edgeFoam;
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:220: _foam = EditorGUILayout.Toggle(
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:221: new GUIContent("Foam", "Turbulence-driven surface foam plus its GPU particle system."), _foam);
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:222: using (new EditorGUI.DisabledScope(!_foam))
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:225: _edgeFoam = EditorGUILayout.Toggle(
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:226: new GUIContent("Edge foam", "Foam band along the pool walls (only with foam)."),
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:227: _foam && _edgeFoam);
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:266: withFoamParticles: _foam);
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:272: ApplyFoam(body);
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:329: void ApplyFoam(WaterVolume body)
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:331: body.Foam = _foam;
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:332: body.foamBorderWidth = (_foam && _edgeFoam) ? EdgeFoamBorderWidth : 0f;
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:499: if (GUILayout.Button(new GUIContent("Add Foam Particles To Selected",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:500: "Retrofit GPU foam particles onto the selected WaterVolume.")))
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:501: WaterSceneBuilder.AddFoamParticlesToSelection();
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:503: if (GUILayout.Button(new GUIContent("Assign Foam Textures To Scene Water",
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:504: "Assign the foam flipbook + normal map to every water material in the open scene.")))
+.\Packages\com.abstractocclusion.webgpuwater\Editor\WaterWizardWindow.cs:505: WaterSceneBuilder.AssignFoamTexturesToSceneWater();
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:1: // WebGL Water - screen-space density-foam composite (KWS-inspired flagship).
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:3: // The floating foam particles are NOT drawn as quads: WaterFoamParticles.compute splats
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:7: //      between sparse splats and grows connected foam),
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:8: //   2. maps density -> foam with a two-term curve (KWS: a soft "low" film plus a
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:11: //   4. lights the result with the shared foam model, cool-tinted like sea foam.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:15: Shader "AbstractOcclusion/WebGpuWater/FoamDensityComposite"
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:19: _Tint ("Tint", Color) = (0.75, 0.85, 1.0, 1.0) // KWS's cool sea-foam tint as the default
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:27: // splash particles (+10) so airborne droplets draw over the surface-hugging foam layer.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:31: // Premultiplied-alpha over the scene: dense foam can go solid white (additive
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:43: #include "WaterFoamCommon.hlsl" // FoamLitColor / FoamWrappedDiffuseNdotL
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:52: StructuredBuffer<uint> _FoamDensity;      // fixed-point accumulated weight per texel
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:53: StructuredBuffer<uint> _FoamDensityDepth; // min eye depth per texel (millimetres)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:87: return _FoamDensity[(uint)p.y * (uint)_DensitySize.x + (uint)p.x];
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:93: return _FoamDensityDepth[(uint)p.y * (uint)_DensitySize.x + (uint)p.x];
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:116: // quadratic core that needs real overlap - sparse foam reads as a veil,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:119: float foamLow  = saturate(density * _DensityLowGain) * DENSITY_LOW_WEIGHT;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:120: float foamHigh = saturate(density * density * _DensityHighGain) * DENSITY_HIGH_WEIGHT;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:121: float alpha = saturate(foamLow + foamHigh) * _ParticleOpacity;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:123: // Soft occlusion against the opaque scene: foam behind geometry fades out
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:127: float foamEye = depthMm * 0.001;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:128: alpha *= saturate(1.0 + (sceneEye - foamEye) / OCCLUSION_SOFTNESS);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:131: // Shared foam lighting, as upward-facing foam (a screen-space layer has no
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:132: // normal); the default _Tint carries KWS's cool sea-foam cast.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:133: float wrapped = FoamWrappedDiffuseNdotL(_LightDir.y);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamDensityComposite.shader:134: float3 lit = FoamLitColor(_Tint.rgb, _SunColor, wrapped);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:1: // WebGL Water - GPU foam particle rendering (KWS-inspired)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:3: // Draws the particle pool written by WaterFoamParticles.compute as procedural quads:
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:4: // the vertex shader pulls a FoamParticle from a StructuredBuffer by SV_VertexID
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:8: // Surface foam lies IN the water plane (tilted by the local ripple normal, glued to
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:11: Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:20: // Flipbook grid + FPS are NOT material sliders: they are driven from the WaterFoamParticles
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:42: #include "WaterHeroWave.hlsl"   // hero-wave base height: foam must ride the breaking wave
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:43: #include "WaterFoamCommon.hlsl" // shared foam lighting + erosion (FOAM_LIGHT_WRAP, EROSION_SOFTNESS...)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:45: // Bed shoaling (globals; this shader doesn't include WaterFog). Lets foam spray sit on the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:46: // shoaled surface near shore instead of the full-height swell.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:52: // (2,2) etc. = a flipbook. Optional, like the surface foam's _FoamTexFrames.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:54: // Life envelope (FoamParticleEnvelope) is shared via WaterFoamCommon.hlsl with the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:55: // density-splat compute, so screen-space foam weight always matches the quad look.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:56: // Erosion dissolve + foam lighting constants come from WaterFoamCommon.hlsl,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:57: // shared with the surface foam and the splash particles.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:63: // Lift surface-foam quads slightly off the water so they never z-fight it.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:71: // MUST match FoamParticle in WaterFoamParticles.compute (48 bytes).
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:72: struct FoamParticle
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:83: StructuredBuffer<FoamParticle> _Particles;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:86: // 0 when the screen-space density pass renders the floating foam (this draw then only
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:88: // WaterFoamParticles.cs, never a material slider.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:104: float3 litColor  : TEXCOORD2; // per-vertex foam lighting (soft blobs: no need per-pixel)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:119: FoamParticle particle = _Particles[vid / 6];
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:121: // Density mode: floating foam is rendered by the screen-space density composite;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:133: // tilt) so foam sits ON the breaking wave, not on the flat rest plane. The pond path
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:152: // must add it too or foam renders INSIDE the raised crest. Base part only (a
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:204: float envelope = FoamParticleEnvelope(particle.age, particle.life) * particle.strength;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:206: // ---- sprite cell from the atlas: a fixed per-seed variant, or an animated flipbook (foam
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:217: // ---- lighting, matched to the surface foam ----
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:218: float wrapped = FoamWrappedDiffuse(surfaceNormal, _LightDir);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:224: o.litColor = FoamLitColor(_Tint.rgb, _SunColor, wrapped);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\FoamParticles.shader:235: float alpha = FoamErosionAlpha(sprite.a, envelope);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\LargeBodyCaustics.shader:37: // Bed shoaling (globals; this shader doesn't include WaterFog) so the caustic surface height
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\LargeBodyCaustics.shader:38: // matches the shoaled render surface near shore.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:15: #include "WaterFoamCommon.hlsl" // FoamDecayBlend: split decay shared with WaterSim.compute
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:33: RWTexture2DArray<float4> OceanDisplacement;// spatial cascade (x, height, z, foam)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:38: //   .w  = accumulated whitecap foam    (OceanFftFoam -> surface shading + particle spawns)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:57: // --- Ocean whitecap foam: temporal Jacobian accumulation (ComputeNormal) ---
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:58: Texture2DArray<float>   OceanFoamPrev;   // previous-frame accumulated foam (read-only SRV)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:59: RWTexture2DArray<float>  OceanFoamNext;  // this-frame accumulated foam (write-only UAV; ping-ponged)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:60: float  OceanFoamDeltaTime;    // seconds since the last dispatch (framerate-independent decay/gen)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:61: float  OceanFoamHistoryValid; // 0 on the first dispatch so uninitialised history can't leak in, else 1
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:62: float  OceanFoamMinWind;      // m/s; no whitecaps below this wind speed
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:63: float  OceanFoamCoverage;     // fold threshold: fresh = saturate(coverage - jacobian)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:64: float  OceanFoamStrength;     // accumulation gain per unit fold
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:65: float  OceanFoamFadeRate;     // exponential decay rate per second (foam lingers, then fades)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:66: float  OceanFoamMax;          // soft ceiling on accumulated foam (Foam Max Buildup slider)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:67: float  OceanFoamSlowFadeFraction; // dense-foam decay as a fraction of the fade rate (Deposit slider: lower = more deposit)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:68: float  OceanFoamDriftFraction;    // downwind foam-drift speed as a fraction of wind speed (Drift slider)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:89: #define OCEAN_FOAM_ACCUM_RATE     5.0   // foam gained per second at full fold * strength (Crest-calibrated)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:90: #define OCEAN_FOAM_CASCADE1_DAMP  0.25  // cascade 1 carries only a little breaking detail (KWS quarters it)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:91: // Split decay (foam "deposit"): dense deposited foam lingers as windrows while thin lace fades fast. The
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:92: // art fade-rate knob is the FAST (thin) rate; OceanFoamSlowFadeFraction (the Deposit slider) sets how
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:93: // slowly dense foam decays relative to it, and OceanFoamDriftFraction rolls it downwind. DENSE_REFERENCE
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:94: // is the accumulated-foam value treated as "fully dense" for the fast/slow blend.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:95: #define OCEAN_FOAM_DENSE_REFERENCE    0.6
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:97: // uniform near-camera foam soup rather than discrete whitecaps (Crest excludes its finest LODs from foam
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:100: #define OCEAN_FOAM_FINEST_DAMP        0.5
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:271: // Manual bilinear read of the persistent foam history at a fractional tile-texel position, wrapping at
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:272: // the cascade edge. The cascade tiles (periodic FFT), so the foam field is periodic and the back-trace
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:275: float OceanFoamHistoryBilinear(float2 texelPos, uint slice, int N)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:283: float c00 = OceanFoamPrev[uint3(x0, y0, slice)];
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:284: float c10 = OceanFoamPrev[uint3(x1, y0, slice)];
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:285: float c01 = OceanFoamPrev[uint3(x0, y1, slice)];
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:286: float c11 = OceanFoamPrev[uint3(x1, y1, slice)];
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:290: // Surface normal + Jacobian foam from central differences of the spatial displacement (cascades tile,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:314: // folding onto itself - a breaking crest that throws foam. (Crest form saturate(coverage - det);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:323: // Fresh foam only where the surface folds, only above the whitecap wind threshold, silenced on the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:325: // the FINEST cascade (Crest FilterWaves: fine detail folds constantly and would foam-soup the near field).
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:326: float fresh = saturate(OceanFoamCoverage - jacobian);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:327: fresh *= (slice == 0u) ? 0.0 : ((slice == 1u) ? OCEAN_FOAM_CASCADE1_DAMP : 1.0);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:328: fresh *= (slice == OceanFftCascades - 1u && OceanFftCascades > 2u) ? OCEAN_FOAM_FINEST_DAMP : 1.0;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:329: fresh *= (OceanWindSpeed > OceanFoamMinWind) ? 1.0 : 0.0;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:331: // Advection ("roll and deposit"): carry the persistent foam downwind and resample it, instead of
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:332: // pinning foam to the texel where the fold was born. Back-trace this texel by the wind-drift velocity
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:333: // (metres -> texels via 'step', the cascade's metres-per-texel) and bilinearly read last frame's foam
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:336: float driftSpeed = OceanWindSpeed * OceanFoamDriftFraction;                  // m/s downwind
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:337: float2 driftTexels = OceanWindDir * (driftSpeed * OceanFoamDeltaTime / step); // metres -> texels
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:338: float advectedFoam = OceanFoamHistoryBilinear(float2(id.xy) - driftTexels, slice, (int)N)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:339: * OceanFoamHistoryValid;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:341: // Split decay + accumulation (framerate-independent, Crest-style): dense deposited foam lingers as
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:343: // instead of flickering per frame. Shared blend (FoamDecayBlend, WaterFoamCommon.hlsl); NOTE this
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:344: // path blends decay RATES (dense = SLOWER) while WaterSim's foam blends SURVIVAL factors
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:349: // building foam up over the first seconds. History is zero on that frame, so only the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:351: float foamDt = (OceanFoamHistoryValid < 0.5) ? (1.0 / max(OceanFoamFadeRate, 1e-3))
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:352: : OceanFoamDeltaTime;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:353: float slowFade = OceanFoamFadeRate * OceanFoamSlowFadeFraction;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:354: float fadeRate = FoamDecayBlend(advectedFoam, OCEAN_FOAM_DENSE_REFERENCE, OceanFoamFadeRate, slowFade);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:355: float foam = advectedFoam * saturate(1.0 - fadeRate * OceanFoamDeltaTime)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:356: + OCEAN_FOAM_ACCUM_RATE * OceanFoamStrength * foamDt * fresh;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:357: foam = min(foam, OceanFoamMax);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:359: OceanFoamNext[id] = foam;           // history the next frame decays from
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:361: // is never sampled by any consumer (they read .xz for tilt, .w for foam), so .y is free real estate,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:364: OceanNormal[id] = float4(n.x, saturate(1.0 - jacobian), n.z, foam);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:411: // Overlay accumulated whitecap foam (OceanNormal.w) as white so it can be verified in the debug view.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:412: float foam = saturate(OceanNormal[id].w);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFft.compute:413: OceanPreview[id] = float4(lerp(col, float3(1.0, 1.0, 1.0), foam), 1.0);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\OceanFftDebug.compute:10: // One slice per cascade. RGBA carries (x-displacement, height, z-displacement, foam) in the real
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\SplashParticles.shader:4: // light as the water's foam: wrapped sun diffuse over an ambient floor (driven by the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\SplashParticles.shader:40: // Foam lighting + erosion dissolve, matched to WaterSurface/FoamParticles so
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\SplashParticles.shader:41: // every foam-like element in the scene shades consistently.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\SplashParticles.shader:42: #include "WaterFoamCommon.hlsl"
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\SplashParticles.shader:85: // upward-facing foam so brightness tracks the sun's height and color.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\SplashParticles.shader:86: float wrapped = FoamWrappedDiffuseNdotL(_LightDir.y);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\SplashParticles.shader:99: float3 lit = FoamLitColor(_Tint.rgb * i.color.rgb, _SunColor, i.fade.x);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\SplashParticles.shader:112: float dissolve = FoamErosionAlpha(sprite.b, envelope);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\SplashParticles.shader:127: alpha = FoamErosionAlpha(sprite.a, envelope);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:1: // WebGpuWater - shared foam look + decay helpers.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:3: // ONE home for the constants and idioms every foam-like element uses, so a retune
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:5: //   WaterSurface.shader   - ocean whitecap + interactive/pond foam shading
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:6: //   FoamParticles.shader  - GPU foam/spray particle shading
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:9: //   WaterSim.compute      - ripple-sim foam accumulation (split decay)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:12: #ifndef WATER_FOAM_COMMON_INCLUDED
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:13: #define WATER_FOAM_COMMON_INCLUDED
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:15: // ---- Foam lighting ----------------------------------------------------------------
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:16: // Wrapped diffuse keeps the unlit side of foam from going black (foam scatters light),
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:18: // particle systems so every foam-like element sits in the same light.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:19: #define FOAM_LIGHT_WRAP  0.4
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:20: #define FOAM_AMBIENT     0.35
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:23: // e.g. splash sheets, pass the sun's height _LightDir.y = "upward-facing foam").
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:24: float FoamWrappedDiffuseNdotL(float ndotl)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:26: return saturate(ndotl * (1.0 - FOAM_LIGHT_WRAP) + FOAM_LIGHT_WRAP);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:29: float FoamWrappedDiffuse(float3 normal, float3 lightDir)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:31: return FoamWrappedDiffuseNdotL(dot(normal, lightDir));
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:34: // Lit foam colour: albedo over an ambient floor plus the wrapped sun term.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:35: float3 FoamLitColor(float3 albedo, float3 sunColor, float wrappedDiffuse)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:37: return albedo * (FOAM_AMBIENT + sunColor * wrappedDiffuse);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:41: // As a foam sprite's lifetime envelope decays, the sprite ERODES - its thin/dark
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:43: // surface foam's lace, applied to particle alpha.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:46: float FoamErosionAlpha(float spriteAlpha, float envelope)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:51: // ---- Foam particle life envelope ----------------------------------------------------
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:53: // by the quad render (FoamParticles.shader) and the density splat (WaterFoamParticles
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:55: #define FOAM_PARTICLE_FADE_IN_SECONDS 0.25
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:56: #define FOAM_PARTICLE_FADE_OUT_START  0.55
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:58: float FoamParticleEnvelope(float age, float life)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:60: float fadeIn = saturate(age / FOAM_PARTICLE_FADE_IN_SECONDS);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:61: float fadeOut = 1.0 - smoothstep(life * FOAM_PARTICLE_FADE_OUT_START, life, age);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:66: // Both foam sims decay in two regimes blended by the local foam AMOUNT, because a
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:67: // single exponential can't make bright fresh foam collapse quickly AND thin residual
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:70: //   OceanFft.compute  blends decay RATES:      dense deposited foam decays SLOWER
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:72: //   WaterSim.compute  blends SURVIVAL factors: thick fresh foam decays FASTER
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:75: float FoamDecayBlend(float amount, float referenceAmount, float valueAtZero, float valueAtReference)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamCommon.hlsl:80: #endif // WATER_FOAM_COMMON_INCLUDED
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:1: // WebGL Water - GPU foam particles (KWS-inspired)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:3: // Particles spawn on the GPU where the sim's foam/turbulence is strong, drift with
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:4: // the surface flow, and are drawn by FoamParticles.shader straight from the buffer
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:14: //                 convert to KIND_SURFACE and keep drifting as foam.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:23: // Ocean-only: adds the FFT whitecap cascade as a second spawn source (breaking-crest foam). Off for
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:25: #pragma multi_compile _ OCEAN_CREST_FOAM
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:28: #include "WaterFoamCommon.hlsl" // FoamParticleEnvelope: shared with the quad render
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:31: // MUST equal WaterFoamParticles.SpawnThreadGroupSize / UpdateThreadGroupSize (C#).
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:42: // Spray landing: below this height offset the droplet becomes surface foam.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:47: // normalised units; a little slack so foam can hug the walls before dying.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:50: // One particle = 48 bytes. MUST match FoamParticle in FoamParticles.shader and
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:51: // the stride in WaterFoamParticles.cs.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:52: struct FoamParticle
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:61: float  strength; // foam amount at spawn, scales opacity
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:64: RWStructuredBuffer<FoamParticle> Particles;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:67: // Sim inputs (same textures the Foam kernel reads).
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:69: Texture2D<float>  FoamTex;  // foam amount (R)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:77: float _SpawnThreshold;    // foam level below which nothing spawns
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:78: float _SpawnRate;         // expected spawns / second / world-unit^2 at foam = 1
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:92: // ---- Screen-space density foam (KWS: particles accumulate into a density buffer instead of
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:93: // drawing overlapping quads; a fullscreen composite turns density into connected, lit foam). ----
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:94: RWStructuredBuffer<uint> DensityBuffer; // per density texel: fixed-point accumulated foam weight
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:101: float    _DensityWeightScale;// fixed-point units per 1.0 of foam weight
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:133: // WaterFoamParticles.cs (48 bytes) and MAX_BURST_DROPLETS <= the kernel thread count. ----
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:157: // ---- Foam motion richness (KWS curl + clumping): floating foam is swirled by a
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:160: float _FoamTime; // slow world clock for the noise drift
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:161: static const float FOAM_NOISE_SCALE   = 0.7;   // noise features per world metre
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:162: static const float FOAM_NOISE_DRIFT   = 0.05;  // field drift speed (keeps clumps alive)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:163: static const float FOAM_CURL_SPEED    = 0.06;  // world units/sec of swirl
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:164: static const float FOAM_CLUMP_SPEED   = 0.04;  // world units/sec of attraction
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:165: static const float FOAM_NOISE_EPSILON = 0.35;  // finite-difference step (world metres)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:167: #ifdef OCEAN_CREST_FOAM
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:168: // FFT spatial cascade (.y = height) + amplitude, so the density splat can place foam on the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:169: // real swell height the way FoamParticles.shader's vertex glue does with LargeBodyWaveHeight.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:175: #ifdef OCEAN_CREST_FOAM
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:176: // Ocean whitecap cascade (bound per-frame from WaterFoamParticles.cs; same array the surface samples).
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:181: float2 _CrestRoll;             // world xz drift (m/s) along the wave direction: foam rolls with the crest
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:184: // Sum the accumulated whitecap foam (.w) across cascades at a world xz. No distance fade here (the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:186: float OceanCrestFoamAt(float2 worldXZ)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:188: float foam = 0.0;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:194: foam += active * _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), 0).w;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:196: return saturate(foam);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:247: float FoamValueNoise(float2 p)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:261: float2 FoamNoiseGrad(float2 p)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:264: float gx = FoamValueNoise(p + float2(eps, 0.0)) - FoamValueNoise(p - float2(eps, 0.0));
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:265: float gy = FoamValueNoise(p + float2(0.0, eps)) - FoamValueNoise(p - float2(0.0, eps));
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:289: #ifdef OCEAN_CREST_FOAM
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:305: // the particle glue must rise too or foam sinks INTO the raised crest. Base part only - a
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:325: // One thread per sim texel: roll a spawn where foam exceeds the threshold. The
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:327: // square metre of foamy water) is independent of grid resolution and body size.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:333: float foam = FoamTex.Load(int3(texel, 0));
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:334: #ifdef OCEAN_CREST_FOAM
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:335: // Add breaking-crest foam from the FFT cascade, sampled at this texel's world position. max() so a
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:336: // texel that is both interaction-foamy and on a crest still emits at the stronger of the two.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:337: foam = max(foam, OceanCrestFoamAt(texelWorld.xz));
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:339: float excess = foam - _SpawnThreshold;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:352: // emit more than uniformly-moving patches. Same measure the sim's foam gen uses.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:378: // Hero-wave lip weight: > 0 only in the actively breaking pocket. The foam BUFFER already
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:379: // carries the injected lip foam (spawn probability is covered); this weight forces the pocket's
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:391: // The breaking pocket always throws: lip spawns are ballistic jet, never floating foam.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:395: // reserving a slot in a coarse tile grid; over-budget spawns demote to floating foam
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:412: FoamParticle particle;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:431: particle.strength = saturate(foam);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:437: // integrate ballistically in Update and land as surface foam, so event splashes share the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:462: FoamParticle particle;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:478: // One thread per pool slot: integrate, convert landed spray to surface foam, and
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:486: FoamParticle particle = Particles[slot];
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:513: // Relax the drift toward the driven velocity (local flow + wind): foam has
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:518: #ifdef OCEAN_CREST_FOAM
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:519: // Roll the whitecap foam forward along the wave-travel direction so it moves WITH the breaking
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:524: // floating foam alive, and a gentle pull UP the noise gradient gathers it into
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:527: float2 noiseGrad = FoamNoiseGrad(particle.worldPos.xz * FOAM_NOISE_SCALE
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:528: + _FoamTime * FOAM_NOISE_DRIFT);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:529: driven += float3(noiseGrad.y, 0.0, -noiseGrad.x) * FOAM_CURL_SPEED
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:530: + float3(noiseGrad.x, 0.0, noiseGrad.y) * FOAM_CLUMP_SPEED;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:561: FoamParticle particle = Particles[slot];
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterFoamParticles.compute:573: float weight = FoamParticleEnvelope(particle.age, particle.life) * particle.strength;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterHeroWave.hlsl:46: // (The foam/whitewater dressing of the collapsed section is the next phase - crest particle plan.)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterHeroWave.hlsl:73: // whitewater source (HeroWaveFoamSource) so the foam can never drift from the shape it rides.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterHeroWave.hlsl:98: // work. Continuous: height, lean, weight and foam all reach 0 at these bounds.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterHeroWave.hlsl:229: // Relative foam weights of the two generation zones. Fixed look constants (the master strength is
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterHeroWave.hlsl:233: #define HERO_FOAM_LIP_GAIN  1.0
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterHeroWave.hlsl:234: #define HERO_FOAM_WASH_GAIN 0.8
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterHeroWave.hlsl:237: // Injected into the ripple-sim foam buffer, so it advects, diffuses and decays like all other
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterHeroWave.hlsl:238: // foam - and everything downstream (surface foam, foam particles, density foam) rides it for free.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterHeroWave.hlsl:239: float HeroWaveFoamSource(float2 worldXZ)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterHeroWave.hlsl:245: return saturate(lip * HERO_FOAM_LIP_GAIN + wash * HERO_FOAM_WASH_GAIN) * heightGate;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterLargeWaves.hlsl:151: Texture2DArray _OceanFftDisplacement;  SamplerState sampler_OceanFftDisplacement; // (x, height, z, foam)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterLargeWaves.hlsl:152: Texture2DArray _OceanFftNormal;        SamplerState sampler_OceanFftNormal;       // (nx, pinch, nz, foam)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterLargeWaves.hlsl:157: float4 _OceanFoamColor;        // whitecap tint (rgb) + master opacity (a); default opaque white
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterLargeWaves.hlsl:158: float  _OceanFoamTileSize;     // metres per foam-pattern tile on the ocean surface
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterLargeWaves.hlsl:159: float  _OceanFoamFeather;      // black-point dissolve softness (0..1) for the foam texture
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterLargeWaves.hlsl:201: // Sum the accumulated whitecap foam (.w of the per-cascade normal target) across the active cascades,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterLargeWaves.hlsl:202: // with the SAME distance fade + mip LOD as the tilt above, so foam anti-aliases and fades toward the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterLargeWaves.hlsl:205: // sum past 1 on a hard break, but foam coverage is a 0..1 mask.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterLargeWaves.hlsl:206: float OceanFftFoam(float2 worldXZ)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterLargeWaves.hlsl:209: float foam = 0.0;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterLargeWaves.hlsl:219: foam += active * fade * _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod).w;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterLargeWaves.hlsl:221: return saturate(foam);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterLargeWaves.hlsl:225: // _OceanFftNormal.y by the FFT compute. Peaks on steep / breaking crests (the same fold that seeds foam),
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterLargeWaves.hlsl:227: // wave height. Same distance fade + mip LOD as the foam/tilt so it anti-aliases identically.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:7: #include "WaterFoamCommon.hlsl" // FoamDecayBlend: split decay shared with OceanFft.compute
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:16: #pragma kernel Foam
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:21: #pragma kernel ScrollFoam
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:44: // Cap the per-step foam backtrace so a steep ripple can't fling foam across the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:46: static const float FOAM_MAX_ADVECT_TEXELS = 4.0;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:48: // Shear foam: fraction of the speed response given to the spatial gradient of the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:50: static const float FOAM_SHEAR_FRACTION = 1.0;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:52: // Foam level at which decay is fully the FRESH rate. Real foam collapses quickly
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:54: // exponential can't do both, so decay blends between two rates by foam amount.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:56: // generation - fixed by _FoamMinWaveHeight - not to the residual decay itself.)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:57: static const float FOAM_FRESH_THRESHOLD = 0.5;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:181: // Foam buffer (R = foam amount per column). Advected/diffused, generated from
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:183: Texture2D<float>    FoamSrc;   // RFloat (r32) - WebGPU-safe single channel
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:184: RWTexture2D<float>  FoamDst;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:185: float _FoamGenRate;       // how fast turbulence creates foam
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:186: float _FoamGenThreshold;  // activity level below which NO foam forms (small waves don't break)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:187: float _FoamMinWaveHeight; // POOL-unit wave height below which NO foam forms (kills ripple noise)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:188: float _FoamDecayFresh;    // survival PER REFERENCE STEP (1/60 s) of thick, fresh foam (e.g. 0.95)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:189: float _FoamDecayResidual; // survival per reference step of thin residual lace (e.g. 0.995)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:190: float _FoamDtSteps;       // elapsed time in reference steps; gen and decay scale by this so foam is frame-rate independent
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:191: float _FoamDecayRate;     // user time-scale on decay only (1 = authored speed, 2 = twice as fast)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:192: float _FoamSpread;        // 0..1 diffusion toward neighbour average
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:193: float _FoamFromSpeed;  // foam from |velocity|
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:194: float _FoamFromCurv;   // foam from negative curvature (wave crests/chop)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:195: float _FoamAdvect;     // texels foam is carried along the surface flow per step
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:199: // shoal ripples and grow a shore-foam band as the water column thins. Inactive (_UseBedDepth = 0)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:204: float _ShoalDepthPool;     // column depth (pool units) below which ripples shoal (slow + steepen)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:205: float _ShoreFoamDepthPool; // column depth (pool units) band over which shore foam fades in
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:206: float _ShoreFoamStrength;  // strength of the standing shore-foam band
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:207: float _BreakFoamStrength;  // strength of dynamic breaking foam (Froude + convergence + crest)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:211: // the sim-uv -> world-xz affine each foam step (WaterVolume.PushHeroWaveFoam). Inert when the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:215: float  _HeroWaveFoamStrength;   // master gain on the injected whitewater (component knob)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:217: // "Deep" column depth used when no bed is active, so shoal/shore terms are no-ops there.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:370: // Shoaling: the discrete wave speed goes as sqrt(_WaveSpeed), so scaling by the depth ratio
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:373: float shoal = saturate(depth / max(_ShoalDepthPool, 1e-4));
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:375: // move velocity by the (shoaled) restoring force, attenuate, integrate height
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:376: info.g += force * (_WaveSpeed * shoal);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:458: // Advected foam: carried along the local surface flow (so it streaks with the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:461: // height/normal state from Src and ping-pongs the foam buffer.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:463: void Foam(uint3 id : SV_DispatchThreadID)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:469: // normal IS the flow direction. Backtrace one flow-step and sample the foam
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:471: float2 flow = clamp(info.ba * _FoamAdvect, -FOAM_MAX_ADVECT_TEXELS, FOAM_MAX_ADVECT_TEXELS);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:478: float f00 = FoamSrc.Load(int3(ClampC(s0 + int2(0, 0)), 0));
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:479: float f10 = FoamSrc.Load(int3(ClampC(s0 + int2(1, 0)), 0));
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:480: float f01 = FoamSrc.Load(int3(ClampC(s0 + int2(0, 1)), 0));
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:481: float f11 = FoamSrc.Load(int3(ClampC(s0 + int2(1, 1)), 0));
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:484: // small isotropic diffusion keeps foam edges from getting too stringy
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:485: float fL = FoamSrc.Load(int3(ClampC(p + int2(-1, 0)), 0));
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:486: float fR = FoamSrc.Load(int3(ClampC(p + int2( 1, 0)), 0));
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:487: float fD = FoamSrc.Load(int3(ClampC(p + int2( 0,-1)), 0));
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:488: float fU = FoamSrc.Load(int3(ClampC(p + int2( 0, 1)), 0));
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:489: float foam = lerp(advected, (fL + fR + fD + fU) * 0.25, _FoamSpread);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:493: // 0.5 and floods the pool with foam. Edge softening is a render-side concern
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:494: // (_FoamFeather in WaterSurface.shader), not a sim-side one.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:495: // Narrow (+/-1) taps feed the breaking-foam divergence below; the +/-2 taps build
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:520: // Breaking threshold (KWS/Crest both gate generation): real foam forms only where waves
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:523: float activity = (speed + shear * FOAM_SHEAR_FRACTION) * _FoamFromSpeed
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:524: + max(0.0, -lap) * _FoamFromCurv;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:525: // AMPLITUDE gate on top: waves shorter than the authored world height never foam.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:526: float heightGate = smoothstep(_FoamMinWaveHeight * 0.5, max(_FoamMinWaveHeight, 1e-6),
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:528: float gen = saturate(activity - _FoamGenThreshold) * heightGate;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:529: foam += gen * (_FoamGenRate * _FoamDtSteps);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:531: // Breaking foam (bed-active shorelines): whitecaps where the flow is fast (Froude), CONVERGING
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:534: if (_UseBedDepth > 0.5 && _BreakFoamStrength > 0.0)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:548: foam += breaking * (_BreakFoamStrength * _FoamDtSteps);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:552: // Hero-wave whitewater: analytic foam from the surfable breaking wave (rolling lip + collapsed
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:554: // foam sources - and leaves an organic trail behind the travelling wave for free.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:555: if (_HeroWaveActive > 0.5 && _HeroWaveFoamStrength > 0.0)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:561: foam += HeroWaveFoamSource(heroWorldXZ) * (_HeroWaveFoamStrength * _FoamDtSteps);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:564: // Bi-exponential decay: thick foam dies at the fresh rate, thin foam at the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:567: // (frame-rate independence) and _FoamDecayRate rescales fade speed linearly -
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:570: // Shared blend (FoamDecayBlend, WaterFoamCommon.hlsl); NOTE this path blends
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:573: float survival = FoamDecayBlend(foam, FOAM_FRESH_THRESHOLD, _FoamDecayResidual, _FoamDecayFresh);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:574: foam *= pow(survival, _FoamDtSteps * _FoamDecayRate);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:576: // Standing shoreline foam: a band that grows as the water column thins near the waterline
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:577: // (both KWS and Crest add a depth-threshold shore foam). Held as a floor so it persists rather
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:580: if (depth > 0.0 && _ShoreFoamStrength > 0.0)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:582: float shore = saturate(1.0 - depth / max(_ShoreFoamDepthPool, 1e-4));
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:583: foam = max(foam, shore * _ShoreFoamStrength);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:586: FoamDst[p] = saturate(foam);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:668: // Same shift for the foam buffer; newly exposed cells reset to zero foam.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:670: void ScrollFoam(uint3 id : SV_DispatchThreadID)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSim.compute:674: FoamDst[p] = InGrid(src) ? FoamSrc.Load(int3(src, 0)) : 0.0;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:33: [Header(Foam)]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:35: // whitecap - assign any soft foam tile); a real grid = an animated flipbook whose
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:37: // Foam Pattern Size (published as _FoamTileSize), not this texture's ST.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:38: _FoamTex ("Foam Pattern (single tile or flipbook)", 2D) = "white" {}
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:39: _FoamTexFrames ("Foam Flipbook Grid (cols, rows)", Vector) = (1, 1, 0, 0)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:40: _FoamTexFPS ("Foam Flipbook Frame Rate", Range(0, 30)) = 10
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:42: // same as the ocean whitecap since its rework) - no foam normal map anymore;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:43: // materials that still serialize _FoamNormalTex keep it as inert data.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:44: _FoamNormalStrength ("Foam Relief Strength (procedural)", Range(0, 3)) = 1
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:46: [Header(Ocean Wave Foam)]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:84: #include "WaterFoamCommon.hlsl" // shared foam lighting constants/helpers (FOAM_LIGHT_WRAP etc.)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:101: // Perturb the foam texture UV by the surface tilt so foam rides the ripples.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:102: #define FOAM_NORMAL_NUDGE   0.1
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:103: // Skip all foam texture work below this mask level (nothing would be visible).
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:104: #define FOAM_MASK_EPSILON   0.005
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:105: // Flow-phased pattern drift: how far the foam pattern is dragged along the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:109: #define FOAM_FLOW_DISTANCE  0.35
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:110: #define FOAM_FLOW_RATE      0.5
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:114: // foam, so everyday ripple foam stays textured lace/flecks instead of big
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:116: #define FOAM_CORE_START     0.8
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:117: #define FOAM_CORE_FULL      0.95
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:118: #define FOAM_LACE_SOFTNESS  0.25
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:119: #define FOAM_CORE_WHITEN    0.7
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:122: #define FOAM_CORE_CUT_SOFTNESS 0.35
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:123: // Procedural foam relief (replaces the normal-map flipbook, like the whitecap):
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:126: #define FOAM_PROC_NORMAL_DELTA 0.03
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:127: #define FOAM_PROC_NORMAL_GAIN  2.0
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:128: // (Residual foam is controlled in the SIM: the Residual Foam slider blends the thin-
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:129: // foam survival rate toward the fresh rate, so leftovers decay away uniformly. A
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:130: // render-side slope gate was tried and rejected - modulating foam by live wave phase
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:132: // Foam lighting (FOAM_LIGHT_WRAP / FOAM_AMBIENT) lives in WaterFoamCommon.hlsl,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:133: // shared with FoamParticles/SplashParticles so every foam element shades alike.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:134: // Seen from BELOW, dense foam blocks the sky transmitted through the surface,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:136: #define FOAM_UNDERSIDE_DARKEN 0.6
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:137: #define FOAM_UNDERSIDE_GLOW   0.4
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:138: // Ocean whitecap anti-tiling: a second, rotated, differently-scaled octave of the foam pattern
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:146: #define OCEAN_WHITECAP_CONTRAST          1.6        // >1 sharpens the pattern so foam breaks into crisper shapes, less round
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:147: #define OCEAN_WHITECAP_CONTRAST_DENSE    1.0        // contrast relaxes toward this as coverage saturates (KWS), so dense foam goes SOLID instead of staying lacy
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:148: // Whitecap parallax (SW3-style fake height): the foam pattern is sampled where a layer floating
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:149: // PARALLAX_HEIGHT metres above the surface would intersect the view ray, so foam visually sits
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:152: #define OCEAN_FOAM_PARALLAX_HEIGHT 0.04
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:153: #define OCEAN_FOAM_PARALLAX_MIN_VIEW_Y 0.25
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:154: // Procedural whitecap relief (Crest MultiScaleFoamNormal): finite-difference the albedo
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:158: #define OCEAN_FOAM_NORMAL_DELTA (4.0 / 1024.0)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:159: #define OCEAN_FOAM_NORMAL_GAIN  2.5
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:221: // Foam: _FoamMask (sim buffer) + globals from the controller; _FoamTex
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:222: // is an optional per-material pattern (defaults white = flat foam).
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:223: sampler2D _FoamMask;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:224: sampler2D _FoamTex;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:225: // Dedicated ocean wave-foam (whitecap) slots: a single seamless TILING texture (not a flipbook
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:227: // (white / bump) keep the look unchanged when unassigned. Decoupled from _FoamTex so the ocean
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:228: // whitecap and the interactive/shoreline foam can be art-directed independently.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:232: float4 _FoamTex_TexelSize;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:233: float4 _FoamTexFrames; // (cols, rows) of the flipbook grid; (1,1) = plain tiling texture
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:234: float  _FoamTexFPS;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:235: float  _FoamNormalStrength;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:236: // WORLD metres per foam-pattern tile (published per body: Foam Pattern Size). The pattern
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:240: float  _FoamTileSize;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:241: float4 _FoamColor;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:242: float _FoamEnabled, _FoamStrength, _FoamBorderWidth, _FoamContactDepth;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:243: // Mask level over which the foam layer fades in from nothing (edge
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:244: // feathering). 0 disables: foam clips hard at the mask epsilon.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:245: float _FoamFeather;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:248: float _FoamCoreCut;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:250: // Manual bilinear sample of the float foam mask - same fix as SampleWaterBilinear:
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:252: // the foam edges go blocky in builds only. The foam RT matches the sim resolution,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:254: float SampleFoamMaskBilinear(float2 uv)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:260: float c00 = tex2Dlod(_FoamMask, float4(baseUV, 0, 0)).r;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:261: float c10 = tex2Dlod(_FoamMask, float4(baseUV + float2(texel.x, 0.0), 0, 0)).r;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:262: float c01 = tex2Dlod(_FoamMask, float4(baseUV + float2(0.0, texel.y), 0, 0)).r;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:263: float c11 = tex2Dlod(_FoamMask, float4(baseUV + texel, 0, 0)).r;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:327: // Flipbook frame pair + crossfade weight for the current time. Both the foam
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:330: void FoamFlipbookFrames(out float2 cellA, out float2 cellB, out float2 grid, out float blend)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:332: grid = max(float2(1.0, 1.0), _FoamTexFrames.xy);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:334: float framePos = _Time.y * _FoamTexFPS;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:353: // Half a texel in tile space, capped so the 1x1 white-fallback texture (no foam assigned,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:360: // Foam pattern with frame advance + crossfade: the foam churns internally
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:365: float3 SampleFoamPattern(float2 uv)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:368: FoamFlipbookFrames(cellA, cellB, grid, blend);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:370: return tex2Dgrad(_FoamTex, uv, ddx(uv), ddy(uv)).rgb;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:371: float3 a = SampleFlipbookCell(_FoamTex, uv, cellA, grid, _FoamTex_TexelSize.xy).rgb;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:372: float3 b = SampleFlipbookCell(_FoamTex, uv, cellB, grid, _FoamTex_TexelSize.xy).rgb;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:376: // Shared foam evaluation for BOTH sides of the surface. Pattern: tiled/flipbook
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:382: // first, so decaying foam breaks into filaments instead of ghosting out.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:385: // foam doesn't dent the shading.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:386: void EvaluateFoam(float2 fuv, float2 flowXZ, float mask, float camDist,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:390: float2 flowDir = flowXZ * FOAM_FLOW_DISTANCE;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:391: float phaseA = frac(_Time.y * FOAM_FLOW_RATE);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:395: float3 baseA = SampleFoamPattern(uvA);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:396: pattern = lerp(baseA, SampleFoamPattern(fuv - flowDir * phaseB), seesaw);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:399: // rotated second octave keeps foam only where BOTH octaves agree, breaking the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:408: float3 octave1 = SampleFoamPattern(rotated - flowDir * phaseA);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:412: core = smoothstep(FOAM_CORE_START, FOAM_CORE_FULL, mask);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:414: // uses): a THIN mask reaches high into the pattern, so light foam shows as a
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:417: // so thin foam vanished entirely and moderate foam jumped to solid patches.)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:420: lace = saturate((pattern.r - laceThreshold) / FOAM_LACE_SOFTNESS);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:427: float coreCut = saturate((pattern.r - laceThreshold) / FOAM_CORE_CUT_SOFTNESS);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:428: float coreAlpha = core * lerp(1.0, coreCut, _FoamCoreCut);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:433: // exists above FOAM_CORE_START, well over any sensible feather band.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:434: float feather = (_FoamFeather > 0.0) ? smoothstep(0.0, _FoamFeather, mask) : 1.0;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:439: // Procedural relief (Crest MultiScaleFoamNormal): brightness reads as bubble
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:441: // away from raised foam. Taken at phase A of the base octave (relief slightly
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:443: float rx = SampleFoamPattern(uvA + float2(FOAM_PROC_NORMAL_DELTA, 0.0)).r;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:444: float rz = SampleFoamPattern(uvA + float2(0.0, FOAM_PROC_NORMAL_DELTA)).r;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:445: tilt = -FOAM_PROC_NORMAL_GAIN * float2(rx - baseA.r, rz - baseA.r)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:446: * (_FoamNormalStrength * mask);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:449: // Ocean whitecap pattern with distance anti-tiling. Combines the base foam tile with a rotated,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:451: // reading as a grid toward the horizon. min() of the two octaves as they blend keeps foam only
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:459: float2 uv0 = worldXZ / max(_OceanFoamTileSize, 1e-3);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:465: float3 octave1 = tex2D(_OceanWhitecapTex, rotated / max(_OceanFoamTileSize * OCEAN_WHITECAP_OCTAVE2_SCALE, 1e-3)).rgb;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:472: // differences (Crest's MultiScaleFoamNormal): brightness reads as bubble height, so the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:473: // negated gradient tilts the shading normal away from raised foam. Self-flattening - where
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:474: // there is no foam the gradient is ~0 - and it retires the separate normal-map texture
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:478: float tile = max(_OceanFoamTileSize, 1e-3);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:479: float dd = tile * OCEAN_FOAM_NORMAL_DELTA;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:483: return -OCEAN_FOAM_NORMAL_GAIN * float2(cx - c, cz - c);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:492: float3 worldPos : TEXCOORD2; // world space; drives depth/SSR/foam-contact
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:576: // swell shoal factor - the hero wave IS the shoaling product. Inert when inactive.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:806: // ---- Foam seen from below: the same advected mask, but instead of lit
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:807: // white it reads as a SILHOUETTE - dense foam blocks the sky coming
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:809: // No contact foam here: the depth texture holds the scene ABOVE the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:811: if (_FoamEnabled > 0.5)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:815: float advected = SampleFoamMaskBilinear(fcoord);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:817: float border = (_SimWindowed < 0.5) ? (1.0 - smoothstep(0.0, _FoamBorderWidth, edge)) : 0.0;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:818: float mask = saturate((advected + border) * _FoamStrength);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:820: if (mask > FOAM_MASK_EPSILON)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:823: float2 fuv = i.worldPos.xz / max(_FoamTileSize, 1e-3)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:824: + normal.xz * FOAM_NORMAL_NUDGE;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:825: float foamDist = distance(i.worldPos.xz, _WorldSpaceCameraPos.xz);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:826: float3 pattern; float core, lace, foamAlpha; float2 tilt;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:827: EvaluateFoam(fuv, nxz, mask, foamDist, pattern, core, lace, foamAlpha, tilt);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:832: underColor *= 1.0 - FOAM_UNDERSIDE_DARKEN * foamAlpha;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:833: underColor += _FoamColor.rgb * pattern * (FOAM_UNDERSIDE_GLOW * sunThrough * lace * mask);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:927: // ---- Ocean FFT whitecap foam: coverage sampled per pixel from the cascade (.w), on the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:928: // same crests as the normal tilt, then broken into moving lace by the foam flipbook -
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:930: // WhiteFoamTexture). Whitecaps are matte, so the resulting alpha knocks the specular
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:933: float oceanFoam = 0.0;                       // textured coverage: drives matte + blend
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:934: float3 oceanFoamPattern = float3(1.0, 1.0, 1.0);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:935: float2 oceanFoamSampleXZ = i.largeWaveSourceXZ; // parallax-lifted pattern-sample point
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:938: float coverage = OceanFftFoam(i.largeWaveSourceXZ);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:939: if (coverage > FOAM_MASK_EPSILON)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:942: // meets the view ray (coverage stays at the true surface point - foam is still
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:945: oceanFoamSampleXZ = i.largeWaveSourceXZ + viewToCam.xz
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:946: * (OCEAN_FOAM_PARALLAX_HEIGHT / max(viewToCam.y, OCEAN_FOAM_PARALLAX_MIN_VIEW_Y));
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:948: // Stock white _FoamTex -> pattern ~= 1 -> solid coverage (no regression); a real
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:949: // foam texture dissolves in as lace. Distance anti-tiling (second rotated octave)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:951: float foamCamDist = distance(i.largeWaveSourceXZ, _WorldSpaceCameraPos.xz);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:952: oceanFoamPattern = SampleOceanWhitecapPattern(oceanFoamSampleXZ, foamCamDist);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:953: // KWS contrast law: dense coverage RELAXES the contrast (heavy foam stops
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:958: float sharpened = pow(saturate(oceanFoamPattern.r), contrast);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:960: oceanFoam = smoothstep(threshold, threshold + max(_OceanFoamFeather, 1e-3), sharpened);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:964: // ---- Foam layers, evaluated BEFORE the reflection composite so the combined foam
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:965: // can matte the specular (foam breaks the mirror sheet - previously only the ocean
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:966: // layer did; pond/wake foam stayed glossy, which read as painted-on). Evaluated
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:969: float oceanFoamAlpha = 0.0;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:970: float3 oceanFoamLook = float3(0.0, 0.0, 0.0);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:971: float pondFoamAlpha = 0.0;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:972: float3 pondFoamLook = float3(0.0, 0.0, 0.0);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:975: // foam so crests shade with the waves instead of reading as flat paint. Gated on the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:977: if (oceanFoam > FOAM_MASK_EPSILON)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:979: // ---- Foam relief: emboss the lighting normal by the foam normal map (same flipbook,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:982: // pond foam / haze below rely on is left untouched. Default "bump" map = zero tilt.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:984: float2 oceanFoamTilt = SampleOceanWhitecapTilt(oceanFoamSampleXZ)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:985: * (_FoamNormalStrength * oceanFoam);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:986: float3 oceanFoamTangent = normalize(cross(normal, float3(0.0, 0.0, 1.0)));
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:987: float3 oceanFoamBitangent = cross(normal, oceanFoamTangent);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:988: float3 oceanFoamNormal = normalize(normal + oceanFoamTangent * oceanFoamTilt.x
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:989: + oceanFoamBitangent * oceanFoamTilt.y);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:991: // Modulate the tint by the pattern so the foam carries internal light/dark detail
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:992: // instead of reading as a flat wash; whiten toward the peaks so dense foam stays bright.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:993: float oceanWrap = FoamWrappedDiffuse(oceanFoamNormal, _LightDir);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:994: float3 oceanTint = _OceanFoamColor.rgb * lerp(oceanFoamPattern, float3(1.0, 1.0, 1.0), oceanFoam);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:995: oceanFoamLook = FoamLitColor(oceanTint, _SunColor, oceanWrap);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:996: oceanFoamAlpha = oceanFoam * _OceanFoamColor.a;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:999: // ---- Interactive/pond foam look: advected buffer + shoreline border + contact ----
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1000: if (_FoamEnabled > 0.5)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1002: // Windowed bodies read the foam buffer in the window frame too - at the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1004: // worldPos misses foam under horizontally-displaced geometry: the hero wave's
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1006: // the buffer ahead of where the lip foam was injected (empty crest head). FFT
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1008: float3 foamSourcePos = float3(i.largeWaveSourceXZ.x, i.worldPos.y, i.largeWaveSourceXZ.y);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1010: : (WorldToSim(foamSourcePos).xz * 0.5 + 0.5);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1011: float advected = SampleFoamMaskBilinear(fcoord);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1013: // shoreline foam against the pool walls (whole-body only; a window has no walls)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1015: float border = (_SimWindowed < 0.5) ? (1.0 - smoothstep(0.0, _FoamBorderWidth, edge)) : 0.0;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1017: // contact foam where geometry pierces the waterline. Needs the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1020: // surface, which the old formula turned into full-surface foam.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1021: // Guard: only add contact foam where the scene is genuinely just
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1022: // BEHIND the surface, else none. Fixes "all water foamed" builds.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1027: float contact  = behind > 0.0 ? (1.0 - saturate(behind / max(_FoamContactDepth, 1e-4))) : 0.0;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1029: float mask = saturate((advected + border + contact) * _FoamStrength);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1031: if (mask > FOAM_MASK_EPSILON)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1034: // body's Foam Pattern Size, independent of extent, anchored under a
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1035: // scrolling window; nudged by the surface tilt so foam rides ripples.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1036: float2 fuv = i.worldPos.xz / max(_FoamTileSize, 1e-3)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1037: + normal.xz * FOAM_NORMAL_NUDGE;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1038: float foamDist = distance(i.worldPos.xz, _WorldSpaceCameraPos.xz);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1039: float3 pattern; float core, lace, foamAlpha; float2 tilt;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1040: EvaluateFoam(fuv, nxz, mask, foamDist, pattern, core, lace, foamAlpha, tilt);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1042: // ---- Foam relief: tilt the lighting normal by the foam's own
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1044: float3 foamTangent = normalize(cross(normal, float3(0.0, 0.0, 1.0)));
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1045: float3 foamBitangent = cross(normal, foamTangent);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1046: float3 foamNormal = normalize(normal + foamTangent * tilt.x + foamBitangent * tilt.y);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1048: // ---- Lit foam: wrapped diffuse from the sun over an ambient
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1049: // floor, so foam shades with the waves instead of flat white. ----
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1050: float wrapped = FoamWrappedDiffuse(foamNormal, _LightDir);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1051: float3 albedo = _FoamColor.rgb * lerp(pattern, float3(1.0, 1.0, 1.0), core * FOAM_CORE_WHITEN);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1052: pondFoamLook = FoamLitColor(albedo, _SunColor, wrapped);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1053: pondFoamAlpha = foamAlpha;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1057: // Foam is matte: the combined coverage knocks the specular reflection down before
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1059: // "foam roughens the surface" cue - Crest lerps smoothness down the same way).
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1060: float foamMatte = max(oceanFoam, pondFoamAlpha);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1063: fresnel * _ReflectionStrength * (1.0 - foamMatte));
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1069: // and intensity. Knocked down by foam so whitecaps stay matte over the glow. ----
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1071: outColor += _ScatterColor.rgb * _SunColor * (sssBoost * (1.0 - foamMatte));
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1090: // ---- Exclusive foam composite (looks evaluated above, before the reflection
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1092: // outColor, after the shoreline gradient so foam sits over it. Coverage is the max of the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1095: // double-lay foam. ----
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1096: float foamCombinedAlpha = max(oceanFoamAlpha, pondFoamAlpha);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1097: if (foamCombinedAlpha > 0.0)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1099: float3 foamCombinedLook = (oceanFoamLook * oceanFoamAlpha + pondFoamLook * pondFoamAlpha)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1100: / max(oceanFoamAlpha + pondFoamAlpha, 1e-5);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterSurface.shader:1101: outColor = lerp(outColor, foamCombinedLook, foamCombinedAlpha);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\Shaders\WaterUnderwaterFog.shader:45: sampler2D _BedTex; // pool-space bed height (global); for the shoreline swell-shoaling factor
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:1: // WebGL Water - GPU foam particles (Unity 6 / URP port)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:3: // Per-body foam/spray particle system, fully GPU-resident (KWS-inspired): a compute
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:4: // pass spawns particles where the body's foam sim is strong and drifts them with the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:5: // surface flow; FoamParticles.shader draws the pool as procedural quads pulled from
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:16: [AddComponentMenu("WebGL Water/Water Foam Particles")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:17: public class WaterFoamParticles : MonoBehaviour
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:19: // Compute kernel names (must match WaterFoamParticles.compute).
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:27: // Thread-group sizes. MUST equal the [numthreads] in WaterFoamParticles.compute.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:34: // ---- Screen-space density foam (KWS). MUST match WaterFoamParticles.compute. ----
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:39: const float DensityWeightScale = 64f;       // fixed-point units per 1.0 of foam weight
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:44: // WaterFoamParticles.compute (48 bytes) and MAX_BURST_DROPLETS there. ----
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:57: /// <summary>How the floating (surface) foam is rendered. Spray is always textured quads.</summary>
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:58: public enum FoamRenderMode
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:61: /// a fullscreen composite turns density into connected, lit foam.</summary>
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:72: // One particle = 12 floats. MUST match FoamParticle in the compute + shader.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:74: struct FoamParticle
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:80: static readonly int ParticleStride = Marshal.SizeOf<FoamParticle>();
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:87: static readonly int ID_FoamTex = Shader.PropertyToID("FoamTex");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:114: // Density foam + spawn quality (compute + composite shader).
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:128: static readonly int ID_FoamDensityShader = Shader.PropertyToID("_FoamDensity");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:129: static readonly int ID_FoamDensityDepthShader = Shader.PropertyToID("_FoamDensityDepth");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:132: static readonly int ID_FoamTime = Shader.PropertyToID("_FoamTime");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:135: const string KeywordOceanCrest = "OCEAN_CREST_FOAM";
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:140: [Tooltip("WaterFoamParticles.compute (spawn/update kernels). Required.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:142: [Tooltip("Material using the AbstractOcclusion/WebGpuWater/FoamParticles shader. Required; the Water " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:146: [Tooltip("How the floating foam is rendered. Screen Space Density (KWS-style) accumulates " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:147: "particles into a density field and shades it as connected foam; Quads draws every " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:149: [SerializeField] internal FoamRenderMode renderMode = FoamRenderMode.ScreenSpaceDensity;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:150: [Tooltip("Material using the AbstractOcclusion/WebGpuWater/FoamDensityComposite shader. Required " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:159: [Tooltip("Foam level (0..1) below which no particles spawn.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:161: [Tooltip("Expected spawns per second per square world-unit of fully-foamed water.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:165: [Tooltip("Fraction of spawns thrown as ballistic spray instead of floating foam.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:181: [Tooltip("Constant downwind drift of floating foam (world units/sec).")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:183: [Tooltip("How quickly foam velocity relaxes to the driven flow (1/sec).")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:187: [Tooltip("How fast whitecap foam rolls forward along the wave-travel direction (world units/sec). " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:188: "0 = foam sits still. Ocean bodies only; ignored on pools.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:190: [Tooltip("Foam sprite atlas layout (columns, rows). (1,1) = a plain foam texture (no flipbook); " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:191: "(2,2) = a 4-frame sheet, etc. Optional, like the surface foam's flipbook grid.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:193: [Tooltip("Flipbook animation speed of the foam sprite over its life (frames/sec). 0 = each particle " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:194: "shows one fixed atlas cell (or the plain texture at grid 1x1); higher = the foam churns " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:215: bool DensityModeActive => renderMode == FoamRenderMode.ScreenSpaceDensity
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:223: Debug.LogError("WaterFoamParticles: no WaterVolume assigned or found on this GameObject.", this);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:229: Debug.LogError("WaterFoamParticles: particleCompute (WaterFoamParticles.compute) not assigned.", this);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:237: Debug.LogError("WaterFoamParticles: particleMaterial not assigned. Use " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:244: // FoamParticles.shader pulls the particle buffer in the VERTEX stage. WebGPU
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:247: // to "no foam particles" instead of a broken build; surface foam still renders.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:250: Debug.LogWarning("WaterFoamParticles: this device does not support structured " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:252: "foam particles disabled on this body.", this);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:267: if (renderMode == FoamRenderMode.ScreenSpaceDensity && !_densitySupported)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:268: Debug.LogWarning("WaterFoamParticles: fragment-stage structured buffers unsupported " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:269: "on this device; density foam falls back to quads.", this);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:270: if (renderMode == FoamRenderMode.ScreenSpaceDensity && densityMaterial == null)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:271: Debug.LogWarning("WaterFoamParticles: densityMaterial not assigned (run the Water " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:272: "Wizard to create it); density foam falls back to quads.", this);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:277: int budget = Mathf.Min(capacity, volume.FoamParticleBudget);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:280: _particles.SetData(new FoamParticle[_capacityPow2]); // life = 0 -> every slot dead
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:321: if (volume.SimStateTexture == null || volume.FoamMaskTexture == null) return;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:322: // Spawn when the 2D foam sim is on OR this is an ocean (whose FFT crests are the source).
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:323: if (!volume.Foam && !volume.OceanFftActive) return;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:350: cs.SetFloat(ID_FoamTime, Time.time); // slow clock for the curl/clump noise drift
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:396: cs.SetTexture(_kSpawn, ID_FoamTex, volume.FoamMaskTexture);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:399: // kernel can emit foam on breaking FFT crests. Pools leave it off (no cascade binding).
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:407: cs.SetVector(ID_CrestRoll, CrestRollWorld()); // foam rolls along the wave direction
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:507: // Same heading as the wind drift, scaled by the crest-roll speed: whitecap foam is carried along
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:541: // Fullscreen triangle that shades the splatted density as connected foam. The bounds
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:546: _densityMpb.SetBuffer(ID_FoamDensityShader, _density);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterFoamParticles.cs:547: _densityMpb.SetBuffer(ID_FoamDensityDepthShader, _densityDepth);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterHeroWave.cs:122: [Tooltip("Foam the wave writes into the ripple-sim foam buffer: the rolling lip plus the " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterHeroWave.cs:124: "wave leaves an organic trail, and surface foam, foam particles and density foam " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterHeroWave.cs:263: FoamStrength = whitewaterStrength,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterHeroWave.cs:306: // sheet inherits reflections/fog/foam; the hero flags ride its property block.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:19: /// <summary>Per-body whitecap-foam accumulation knobs, authored on the ocean WaterVolume.</summary>
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:20: internal readonly struct FoamParams
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:22: internal readonly float WindThreshold; // m/s; no foam below this wind speed
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:25: internal readonly float FadeRate;      // exponential decay per second (lower = foam lingers)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:26: internal readonly float SlowFadeFraction; // dense-foam decay as a fraction of FadeRate (deposit persistence)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:29: internal FoamParams(float windThreshold, float coverage, float strength, float fadeRate,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:56: // Ocean whitecap foam internal calibration (NOT art knobs - the coverage/strength/fade/threshold
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:57: // sliders live on the ocean WaterVolume and arrive via FoamParams). Named so there are no magic numbers.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:58: const float MaxFoamDeltaTime = 0.1f; // clamp dt so a frame hitch or pause can't over-accumulate foam
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:115: static readonly int ID_FoamPrev = Shader.PropertyToID("OceanFoamPrev");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:116: static readonly int ID_FoamNext = Shader.PropertyToID("OceanFoamNext");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:117: static readonly int ID_FoamDeltaTime = Shader.PropertyToID("OceanFoamDeltaTime");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:118: static readonly int ID_FoamHistoryValid = Shader.PropertyToID("OceanFoamHistoryValid");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:119: static readonly int ID_FoamMinWind = Shader.PropertyToID("OceanFoamMinWind");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:120: static readonly int ID_FoamCoverage = Shader.PropertyToID("OceanFoamCoverage");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:121: static readonly int ID_FoamStrength = Shader.PropertyToID("OceanFoamStrength");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:122: static readonly int ID_FoamFadeRate = Shader.PropertyToID("OceanFoamFadeRate");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:123: static readonly int ID_FoamMax = Shader.PropertyToID("OceanFoamMax");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:124: static readonly int ID_FoamSlowFade = Shader.PropertyToID("OceanFoamSlowFadeFraction");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:125: static readonly int ID_FoamDrift = Shader.PropertyToID("OceanFoamDriftFraction");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:140: RenderTexture _foamHistA, _foamHistB; // ping-pong accumulated-foam history (one slice per cascade)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:141: float _lastDispatchTime;              // wave time at the previous dispatch, for the foam delta time
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:165: // Cascade data for consumers outside the render globals (e.g. the foam-particle spawn compute,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:166: // which samples the whitecap .w to emit crest foam).
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:168: // Raw spatial displacement cascade (.y = height, per-cascade scale baked in). The foam-particle
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:169: // density splat sums it to place foam on the real swell (mirrors BakeHeightField's math).
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:249: // Foam history: single-channel, ping-ponged so ComputeNormal reads last frame's accumulated foam
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:253: _foamHistA = CreateArray("OceanFftFoamA", RenderTextureFormat.RFloat, RenderTextureFormat.RFloat);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:254: _foamHistB = CreateArray("OceanFftFoamB", RenderTextureFormat.RFloat, RenderTextureFormat.RFloat);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:260: || _foamHistA == null || _foamHistB == null)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:399: float swellWavelength, float swellHeight, Vector2 cameraXZ, FoamParams foam)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:427: // Normal + foam cascade from the finished displacement, then mips for per-pixel trilinear
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:430: // Whitecap foam: framerate-independent accumulation needs the real time since the last dispatch,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:433: float foamDt = _hasLastDispatchTime ? Mathf.Clamp(waveTime - _lastDispatchTime, 0f, MaxFoamDeltaTime) : 0f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:436: _cs.SetFloat(ID_FoamDeltaTime, foamDt);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:437: _cs.SetFloat(ID_FoamHistoryValid, historyValid);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:438: _cs.SetFloat(ID_FoamMinWind, foam.WindThreshold);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:439: _cs.SetFloat(ID_FoamCoverage, foam.Coverage);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:440: _cs.SetFloat(ID_FoamStrength, foam.Strength);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:441: _cs.SetFloat(ID_FoamFadeRate, foam.FadeRate);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:442: _cs.SetFloat(ID_FoamSlowFade, foam.SlowFadeFraction);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:443: _cs.SetFloat(ID_FoamDrift, foam.DriftFraction);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:444: _cs.SetFloat(ID_FoamMax, foam.Max);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:448: _cs.SetTexture(_kNormal, ID_FoamPrev, _foamHistA); // read last frame's accumulated foam
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:449: _cs.SetTexture(_kNormal, ID_FoamNext, _foamHistB); // write this frame's accumulated foam
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:452: (_foamHistA, _foamHistB) = (_foamHistB, _foamHistA); // ping-pong: this frame becomes next frame's prev
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:469: _cs.SetTexture(_kPreview, ID_Normal, _normal); // preview overlays the accumulated foam (.w) as white
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:639: Release(ref _foamHistA);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterOceanFft.cs:640: Release(ref _foamHistB);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterQuality.cs:37: const int DefaultMaxFoamParticles = 65536;  // effectively "no cap" (the component max)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterQuality.cs:43: const int MinFoamParticleCap = 64; // one update thread-group
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterQuality.cs:61: public readonly int MaxFoamParticles;  // cap on the GPU foam-particle pool
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterQuality.cs:66: int causticInterval, int readbackInterval, int maxFoamParticles)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterQuality.cs:80: MaxFoamParticles = Mathf.Max(MinFoamParticleCap, maxFoamParticles);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterQuality.cs:97: DefaultMaxFoamParticles);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterQuality.cs:127: [Tooltip("Cap on the GPU foam-particle pool (all capacity is drawn every frame).")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterQuality.cs:128: [SerializeField] int highMaxFoamParticles = DefaultMaxFoamParticles;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterQuality.cs:151: [Tooltip("Cap on the GPU foam-particle pool.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterQuality.cs:152: [SerializeField] int mediumMaxFoamParticles = DefaultMaxFoamParticles;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterQuality.cs:184: [Tooltip("Cap on the GPU foam-particle pool (all capacity is drawn every frame).")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterQuality.cs:185: [SerializeField] int lowMaxFoamParticles = 1024;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterQuality.cs:202: highCausticInterval, highReadbackInterval, highMaxFoamParticles);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterQuality.cs:206: mediumCausticInterval, mediumReadbackInterval, mediumMaxFoamParticles);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterQuality.cs:210: lowCausticInterval, lowReadbackInterval, lowMaxFoamParticles);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:27: const string KernelFoam = "Foam";
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:32: const string KernelScrollFoam = "ScrollFoam";
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:66: static readonly int ID_FoamGenRate = Shader.PropertyToID("_FoamGenRate");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:67: static readonly int ID_FoamGenThreshold = Shader.PropertyToID("_FoamGenThreshold");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:68: static readonly int ID_FoamMinWaveHeight = Shader.PropertyToID("_FoamMinWaveHeight");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:69: static readonly int ID_FoamDecayResidual = Shader.PropertyToID("_FoamDecayResidual");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:70: static readonly int ID_FoamDecayFresh = Shader.PropertyToID("_FoamDecayFresh");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:71: static readonly int ID_FoamDtSteps = Shader.PropertyToID("_FoamDtSteps");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:72: static readonly int ID_FoamDecayRate = Shader.PropertyToID("_FoamDecayRate");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:73: static readonly int ID_FoamSpread = Shader.PropertyToID("_FoamSpread");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:74: static readonly int ID_FoamFromSpeed = Shader.PropertyToID("_FoamFromSpeed");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:75: static readonly int ID_FoamFromCurv = Shader.PropertyToID("_FoamFromCurv");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:76: static readonly int ID_FoamAdvect = Shader.PropertyToID("_FoamAdvect");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:77: static readonly int ID_FoamSrc = Shader.PropertyToID("FoamSrc");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:78: static readonly int ID_FoamDst = Shader.PropertyToID("FoamDst");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:85: static readonly int ID_ShoalDepthPool = Shader.PropertyToID("_ShoalDepthPool");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:86: static readonly int ID_ShoreFoamDepthPool = Shader.PropertyToID("_ShoreFoamDepthPool");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:87: static readonly int ID_ShoreFoamStrength = Shader.PropertyToID("_ShoreFoamStrength");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:88: static readonly int ID_BreakFoamStrength = Shader.PropertyToID("_BreakFoamStrength");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:91: static readonly int ID_HeroWaveFoamStrength = Shader.PropertyToID("_HeroWaveFoamStrength");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:97: readonly int _kDrop, _kSphereInteract, _kUpdate, _kNormal, _kObstacle, _kObstacleSmooth, _kFoam, _kConserve, _kScroll, _kScrollFoam;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:109: // behaves exactly as a bottomless pool. Bound onto the Update and Foam kernels each frame.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:112: float _shoalDepthPool;      // pool-unit depth below which ripples shoal
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:113: float _shoreFoamDepthPool;  // pool-unit depth band for standing shore foam
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:114: float _shoreFoamStrength;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:115: float _breakFoamStrength;   // dynamic breaking-foam strength (Phase 2a)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:127: RenderTexture _foamA, _foamB; // foam amount ping-pong (R)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:136: /// <summary>The current foam amount texture (R channel).</summary>
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:137: public RenderTexture FoamTexture => _foamA;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:156: _kFoam = cs.FindKernel(KernelFoam);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:161: _kScrollFoam = cs.FindKernel(KernelScrollFoam);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:166: _foamA = Create(RenderTextureFormat.RFloat, "WaterFoam");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:167: _foamB = Create(RenderTextureFormat.RFloat, "WaterFoam");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:168: Clear(_a); Clear(_b); Clear(_foamA); Clear(_foamB);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:203: ReleaseAndDestroy(ref _foamA);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:204: ReleaseAndDestroy(ref _foamB);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:247: /// shoal and shore-foam depths (pool units). With <paramref name="enabled"/> false (or a null
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:248: /// map) the sim runs as a bottomless pool, unchanged. Bound on the Update + Foam kernels.</summary>
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:249: public void SetBedDepth(Texture bed, bool enabled, float shoalDepthPool, float shoreFoamDepthPool,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:250: float shoreFoamStrength, float breakFoamStrength)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:254: _shoalDepthPool = shoalDepthPool;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:255: _shoreFoamDepthPool = shoreFoamDepthPool;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:256: _shoreFoamStrength = shoreFoamStrength;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:257: _breakFoamStrength = breakFoamStrength;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:260: // Hero-wave whitewater state, cached between SetHeroWaveFoam and the Foam dispatch.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:266: /// <summary>Hero-wave whitewater source for the Foam kernel: this frame's wave state (which
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:267: /// carries the master foam strength) plus the sim-uv -> world-xz affine (origin + axis
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:268: /// spans). Pushed by WaterVolume.PushHeroWaveFoam just before StepFoam; inactive = no-op.</summary>
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:269: internal void SetHeroWaveFoam(in HeroWaveShaderState state, Vector4 uvToWorldOrigin,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:285: _cs.SetFloat(ID_HeroWaveFoamStrength, _heroWave.FoamStrength);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:293: _cs.SetFloat(ID_ShoalDepthPool, _shoalDepthPool);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:294: _cs.SetFloat(ID_ShoreFoamDepthPool, _shoreFoamDepthPool);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:295: _cs.SetFloat(ID_ShoreFoamStrength, _shoreFoamStrength);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:296: _cs.SetFloat(ID_BreakFoamStrength, _breakFoamStrength);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:398: /// <summary>Advance the foam buffer: advect along the surface flow, diffuse,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:399: /// generate from turbulence, decay. Decay is bi-exponential: thick fresh foam
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:403: /// 1 = 1/60 s) so foam evolves frame-rate independently; <paramref name="decayRate"/>
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:405: /// Reads the current height/normal state; ping-pongs the foam textures.</summary>
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:406: public void StepFoam(float genRate, float genThreshold, float minWaveHeight, float decayFresh,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:411: _cs.SetFloat(ID_FoamGenRate, genRate);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:412: _cs.SetFloat(ID_FoamGenThreshold, genThreshold);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:413: _cs.SetFloat(ID_FoamMinWaveHeight, minWaveHeight);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:414: _cs.SetFloat(ID_FoamDecayFresh, decayFresh);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:415: _cs.SetFloat(ID_FoamDecayResidual, decayResidual);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:416: _cs.SetFloat(ID_FoamDtSteps, dtSteps);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:417: _cs.SetFloat(ID_FoamDecayRate, decayRate);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:418: _cs.SetFloat(ID_FoamSpread, spread);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:419: _cs.SetFloat(ID_FoamFromSpeed, fromSpeed);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:420: _cs.SetFloat(ID_FoamFromCurv, fromCurv);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:421: _cs.SetFloat(ID_FoamAdvect, advect);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:422: _cs.SetTexture(_kFoam, ID_Src, _a);        // height state (read)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:423: _cs.SetTexture(_kFoam, ID_FoamSrc, _foamA);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:424: _cs.SetTexture(_kFoam, ID_FoamDst, _foamB);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:425: BindBed(_kFoam);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:427: _cs.Dispatch(_kFoam, _groups, _groups, 1);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:428: (_foamA, _foamB) = (_foamB, _foamA);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:454: /// Shift the whole sim state (height/velocity/normal and foam) by an integer
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:472: _cs.SetTexture(_kScrollFoam, ID_FoamSrc, _foamA);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:473: _cs.SetTexture(_kScrollFoam, ID_FoamDst, _foamB);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:474: _cs.Dispatch(_kScrollFoam, _groups, _groups, 1);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSimulation.cs:475: (_foamA, _foamB) = (_foamB, _foamA);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSplash.cs:4: // also feeds the turbulence-driven foam. Particle look/motion lives on the emitter
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSplashEmitter.cs:163: /// the body's GPU foam-particle system when one is present (spray unification: every
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterSplashEmitter.cs:175: WaterFoamParticles gpuSpray = body != null ? body.GetComponent<WaterFoamParticles>() : null;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:50: static readonly int ID_FoamMask = Shader.PropertyToID("_FoamMask");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:51: static readonly int ID_FoamColor = Shader.PropertyToID("_FoamColor");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:52: static readonly int ID_FoamEnabled = Shader.PropertyToID("_FoamEnabled");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:53: static readonly int ID_FoamStrength = Shader.PropertyToID("_FoamStrength");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:54: static readonly int ID_FoamTileSize = Shader.PropertyToID("_FoamTileSize");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:55: static readonly int ID_FoamBorder = Shader.PropertyToID("_FoamBorderWidth");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:56: static readonly int ID_FoamContact = Shader.PropertyToID("_FoamContactDepth");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:57: static readonly int ID_FoamFeather = Shader.PropertyToID("_FoamFeather");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:58: static readonly int ID_FoamCoreCut = Shader.PropertyToID("_FoamCoreCut");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:75: static readonly int ID_OceanFoamColor = Shader.PropertyToID("_OceanFoamColor");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:76: static readonly int ID_OceanFoamTileSize = Shader.PropertyToID("_OceanFoamTileSize");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:77: static readonly int ID_OceanFoamFeather = Shader.PropertyToID("_OceanFoamFeather");
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:208: if (water.FoamTexture != null) sink.SetTexture(ID_FoamMask, water.FoamTexture);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:224: sink.SetColor(ID_OceanFoamColor, _body.OceanFoamColor);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:225: sink.SetFloat(ID_OceanFoamTileSize, _body.OceanFoamTileSize);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:226: sink.SetFloat(ID_OceanFoamFeather, _body.OceanFoamFeather);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:322: sink.SetColor(ID_FoamColor, _body.foamColor);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:323: sink.SetFloat(ID_FoamEnabled, _body.Foam ? 1f : 0f);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:324: sink.SetFloat(ID_FoamStrength, _body.foamStrength);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:325: sink.SetFloat(ID_FoamTileSize, _body.foamPatternSize);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:326: sink.SetFloat(ID_FoamBorder, _body.foamBorderWidth);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:327: sink.SetFloat(ID_FoamContact, _body.foamContactDepth);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:328: sink.SetFloat(ID_FoamFeather, _body.foamFeather);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterUniformPublisher.cs:329: sink.SetFloat(ID_FoamCoreCut, _body.foamCoreCut);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:106: /// rays and FFT whitecap foam. All ocean-only - inert on pools / bounded lakes. Migrated off the
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:185: [Header("Ocean foam (whitecaps)")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:186: [Tooltip("Wind speed (m/s) below which the FFT ocean grows NO whitecaps (KWS foams above ~4). Tie " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:187: "to the same Wind Speed that drives the swell: calmer seas stay foam-free. Ocean-only.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:188: [Min(0f)] public float oceanFoamWindThreshold = DefaultOceanFoamWindThreshold;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:189: [Tooltip("How readily a folding wave crest turns to foam. 1 = only where the surface actually pinches " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:190: "(the natural default); higher spreads foam onto gentler folds; lower needs sharper breaks. " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:192: [Range(0f, OceanFoamCoverageMax)] public float oceanFoamCoverage = DefaultOceanFoamCoverage;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:193: [Tooltip("How fast foam builds up on breaking crests. Higher = denser whitecaps sooner.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:194: [Range(0f, OceanFoamStrengthMax)] public float oceanFoamStrength = DefaultOceanFoamStrength;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:195: [Tooltip("How fast foam fades once a crest passes (per second). Lower = foam lingers and streaks; " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:197: [Range(0f, OceanFoamFadeRateMax)] public float oceanFoamFadeRate = DefaultOceanFoamFadeRate;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:198: [Tooltip("Whitecap tint (RGB) and overall opacity (alpha) where foam sits on the surface. White is " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:199: "the natural default; alpha 0 hides the surface foam entirely (accumulation still runs).")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:200: public Color oceanFoamColor = Color.white;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:201: [Tooltip("Metres per tile of the Foam Pattern texture on the ocean surface. Smaller = finer, more " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:202: "repeated lace; larger = broader foam shapes. Uses the material's Foam Pattern slot.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:203: [Min(OceanFoamTileSizeMin)] public float oceanFoamTileSize = DefaultOceanFoamTileSize;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:204: [Tooltip("How softly the foam texture dissolves in as coverage rises. 0 = hard edges; higher = a " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:205: "gentle feathered fade from water to foam.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:206: [Range(0f, 1f)] public float oceanFoamFeather = DefaultOceanFoamFeather;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:207: [Tooltip("How much foam is left behind (deposited) after a crest passes. Higher = dense whitecaps " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:208: "linger and streak into trails; 0 = foam fades as fast as it forms. This is the main " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:210: [Range(0f, 1f)] public float oceanFoamDeposit = DefaultOceanFoamDeposit;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:211: [Tooltip("How fast deposited foam rolls downwind, streaking into windrows (as a fraction of wind " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:212: "speed). 0 = foam stays where it formed.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:213: [Range(0f, OceanFoamDriftMax)] public float oceanFoamDrift = DefaultOceanFoamDrift;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:214: [Tooltip("Ceiling on how dense foam can pile up before accumulation stops. Higher = thicker, " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:216: [Range(OceanFoamMaxBuildupMin, OceanFoamMaxBuildupMax)] public float oceanFoamMaxBuildup = DefaultOceanFoamMaxBuildup;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:240: internal float oceanFoamWindThreshold => ocean.oceanFoamWindThreshold;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:241: internal float oceanFoamCoverage => ocean.oceanFoamCoverage;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:242: internal float oceanFoamStrength => ocean.oceanFoamStrength;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:243: internal float oceanFoamFadeRate => ocean.oceanFoamFadeRate;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:244: internal Color oceanFoamColor => ocean.oceanFoamColor;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:245: internal float oceanFoamTileSize => ocean.oceanFoamTileSize;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:246: internal float oceanFoamFeather => ocean.oceanFoamFeather;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:247: internal float oceanFoamDeposit => ocean.oceanFoamDeposit;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:248: internal float oceanFoamDrift => ocean.oceanFoamDrift;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:249: internal float oceanFoamMaxBuildup => ocean.oceanFoamMaxBuildup;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:270: [SerializeField, HideInInspector, FormerlySerializedAs("oceanFoamWindThreshold")] float _legacyOceanFoamWindThreshold = DefaultOceanFoamWindThreshold;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:271: [SerializeField, HideInInspector, FormerlySerializedAs("oceanFoamCoverage")] float _legacyOceanFoamCoverage = DefaultOceanFoamCoverage;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:272: [SerializeField, HideInInspector, FormerlySerializedAs("oceanFoamStrength")] float _legacyOceanFoamStrength = DefaultOceanFoamStrength;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:273: [SerializeField, HideInInspector, FormerlySerializedAs("oceanFoamFadeRate")] float _legacyOceanFoamFadeRate = DefaultOceanFoamFadeRate;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:274: [SerializeField, HideInInspector, FormerlySerializedAs("oceanFoamColor")] Color _legacyOceanFoamColor = Color.white;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:275: [SerializeField, HideInInspector, FormerlySerializedAs("oceanFoamTileSize")] float _legacyOceanFoamTileSize = DefaultOceanFoamTileSize;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:276: [SerializeField, HideInInspector, FormerlySerializedAs("oceanFoamFeather")] float _legacyOceanFoamFeather = DefaultOceanFoamFeather;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:285: // Ocean whitecap foam defaults - subtle + wind-gated so the current look is unchanged until dialed.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:286: const float DefaultOceanFoamWindThreshold = 4f; // KWS FOAM_MIN_WIND: no whitecaps below ~4 m/s
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:287: const float DefaultOceanFoamCoverage = 1f;      // fold threshold; 1 == the original saturate(1 - jacobian)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:288: const float DefaultOceanFoamStrength = 1f;      // accumulation gain per unit fold
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:289: const float DefaultOceanFoamFadeRate = 0.5f;    // exponential decay per second (lower = foam lingers)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:290: const float OceanFoamCoverageMax = 2f;          // beyond ~2 the whole surface foams; clamp the knob
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:291: const float OceanFoamStrengthMax = 4f;          // sane upper bound for the build-up gain slider
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:292: const float OceanFoamFadeRateMax = 4f;          // fastest useful decay; higher just flickers
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:293: const float DefaultOceanFoamTileSize = 8f;      // metres per foam-pattern tile on the surface
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:294: const float OceanFoamTileSizeMin = 0.5f;        // guard the divide + keep the pattern from collapsing
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:295: const float DefaultOceanFoamFeather = 0.25f;    // dissolve softness of the foam texture black point
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:298: const float DefaultOceanFoamDeposit = 0.85f;    // dense-foam persistence; slowFadeFraction = 1 - this
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:299: const float DefaultOceanFoamDrift = 0.08f;      // downwind roll speed as a fraction of wind speed
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:300: const float OceanFoamDriftMax = 0.3f;           // fastest useful roll before foam smears across the tile
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:301: const float DefaultOceanFoamMaxBuildup = 1f;    // accumulation ceiling (1 = the original FoamMax)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:302: const float OceanFoamMaxBuildupMin = 0.25f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:303: const float OceanFoamMaxBuildupMax = 3f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:309: internal float OceanFoamWindThreshold => oceanFoamWindThreshold;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:310: internal float OceanFoamCoverage => oceanFoamCoverage;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:311: internal float OceanFoamStrength => oceanFoamStrength;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:312: internal float OceanFoamFadeRate => oceanFoamFadeRate;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:313: internal Color OceanFoamColor => oceanFoamColor;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:314: internal float OceanFoamTileSize => oceanFoamTileSize;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:315: internal float OceanFoamFeather => oceanFoamFeather;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:316: internal float OceanFoamDeposit => oceanFoamDeposit;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:317: internal float OceanFoamDrift => oceanFoamDrift;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:318: internal float OceanFoamMaxBuildup => oceanFoamMaxBuildup;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:646: "ripple solver timestep. 1 = real time, 0 = frozen, 2 = double speed. Foam and splash " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:788: "this below full break to let foam take over the very tips).")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:869: if (_settingsVersion < 5) MigrateFoamV5();
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:907: ocean.oceanFoamWindThreshold = _legacyOceanFoamWindThreshold;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:908: ocean.oceanFoamCoverage = _legacyOceanFoamCoverage;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:909: ocean.oceanFoamStrength = _legacyOceanFoamStrength;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:910: ocean.oceanFoamFadeRate = _legacyOceanFoamFadeRate;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:911: ocean.oceanFoamColor = _legacyOceanFoamColor;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:912: ocean.oceanFoamTileSize = _legacyOceanFoamTileSize;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:913: ocean.oceanFoamFeather = _legacyOceanFoamFeather;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:939: // v5: the "Foam" fields (pool/interactive surface foam) moved into FoamSettings.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:940: void MigrateFoamV5()
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:942: foamSettings.foam = _legacyFoam;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:943: foamSettings.foamGenRate = _legacyFoamGenRate;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:944: foamSettings.foamDecay = _legacyFoamDecay;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:945: foamSettings.foamDecayRate = _legacyFoamDecayRate;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:946: foamSettings.foamSpread = _legacyFoamSpread;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:947: foamSettings.foamAdvect = _legacyFoamAdvect;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:948: foamSettings.foamFromSpeed = _legacyFoamFromSpeed;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:949: foamSettings.foamFromCurvature = _legacyFoamFromCurvature;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:950: foamSettings.foamColor = _legacyFoamColor;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:951: foamSettings.foamStrength = _legacyFoamStrength;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:952: foamSettings.foamFeather = _legacyFoamFeather;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:953: foamSettings.foamCoreCut = _legacyFoamCoreCut;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:954: foamSettings.foamBorderWidth = _legacyFoamBorderWidth;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:955: foamSettings.foamContactDepth = _legacyFoamContactDepth;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1029: [Tooltip("Interactive-ripple shoaling: WORLD-unit column depth below which ripples slow and " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1030: "steepen toward shore (celerity ~ sqrt(depth)). 0 disables shoaling.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1031: [Range(0f, 20f)] public float shoalDepth = 3f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1032: [Tooltip("WORLD-unit column depth band over which a standing shoreline foam line fades in " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1033: "toward the waterline. 0 = no shore foam.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1034: [Range(0f, 10f)] public float shorelineFoamDepth = 1f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1035: [Tooltip("Strength of the standing shoreline foam band.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1036: [Range(0f, 1f)] public float shorelineFoamStrength = 0.6f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1037: [Tooltip("Strength of dynamic breaking foam - whitecaps where fast, converging, cresting " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1039: [Range(0f, 1f)] public float breakingFoamStrength = 0.5f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1049: internal float shoalDepth => bedDepthSettings.shoalDepth;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1050: internal float shorelineFoamDepth => bedDepthSettings.shorelineFoamDepth;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1051: internal float shorelineFoamStrength => bedDepthSettings.shorelineFoamStrength;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1052: internal float breakingFoamStrength => bedDepthSettings.breakingFoamStrength;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1118: [Header("Foam")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1119: [SerializeField] FoamSettings foamSettings = new FoamSettings();
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1121: /// <summary>Turbulence-driven surface foam simulation and shading (the pool/interactive foam,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1125: public sealed class FoamSettings
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1127: [Tooltip("Turbulence-driven surface foam simulation and shading (on/off).")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1128: public bool foam = false;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1129: [Tooltip("How fast turbulence creates foam.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1130: [Range(0f, 2f)] public float foamGenRate = 0.6f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1131: [Tooltip("SURVIVAL factor per step of thick, fresh foam (not a decay rate: HIGHER = foam lasts longer). Lower = bursts collapse faster.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1132: [Range(0.80f, 1f)] public float foamDecay = 0.96f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1134: [Range(0.90f, 1f)] public float foamDecayResidual = 0.993f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1135: [Tooltip("Time scale of foam decay, frame-rate independent: 1 = authored speed, 2 = fades twice as fast, 0.5 = half. Tune fade SPEED here; the survival sliders above compound ~60x per second, so tiny changes there swing the look violently.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1136: [Range(0.05f, 4f)] public float foamDecayRate = 1f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1137: [Tooltip("Diffusion of foam toward neighbours.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1138: [Range(0f, 1f)] public float foamSpread = 0.2f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1139: [Tooltip("Activity level below which NO foam forms: small waves are too weak to break, " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1140: "so they pass without leaving foam. Raise until gentle ripples stay clean and " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1141: "only wakes/splashes/breaking waves foam. 0 = every motion foams (old look).")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1142: [Range(0f, 1f)] public float foamGenThreshold = 0.15f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1143: [Tooltip("WORLD wave height (metres) below which NO foam forms. Kills the noise foam: " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1145: "height, so without this gate they out-foam the actual waves. Raise until only " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1146: "waves of real size foam.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1147: [Range(0f, 0.2f)] public float foamMinWaveHeight = 0.01f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1148: [Tooltip("How far foam is carried along the surface flow each step (texels). 0 = old isotropic spread.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1149: [Range(0f, 8f)] public float foamAdvect = 3f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1150: public float foamFromSpeed = 6f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1151: public float foamFromCurvature = 30f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1153: public Color foamColor = Color.white;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1154: [Tooltip("WORLD size (metres) of one foam-pattern tile. The pattern is sampled in world " +
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1158: [Min(0.25f)] public float foamPatternSize = 2f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1159: [Range(0f, 2f)] public float foamStrength = 1f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1160: [Tooltip("Softness of the foam edges: mask level over which foam fades in from nothing. 0 = hard edges (no feathering).")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1161: [Range(0f, 0.5f)] public float foamFeather = 0.15f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1162: [Tooltip("How much the foam pattern erodes the dense core: 0 = solid white core, 1 = core breaks into pattern detail like the residual lace.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1163: [Range(0f, 1f)] public float foamCoreCut = 0.5f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1164: [Tooltip("Width of the foam band along the pool walls (pool units).")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1165: [Range(0f, 0.5f)] public float foamBorderWidth = 0.08f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1166: [Tooltip("Depth band for contact foam where objects meet the waterline.")]
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1167: [Range(0f, 0.5f)] public float foamContactDepth = 0.06f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1170: // Same-named forwarding accessors keep every reader unchanged. Foam stays a public get/set (sample
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1171: // + Water Wizard API) targeting the settings; foam is the private read for the internal gate;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1172: // foamBorderWidth stays writable (the Water Wizard sets it). The rest are read-only.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1173: bool foam => foamSettings.foam;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1174: internal float foamGenRate => foamSettings.foamGenRate;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1175: internal float foamDecay => foamSettings.foamDecay;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1176: internal float foamDecayRate => foamSettings.foamDecayRate;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1177: internal float foamGenThreshold => foamSettings.foamGenThreshold;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1178: internal float foamMinWaveHeight => foamSettings.foamMinWaveHeight;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1179: internal float foamDecayResidual => foamSettings.foamDecayResidual;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1180: internal float foamSpread => foamSettings.foamSpread;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1181: internal float foamAdvect => foamSettings.foamAdvect;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1182: internal float foamFromSpeed => foamSettings.foamFromSpeed;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1183: internal float foamFromCurvature => foamSettings.foamFromCurvature;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1184: internal Color foamColor => foamSettings.foamColor;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1185: internal float foamPatternSize => foamSettings.foamPatternSize;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1186: internal float foamStrength => foamSettings.foamStrength;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1187: internal float foamFeather => foamSettings.foamFeather;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1188: internal float foamCoreCut => foamSettings.foamCoreCut;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1189: internal float foamBorderWidth { get => foamSettings.foamBorderWidth; set => foamSettings.foamBorderWidth = value; }
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1190: internal float foamContactDepth => foamSettings.foamContactDepth;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1192: /// <summary>Turbulence-driven surface foam simulation and shading.</summary>
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1193: public bool Foam { get => foamSettings.foam; set => foamSettings.foam = value; }
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1195: // Legacy capture (pre-Phase-2 scenes) -> copied once by MigrateFoamV5. Hidden; do not edit.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1196: [SerializeField, HideInInspector, FormerlySerializedAs("foam")] bool _legacyFoam = false;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1197: [SerializeField, HideInInspector, FormerlySerializedAs("foamGenRate")] float _legacyFoamGenRate = 0.6f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1198: [SerializeField, HideInInspector, FormerlySerializedAs("foamDecay")] float _legacyFoamDecay = 0.96f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1199: [SerializeField, HideInInspector, FormerlySerializedAs("foamDecayRate")] float _legacyFoamDecayRate = 1f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1200: [SerializeField, HideInInspector, FormerlySerializedAs("foamSpread")] float _legacyFoamSpread = 0.2f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1201: [SerializeField, HideInInspector, FormerlySerializedAs("foamAdvect")] float _legacyFoamAdvect = 3f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1202: [SerializeField, HideInInspector, FormerlySerializedAs("foamFromSpeed")] float _legacyFoamFromSpeed = 6f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1203: [SerializeField, HideInInspector, FormerlySerializedAs("foamFromCurvature")] float _legacyFoamFromCurvature = 30f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1204: [SerializeField, HideInInspector, FormerlySerializedAs("foamColor")] Color _legacyFoamColor = Color.white;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1205: [SerializeField, HideInInspector, FormerlySerializedAs("foamStrength")] float _legacyFoamStrength = 1f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1206: [SerializeField, HideInInspector, FormerlySerializedAs("foamFeather")] float _legacyFoamFeather = 0.15f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1207: [SerializeField, HideInInspector, FormerlySerializedAs("foamCoreCut")] float _legacyFoamCoreCut = 0.5f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1208: [SerializeField, HideInInspector, FormerlySerializedAs("foamBorderWidth")] float _legacyFoamBorderWidth = 0.08f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1209: [SerializeField, HideInInspector, FormerlySerializedAs("foamContactDepth")] float _legacyFoamContactDepth = 0.06f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1374: // Cascade whitecap data for the foam-particle spawn compute (crest foam source).
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1376: // Spatial displacement cascade for the foam-particle density splat (swell-height glue).
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1414: int _maxFoamParticles = WaterQuality.Default.MaxFoamParticles;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1415: /// <summary>Tier cap on the GPU foam-particle pool (WaterFoamParticles clamps to it).</summary>
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1416: internal int FoamParticleBudget => _maxFoamParticles;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1431: float _foamTimeDebt; // reference steps elapsed since the last foam pass (foam runs once per frame, not per solver step)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1503: // Cap on the foam time debt (reference steps), mirroring MaxSolverStepsPerFrame:
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1504: // after a long pause foam catches up at most this much instead of vanishing in one pass.
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1505: const float MaxFoamTimeDebtSteps = 8f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1563: _foamTimeDebt = 0f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1873: _maxFoamParticles = tier.MaxFoamParticles;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:1881: $"waves {_maxWaveCount}, refine {_peakedRefineSteps}, foamCap {_maxFoamParticles}", this);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2041: var foam = new WaterOceanFft.FoamParams(OceanFoamWindThreshold, OceanFoamCoverage,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2042: OceanFoamStrength, OceanFoamFadeRate,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2043: 1f - OceanFoamDeposit, OceanFoamDrift, OceanFoamMaxBuildup);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2045: SwellWavelength, SwellHeight, camXZ, foam);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2329: /// (sim + caustic textures, volume frame, waves, fog, foam). Used for this body's own
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2654: // Foam runs once per frame (not per solver step), so it tracks its own elapsed
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2656: // or high-fps frames that owe no solver step would be lost and foam would decay
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2658: _foamTimeDebt = Mathf.Min(_foamTimeDebt + seconds * ReferenceFrameRate, MaxFoamTimeDebtSteps);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2713: // Shoreline (bed depth): couple the baked terrain bed into the sim so ripples shoal and a
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2714: // shore-foam band forms near the waterline. Bounded bodies only - a windowed ocean's sim is
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2720: shoalDepth * poolPerWorldY, shorelineFoamDepth * poolPerWorldY,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2721: shorelineFoamStrength, breakingFoamStrength);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2749: if (foam)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2752: // thick fresh foam (residual >= fresh), or the blend inverts and foam
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2755: float residualSurvival = Mathf.Max(foamDecayResidual, foamDecay);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2756: // Scale-invariant foam ACTIVITY on cap-limited grids: the wave-speed correction
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2763: float foamActivityScale = 1f / Mathf.Max(_simDensityRatio, 0.05f);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2765: PushHeroWaveFoam(_water); // hero-wave whitewater source (inert without a hero wave)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2766: _water.StepFoam(foamGenRate, foamGenThreshold,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2767: foamMinWaveHeight / VolumeExtentSafe.y, foamDecay,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2768: residualSurvival, foamSpread, foamFromSpeed * foamActivityScale,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2769: foamFromCurvature * foamActivityScale, foamAdvect,
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2770: _foamTimeDebt, foamDecayRate);
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:2771: _foamTimeDebt = 0f;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:3037: // ---- GPU consumer API (foam particles and similar per-body effects) ----
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:3041: /// <summary>Current foam-amount texture (R channel) for GPU consumers.</summary>
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.cs:3042: public RenderTexture FoamMaskTexture => _water?.FoamTexture;
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.HeroWave.cs:21: public float FoamStrength; // whitewater master gain - consumed by the ripple-sim foam
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.HeroWave.cs:32: /// every GPU consumer (ripple-sim foam, foam particles) shares, so field packing can never
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.HeroWave.cs:60: /// StepFoam; the inert default state costs the kernel nothing.</summary>
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.HeroWave.cs:61: internal void PushHeroWaveFoam(WaterSimulation sim)
+.\Packages\com.abstractocclusion.webgpuwater\Runtime\WaterVolume.HeroWave.cs:72: sim.SetHeroWaveFoam(_heroWave,

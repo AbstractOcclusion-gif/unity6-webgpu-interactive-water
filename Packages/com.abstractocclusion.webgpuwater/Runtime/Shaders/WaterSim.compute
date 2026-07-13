@@ -196,15 +196,11 @@ float _FoamAdvect;     // texels foam is carried along the surface flow per step
 
 // Bed depth (Phase 1 shoreline): pool-space terrain bed height (R = bed pool-Y), baked by
 // WaterVolume in the SAME pool frame as the sim, so a sim cell's UV maps straight to it. Used to
-// shoal ripples and grow a shore-foam band as the water column thins. Inactive (_UseBedDepth = 0)
-// on bodies without a bed, so those behave exactly as a bottomless pool.
+// hold dry land flat (ripples reflect off the waterline) and drain the open-shore boundary.
+// Inactive (_UseBedDepth = 0) on bodies without a bed, so those behave exactly as a bottomless pool.
 Texture2D<float> _BedTex;
 SamplerState sampler_BedTex;
 float _UseBedDepth;        // 1 = bed active
-float _ShoalDepthPool;     // column depth (pool units) below which ripples shoal (slow + steepen)
-float _ShoreFoamDepthPool; // column depth (pool units) band over which shore foam fades in
-float _ShoreFoamStrength;  // strength of the standing shore-foam band
-float _BreakFoamStrength;  // strength of dynamic breaking foam (Froude + convergence + crest)
 
 // Hero-wave whitewater (surfable breaking wave, uniforms in WaterHeroWave.hlsl): the wave is a
 // world-space function but the sim grid knows nothing about the world frame, so the CPU publishes
@@ -217,12 +213,8 @@ float  _HeroWaveFoamStrength;   // master gain on the injected whitewater (compo
 // "Deep" column depth used when no bed is active, so shoal/shore terms are no-ops there.
 static const float BED_DEEP_DEPTH = 1000.0;
 
-// Phase 2a shore-dynamics heuristics (bed-active bodies only). These are detection tunings, not a
-// physical solve: FLOW_SPEED_SCALE turns the surface slope (normal.xz = -grad h) into a flow-speed
-// proxy, BREAK_G scales the Froude denominator, and DRAIN_BAND is the outer UV band over which the
-// open-shore boundary drain absorbs outgoing ripples (so they don't reflect or pile at the edge).
-static const float FLOW_SPEED_SCALE = 4.0;
-static const float BREAK_G = 1.0;
+// DRAIN_BAND is the outer UV band over which the open-shore boundary drain absorbs outgoing ripples
+// (so they don't reflect or pile at the domain edge). Bed-active bodies only.
 static const float DRAIN_BAND = 0.08;
 
 // Still-water column depth (pool units) at a sim cell: the rest surface sits at pool y = 0 and the
@@ -367,13 +359,8 @@ void Update(uint3 id : SV_DispatchThreadID)
     float force = _WaveAxisWeight.x * (hL + hR - 2.0 * info.r)
                 + _WaveAxisWeight.y * (hD + hU - 2.0 * info.r);
 
-    // Shoaling: the discrete wave speed goes as sqrt(_WaveSpeed), so scaling by the depth ratio
-    // gives celerity ~ sqrt(depth) - ripples slow and bunch up as the column thins toward shore.
-    // saturate keeps deep water (and bed-less bodies, depth = BED_DEEP_DEPTH) at full speed.
-    float shoal = saturate(depth / max(_ShoalDepthPool, 1e-4));
-
-    // move velocity by the (shoaled) restoring force, attenuate, integrate height
-    info.g += force * (_WaveSpeed * shoal);
+    // move velocity by the restoring force, attenuate, integrate height
+    info.g += force * _WaveSpeed;
     info.g *= _Damping;
     info.r += info.g;
 
@@ -528,27 +515,6 @@ void Foam(uint3 id : SV_DispatchThreadID)
     float gen = saturate(activity - _FoamGenThreshold) * heightGate;
     foam += gen * (_FoamGenRate * _FoamDtSteps);
 
-    // Breaking foam (bed-active shorelines): whitecaps where the flow is fast (Froude), CONVERGING
-    // (piling up), and cresting - the KWS/Crest breaking criterion. The surface slope (normal.xz =
-    // -grad h, in .ba) is our flow proxy; its divergence gives convergence, and -lap gives the crest.
-    if (_UseBedDepth > 0.5 && _BreakFoamStrength > 0.0)
-    {
-        float depthB = BedColumnDepth(((float2)p + 0.5) * _Delta);
-        if (depthB > 0.0)
-        {
-            float2 flow = info.ba * FLOW_SPEED_SCALE;
-            float froude = length(flow) / sqrt(max(BREAK_G * depthB, 1e-4));
-            float fastFlow = smoothstep(0.15, 0.65, froude);
-
-            float divergence = ((nR.b - nL.b) + (nU.a - nD.a)) * 0.5 * FLOW_SPEED_SCALE;
-            float convergence = smoothstep(0.02, 0.25, -divergence);
-
-            float crest = smoothstep(0.004, 0.03, -lap);
-            float breaking = max(crest, convergence) * fastFlow;
-            foam += breaking * (_BreakFoamStrength * _FoamDtSteps);
-        }
-    }
-
     // Hero-wave whitewater: analytic foam from the surfable breaking wave (rolling lip + collapsed
     // whitewash), injected as GENERATION so it advects, diffuses and decays exactly like the other
     // foam sources - and leaves an organic trail behind the travelling wave for free.
@@ -572,16 +538,6 @@ void Foam(uint3 id : SV_DispatchThreadID)
     // RATES (dense = SLOWER) - opposite semantics, both deliberate, documented there.
     float survival = FoamDecayBlend(foam, FOAM_FRESH_THRESHOLD, _FoamDecayResidual, _FoamDecayFresh);
     foam *= pow(survival, _FoamDtSteps * _FoamDecayRate);
-
-    // Standing shoreline foam: a band that grows as the water column thins near the waterline
-    // (both KWS and Crest add a depth-threshold shore foam). Held as a floor so it persists rather
-    // than decaying away. No-op where there is no bed or the water is deeper than the band.
-    float depth = BedColumnDepth(((float2)p + 0.5) * _Delta);
-    if (depth > 0.0 && _ShoreFoamStrength > 0.0)
-    {
-        float shore = saturate(1.0 - depth / max(_ShoreFoamDepthPool, 1e-4));
-        foam = max(foam, shore * _ShoreFoamStrength);
-    }
 
     FoamDst[p] = saturate(foam);
 }

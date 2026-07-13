@@ -82,10 +82,6 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_ScrollOffset = Shader.PropertyToID("_ScrollOffset");
         static readonly int ID_BedTex = Shader.PropertyToID("_BedTex");
         static readonly int ID_UseBedDepth = Shader.PropertyToID("_UseBedDepth");
-        static readonly int ID_ShoalDepthPool = Shader.PropertyToID("_ShoalDepthPool");
-        static readonly int ID_ShoreFoamDepthPool = Shader.PropertyToID("_ShoreFoamDepthPool");
-        static readonly int ID_ShoreFoamStrength = Shader.PropertyToID("_ShoreFoamStrength");
-        static readonly int ID_BreakFoamStrength = Shader.PropertyToID("_BreakFoamStrength");
         static readonly int ID_HeroSimUvToWorldOrigin = Shader.PropertyToID("_HeroSimUvToWorldOrigin");
         static readonly int ID_HeroSimUvToWorldAxes = Shader.PropertyToID("_HeroSimUvToWorldAxes");
         static readonly int ID_HeroWaveFoamStrength = Shader.PropertyToID("_HeroWaveFoamStrength");
@@ -105,14 +101,11 @@ namespace AbstractOcclusion.WebGpuWater
         Vector4 _waveAxisWeight = new Vector4(0.25f, 0.25f, 0f, 0f);
         Vector4 _dropAxisScale = new Vector4(1f, 1f, 0f, 0f);
 
-        // Bed-depth coupling (Phase 1 shoreline). Inactive by default so a body without a baked bed
-        // behaves exactly as a bottomless pool. Bound onto the Update and Foam kernels each frame.
+        // Bed-depth coupling: holds dry land flat (ripples reflect off the waterline) and drains the
+        // open-shore boundary. Inactive by default so a body without a baked bed behaves exactly as a
+        // bottomless pool. Bound onto the Update kernel each frame.
         Texture _bedTex;
         float _useBedDepth;         // 1 = active
-        float _shoalDepthPool;      // pool-unit depth below which ripples shoal
-        float _shoreFoamDepthPool;  // pool-unit depth band for standing shore foam
-        float _shoreFoamStrength;
-        float _breakFoamStrength;   // dynamic breaking-foam strength (Phase 2a)
 
         // Static reflection (opt-in). Inactive by default so the Update kernel is byte-identical.
         // Bound onto the Update kernel each frame (black solid mask when inactive).
@@ -243,18 +236,13 @@ namespace AbstractOcclusion.WebGpuWater
             _dropAxisScale = new Vector4(dropScale.x, dropScale.y, 0f, 0f);
         }
 
-        /// <summary>Bed-depth shoreline coupling (Phase 1): the pool-space bed-height map plus the
-        /// shoal and shore-foam depths (pool units). With <paramref name="enabled"/> false (or a null
-        /// map) the sim runs as a bottomless pool, unchanged. Bound on the Update + Foam kernels.</summary>
-        public void SetBedDepth(Texture bed, bool enabled, float shoalDepthPool, float shoreFoamDepthPool,
-                                float shoreFoamStrength, float breakFoamStrength)
+        /// <summary>Bed-depth shoreline coupling: the pool-space bed-height map. With
+        /// <paramref name="enabled"/> false (or a null map) the sim runs as a bottomless pool,
+        /// unchanged. Bound on the Update kernel (dry-land reflect + open-shore drain).</summary>
+        public void SetBedDepth(Texture bed, bool enabled)
         {
             _bedTex = bed;
             _useBedDepth = (enabled && bed != null) ? 1f : 0f;
-            _shoalDepthPool = shoalDepthPool;
-            _shoreFoamDepthPool = shoreFoamDepthPool;
-            _shoreFoamStrength = shoreFoamStrength;
-            _breakFoamStrength = breakFoamStrength;
         }
 
         // Hero-wave whitewater state, cached between SetHeroWaveFoam and the Foam dispatch.
@@ -285,15 +273,11 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetFloat(ID_HeroWaveFoamStrength, _heroWave.FoamStrength);
         }
 
-        // Bind the bed map + shoreline uniforms onto a kernel. A texture is always bound (black when
-        // inactive) so the backend never sees an unbound sampler; the shader early-outs on _UseBedDepth.
+        // Bind the bed map + active flag onto a kernel. A texture is always bound (black when inactive)
+        // so the backend never sees an unbound sampler; the shader early-outs on _UseBedDepth.
         void BindBed(int kernel)
         {
             _cs.SetFloat(ID_UseBedDepth, _useBedDepth);
-            _cs.SetFloat(ID_ShoalDepthPool, _shoalDepthPool);
-            _cs.SetFloat(ID_ShoreFoamDepthPool, _shoreFoamDepthPool);
-            _cs.SetFloat(ID_ShoreFoamStrength, _shoreFoamStrength);
-            _cs.SetFloat(ID_BreakFoamStrength, _breakFoamStrength);
             _cs.SetTexture(kernel, ID_BedTex, _bedTex != null ? _bedTex : Texture2D.blackTexture);
         }
 
@@ -422,7 +406,6 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetTexture(_kFoam, ID_Src, _a);        // height state (read)
             _cs.SetTexture(_kFoam, ID_FoamSrc, _foamA);
             _cs.SetTexture(_kFoam, ID_FoamDst, _foamB);
-            BindBed(_kFoam);
             BindHeroWave();
             _cs.Dispatch(_kFoam, _groups, _groups, 1);
             (_foamA, _foamB) = (_foamB, _foamA);
