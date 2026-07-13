@@ -996,20 +996,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         oceanFoamAlpha = oceanFoam * _OceanFoamColor.a;
                     }
 
-                    // ---- Interactive/pond foam look: advected buffer + shoreline border + contact ----
+                    // ---- Interactive/pond foam look: pool-wall border + geometry contact foam.
+                    // The floating sim-foam fill (wakes, interactor rims) is owned by the particle /
+                    // density-composite system (WaterFoamParticles); this surface layer only adds the
+                    // border + contact terms it uniquely renders, plus the specular matte below. ----
                     if (_FoamEnabled > 0.5)
                     {
-                        // Windowed bodies read the foam buffer in the window frame too - at the
-                        // SOURCE xz (undisplaced), like the whitecap path. Sampling at the displaced
-                        // worldPos misses foam under horizontally-displaced geometry: the hero wave's
-                        // crest is thrown metres forward by lean + curl, so its fragments were reading
-                        // the buffer ahead of where the lip foam was injected (empty crest head). FFT
-                        // chop caused the same error at a smaller, invisible scale.
-                        float3 foamSourcePos = float3(i.largeWaveSourceXZ.x, i.worldPos.y, i.largeWaveSourceXZ.y);
-                        float2 fcoord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
-                                                             : (WorldToSim(foamSourcePos).xz * 0.5 + 0.5);
-                        float advected = SampleFoamMaskBilinear(fcoord);
-
                         // shoreline foam against the pool walls (whole-body only; a window has no walls)
                         float edge = min(1.0 - abs(i.position.x), 1.0 - abs(i.position.z));
                         float border = (_SimWindowed < 0.5) ? (1.0 - smoothstep(0.0, _FoamBorderWidth, edge)) : 0.0;
@@ -1026,7 +1018,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         float behind   = sceneEye - surfEye; // > 0 when scene sits below the surface
                         float contact  = behind > 0.0 ? (1.0 - saturate(behind / max(_FoamContactDepth, 1e-4))) : 0.0;
 
-                        float mask = saturate((advected + border + contact) * _FoamStrength);
+                        float mask = saturate((border + contact) * _FoamStrength);
 
                         if (mask > FOAM_MASK_EPSILON)
                         {
