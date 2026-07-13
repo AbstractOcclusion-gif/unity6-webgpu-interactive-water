@@ -13,6 +13,9 @@
 #ifndef WEBGPUWATER_LARGE_WAVES_INCLUDED
 #define WEBGPUWATER_LARGE_WAVES_INCLUDED
 
+// Layer B shoaling reads the world-frame seabed depth field (Layer A) to attenuate waves near shore.
+#include "WaterShore.hlsl"
+
 // Reuses _WaveTime (declared in WaterWaves.hlsl, published every frame) as the shared clock, so the
 // open-water waves animate in lockstep with the rest of the water.
 
@@ -84,7 +87,7 @@ struct LargeBodyWaveField
 // bands never align into ridges. Directions scatter within 'dirSpread' of the wind heading.
 void LbwAccumulateBand(float2 worldXZ, int count, float baseWavelength, float wavelengthFalloff,
                        float baseAmplitude, float amplitudeFalloff, float dirSpread, float phaseSeed,
-                       float amplitudeScale, float minWavelength, inout LargeBodyWaveField f)
+                       float amplitudeScale, float minWavelength, float shoalDepth, inout LargeBodyWaveField f)
 {
     float wavelength = baseWavelength;
     float amplitude = baseAmplitude;
@@ -108,7 +111,9 @@ void LbwAccumulateBand(float2 worldXZ, int count, float baseWavelength, float wa
         // (which samples only near the camera) stays exact against this full-spectrum near field.
         float bandWeight = (minWavelength <= 0.0) ? 1.0
                          : smoothstep(minWavelength * LBW_BANDLIMIT_LOW, minWavelength * LBW_BANDLIMIT_HIGH, wavelength);
-        float a = amplitudeScale * amplitude * bandWeight;
+        // Shoaling: attenuate this component by depth/wavelength so short waves die first and all
+        // waves fall to zero as the water column runs out (no punching below the seabed near shore).
+        float a = amplitudeScale * amplitude * bandWeight * ShoalWeight(shoalDepth, wavelength);
 
         f.height    += a * sinP;
         f.slope     += a * k * dir * cosP;              // d/dxz of A*sin(phase)
@@ -134,12 +139,16 @@ LargeBodyWaveField EvaluateLargeBodyWave(float2 worldXZ, float minWavelength)
     f.disp = float2(0.0, 0.0);
     f.dispDeriv = float3(0.0, 0.0, 0.0); // (dDx/dx, dDx/dz, dDz/dz); dDz/dx == dDx/dz by symmetry
 
+    // Layer B shoaling: still-water depth under this world xz. One sample feeds both bands so height,
+    // chop and normal all attenuate together (a deep sentinel off-field leaves open water unchanged).
+    float shoalDepth = ShoreShoalDepth(worldXZ);
+
     LbwAccumulateBand(worldXZ, LBW_WAVE_COUNT, LBW_BASE_WAVELENGTH, LBW_WAVELENGTH_FALLOFF,
                       LBW_BASE_AMPLITUDE, LBW_AMPLITUDE_FALLOFF, LBW_DIR_SPREAD, LBW_CHOP_PHASE_SEED,
-                      _LargeWaveAmplitude, minWavelength, f);
+                      _LargeWaveAmplitude, minWavelength, shoalDepth, f);
     LbwAccumulateBand(worldXZ, LBW_SWELL_COUNT, _LargeSwellWavelength, LBW_SWELL_WAVELENGTH_FALLOFF,
                       1.0, LBW_SWELL_AMPLITUDE_FALLOFF, LBW_SWELL_DIR_SPREAD, LBW_SWELL_PHASE_SEED,
-                      _LargeSwellHeight, minWavelength, f);
+                      _LargeSwellHeight, minWavelength, shoalDepth, f);
     return f;
 }
 

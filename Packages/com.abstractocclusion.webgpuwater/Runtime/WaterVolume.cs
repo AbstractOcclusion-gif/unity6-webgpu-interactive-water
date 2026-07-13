@@ -9,6 +9,7 @@
 //   WaterSurfaceSampler  - async height readback + CPU bilinear surface queries
 //   WaterSimWindow       - camera-following scrolling sim window for large bodies
 //   WaterBedBaker        - terrain -> pool-space bed-height bake (lazy)
+//   WaterShoreDepthField - terrain -> world-frame seabed-height bake (Layer A shoreline)
 //   WaterUniformPublisher- per-body shader uniforms (property block + global mirror)
 //   WaterInputRouter     - scene input (primary body only, play mode only)
 //   WaterSimScheduler    - static per-frame visibility / sim-budget schedule
@@ -1046,6 +1047,10 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0.1f, 50f)] [FormerlySerializedAs("shorelineFadeDepth")] public float bedFadeDepth = 6f;
             [Tooltip("Maximum tint toward the deep-water colour.")]
             [Range(0f, 1f)] [FormerlySerializedAs("shorelineStrength")] public float bedTintStrength = 0.8f;
+            [Tooltip("Depth (world metres) over which the open-water swell shoals toward shore. Waves keep " +
+                     "full height in water deeper than this and calm within it toward the waterline; larger " +
+                     "reaches the calming further out into deeper water. 0 = no shoaling.")]
+            [Range(0f, 30f)] public float shoreShoalDepth = 4f;
         }
 
         // Same-named forwarding accessors keep every reader unchanged (WaterBedBaker, the publisher).
@@ -1055,6 +1060,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal Color deepWaterColor => bedDepthSettings.deepWaterColor;
         internal float bedFadeDepth => bedDepthSettings.bedFadeDepth;
         internal float bedTintStrength => bedDepthSettings.bedTintStrength;
+        internal float shoreShoalDepth => bedDepthSettings.shoreShoalDepth;
 
         // Legacy capture (pre-Phase-2 scenes) -> copied once by MigrateBedDepthV8. Hidden; do not edit.
         [SerializeField, HideInInspector, FormerlySerializedAs("useBedDepth")] bool _legacyUseBedDepth = false;
@@ -1308,6 +1314,7 @@ namespace AbstractOcclusion.WebGpuWater
         // uninitialized body (context-menu rebake, defensive uniform writes), so it is not part of
         // the eager registry.
         WaterBedBaker _bedBaker;
+        WaterShoreDepthField _shoreDepth;
         WaterUniformPublisher _publisher;
         WaterInputRouter _inputRouter;
 
@@ -1365,6 +1372,7 @@ namespace AbstractOcclusion.WebGpuWater
         // Lazy: the bed baker serves the context-menu RebakeBed even on an uninitialized
         // body, and the publisher serves WriteBodyProps callers defensively.
         WaterBedBaker BedBaker => _bedBaker ??= new WaterBedBaker(this);
+        WaterShoreDepthField ShoreDepth => _shoreDepth ??= new WaterShoreDepthField(this);
         WaterUniformPublisher Publisher => _publisher ??= new WaterUniformPublisher(this);
         WaterInputRouter InputRouter => _inputRouter ??= new WaterInputRouter(this);
 
@@ -1630,6 +1638,7 @@ namespace AbstractOcclusion.WebGpuWater
             CreateOceanClipmap();   // unbounded-ocean bodies: horizon-reaching camera-following surface
 
             BedBaker.EnsureBaked(); // lazy terrain -> pool-space bed bake, only when useBedDepth is on
+            ShoreDepth.EnsureBakedAndPublish(); // Layer A: world-frame seabed field + publish globals
 
             Publisher.PublishSharedGlobals();
             EnsureWaveBank();
@@ -1653,6 +1662,7 @@ namespace AbstractOcclusion.WebGpuWater
                                    // surface sampler, ocean FFT, sim window) - releases the same GPU
                                    // resources the inline disposal did, and clears the sampler/window refs.
             _bedBaker?.Dispose();  // also re-arms the lazy bake gate for the next enable
+            _shoreDepth?.Dispose(); // Layer A field; re-arms its own lazy bake gate too
             DestroySimWindowPatch(); // before restoring the surface material it borrows
             DestroyOceanClipmap();   // ditto - it borrows the same surface material
             _planarMirror?.Dispose(); // frees this body's planar mirror camera + RT
@@ -2031,6 +2041,7 @@ namespace AbstractOcclusion.WebGpuWater
             Publisher.PublishSharedGlobals(); // sun, sky, tiles, camera-independent shared clock
             EnsureWaveBank();
             BedBaker.EnsureBaked();           // picks up useBedDepth being toggled on at runtime
+            ShoreDepth.EnsureBakedAndPublish(); // Layer A: keep the seabed field + globals live
             // Bounded bodies render the pool caustic; the windowed OCEAN renders the large-body caustic
             // in the sim-window's world frame (other windowed bodies still skip - see RenderCausticsForThisBody).
             // The tier can amortise the pass over N frames (the caustic RT simply holds).
@@ -3199,6 +3210,23 @@ namespace AbstractOcclusion.WebGpuWater
         /// the terrain or the volume placement changes.</summary>
         [ContextMenu("Rebake Bed")]
         public void RebakeBed() => BedBaker.Rebake();
+
+        [ContextMenu("Rebake Shore Depth (Layer A)")]
+        public void RebakeShoreDepth() => ShoreDepth.Rebake();
+
+        [ContextMenu("Toggle Shore Depth Debug (Layer A)")]
+        public void ToggleShoreDepthDebug()
+        {
+            WaterShoreDepthField.ToggleDepthDebug();
+            ShoreDepth.EnsureBakedAndPublish(); // push the flag now so it shows without waiting for a tick
+        }
+
+        [ContextMenu("Toggle Shore SDF Debug (Layer A)")]
+        public void ToggleShoreSdfDebug()
+        {
+            WaterShoreDepthField.ToggleSdfDebug();
+            ShoreDepth.EnsureBakedAndPublish(); // push the flag now so it shows without waiting for a tick
+        }
 
         // ---- edit-mode preview ------------------------------------------------
         // The editor preview driver (Editor/WaterEditorPreviewDriver) pumps the player loop

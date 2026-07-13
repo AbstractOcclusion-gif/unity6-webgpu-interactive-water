@@ -218,6 +218,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // Pool-space terrain bed height (R = bed height in pool units), baked by WaterVolume.
             sampler2D _BedTex;
 
+            // Shore depth + SDF uniforms and helpers (Layer A/B) are declared in WaterShore.hlsl,
+            // included via WaterLargeWaves.hlsl above; the debug branches below read them directly.
+
             // Foam: _FoamMask (sim buffer) + globals from the controller; _FoamTex
             // is an optional per-material pattern (defaults white = flat foam).
             sampler2D _FoamMask;
@@ -1125,6 +1128,38 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         float horizD = distance(i.worldPos, _WorldSpaceCameraPos);
                         float horizonFade = smoothstep(_HorizonFadeDistance * HORIZON_FADE_START, _HorizonFadeDistance, horizD);
                         outColor = lerp(outColor, SampleEnvironment(incomingRay), horizonFade);
+                    }
+
+                    // ---- Layer A debug: visualize the world-frame seabed-depth field on the surface
+                    // (red = dry / seabed above surface, green shallow -> blue deep). Debug only;
+                    // _ShoreDepthDebug is off unless toggled from the WaterVolume context menu. ----
+                    if (_ShoreDepthDebug > 0.5 && _ShoreDepthValid > 0.5)
+                    {
+                        float2 shoreUV = (i.worldPos.xz - _ShoreDepthCenter.xy) / (2.0 * _ShoreDepthSize.xy) + 0.5;
+                        float seabedY = tex2Dlod(_ShoreDepthTex, float4(shoreUV, 0, 0)).r;
+                        float shoreColDepth = i.worldPos.y - seabedY;   // metres of water column
+                        const float SHORE_DEBUG_RANGE = 10.0;           // depth (m) mapped shallow -> deep
+                        float3 shoreDbg = (shoreColDepth < 0.0)
+                            ? float3(1.0, 0.0, 0.0)
+                            : lerp(float3(0.1, 0.9, 0.4), float3(0.0, 0.2, 0.9), saturate(shoreColDepth / SHORE_DEBUG_RANGE));
+                        float shoreInField = all(shoreUV == saturate(shoreUV)) ? 1.0 : 0.0;
+                        outColor = lerp(outColor, shoreDbg, shoreInField);
+                    }
+
+                    // ---- Layer A debug: visualize the shoreline SDF (signed distance to shore). Water
+                    // side cyan, land side orange, banded every few metres so distance reads as contours.
+                    // Debug only; _ShoreSDFDebug is off unless toggled from the context menu. ----
+                    if (_ShoreSDFDebug > 0.5 && _ShoreSDFValid > 0.5)
+                    {
+                        float2 sdfUV = (i.worldPos.xz - _ShoreDepthCenter.xy) / (2.0 * _ShoreDepthSize.xy) + 0.5;
+                        float4 sdfSample = tex2Dlod(_ShoreSDFTex, float4(sdfUV, 0, 0));
+                        float signedDist = sdfSample.b;
+                        const float SHORE_SDF_DEBUG_BAND = 5.0; // metres between distance contours
+                        float band = frac(abs(signedDist) / SHORE_SDF_DEBUG_BAND);
+                        float3 sdfDbg = (signedDist >= 0.0) ? float3(0.1, 0.7, 1.0) : float3(1.0, 0.5, 0.1);
+                        sdfDbg *= 0.55 + 0.45 * band;
+                        float sdfInField = all(sdfUV == saturate(sdfUV)) ? sdfSample.a : 0.0;
+                        outColor = lerp(outColor, sdfDbg, sdfInField);
                     }
 
                     return float4(outColor, 1.0);
