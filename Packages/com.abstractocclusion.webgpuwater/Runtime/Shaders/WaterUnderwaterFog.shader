@@ -42,8 +42,6 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         float3 _SunColor;
         float _OceanWorldWaves;     // 1 = sample wind waves in WORLD metres (ocean); 0 = pool xz (pond)
 
-        sampler2D _BedTex; // pool-space bed height (global); for the shoreline swell-shoaling factor
-
         // Per-pixel wavy-waterline crossing search (U2). The camera->scene ray meets the DISPLACED surface
         // at a height that follows crests/troughs, so we bracket the FIRST sign change of
         // (rayY - SurfaceHeightAtXZ) with a constant-step coarse scan and refine by bisection. Constant

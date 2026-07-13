@@ -34,12 +34,6 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyCaustics"
             #include "WaterWaves.hlsl"      // _WaveTime (shared clock) for the analytic wave field
             #include "WaterLargeWaves.hlsl" // ApplyLargeBodyWaveNormal, LargeBodyWaveHeight - the open-water swell
 
-            // Bed shoaling (globals; this shader doesn't include WaterFog) so the caustic surface height
-            // matches the shoaled render surface near shore.
-            sampler2D _BedTex;
-            float _BedValid;
-            float _UseBedDepth;
-
             float _WaveNormalStrength; // global; the same wave-normal strength the surface uses
 
             // Reference-plane depth is shared with the god-ray sampler via WaterVolume.hlsl

@@ -42,12 +42,6 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             #include "WaterHeroWave.hlsl"   // hero-wave base height: foam must ride the breaking wave
             #include "WaterFoamCommon.hlsl" // shared foam lighting + erosion (FOAM_LIGHT_WRAP, EROSION_SOFTNESS...)
 
-            // Bed shoaling (globals; this shader doesn't include WaterFog). Lets foam spray sit on the
-            // shoaled surface near shore instead of the full-height swell.
-            sampler2D _BedTex;
-            float _BedValid;
-            float _UseBedDepth;
-
             // Atlas layout is a uniform now (_ParticleFlipbookGrid): (1,1) = a plain non-atlas texture,
             // (2,2) etc. = a flipbook. Optional, like the surface foam's _FoamTexFrames.
 

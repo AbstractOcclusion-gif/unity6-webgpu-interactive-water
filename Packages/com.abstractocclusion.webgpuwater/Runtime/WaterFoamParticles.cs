@@ -498,7 +498,7 @@ namespace AbstractOcclusion.WebGpuWater
         // 0 degrees = travelling toward +X in the body's local frame.
         Vector2 WindDriftWorld()
         {
-            float radians = volume.windFromDegrees * Mathf.Deg2Rad;
+            float radians = volume.LargeWaveHeadingRad;
             Vector3 local = new Vector3(Mathf.Cos(radians), 0f, Mathf.Sin(radians));
             Vector3 world = volume.transform.rotation * local * windDriftSpeed;
             return new Vector2(world.x, world.z);
@@ -508,7 +508,7 @@ namespace AbstractOcclusion.WebGpuWater
         // the wave-travel direction so it rolls forward with the breaking crest.
         Vector2 CrestRollWorld()
         {
-            float radians = volume.windFromDegrees * Mathf.Deg2Rad;
+            float radians = volume.LargeWaveHeadingRad;
             Vector3 local = new Vector3(Mathf.Cos(radians), 0f, Mathf.Sin(radians));
             Vector3 world = volume.transform.rotation * local * crestRollSpeed;
             return new Vector2(world.x, world.z);
