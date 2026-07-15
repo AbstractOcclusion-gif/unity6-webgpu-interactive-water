@@ -299,8 +299,80 @@ namespace AbstractOcclusion.WebGpuWater
             // with, so the injected foam lands exactly where the eye sees the fronts break).
             public float Amplitude, Wavelength, Period, BandDepth, SetStrength, Lean,
                          Compression, Greens, AmbientFade,
-                         CrestLength, CrestVariation, Directionality;
-            public Vector4 WindDir; // xy = (cos, sin) of the swell heading
+                         CrestLength, CrestVariation, CrestPersistence, Directionality;
+            public float ShoalDepth; // _ShoreShoalDepth: the particles' density glue shoals with it
+            public Vector4 WindDir;  // xy = (cos, sin) of the swell heading
+
+            static readonly int ID_ShoreFoamActive = Shader.PropertyToID("_ShoreFoamActive");
+            static readonly int ID_ShoreFoamGain = Shader.PropertyToID("_ShoreFoamGain");
+            static readonly int ID_ShoreWaterlineFoamGain = Shader.PropertyToID("_ShoreWaterlineFoamGain");
+            static readonly int ID_ShoreFoamTime = Shader.PropertyToID("_ShoreFoamTime");
+            static readonly int ID_ShoreSimUvToWorldOrigin = Shader.PropertyToID("_ShoreSimUvToWorldOrigin");
+            static readonly int ID_ShoreSimUvToWorldAxes = Shader.PropertyToID("_ShoreSimUvToWorldAxes");
+            static readonly int ID_ShoreFieldCenterSim = Shader.PropertyToID("_ShoreFieldCenterSim");
+            static readonly int ID_ShoreFieldSizeSim = Shader.PropertyToID("_ShoreFieldSizeSim");
+            static readonly int ID_ShoreDepthTexSim = Shader.PropertyToID("_ShoreDepthTexSim");
+            static readonly int ID_ShoreSDFTexSim = Shader.PropertyToID("_ShoreSDFTexSim");
+            static readonly int ID_SurfActiveSim = Shader.PropertyToID("_SurfActive");
+            static readonly int ID_SurfAmplitudeSim = Shader.PropertyToID("_SurfAmplitude");
+            static readonly int ID_SurfWavelengthSim = Shader.PropertyToID("_SurfWavelength");
+            static readonly int ID_SurfPeriodSim = Shader.PropertyToID("_SurfPeriod");
+            static readonly int ID_SurfBandDepthSim = Shader.PropertyToID("_SurfBandDepth");
+            static readonly int ID_SurfSetStrengthSim = Shader.PropertyToID("_SurfSetStrength");
+            static readonly int ID_SurfLeanSim = Shader.PropertyToID("_SurfLean");
+            static readonly int ID_SurfCompressionSim = Shader.PropertyToID("_SurfCompression");
+            static readonly int ID_SurfGreensSim = Shader.PropertyToID("_SurfGreens");
+            static readonly int ID_SurfAmbientFadeSim = Shader.PropertyToID("_SurfAmbientFade");
+            static readonly int ID_SurfWaterlineFoamSim = Shader.PropertyToID("_SurfWaterlineFoam");
+            static readonly int ID_SurfCrestLengthSim = Shader.PropertyToID("_SurfCrestLength");
+            static readonly int ID_SurfCrestVariationSim = Shader.PropertyToID("_SurfCrestVariation");
+            static readonly int ID_SurfCrestPersistenceSim = Shader.PropertyToID("_SurfCrestPersistence");
+            static readonly int ID_SurfDirectionalitySim = Shader.PropertyToID("_SurfDirectionality");
+            static readonly int ID_SurfWindDirXZSim = Shader.PropertyToID("_SurfWindDirXZ");
+            static readonly int ID_ShoreShoalDepthSim = Shader.PropertyToID("_ShoreShoalDepth");
+
+            /// <summary>Push the surf-front uniforms + the Layer A field textures onto a compute
+            /// kernel - the ONE binder every GPU consumer (ripple-sim foam injection, foam
+            /// particles) shares, so field packing can never drift between consumers. Textures are
+            /// ALWAYS bound (black fallback) so the WebGPU backend never sees an unbound sampler;
+            /// the active flag gates all reads. Uniforms a compute doesn't declare are no-ops.</summary>
+            internal void BindTo(ComputeShader cs, int kernel)
+            {
+                bool active = Active && DepthTex != null && SdfTex != null;
+                cs.SetFloat(ID_ShoreFoamActive, active ? 1f : 0f);
+                cs.SetTexture(kernel, ID_ShoreDepthTexSim,
+                              DepthTex != null ? DepthTex : Texture2D.blackTexture);
+                cs.SetTexture(kernel, ID_ShoreSDFTexSim,
+                              SdfTex != null ? SdfTex : Texture2D.blackTexture);
+                if (!active) return;
+                cs.SetFloat(ID_ShoreFoamGain, FoamGain);
+                cs.SetFloat(ID_ShoreWaterlineFoamGain, WaterlineGain);
+                cs.SetFloat(ID_ShoreFoamTime, Time);
+                cs.SetVector(ID_ShoreSimUvToWorldOrigin, UvToWorldOrigin);
+                cs.SetVector(ID_ShoreSimUvToWorldAxes, UvToWorldAxes);
+                cs.SetVector(ID_ShoreFieldCenterSim, FieldCenter);
+                cs.SetVector(ID_ShoreFieldSizeSim, FieldSize);
+                cs.SetFloat(ID_SurfActiveSim, 1f);
+                cs.SetFloat(ID_SurfAmplitudeSim, Amplitude);
+                cs.SetFloat(ID_SurfWavelengthSim, Wavelength);
+                cs.SetFloat(ID_SurfPeriodSim, Period);
+                cs.SetFloat(ID_SurfBandDepthSim, BandDepth);
+                cs.SetFloat(ID_SurfSetStrengthSim, SetStrength);
+                cs.SetFloat(ID_SurfLeanSim, Lean);
+                cs.SetFloat(ID_SurfCompressionSim, Compression);
+                cs.SetFloat(ID_SurfGreensSim, Greens);
+                cs.SetFloat(ID_SurfAmbientFadeSim, AmbientFade);
+                cs.SetFloat(ID_SurfCrestLengthSim, CrestLength);
+                cs.SetFloat(ID_SurfCrestVariationSim, CrestVariation);
+                cs.SetFloat(ID_SurfCrestPersistenceSim, CrestPersistence);
+                cs.SetFloat(ID_SurfDirectionalitySim, Directionality);
+                cs.SetVector(ID_SurfWindDirXZSim, WindDir);
+                cs.SetFloat(ID_ShoreShoalDepthSim, ShoalDepth);
+                // Zero on purpose: the sim's Foam kernel injects its OWN waterline term
+                // (_ShoreWaterlineFoamGain); letting the analytic lace through too would double
+                // it - and the particles' breaker signal never reads the lace anyway.
+                cs.SetFloat(ID_SurfWaterlineFoamSim, 0f);
+            }
         }
 
         ShoreFoamState _shoreFoam;
@@ -309,69 +381,9 @@ namespace AbstractOcclusion.WebGpuWater
         /// just before StepFoam; inactive (the default) is a no-op.</summary>
         internal void SetShoreFoam(in ShoreFoamState state) => _shoreFoam = state;
 
-        static readonly int ID_ShoreFoamActive = Shader.PropertyToID("_ShoreFoamActive");
-        static readonly int ID_ShoreFoamGain = Shader.PropertyToID("_ShoreFoamGain");
-        static readonly int ID_ShoreWaterlineFoamGain = Shader.PropertyToID("_ShoreWaterlineFoamGain");
-        static readonly int ID_ShoreFoamTime = Shader.PropertyToID("_ShoreFoamTime");
-        static readonly int ID_ShoreSimUvToWorldOrigin = Shader.PropertyToID("_ShoreSimUvToWorldOrigin");
-        static readonly int ID_ShoreSimUvToWorldAxes = Shader.PropertyToID("_ShoreSimUvToWorldAxes");
-        static readonly int ID_ShoreFieldCenterSim = Shader.PropertyToID("_ShoreFieldCenterSim");
-        static readonly int ID_ShoreFieldSizeSim = Shader.PropertyToID("_ShoreFieldSizeSim");
-        static readonly int ID_ShoreDepthTexSim = Shader.PropertyToID("_ShoreDepthTexSim");
-        static readonly int ID_ShoreSDFTexSim = Shader.PropertyToID("_ShoreSDFTexSim");
-        static readonly int ID_SurfActiveSim = Shader.PropertyToID("_SurfActive");
-        static readonly int ID_SurfAmplitudeSim = Shader.PropertyToID("_SurfAmplitude");
-        static readonly int ID_SurfWavelengthSim = Shader.PropertyToID("_SurfWavelength");
-        static readonly int ID_SurfPeriodSim = Shader.PropertyToID("_SurfPeriod");
-        static readonly int ID_SurfBandDepthSim = Shader.PropertyToID("_SurfBandDepth");
-        static readonly int ID_SurfSetStrengthSim = Shader.PropertyToID("_SurfSetStrength");
-        static readonly int ID_SurfLeanSim = Shader.PropertyToID("_SurfLean");
-        static readonly int ID_SurfCompressionSim = Shader.PropertyToID("_SurfCompression");
-        static readonly int ID_SurfGreensSim = Shader.PropertyToID("_SurfGreens");
-        static readonly int ID_SurfAmbientFadeSim = Shader.PropertyToID("_SurfAmbientFade");
-        static readonly int ID_SurfWaterlineFoamSim = Shader.PropertyToID("_SurfWaterlineFoam");
-        static readonly int ID_SurfCrestLengthSim = Shader.PropertyToID("_SurfCrestLength");
-        static readonly int ID_SurfCrestVariationSim = Shader.PropertyToID("_SurfCrestVariation");
-        static readonly int ID_SurfDirectionalitySim = Shader.PropertyToID("_SurfDirectionality");
-        static readonly int ID_SurfWindDirXZSim = Shader.PropertyToID("_SurfWindDirXZ");
-
         // Push the surf-front foam uniforms + the Layer A field textures onto the Foam kernel.
-        // Textures are ALWAYS bound (black fallback) so the WebGPU backend never sees an unbound
-        // sampler; the active flag gates all reads in the kernel.
-        void BindShoreFoam(int kernel)
-        {
-            bool active = _shoreFoam.Active && _shoreFoam.DepthTex != null && _shoreFoam.SdfTex != null;
-            _cs.SetFloat(ID_ShoreFoamActive, active ? 1f : 0f);
-            _cs.SetTexture(kernel, ID_ShoreDepthTexSim,
-                           _shoreFoam.DepthTex != null ? _shoreFoam.DepthTex : Texture2D.blackTexture);
-            _cs.SetTexture(kernel, ID_ShoreSDFTexSim,
-                           _shoreFoam.SdfTex != null ? _shoreFoam.SdfTex : Texture2D.blackTexture);
-            if (!active) return;
-            _cs.SetFloat(ID_ShoreFoamGain, _shoreFoam.FoamGain);
-            _cs.SetFloat(ID_ShoreWaterlineFoamGain, _shoreFoam.WaterlineGain);
-            _cs.SetFloat(ID_ShoreFoamTime, _shoreFoam.Time);
-            _cs.SetVector(ID_ShoreSimUvToWorldOrigin, _shoreFoam.UvToWorldOrigin);
-            _cs.SetVector(ID_ShoreSimUvToWorldAxes, _shoreFoam.UvToWorldAxes);
-            _cs.SetVector(ID_ShoreFieldCenterSim, _shoreFoam.FieldCenter);
-            _cs.SetVector(ID_ShoreFieldSizeSim, _shoreFoam.FieldSize);
-            _cs.SetFloat(ID_SurfActiveSim, 1f);
-            _cs.SetFloat(ID_SurfAmplitudeSim, _shoreFoam.Amplitude);
-            _cs.SetFloat(ID_SurfWavelengthSim, _shoreFoam.Wavelength);
-            _cs.SetFloat(ID_SurfPeriodSim, _shoreFoam.Period);
-            _cs.SetFloat(ID_SurfBandDepthSim, _shoreFoam.BandDepth);
-            _cs.SetFloat(ID_SurfSetStrengthSim, _shoreFoam.SetStrength);
-            _cs.SetFloat(ID_SurfLeanSim, _shoreFoam.Lean);
-            _cs.SetFloat(ID_SurfCompressionSim, _shoreFoam.Compression);
-            _cs.SetFloat(ID_SurfGreensSim, _shoreFoam.Greens);
-            _cs.SetFloat(ID_SurfAmbientFadeSim, _shoreFoam.AmbientFade);
-            _cs.SetFloat(ID_SurfCrestLengthSim, _shoreFoam.CrestLength);
-            _cs.SetFloat(ID_SurfCrestVariationSim, _shoreFoam.CrestVariation);
-            _cs.SetFloat(ID_SurfDirectionalitySim, _shoreFoam.Directionality);
-            _cs.SetVector(ID_SurfWindDirXZSim, _shoreFoam.WindDir);
-            // Zero on the sim on purpose: the Foam kernel injects its OWN waterline term
-            // (_ShoreWaterlineFoamGain); letting the analytic lace through too would double it.
-            _cs.SetFloat(ID_SurfWaterlineFoamSim, 0f);
-        }
+        // The binder lives on ShoreFoamState (shared with the foam-particles compute).
+        void BindShoreFoam(int kernel) => _shoreFoam.BindTo(_cs, kernel);
 
         /// <summary>Static reflection: the solid mask (submerged footprint of reflector objects) plus its
         /// threshold and resting dip. With <paramref name="enabled"/> false (or a null mask) the Update

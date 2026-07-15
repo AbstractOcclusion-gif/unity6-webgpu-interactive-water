@@ -27,6 +27,8 @@
 #include "WaterVolume.hlsl"     // pool/window <-> world frame (same uniforms as the render side)
 #include "WaterFoamCommon.hlsl" // FoamParticleEnvelope: shared with the quad render
 #include "WaterHeroWave.hlsl"   // hero wave: lip spray source + base height for surface glue
+#include "WaterSurfWaves.hlsl"  // surf breaker fronts: plunging-lip spray source (uniforms set by
+                                // WaterSimulation.ShoreFoamState.BindTo - compute sees no globals)
 
 // MUST equal WaterFoamParticles.SpawnThreadGroupSize / UpdateThreadGroupSize (C#).
 #define SPAWN_THREAD_GROUP_SIZE  8
@@ -125,6 +127,21 @@ static const float HERO_SPRAY_MIN_LIP = 0.35;
 // Horizontal throw (world units/sec at lip weight 1) along the wave's travel direction; gravity
 // arcs it down the face. Matches the visual speed of the curl, not a physical jet velocity.
 static const float HERO_SPRAY_THROW_SPEED = 7.0;
+
+// Surf plunging-lip spray (CURL-3, the KWS crash moment): a spawn on a cresting PLUNGING front is
+// forced to ballistic spray thrown shoreward off the lip. The gate reads the front's canonical
+// breaker signal (cresting-lip line, plunge-amplified, surge-killed - WaterSurfWaves.hlsl), so
+// spilling shelves and surging cliffs throw nothing. The whitewash the shore injection already
+// writes into the foam buffer covers spawn PROBABILITY; these only shape what spawns there.
+static const float SURF_SPRAY_MIN_LIP = 0.3;
+static const float SURF_SPRAY_THROW_SPEED = 6.0;
+// Matches SHORE_BORDER_FEATHER (WaterShore.hlsl) / SHORE_FOAM_BORDER_FEATHER (WaterSim.compute).
+static const float SURF_SPRAY_BORDER_FEATHER = 0.08;
+// Matches SHORE_DEEP_SENTINEL (WaterShore.hlsl, not includable here - sampler2D).
+static const float SHORE_DEEP_SENTINEL_SIM = 1e9;
+// Matches OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION (WaterLargeWaves.hlsl): a cascade's shore
+// attenuation uses one representative wavelength = this fraction of its domain size.
+static const float CASCADE_WAVELENGTH_FRACTION_SIM = 0.25;
 
 // ---- CPU-event splash bursts (spray unification): rigidbody impacts and mouse splashes
 // queue burst requests on the CPU; the SpawnBurst kernel throws KIND_SPRAY droplets from
@@ -280,26 +297,98 @@ bool ProjectToScreen(float3 world, out float2 uv, out float eyeDepth)
     return true;
 }
 
+// ---- Layer A shore field for the surf-lip spray. Same uniform names + binder as the ripple
+// sim's foam injection (WaterSimulation.ShoreFoamState.BindTo), so the particles' front
+// evaluation can never drift from the injected whitewash the spawns ride on. Textures are
+// always bound (black fallback); every read gates on _ShoreFoamActive.
+float _ShoreFoamActive;
+float _ShoreFoamTime;
+float _ShoreShoalDepth;      // shoal band depth (m) - drives the ShoalWeightSim replica below
+float4 _ShoreFieldCenterSim; // xy = world XZ centre of the Layer A field
+float4 _ShoreFieldSizeSim;   // xy = world XZ half-extent of the Layer A field
+Texture2D<float>  _ShoreDepthTexSim;  SamplerState sampler_ShoreDepthTexSim;
+Texture2D<float4> _ShoreSDFTexSim;    SamplerState sampler_ShoreSDFTexSim;
+
+// Replica of ShoalWeight() in WaterShore.hlsl - KEEP IN SYNC (that header declares sampler2D
+// objects, which a compute kernel cannot include; the function itself is pure math).
+float ShoalWeightSim(float depth, float wavelength)
+{
+    float clamped = max(depth, 0.0);
+    float raw = saturate(2.0 * clamped / max(wavelength, 1e-3));
+    float band = max(_ShoreShoalDepth, 1e-3);
+    float deep = smoothstep(0.35 * band, band, clamped);
+    return lerp(raw, 1.0, deep);
+}
+
+// One shore-field fetch + the canonical front evaluation at a world xz. Inert (deep water, zero
+// influence, zero surf) off-field or while the shore layer is off - callers can use the outputs
+// unconditionally.
+SurfWaveSample SurfSampleAt(float2 worldXZ, out float shoreDepth, out float shoreInfluence,
+                            out float2 toShore)
+{
+    shoreDepth = SHORE_DEEP_SENTINEL_SIM;
+    shoreInfluence = 0.0;
+    toShore = float2(0.0, 0.0);
+    if (_ShoreFoamActive < 0.5) return SurfWaveSampleInert();
+    float2 fieldUv = (worldXZ - _ShoreFieldCenterSim.xy)
+                   / (2.0 * _ShoreFieldSizeSim.xy) + 0.5;
+    float2 edge = saturate(min(fieldUv, 1.0 - fieldUv) / SURF_SPRAY_BORDER_FEATHER);
+    float influence = edge.x * edge.y;
+    if (influence <= 0.001) return SurfWaveSampleInert();
+    shoreInfluence = influence;
+    shoreDepth = _ShoreDepthTexSim.SampleLevel(sampler_ShoreDepthTexSim, saturate(fieldUv), 0);
+    float4 shoreSdf = _ShoreSDFTexSim.SampleLevel(sampler_ShoreSDFTexSim, saturate(fieldUv), 0);
+    float2 dir = shoreSdf.rg * 2.0 - 1.0;
+    float len = length(dir);
+    toShore = len > 1e-4 ? dir / len : float2(0.0, 0.0);
+    return EvaluateSurfWaves(worldXZ, shoreDepth, shoreSdf.b, toShore, shoreSdf.a, influence,
+                             _ShoreFoamTime);
+}
+
+// The surf front's breaker-lip weight + local toward-shore direction at a world xz.
+float SurfLipAt(float2 worldXZ, out float2 toShore)
+{
+    float depthUnused;
+    float influenceUnused;
+    return SurfSampleAt(worldXZ, depthUnused, influenceUnused, toShore).breaker;
+}
+
 // World-space surface height under a floating particle: the same "glue to the animated
 // surface" the quad vertex does, minus the small analytic wind-wave layer (cm-scale;
 // compute has no wave globals). Pond: sim heightfield. Ocean: summed FFT cascades.
 float SurfaceWorldY(float3 worldPos, float2 simNorm)
 {
     float surfaceY;
+    // Coastline: the rendered surface shoals the swell near shore, fades it under the surf
+    // fronts and adds the fronts on top - the density glue must do the same or shore-zone foam
+    // rasterizes at the un-shoaled open-water height (mirrors the shader's FFT branch of
+    // LargeBodyWaveHeight, built from the compute-safe replicas above). Inert off-shore.
+    float shoreDepth;
+    float shoreInfluence;
+    float2 toShoreUnused;
+    SurfWaveSample surfGlue = SurfSampleAt(worldPos.xz, shoreDepth, shoreInfluence, toShoreUnused);
 #ifdef OCEAN_CREST_FOAM
     float height = 0.0;
     for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
     {
         float active = (c < (int)_OceanFftCascadeCount) ? 1.0 : 0.0;
         float slice = min((float)c, _OceanFftCascadeCount - 1.0);
-        float2 uv = worldPos.xz / max(_OceanFftDomainSizes[c], 1e-3);
-        height += active * _OceanFftSpatial.SampleLevel(sampler_OceanFftSpatial, float3(uv, slice), 0).y;
+        float domain = max(_OceanFftDomainSizes[c], 1e-3);
+        float2 uv = worldPos.xz / domain;
+        float cascadeShoal = lerp(1.0, ShoalWeightSim(shoreDepth,
+                                                      domain * CASCADE_WAVELENGTH_FRACTION_SIM),
+                                  shoreInfluence);
+        height += active * cascadeShoal
+                * _OceanFftSpatial.SampleLevel(sampler_OceanFftSpatial, float3(uv, slice), 0).y;
     }
-    surfaceY = _VolumeCenter.y + height * _OceanFftAmplitude;
+    surfaceY = _VolumeCenter.y
+             + height * _OceanFftAmplitude * SurfAmbientWeight(surfGlue.mask)
+             + surfGlue.height;
 #else
     // Sim height is stored in pool units; the volume's vertical extent maps it to metres.
+    // The surf fronts ride on top (they are analytic surface geometry, not sim state).
     float poolY = SampleSim(simNorm).r;
-    surfaceY = _VolumeCenter.y + poolY * VolumeExtentSafe().y;
+    surfaceY = _VolumeCenter.y + poolY * VolumeExtentSafe().y + surfGlue.height;
 #endif
     // Hero wave: the ocean itself rises with the wave (base offset on every surface vertex), so
     // the particle glue must rise too or foam sinks INTO the raised crest. Base part only - a
@@ -387,9 +476,17 @@ void Spawn(uint3 id : SV_DispatchThreadID)
         heroLip = heroTerms.crestness * heroTerms.peel * (1.0 - heroTerms.collapse) * heroGate;
     }
 
+    // Surf plunging-lip weight: same pattern as the hero pocket, driven by the coastline's own
+    // breaker signal. Evaluated post-roll like the hero terms above.
+    float surfLip = 0.0;
+    float2 surfToShore = float2(0.0, 0.0);
+    if (_ShoreFoamActive > 0.5)
+        surfLip = SurfLipAt(texelWorld.xz, surfToShore);
+
     bool spray = r0 < _SprayChance;
-    // The breaking pocket always throws: lip spawns are ballistic jet, never floating foam.
+    // The breaking pocket/lip always throws: lip spawns are ballistic jet, never floating foam.
     if (heroLip > HERO_SPRAY_MIN_LIP) spray = true;
+    if (surfLip > SURF_SPRAY_MIN_LIP) spray = true;
 
     // Per-screen-tile spray budget (KWS): spray clumping in one screen region is capped by
     // reserving a slot in a coarse tile grid; over-budget spawns demote to floating foam
@@ -423,6 +520,11 @@ void Spawn(uint3 id : SV_DispatchThreadID)
         float2 heroTravel = float2(-heroAlong.y, heroAlong.x);
         particle.velocity += float3(heroTravel.x, 0.0, heroTravel.y) * (HERO_SPRAY_THROW_SPEED * heroLip);
     }
+    // Surf lip jet: throw shoreward along the point's own toward-shore direction; gravity arcs
+    // the droplets onto the splash-down zone, where landing converts them to floating churn.
+    if (spray && surfLip > SURF_SPRAY_MIN_LIP)
+        particle.velocity += float3(surfToShore.x, 0.0, surfToShore.y)
+                           * (SURF_SPRAY_THROW_SPEED * surfLip);
     particle.age = 0.0;
     particle.life = lerp(_LifeMin, _LifeMax, r1);
     particle.size = lerp(_SizeMin, _SizeMax, r2);

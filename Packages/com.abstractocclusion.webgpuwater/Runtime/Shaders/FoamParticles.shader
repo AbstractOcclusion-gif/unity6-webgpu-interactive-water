@@ -81,6 +81,8 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             // shows KIND_SPRAY droplets); 1 = classic quads for everything. Set per draw by
             // WaterFoamParticles.cs, never a material slider.
             float _SurfaceQuadsEnabled;
+            // _LargeBody (1 = open water, picks the large-body glue below) comes from
+            // WaterVolume.hlsl - already included; do not redeclare.
             float3 _SunColor; // Unity directional light color * intensity (global, from WaterVolume)
             float4 _Tint;
             float _ParticleOpacity;
@@ -121,14 +123,19 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 // ---- glue the particle to the animated surface ----
                 float3 surfaceWorld;
                 float3 surfaceNormal;
-                if (_OceanFftActive > 0.5)
+                if (_LargeBody > 0.5)
                 {
-                    // Ocean: ride the FFT swell/chop crest (sea level + FFT height, leaned by the cascade
-                    // tilt) so foam sits ON the breaking wave, not on the flat rest plane. The pond path
-                    // (else) is byte-for-byte unchanged.
+                    // Open water (FFT or analytic): ride the FULL large-body surface -
+                    // LargeBodyWaveHeight internally carries the swell/FFT, the near-shore shoal
+                    // attenuation, the ambient fade under the surf fronts AND the fronts
+                    // themselves, so foam sits ON the shoaling/breaking waves. Gating this on
+                    // _OceanFftActive only (the original) dropped every analytic ocean to the
+                    // pond path: particles ignored the shoal and the shore waves entirely.
+                    // (Interactive ripples aren't in this glue - the same trade the FFT path
+                    // always made.) The pond path (else) is byte-for-byte unchanged.
                     float2 wxz = particle.worldPos.xz;
                     surfaceWorld = float3(wxz.x, _VolumeCenter.y + LargeBodyWaveHeight(wxz), wxz.y);
-                    float2 tilt = OceanFftNormalTilt(wxz);
+                    float2 tilt = OceanFftNormalTilt(wxz); // 0 tilt when FFT is off (flat lean)
                     surfaceNormal = normalize(float3(tilt.x, 1.0, tilt.y));
                 }
                 else

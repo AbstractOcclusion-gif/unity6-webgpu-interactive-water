@@ -56,6 +56,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SurfWaterlineFoam = Shader.PropertyToID("_SurfWaterlineFoam");
         static readonly int ID_SurfCrestLength = Shader.PropertyToID("_SurfCrestLength");
         static readonly int ID_SurfCrestVariation = Shader.PropertyToID("_SurfCrestVariation");
+        static readonly int ID_SurfCrestPersistence = Shader.PropertyToID("_SurfCrestPersistence");
         static readonly int ID_SurfDirectionality = Shader.PropertyToID("_SurfDirectionality");
         static readonly int ID_SurfWindDirXZ = Shader.PropertyToID("_SurfWindDirXZ");
         static readonly int ID_SurfFoamStrength = Shader.PropertyToID("_SurfFoamStrength");
@@ -464,6 +465,7 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalFloat(ID_SurfWaterlineFoam, _body.surfWaterlineFoam);
             Shader.SetGlobalFloat(ID_SurfCrestLength, _body.surfCrestLength);
             Shader.SetGlobalFloat(ID_SurfCrestVariation, _body.surfCrestVariation);
+            Shader.SetGlobalFloat(ID_SurfCrestPersistence, _body.surfCrestPersistence);
             Shader.SetGlobalFloat(ID_SurfDirectionality, _body.surfDirectionality);
             Shader.SetGlobalVector(ID_SurfWindDirXZ,
                 new Vector4(Mathf.Cos(_body.LargeWaveHeadingRad), Mathf.Sin(_body.LargeWaveHeadingRad), 0f, 0f));

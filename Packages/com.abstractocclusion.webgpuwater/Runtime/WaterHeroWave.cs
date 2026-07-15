@@ -27,11 +27,10 @@ namespace AbstractOcclusion.WebGpuWater
             InfinitePeel, // rise once, then hold an endless breaking section (wave-pool style)
         }
 
-        // --- strip mesh / rendering constants ---
+        // --- strip mesh / rendering constants (mesh builder + renderer recipe live in WaterLipSheetRig) ---
         const string StripObjectName = "WaterHeroWaveSheet";
         const string StripUnderObjectName = "WaterHeroWaveSheetUnder";
-        // KEEP IN SYNC with WaterVolume.WaterLayerName (private there); same layer as every water renderer.
-        const string WaterLayerName = "Water";
+        const string StripMeshName = "WaterHeroWaveStrip";
         // View-space metres the sheet is pulled toward the camera, so where its foot coincides with
         // the base surface it wins the depth test. Reuses the shader's _PatchDepthBias mechanism but
         // is its own value - it does NOT need to match WaterVolume.PatchDepthBiasMeters.
@@ -291,31 +290,18 @@ namespace AbstractOcclusion.WebGpuWater
             if (_stripRenderer == null
                 && volume.surfaceAbove != null && volume.surfaceAbove.sharedMaterial != null)
             {
-                if (_stripMesh == null) _stripMesh = BuildStripGrid(stripAlongSegments, stripAcrossSegments);
-                _stripRenderer = CreateStripRenderer(StripObjectName, volume.surfaceAbove.sharedMaterial);
+                if (_stripMesh == null)
+                    _stripMesh = WaterLipSheetRig.BuildStripGrid(StripMeshName,
+                                                                 stripAlongSegments, stripAcrossSegments);
+                _stripRenderer = WaterLipSheetRig.CreateStripRenderer(volume, _stripMesh,
+                    StripObjectName, volume.surfaceAbove.sharedMaterial);
             }
             if (_stripUnderRenderer == null && _stripMesh != null
                 && volume.surfaceUnder != null && volume.surfaceUnder.sharedMaterial != null)
             {
-                _stripUnderRenderer = CreateStripRenderer(StripUnderObjectName, volume.surfaceUnder.sharedMaterial);
+                _stripUnderRenderer = WaterLipSheetRig.CreateStripRenderer(volume, _stripMesh,
+                    StripUnderObjectName, volume.surfaceUnder.sharedMaterial);
             }
-        }
-
-        // Mirror of the volume's patch/clipmap renderer recipe: never-shadowing MeshRenderer on the
-        // Water layer, parented beside the surface, reusing THIS body's material instance so the
-        // sheet inherits reflections/fog/foam; the hero flags ride its property block.
-        MeshRenderer CreateStripRenderer(string objectName, Material material)
-        {
-            var go = new GameObject(objectName) { hideFlags = HideFlags.DontSave };
-            go.transform.SetParent(volume.surfaceAbove.transform.parent, false);
-            int layer = LayerMask.NameToLayer(WaterLayerName);
-            if (layer >= 0) go.layer = layer;
-            go.AddComponent<MeshFilter>().sharedMesh = _stripMesh;
-            var meshRenderer = go.AddComponent<MeshRenderer>();
-            meshRenderer.sharedMaterial = material;
-            meshRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            meshRenderer.receiveShadows = false;
-            return meshRenderer;
         }
 
         void UpdateStrip()
@@ -353,63 +339,16 @@ namespace AbstractOcclusion.WebGpuWater
             stripTransform.localScale = new Vector3(halfLength, 1f, halfWidth);
         }
 
-        // Dense XZ-plane grid in local [-1,1] (x = along the crest, z = across the wave), same
-        // triangle pattern as WaterMeshBuilder.BuildGrid so the winding matches every other water
-        // surface. Huge bounds like the other generated water meshes (culling is never mesh-tight).
-        static Mesh BuildStripGrid(int alongSegments, int acrossSegments)
-        {
-            if (alongSegments < 1 || acrossSegments < 1)
-                throw new System.ArgumentException(
-                    $"Strip segments must be >= 1, got {alongSegments}x{acrossSegments}.");
-
-            int alongVerts = alongSegments + 1;
-            int acrossVerts = acrossSegments + 1;
-            var verts = new Vector3[alongVerts * acrossVerts];
-            for (int i = 0; i < alongVerts; i++)
-                for (int j = 0; j < acrossVerts; j++)
-                    verts[i * acrossVerts + j] = new Vector3(
-                        i / (float)alongSegments * 2f - 1f, 0f, j / (float)acrossSegments * 2f - 1f);
-
-            var tris = new int[alongSegments * acrossSegments * 6];
-            int t = 0;
-            for (int i = 0; i < alongSegments; i++)
-                for (int j = 0; j < acrossSegments; j++)
-                {
-                    int a = i * acrossVerts + j;
-                    int b = (i + 1) * acrossVerts + j;
-                    int c = i * acrossVerts + (j + 1);
-                    int d = (i + 1) * acrossVerts + (j + 1);
-                    tris[t++] = a; tris[t++] = c; tris[t++] = b;
-                    tris[t++] = b; tris[t++] = c; tris[t++] = d;
-                }
-
-            var mesh = new Mesh
-            {
-                name = "WaterHeroWaveStrip",
-                indexFormat = UnityEngine.Rendering.IndexFormat.UInt32,
-            };
-            mesh.vertices = verts;
-            mesh.triangles = tris;
-            mesh.bounds = new Bounds(Vector3.zero, Vector3.one * WaterMeshBuilder.HugeBoundsSize);
-            return mesh;
-        }
-
         void DestroyStrip()
         {
-            DestroyRuntimeObject(_stripRenderer != null ? _stripRenderer.gameObject : null);
-            DestroyRuntimeObject(_stripUnderRenderer != null ? _stripUnderRenderer.gameObject : null);
-            DestroyRuntimeObject(_stripMesh);
+            WaterLipSheetRig.DestroyRuntimeObject(_stripRenderer != null ? _stripRenderer.gameObject : null);
+            WaterLipSheetRig.DestroyRuntimeObject(_stripUnderRenderer != null ? _stripUnderRenderer.gameObject : null);
+            WaterLipSheetRig.DestroyRuntimeObject(_stripMesh);
             _stripRenderer = null;
             _stripUnderRenderer = null;
             _stripMesh = null;
             _stripBlock = null;
             _stripUnderBlock = null;
-        }
-
-        static void DestroyRuntimeObject(Object obj)
-        {
-            if (obj == null) return;
-            if (Application.isPlaying) Destroy(obj); else DestroyImmediate(obj);
         }
     }
 }

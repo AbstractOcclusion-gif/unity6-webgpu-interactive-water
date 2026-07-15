@@ -42,8 +42,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             _showWiring = WaterEditorUI.Section("Wiring & References (scene builder)", _showWiring, () =>
             {
                 EditorGUILayout.HelpBox(WiringHelp, MessageType.None);
+                // NOTE: never list a path here without its serialized field on WaterVolume -
+                // Prop() returns null for a missing path and PropertyField(null) throws the
+                // moment the section unfolds ("sweCompute" lingered here after the SWE removal).
                 DrawFields(
-                    "simCompute", "oceanFftCompute", "sweCompute", "causticsShader",
+                    "simCompute", "oceanFftCompute", "causticsShader",
                     "largeBodyCausticsShader", "obstacleShader", "waterMesh",
                     "targetCamera", "sun");
             });

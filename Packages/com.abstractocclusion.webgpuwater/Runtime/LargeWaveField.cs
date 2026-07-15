@@ -32,6 +32,7 @@ namespace AbstractOcclusion.WebGpuWater
         public float SurfSetStrength;      // _SurfSetStrength
         public float SurfCrestLength;      // _SurfCrestLength
         public float SurfCrestVariation;   // _SurfCrestVariation
+        public float SurfCrestPersistence; // _SurfCrestPersistence
         public float SurfDirectionality;   // _SurfDirectionality
         public float SurfWindDirX;         // _SurfWindDirXZ.x (cos of the swell heading)
         public float SurfWindDirZ;         // _SurfWindDirXZ.y (sin of the swell heading)
@@ -69,6 +70,7 @@ namespace AbstractOcclusion.WebGpuWater
         // WaterWaveConstantsValidator). Only height-affecting constants are mirrored; the
         // whitewash/breaker foam shaping is render-only and has no CPU counterpart.
         const float SurfMinDepth = 0.05f;
+        const float SurfCrestSeedDrift = 0.35f;
         const float SurfFaceFraction = 0.10f;
         const float SurfBackFraction = 0.24f;
         const float SurfSetWaves = 5.0f;
@@ -87,6 +89,7 @@ namespace AbstractOcclusion.WebGpuWater
         const float SurfGammaSlopeGain = 5.0f;
         const float SurfGammaMax = 1.1f;
         const float SurfBoreStableGamma = 0.40f;
+        const float SurfPlungeFaceSharpen = 0.6f;
 
         // Matches LBW_INVERSION_ITERATIONS in WaterLargeWaves.hlsl (Crest's SampleInvertedDisplacement
         // uses 4). Inverting the horizontal Gerstner displacement is how a fixed world xz maps back to
@@ -181,7 +184,8 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (ctx.SurfCrestVariation <= 0f) return 1f;
             float invLen = 1f / Mathf.Max(ctx.SurfCrestLength, 4f);
-            float seed = Hash(frontIndex) * 37f;
+            float seed = Mathf.Lerp(Hash(frontIndex) * 37f, frontIndex * SurfCrestSeedDrift,
+                                    Mathf.Clamp01(ctx.SurfCrestPersistence));
             float n = Mathf.Sin((x * 1f + z * 0.31f) * (TwoPi * invLen) + seed)
                     + 0.5f * Mathf.Sin((x * -0.42f + z * 1f) * (TwoPi * invLen * 1.7f) + seed * 1.3f);
             float n01 = Mathf.Clamp01(n / 1.5f * 0.5f + 0.5f);
@@ -205,14 +209,32 @@ namespace AbstractOcclusion.WebGpuWater
                                         / Mathf.Max(deepLength, 1e-3f));
         }
 
-        // Mirrors SurfBreakerWeights().z in WaterSurfWaves.hlsl. Only the SURGING weight moves the
-        // surface (it kills the bore hand-over); spill/plunge shape foam, which has no CPU side.
+        // Mirrors SurfBreakerWeights().z in WaterSurfWaves.hlsl (kills the bore hand-over).
         static float SurfSurgeWeight(float xi)
             => SmoothStep(SurfXiSurgeStartLo, SurfXiSurgeStartHi, xi);
+
+        // Mirrors SurfBreakerWeights().y in WaterSurfWaves.hlsl: plunging drives the face
+        // steepening, which moves the surface (spilling stays foam-only, no CPU side).
+        static float SurfPlungeWeight(float xi)
+            => SmoothStep(SurfXiSpillEndLo, SurfXiSpillEndHi, xi) * (1f - SurfSurgeWeight(xi));
 
         // Mirrors SurfGamma() in WaterSurfWaves.hlsl (Weggel-simplified breaker index).
         static float SurfGamma(float tanBeta)
             => Mathf.Clamp(SurfGammaBase + SurfGammaSlopeGain * tanBeta, SurfGammaBase, SurfGammaMax);
+
+        /// <summary>Break-criterion ratio H/(gamma*depth) for a MEAN set wave (setAmp = 1) at a
+        /// column depth + beach slope: the break LINE is where this crosses 1. Composed from the
+        /// same mirrored terms the height math uses, so it can never drift from where the shader
+        /// actually breaks. Consumed by WaterSurfCurl's camera-following placement (closed-form
+        /// from the CPU shore arrays - no readback).</summary>
+        internal static float SurfBreakOverCap(in ShoreWaveContext ctx, float depth, float slopeTan)
+        {
+            float d = Mathf.Max(depth, SurfMinDepth);
+            float green = Mathf.Min(Mathf.Pow(Mathf.Max(ctx.SurfBandDepth, d) / d, 0.25f),
+                                    Mathf.Max(ctx.Greens, 1f));
+            float capH = SurfGamma(slopeTan) * d;
+            return (ctx.SurfAmplitude * green) / Mathf.Max(capH, 1e-3f);
+        }
 
         // Mirrors SurfFrontHeight() in WaterSurfWaves.hlsl (height only - buoyancy needs no foam).
         static float SurfFrontHeight(in ShoreWaveContext ctx, float x, float z,
@@ -228,7 +250,9 @@ namespace AbstractOcclusion.WebGpuWater
             float d = Mathf.Max(depth, SurfMinDepth);
 
             float deepHeight = ctx.SurfAmplitude * setAmp;
-            float surge = SurfSurgeWeight(SurfIribarren(ctx, tanBeta, deepHeight));
+            float xi = SurfIribarren(ctx, tanBeta, deepHeight);
+            float surge = SurfSurgeWeight(xi);
+            float plunge = SurfPlungeWeight(xi);
 
             float green = Mathf.Min(Mathf.Pow(Mathf.Max(ctx.SurfBandDepth, d) / d, 0.25f),
                                     Mathf.Max(ctx.Greens, 1f));
@@ -244,7 +268,9 @@ namespace AbstractOcclusion.WebGpuWater
             dAcross += lean * Mathf.Exp(-Mathf.Abs(dAcross) / (0.25f * wavelength));
             float faceLen = SurfFaceFraction * wavelength;
             float backLen = SurfBackFraction * wavelength;
-            float profLen = dAcross < 0f ? faceLen : backLen;
+            // Plunging face steepening - keep lockstep with SurfComputeFrontTerms in the HLSL.
+            float faceSharpen = Mathf.Lerp(1f, SurfPlungeFaceSharpen, plunge * cresting);
+            float profLen = dAcross < 0f ? faceLen * faceSharpen : backLen;
             float sech = 1f / Cosh(Mathf.Min(Mathf.Abs(dAcross) / profLen, SurfSechArgMax));
             float profile = sech * sech;
             // Parity fix: the bore sech width is backLen * 1.4 in the shader; this mirror had

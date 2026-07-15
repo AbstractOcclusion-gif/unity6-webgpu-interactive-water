@@ -342,6 +342,13 @@ namespace AbstractOcclusion.WebGpuWater
             // Hero wave: lip-spray source in Spawn + base height in the density glue. The shared
             // struct binder keeps packing identical to every other GPU consumer; inactive = inert.
             volume.HeroWaveState.BindTo(cs);
+            // Surf breaker fronts: plunging-lip spray source in Spawn + shoal/front height in the
+            // density glue (RasterizeDensity). Same binder as the ripple-sim foam injection, so
+            // the particles' front evaluation can never drift from the injected whitewash their
+            // spawns ride on. Inactive (no shore/surf) = inert.
+            WaterSimulation.ShoreFoamState shoreFoam = volume.BuildShoreFoamState();
+            shoreFoam.BindTo(cs, _kSpawn);
+            shoreFoam.BindTo(cs, _kRasterizeDensity);
 
             cs.SetFloat(ID_Size, volume.SimResolution);
             cs.SetInt(ID_Capacity, _capacityPow2);

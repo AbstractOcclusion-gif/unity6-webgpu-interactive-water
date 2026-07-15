@@ -1053,7 +1053,7 @@ MonoBehaviour:
     surfDirectionality: 0.088
     surfLean: 0.293
     surfAmbientFade: 0.735
-    surfSwashAmplitude: 0.05
+    surfSwashAmplitude: 0.07
     surfFoamGain: 2.46
     surfWaterlineFoam: 0.774
     surfFoamStrength: 1

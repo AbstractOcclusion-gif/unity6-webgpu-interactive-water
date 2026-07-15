@@ -66,6 +66,7 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
         static readonly (string Hlsl, string CSharp)[] SurfWavesConstantPairs =
         {
             ("SURF_MIN_DEPTH",              "SurfMinDepth"),
+            ("SURF_CREST_SEED_DRIFT",       "SurfCrestSeedDrift"),
             ("SURF_FACE_FRACTION",          "SurfFaceFraction"),
             ("SURF_BACK_FRACTION",          "SurfBackFraction"),
             ("SURF_SET_WAVES",              "SurfSetWaves"),
@@ -82,6 +83,7 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
             ("SURF_GAMMA_SLOPE_GAIN",       "SurfGammaSlopeGain"),
             ("SURF_GAMMA_MAX",              "SurfGammaMax"),
             ("SURF_BORE_STABLE_GAMMA",      "SurfBoreStableGamma"),
+            ("SURF_PLUNGE_FACE_SHARPEN",    "SurfPlungeFaceSharpen"),
         };
 
         // Captures the numeric literal, tolerating scientific notation and a trailing C# 'f'.

@@ -104,6 +104,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "bedDepthSettings.surfSetStrength",
                     "bedDepthSettings.surfCrestLength",
                     "bedDepthSettings.surfCrestVariation",
+                    "bedDepthSettings.surfCrestPersistence",
                     "bedDepthSettings.surfDirectionality",
                     "bedDepthSettings.surfLean",
                     "bedDepthSettings.surfAmbientFade",

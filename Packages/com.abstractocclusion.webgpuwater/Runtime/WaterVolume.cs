@@ -1083,6 +1083,11 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("How deeply the crest segmentation modulates the fronts. 0 = endless " +
                      "shore-long bands (old look); 1 = strongly broken-up individual crests.")]
             [Range(0f, 1f)] public float surfCrestVariation = 0.6f;
+            [Tooltip("How anchored the crest segmentation is across waves. 0 = every front gets a " +
+                     "fresh random pattern (foam hot spots wander wave to wave); 1 = successive " +
+                     "waves break at nearly the same alongshore spots, migrating slowly like a " +
+                     "real sandbank - the right feel for visible breaking lips.")]
+            [Range(0f, 1f)] public float surfCrestPersistence = 0f;
             [Tooltip("Gate surf by shore exposure to the swell direction: the coast facing the " +
                      "wind gets the surf, the lee side calms down. 0 = surf everywhere.")]
             [Range(0f, 1f)] public float surfDirectionality = 0.7f;
@@ -1137,6 +1142,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal float surfSetStrength => bedDepthSettings.surfSetStrength;
         internal float surfCrestLength => bedDepthSettings.surfCrestLength;
         internal float surfCrestVariation => bedDepthSettings.surfCrestVariation;
+        internal float surfCrestPersistence => bedDepthSettings.surfCrestPersistence;
         internal float surfDirectionality => bedDepthSettings.surfDirectionality;
         internal float surfLean => bedDepthSettings.surfLean;
         internal float surfAmbientFade => bedDepthSettings.surfAmbientFade;
@@ -2742,6 +2748,7 @@ namespace AbstractOcclusion.WebGpuWater
                 ctx.SurfSetStrength = surfSetStrength;
                 ctx.SurfCrestLength = surfCrestLength;
                 ctx.SurfCrestVariation = surfCrestVariation;
+                ctx.SurfCrestPersistence = surfCrestPersistence;
                 ctx.SurfDirectionality = surfDirectionality;
                 ctx.SurfWindDirX = Mathf.Cos(LargeWaveHeadingRad);
                 ctx.SurfWindDirZ = Mathf.Sin(LargeWaveHeadingRad);
@@ -2917,6 +2924,14 @@ namespace AbstractOcclusion.WebGpuWater
         void PushShoreFoam(WaterSimulation sim)
         {
             if (sim == null) return;
+            sim.SetShoreFoam(BuildShoreFoamState());
+        }
+
+        /// <summary>The surf-front foam source state: the SAME front-field values the surface
+        /// renders with, packaged for compute consumers (ripple-sim foam injection, foam-particle
+        /// lip spray) via ShoreFoamState.BindTo. Inactive unless the surf layer is live here.</summary>
+        internal WaterSimulation.ShoreFoamState BuildShoreFoamState()
+        {
             WaterShoreDepthField shore = ShoreDepth;
             var state = new WaterSimulation.ShoreFoamState();
             state.Active = shore.SurfLayerActive && surfFoamGain + surfWaterlineFoam > 0f;
@@ -2946,6 +2961,7 @@ namespace AbstractOcclusion.WebGpuWater
                 state.SetStrength = surfSetStrength;
                 state.CrestLength = surfCrestLength;
                 state.CrestVariation = surfCrestVariation;
+                state.CrestPersistence = surfCrestPersistence;
                 state.Directionality = surfDirectionality;
                 state.WindDir = new Vector4(Mathf.Cos(LargeWaveHeadingRad),
                                             Mathf.Sin(LargeWaveHeadingRad), 0f, 0f);
@@ -2953,8 +2969,9 @@ namespace AbstractOcclusion.WebGpuWater
                 state.Compression = shoreCompression;
                 state.Greens = shoreGreens;
                 state.AmbientFade = surfAmbientFade;
+                state.ShoalDepth = shoreShoalDepth;
             }
-            sim.SetShoreFoam(state);
+            return state;
         }
 
         // Choose the caustic path for this body: bounded bodies use the pool caustic (projected onto

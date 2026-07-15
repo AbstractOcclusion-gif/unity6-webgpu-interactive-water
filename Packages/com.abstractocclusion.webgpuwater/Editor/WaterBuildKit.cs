@@ -47,6 +47,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // must be addressed via the Packages/ mount, not Assets/.
         internal const string PackageShadersRoot = "Packages/com.abstractocclusion.webgpuwater/Runtime/Shaders";
         internal const string SimComputePath = PackageShadersRoot + "/WaterSim.compute";
+        internal const string OceanFftComputePath = PackageShadersRoot + "/OceanFft.compute";
 
         internal const int GridDetail = 200;
         internal const int SkyCubemapSize = 128;
@@ -215,6 +216,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             // Optional (oceans only): near-field caustics in the sim-window frame. Non-fatal if absent,
             // so bounded/pool builds don't require it - Shader.Find just leaves the field null.
             volume.largeBodyCausticsShader = Shader.Find("AbstractOcclusion/WebGpuWater/LargeBodyCaustics");
+            // Optional (oceans only): the FFT-cascade wave compute. The runtime module only arms on an
+            // ocean clipmap body AND with this assigned, so wiring it on every build is inert for
+            // pools/lakes - but a wizard-built ocean now gets its FFT waves without hand-wiring the
+            // slot in the inspector. Non-fatal if absent (analytic large-wave fallback).
+            volume.oceanFftCompute = AssetDatabase.LoadAssetAtPath<ComputeShader>(OceanFftComputePath);
             volume.obstacleShader = ctx.Shaders.Obstacle;
             volume.waterMesh = ctx.Grid;
             volume.targetCamera = ctx.Camera;
