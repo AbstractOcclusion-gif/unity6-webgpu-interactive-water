@@ -5,7 +5,6 @@
 // Ping-pong between two RGBAFloat RenderTextures (Src -> Dst), swapped in C#.
 
 #include "WaterFoamCommon.hlsl" // FoamDecayBlend: split decay shared with OceanFft.compute
-#include "WaterHeroWave.hlsl"   // hero-wave whitewater source (shares the wave's canonical terms)
 #include "WaterSurfWaves.hlsl"  // surf breaker-front whitewash source (pure math; textures below)
 
 #pragma kernel Drop
@@ -202,14 +201,6 @@ float _FoamAdvect;     // texels foam is carried along the surface flow per step
 Texture2D<float> _BedTex;
 SamplerState sampler_BedTex;
 float _UseBedDepth;        // 1 = bed active
-
-// Hero-wave whitewater (surfable breaking wave, uniforms in WaterHeroWave.hlsl): the wave is a
-// world-space function but the sim grid knows nothing about the world frame, so the CPU publishes
-// the sim-uv -> world-xz affine each foam step (WaterVolume.PushHeroWaveFoam). Inert when the
-// strength is 0 or no hero wave is active.
-float4 _HeroSimUvToWorldOrigin; // xy = world xz of sim uv (0, 0)
-float4 _HeroSimUvToWorldAxes;   // xy = world xz span across uv.x, zw = span across uv.y
-float  _HeroWaveFoamStrength;   // master gain on the injected whitewater (component knob)
 
 // Surf breaker-front foam (coastline Layer D): the same analytic front field the surface renders
 // (WaterSurfWaves.hlsl), injected as GENERATION like the hero wave so it advects, diffuses and
@@ -534,18 +525,6 @@ void Foam(uint3 id : SV_DispatchThreadID)
                                   abs(info.r));
     float gen = saturate(activity - _FoamGenThreshold) * heightGate;
     foam += gen * (_FoamGenRate * _FoamDtSteps);
-
-    // Hero-wave whitewater: analytic foam from the surfable breaking wave (rolling lip + collapsed
-    // whitewash), injected as GENERATION so it advects, diffuses and decays exactly like the other
-    // foam sources - and leaves an organic trail behind the travelling wave for free.
-    if (_HeroWaveActive > 0.5 && _HeroWaveFoamStrength > 0.0)
-    {
-        float2 uvHero = ((float2)p + 0.5) * _Delta;
-        float2 heroWorldXZ = _HeroSimUvToWorldOrigin.xy
-                           + uvHero.x * _HeroSimUvToWorldAxes.xy
-                           + uvHero.y * _HeroSimUvToWorldAxes.zw;
-        foam += HeroWaveFoamSource(heroWorldXZ) * (_HeroWaveFoamStrength * _FoamDtSteps);
-    }
 
     // Surf breaker-front foam (coastline): whitewash where fronts have broken, a thin line at the
     // cresting lip, and standing lace hugging the waterline - all injected as generation so the

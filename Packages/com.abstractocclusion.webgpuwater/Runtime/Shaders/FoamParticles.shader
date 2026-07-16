@@ -39,7 +39,6 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             #include "WaterWaves.hlsl"  // WaveHeight (ambient wind-wave layer)
             #include "WaterVolume.hlsl" // pool/window <-> world frame
             #include "WaterLargeWaves.hlsl" // FFT ocean surface: LargeBodyWaveHeight, OceanFftNormalTilt, _OceanFftActive
-            #include "WaterHeroWave.hlsl"   // hero-wave base height: foam must ride the breaking wave
             #include "WaterFoamCommon.hlsl" // shared foam lighting + erosion (FOAM_LIGHT_WRAP, EROSION_SOFTNESS...)
             #include "WaterParticleCommon.hlsl" // billboard corner expansion + flipbook atlas cell
 
@@ -153,14 +152,6 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                     surfaceWorld = PoolToWorld(poolPos);
                     surfaceNormal = PoolNormalToWorld(
                         float3(info.b, sqrt(max(1e-4, 1.0 - dot(info.ba, info.ba))), info.a));
-                }
-                // Hero wave: the ocean surface itself carries the wave's base offset, so the glue
-                // must add it too or foam renders INSIDE the raised crest. Base part only (a
-                // floating particle sits on the face, never on the overhanging lip sheet).
-                if (_HeroWaveActive > 0.5)
-                {
-                    float heroWeightUnused;
-                    surfaceWorld.y += HeroWaveOffset(particle.worldPos.xz, false, heroWeightUnused).y;
                 }
                 float3 center = surfaceWorld
                               + surfaceNormal * SURFACE_LIFT

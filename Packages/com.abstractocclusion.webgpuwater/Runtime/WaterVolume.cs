@@ -1047,6 +1047,22 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0.1f, 50f)] [FormerlySerializedAs("shorelineFadeDepth")] public float bedFadeDepth = 6f;
             [Tooltip("Maximum tint toward the deep-water colour.")]
             [Range(0f, 1f)] [FormerlySerializedAs("shorelineStrength")] public float bedTintStrength = 0.8f;
+
+            [Header("Depth clarity (auto water transparency from the bed depth)")]
+            [Tooltip("Drive water clarity from the baked bed depth: turbidity, underwater-fog reach and " +
+                     "the deep-water tint all follow ONE depth curve. Off = the flat per-body look. Needs " +
+                     "a baked bed (Use Bed Depth on).")]
+            public bool clarityFromDepth = false;
+            [Tooltip("Column depth (m) treated as fully SHALLOW on the clarity curve.")]
+            [Range(0f, 50f)] public float clarityShallowDepth = 0.5f;
+            [Tooltip("Column depth (m) treated as fully DEEP on the clarity curve.")]
+            [Range(0f, 50f)] public float clarityDeepDepth = 8f;
+            [Tooltip("Clarity at the SHALLOW end (1 = clear/see-through, 0 = murky).")]
+            [Range(0f, 1f)] public float clarityShallow = 1f;
+            [Tooltip("Clarity at the DEEP end (1 = clear, 0 = murky). Default: deep water reads murkier.")]
+            [Range(0f, 1f)] public float clarityDeep = 0f;
+            [Tooltip("How strongly the depth curve pushes the look vs the flat per-body turbidity/fog. 0 = off.")]
+            [Range(0f, 1f)] public float clarityStrength = 1f;
             [Tooltip("Depth (world metres) over which the open-water swell shoals toward shore. Waves keep " +
                      "full height in water deeper than this and calm within it toward the waterline; larger " +
                      "reaches the calming further out into deeper water. 0 = no shoaling.")]
@@ -1135,6 +1151,12 @@ namespace AbstractOcclusion.WebGpuWater
         internal Color deepWaterColor => bedDepthSettings.deepWaterColor;
         internal float bedFadeDepth => bedDepthSettings.bedFadeDepth;
         internal float bedTintStrength => bedDepthSettings.bedTintStrength;
+        internal bool clarityFromDepth => bedDepthSettings.clarityFromDepth;
+        internal float clarityShallowDepth => bedDepthSettings.clarityShallowDepth;
+        internal float clarityDeepDepth => bedDepthSettings.clarityDeepDepth;
+        internal float clarityShallow => bedDepthSettings.clarityShallow;
+        internal float clarityDeep => bedDepthSettings.clarityDeep;
+        internal float clarityStrength => bedDepthSettings.clarityStrength;
         internal float shoreShoalDepth => bedDepthSettings.shoreShoalDepth;
         internal float shoreRefraction => bedDepthSettings.shoreRefraction;
         internal float shoreCompression => bedDepthSettings.shoreCompression;
@@ -2948,7 +2970,6 @@ namespace AbstractOcclusion.WebGpuWater
                 // authored against. Identity at ratio 1 (small bodies unchanged).
                 float foamActivityScale = 1f / Mathf.Max(_simDensityRatio, 0.05f);
                 // Min wave height is authored in WORLD metres; the sim's heights are pool units.
-                PushHeroWaveFoam(_water); // hero-wave whitewater source (inert without a hero wave)
                 PushShoreFoam(_water);    // surf-front whitewash source (inert without the surf layer)
                 _water.StepFoam(foamGenRate, foamGenThreshold,
                                 foamMinWaveHeight / VolumeExtentSafe.y, foamDecay,
@@ -2980,7 +3001,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (state.Active)
             {
                 // The sim domain is the scrolling window on windowed bodies, the whole footprint
-                // otherwise - the SAME frames the render side uses (mirrors PushHeroWaveFoam).
+                // otherwise - the SAME frames the render side uses.
                 Vector3 domainCenter = IsWindowed ? SimWindowCenter : VolumeCenter;
                 Vector3 domainExtent = IsWindowed ? SimHalfExtent : VolumeExtentSafe;
                 Quaternion rotation = VolumeRotation;
@@ -3262,9 +3283,10 @@ namespace AbstractOcclusion.WebGpuWater
                 // readback path (SampleLargeWaveField) and the GPU FFT branch (LargeBodyWaveHeight) use, so
                 // the submerge gate matches the rendered shore surface near shore: shoal attenuation +
                 // ambient fade + the surf-front height on the master beat (ShoreWaveCtx.SurfBeatTime).
-                // Without it the gate saw bare swell and the fog popped on/off against the wrong height
-                // wherever surf fronts lift the surface. Height uses only fft.x (ApplyShoreToFftSample), so
-                // zero derivs are correct for this height-only gate. Identity offshore (no shore field).
+                // Without it the gate saw bare (un-shoaled, deep-amplitude) swell and the fog popped on
+                // against the wrong height wherever the shore surface differs - fogging the ABOVE-water
+                // scene near shore. Height uses only fft.x (ApplyShoreToFftSample), so zero derivs are
+                // correct for this height-only gate. Identity offshore (no shore field).
                 y += LargeWaveField.ApplyShoreToFftSample(new Vector3(fftHeight, 0f, 0f),
                          p.x, p.z, _waveTime, SwellWavelength, ShoreWaveCtx).x;
             else

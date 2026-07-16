@@ -82,9 +82,6 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_ScrollOffset = Shader.PropertyToID("_ScrollOffset");
         static readonly int ID_BedTex = Shader.PropertyToID("_BedTex");
         static readonly int ID_UseBedDepth = Shader.PropertyToID("_UseBedDepth");
-        static readonly int ID_HeroSimUvToWorldOrigin = Shader.PropertyToID("_HeroSimUvToWorldOrigin");
-        static readonly int ID_HeroSimUvToWorldAxes = Shader.PropertyToID("_HeroSimUvToWorldAxes");
-        static readonly int ID_HeroWaveFoamStrength = Shader.PropertyToID("_HeroWaveFoamStrength");
 
         /// <summary>Grid resolution of the heightfield RTs (per side). Set per quality tier.</summary>
         public int Resolution { get; }
@@ -243,34 +240,6 @@ namespace AbstractOcclusion.WebGpuWater
         {
             _bedTex = bed;
             _useBedDepth = (enabled && bed != null) ? 1f : 0f;
-        }
-
-        // Hero-wave whitewater state, cached between SetHeroWaveFoam and the Foam dispatch.
-        // Default (inactive, zero strength) keeps the kernel's hero branch entirely skipped.
-        HeroWaveShaderState _heroWave;
-        Vector4 _heroUvToWorldOrigin;
-        Vector4 _heroUvToWorldAxes;
-
-        /// <summary>Hero-wave whitewater source for the Foam kernel: this frame's wave state (which
-        /// carries the master foam strength) plus the sim-uv -> world-xz affine (origin + axis
-        /// spans). Pushed by WaterVolume.PushHeroWaveFoam just before StepFoam; inactive = no-op.</summary>
-        internal void SetHeroWaveFoam(in HeroWaveShaderState state, Vector4 uvToWorldOrigin,
-                                      Vector4 uvToWorldAxes)
-        {
-            _heroWave = state;
-            _heroUvToWorldOrigin = uvToWorldOrigin;
-            _heroUvToWorldAxes = uvToWorldAxes;
-        }
-
-        // Push the hero-wave whitewater uniforms (the shared struct binder) plus this sim's
-        // uv -> world affine and the injection strength. The active flag gates everything in the
-        // kernel, so stale vectors from a cleared wave can't leak.
-        void BindHeroWave()
-        {
-            _heroWave.BindTo(_cs);
-            _cs.SetVector(ID_HeroSimUvToWorldOrigin, _heroUvToWorldOrigin);
-            _cs.SetVector(ID_HeroSimUvToWorldAxes, _heroUvToWorldAxes);
-            _cs.SetFloat(ID_HeroWaveFoamStrength, _heroWave.FoamStrength);
         }
 
         // Bind the bed map + active flag onto a kernel. A texture is always bound (black when inactive)
@@ -510,7 +479,6 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetTexture(_kFoam, ID_Src, _a);        // height state (read)
             _cs.SetTexture(_kFoam, ID_FoamSrc, _foamA);
             _cs.SetTexture(_kFoam, ID_FoamDst, _foamB);
-            BindHeroWave();
             BindShoreFoam(_kFoam);                     // surf-front whitewash source (inert by default)
             _cs.Dispatch(_kFoam, _groups, _groups, 1);
             (_foamA, _foamB) = (_foamB, _foamA);

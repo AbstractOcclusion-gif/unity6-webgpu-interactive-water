@@ -26,7 +26,6 @@
 
 #include "WaterVolume.hlsl"     // pool/window <-> world frame (same uniforms as the render side)
 #include "WaterFoamCommon.hlsl" // FoamParticleEnvelope: shared with the quad render
-#include "WaterHeroWave.hlsl"   // hero wave: lip spray source + base height for surface glue
 #include "WaterSurfWaves.hlsl"  // surf breaker fronts: plunging-lip spray source (uniforms set by
                                 // WaterSimulation.ShoreFoamState.BindTo - compute sees no globals)
 // Shared particle plumbing: PCG hash + the Layer A shore-field fetch (uniforms, textures
@@ -163,13 +162,6 @@ static const int SPLAT_RADIUS_MAX = 3;
 static const uint TILE_GRID = 16;
 // Spawn-probability boost per unit of local velocity shear (wake edges emit more).
 static const float SPAWN_SHEAR_BOOST = 4.0;
-
-// Hero-wave lip spray: above this lip weight (crestness x peel x un-collapsed, 0..1) a spawn in the
-// actively-breaking pocket is FORCED to ballistic spray - the jet thrown off the overturning lip.
-static const float HERO_SPRAY_MIN_LIP = 0.35;
-// Horizontal throw (world units/sec at lip weight 1) along the wave's travel direction; gravity
-// arcs it down the face. Matches the visual speed of the curl, not a physical jet velocity.
-static const float HERO_SPRAY_THROW_SPEED = 7.0;
 
 // Surf plunging-lip spray (CURL-3, the KWS crash moment): a spawn on a cresting PLUNGING front is
 // forced to ballistic spray thrown shoreward off the lip. The gate reads the front's canonical
@@ -413,14 +405,6 @@ float SurfaceWorldY(float3 worldPos, float2 simNorm)
     float poolY = SampleSim(simNorm).r;
     surfaceY = _VolumeCenter.y + poolY * VolumeExtentSafe().y + surfGlue.height;
 #endif
-    // Hero wave: the ocean itself rises with the wave (base offset on every surface vertex), so
-    // the particle glue must rise too or foam sinks INTO the raised crest. Base part only - a
-    // floating particle sits on the face, never on the overhanging lip sheet.
-    if (_HeroWaveActive > 0.5)
-    {
-        float heroWeightUnused;
-        surfaceY += HeroWaveOffset(worldPos.xz, false, heroWeightUnused).y;
-    }
     return surfaceY;
 }
 
@@ -499,28 +483,16 @@ void Spawn(uint3 id : SV_DispatchThreadID)
     float r1 = Rand01(id.xy, _FrameSeed ^ 0x85EBCA6Bu);
     float r2 = Rand01(id.xy, _FrameSeed ^ 0xC2B2AE35u);
 
-    // Hero-wave lip weight: > 0 only in the actively breaking pocket. The foam BUFFER already
-    // carries the injected lip foam (spawn probability is covered); this weight forces the pocket's
-    // spawns into thrown spray. Evaluated here - after the probability roll - so the transcendental
-    // terms run only for the handful of texels that actually spawn this frame.
-    float heroLip = 0.0;
-    if (_HeroWaveActive > 0.5)
-    {
-        HeroWaveTerms heroTerms = HeroComputeTerms(HeroLocalCoords(texelWorld.xz));
-        float heroGate = smoothstep(0.0, HERO_SHEET_MIN_AMPLITUDE, heroTerms.amplitude);
-        heroLip = heroTerms.crestness * heroTerms.peel * (1.0 - heroTerms.collapse) * heroGate;
-    }
-
-    // Surf plunging-lip weight: same pattern as the hero pocket, driven by the coastline's own
-    // breaker signal. Evaluated post-roll like the hero terms above.
+    // Surf plunging-lip weight: driven by the coastline's own breaker signal. Evaluated post-roll
+    // (after the probability roll) so the transcendental terms run only for the handful of texels
+    // that actually spawn this frame.
     float surfLip = 0.0;
     float2 surfToShore = float2(0.0, 0.0);
     if (_ShoreFoamActive > 0.5)
         surfLip = SurfLipAt(texelWorld.xz, surfToShore);
 
     bool spray = r0 < _SprayChance;
-    // The breaking pocket/lip always throws: lip spawns are ballistic jet, never floating foam.
-    if (heroLip > HERO_SPRAY_MIN_LIP) spray = true;
+    // The breaking lip always throws: lip spawns are ballistic jet, never floating foam.
     if (surfLip > SURF_SPRAY_MIN_LIP) spray = true;
 
     // Per-screen-tile spray budget (KWS): spray clumping in one screen region is capped by
@@ -546,15 +518,6 @@ void Spawn(uint3 id : SV_DispatchThreadID)
     particle.worldPos.y = 0.0;
     particle.velocity = flowWorld + float3(_WindDrift.x, 0.0, _WindDrift.y);
     if (spray) particle.velocity.y = _SprayLaunchSpeed * (0.6 + 0.4 * r1);
-    // Lip jet: throw the pocket's spray forward along the wave's travel direction, scaled by the
-    // lip weight, so droplets fly off the curl and gravity arcs them down the face. Gated on the
-    // POST-BUDGET spray flag: a tile-cap demotion must not leave a floater streaking at 7 m/s.
-    if (spray && heroLip > HERO_SPRAY_MIN_LIP)
-    {
-        float2 heroAlong = _HeroWaveFrame.zw;
-        float2 heroTravel = float2(-heroAlong.y, heroAlong.x);
-        particle.velocity += float3(heroTravel.x, 0.0, heroTravel.y) * (HERO_SPRAY_THROW_SPEED * heroLip);
-    }
     // Surf lip jet: throw shoreward along the point's own toward-shore direction; gravity arcs
     // the droplets onto the splash-down zone, where landing converts them to floating churn.
     if (spray && surfLip > SURF_SPRAY_MIN_LIP)

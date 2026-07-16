@@ -89,6 +89,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "bedDepthSettings.bedFadeDepth",
                     "bedDepthSettings.bedTintStrength",
                     "bedDepthSettings.shoreShoalDepth");
+                WaterEditorUI.SubHeading("Depth clarity (auto transparency)");
+                DrawFields("bedDepthSettings.clarityFromDepth");
+                DrawFieldsIf(Prop("bedDepthSettings.clarityFromDepth").boolValue,
+                    "bedDepthSettings.clarityShallowDepth",
+                    "bedDepthSettings.clarityDeepDepth",
+                    "bedDepthSettings.clarityShallow",
+                    "bedDepthSettings.clarityDeep",
+                    "bedDepthSettings.clarityStrength");
                 WaterEditorUI.SubHeading("Surf breaker fronts");
                 DrawFields(
                     "bedDepthSettings.surfEnabled",

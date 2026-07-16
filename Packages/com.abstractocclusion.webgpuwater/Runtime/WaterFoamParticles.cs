@@ -240,8 +240,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         void OnEnable()
         {
-            // Parent lookup, matching WaterSurfRollerParticles/WaterSurfCurl: the particle
-            // systems are often children of the body object.
+            // Parent lookup: the particle systems are often children of the body object.
             if (volume == null) volume = GetComponentInParent<WaterVolume>();
             if (volume == null)
             {
@@ -347,7 +346,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (volume == null || !volume.isActiveAndEnabled) return;
             // Defensive: OnEnable can bail before allocating (compute/material assigned later in
             // the inspector, then the component re-enabled mid-setup) - never dispatch or draw
-            // with a dead pool (same guard as WaterSurfRollerParticles).
+            // with a dead pool.
             if (_particles == null || _counters == null || particleCompute == null) return;
             if (volume.SimStateTexture == null || volume.FoamMaskTexture == null) return;
             // Spawn when the 2D foam sim is on OR this is an ocean (whose FFT crests are the source).
@@ -358,8 +357,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (profile != null) profile.ApplyTo(this);
 
             // The density splat + spawn-quality projections follow the body's target camera when
-            // one is assigned (same resolution as WaterSurfRollerParticles/WaterSurfCurl), else
-            // the main camera. In views without one (or with the sim paused) the density field
+            // one is assigned, else the main camera. In views without one (or with the sim paused) the density field
             // would be stale/unanchored, so those frames fall back to reprojectable quads.
             Camera densityCamera = volume.targetCamera != null ? volume.targetCamera : Camera.main;
             _densityPending = false;
@@ -376,9 +374,6 @@ namespace AbstractOcclusion.WebGpuWater
         {
             ComputeShader cs = particleCompute;
             volume.WriteSimFrameUniforms(cs);
-            // Hero wave: lip-spray source in Spawn + base height in the density glue. The shared
-            // struct binder keeps packing identical to every other GPU consumer; inactive = inert.
-            volume.HeroWaveState.BindTo(cs);
             // Surf breaker fronts: plunging-lip spray source in Spawn + shoal/front height in the
             // density glue (RasterizeDensity). Same binder as the ripple-sim foam injection, so
             // the particles' front evaluation can never drift from the injected whitewash their

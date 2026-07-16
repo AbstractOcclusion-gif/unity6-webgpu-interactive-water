@@ -245,8 +245,7 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>Break-criterion ratio H/(gamma*depth) for a MEAN set wave (setAmp = 1) at a
         /// column depth + beach slope: the break LINE is where this crosses 1. Composed from the
         /// same mirrored terms the height math uses, so it can never drift from where the shader
-        /// actually breaks. Consumed by WaterSurfCurl's camera-following placement (closed-form
-        /// from the CPU shore arrays - no readback).</summary>
+        /// actually breaks. Closed-form from the CPU shore arrays - no readback.</summary>
         internal static float SurfBreakOverCap(in ShoreWaveContext ctx, float depth, float slopeTan)
         {
             float d = Mathf.Max(depth, SurfMinDepth);

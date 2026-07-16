@@ -22,13 +22,13 @@ MonoBehaviour:
     sizeHeroPower: 2
   ambient:
     drive: 1
-    spawnThreshold: 0.25
-    spawnRate: 30
-    maxSpawnPerFrame: 256
-    sprayChance: 0.08
+    spawnThreshold: 0.022
+    spawnRate: 178.5
+    maxSpawnPerFrame: 2905
+    sprayChance: 0.517
     sprayLaunchSpeed: 0.6
     lifeRange: {x: 1.5, y: 4}
-    sizeRange: {x: 0.02, y: 0.06}
+    sizeRange: {x: 0.1, y: 0.2}
     spawnMaxDistance: 120
   veil:
     drive: 1

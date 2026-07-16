@@ -97,6 +97,26 @@ float3 ApplyWaterOpacityTinted(float3 color, float3 inscatter)
     return lerp(color, inscatter, saturate(_WaterOpacity));
 }
 
+// ---- Depth clarity (auto transparency from the bed depth) ----------------
+// clarity in [0,1]: 1 = clear (identity - reproduces ApplyWaterVolume/ApplyWaterOpacityTinted
+// exactly), 0 = fully murky. A murky pixel gets denser fog (shorter reach) and higher turbidity,
+// so shallow/deep water reads as authored by WaterDepthClarity (below). Callers pass clarity = 1
+// wherever the feature is inactive, keeping every existing body byte-identical.
+#define CLARITY_FOG_DENSITY_MAX 4.0 // deepest murk multiplies the fog density by this at clarity 0
+float3 ApplyWaterVolumeClarity(float3 color, float dist, float3 inscatter, float clarity)
+{
+    if (_WaterFogEnabled < 0.5 && _ScatterEnabled < 0.5) return color;
+    float density = _WaterFogDensity * lerp(CLARITY_FOG_DENSITY_MAX, 1.0, saturate(clarity));
+    float3 absorb = exp(-_WaterExtinction.rgb * (density * max(0.0, dist)));
+    return lerp(inscatter, color, absorb);
+}
+float3 ApplyWaterOpacityTintedClarity(float3 color, float3 inscatter, float clarity)
+{
+    // Murk raises turbidity from the body's base _WaterOpacity toward fully opaque as clarity -> 0.
+    float opacity = saturate(_WaterOpacity + (1.0 - saturate(clarity)) * (1.0 - _WaterOpacity));
+    return lerp(color, inscatter, opacity);
+}
+
 // ---- Downwelling depth attenuation --------------------------------------
 // Separate from the view-path fog above: this models the light LOST travelling straight
 // DOWN from the surface, so a point reads darker the DEEPER it sits, independent of how
@@ -138,6 +158,23 @@ float  _UseBedDepth;         // master toggle for real bed depth
 float4 _DeepWaterColor;      // shoreline gradient target colour (deep water)
 float  _ShorelineDepthScale; // gradient rate (1 / fade-depth, per world unit)
 float  _ShorelineStrength;   // 0..1 max tint toward the deep colour
+
+// Depth clarity curve: ONE mapping from the bed column depth to a clarity in [0,1] that drives
+// turbidity, underwater-fog reach and the deep-water tint together (no painted mask). Inert at
+// strength 0, so a body that never opts in is byte-identical to before.
+float4 _DepthClarityRange;    // x = shallow depth (m), y = deep depth (m), z = clarity@shallow, w = clarity@deep
+float  _DepthClarityStrength; // 0 = off (flat per-body look); 1 = full depth-driven clarity
+
+// Clarity at a world column depth. 1 = clear (identity), 0 = murky. Returns 1 when the feature is
+// off (strength 0) so every caller is a no-op until a body opts in.
+float WaterDepthClarity(float columnDepthWorld)
+{
+    if (_DepthClarityStrength <= 0.0) return 1.0;
+    float span = max(_DepthClarityRange.y - _DepthClarityRange.x, 1e-3);
+    float t = saturate((columnDepthWorld - _DepthClarityRange.x) / span);
+    float clarity = lerp(_DepthClarityRange.z, _DepthClarityRange.w, t);
+    return lerp(1.0, clarity, saturate(_DepthClarityStrength));
+}
 
 // Water-column depth (world units) from the bed's pool height up to the surface's pool height.
 float BedColumnDepthWorld(float bedPoolY, float surfacePoolY, float extentY)

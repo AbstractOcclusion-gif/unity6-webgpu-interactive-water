@@ -1,7 +1,7 @@
 // WebGpuWater - shared GPU-particle pool plumbing.
 //
-// ONE home for the pool recipe WaterFoamParticles and WaterSurfRollerParticles used to
-// carry as copy-pasted blocks: tier-capped pow2 pool allocation with dead-slot zeroing,
+// ONE home for the pool recipe WaterFoamParticles used to carry as a copy-pasted block:
+// tier-capped pow2 pool allocation with dead-slot zeroing,
 // zeroed counters, and the flipbook MaterialPropertyBlock plumbing both draws share.
 // Pure helpers - each system keeps owning its buffers' lifetime (Dispose stays local).
 using UnityEngine;

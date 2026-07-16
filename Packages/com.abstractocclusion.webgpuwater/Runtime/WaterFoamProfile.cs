@@ -2,7 +2,7 @@
 //
 // A body's whole foam story in one asset: a shared look block (tint, sprite atlas,
 // flipbook, hero-size bias, opacity) plus one section per foam element (ambient
-// foam/spray, screen-space veil, surf roller, splash). Every foam component takes an
+// foam/spray, screen-space veil, splash). Every foam component takes an
 // OPTIONAL profile reference:
 //   - null profile          -> the component behaves exactly as before (zero migration);
 //   - section 'drive' off   -> that section keeps the component's own inspector values;
@@ -19,8 +19,8 @@ namespace AbstractOcclusion.WebGpuWater
                      menuName = "AbstractOcclusion/Water/Water Foam Profile")]
     public sealed class WaterFoamProfile : ScriptableObject
     {
-        // Shader property ids for the look/veil overrides (same names on FoamParticles,
-        // SurfRollerParticles and FoamDensityComposite).
+        // Shader property ids for the look/veil overrides (same names on FoamParticles
+        // and FoamDensityComposite).
         static readonly int ID_Tint = Shader.PropertyToID("_Tint");
         static readonly int ID_ParticleOpacity = Shader.PropertyToID("_ParticleOpacity");
         static readonly int ID_ParticleTex = Shader.PropertyToID("_ParticleTex");
@@ -74,20 +74,6 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         [System.Serializable]
-        public sealed class RollerSection
-        {
-            public bool drive = true;
-            [Range(0.5f, 10f)] public float particlesPerMeter = 3f;
-            [Range(1, 8)] public int burstPerArrival = 3;
-            [Range(0f, 1f)] public float spraySharePct = 0.25f;
-            [Range(0.01f, 2f)] public float sizeMin = 0.12f;
-            [Range(0.01f, 2f)] public float sizeMax = 0.35f;
-            [Range(0f, 8f)] public float tumbleSpeed = 2f;
-            [Range(0f, 8f)] public float lifeTailSeconds = 3.5f;
-            [Range(0f, 1f)] public float masterGain = 1f;
-        }
-
-        [System.Serializable]
         public sealed class SplashSection
         {
             public bool drive = true;
@@ -107,8 +93,6 @@ namespace AbstractOcclusion.WebGpuWater
         public AmbientSection ambient = new AmbientSection();
         [Tooltip("Screen-space density veil (FoamDensityComposite material values).")]
         public VeilSection veil = new VeilSection();
-        [Tooltip("Surf roller foam on the breaking fronts (WaterSurfRollerParticles).")]
-        public RollerSection roller = new RollerSection();
         [Tooltip("Impact splashes: crown + droplet burst shaping (WaterSplashEmitter).")]
         public SplashSection splash = new SplashSection();
 
@@ -136,28 +120,6 @@ namespace AbstractOcclusion.WebGpuWater
             }
         }
 
-        internal void ApplyTo(WaterSurfRollerParticles rollerParticles)
-        {
-            if (rollerParticles == null) return;
-            if (roller.drive)
-            {
-                rollerParticles.particlesPerMeter = roller.particlesPerMeter;
-                rollerParticles.burstPerArrival = roller.burstPerArrival;
-                rollerParticles.spraySharePct = roller.spraySharePct;
-                rollerParticles.sizeMin = roller.sizeMin;
-                rollerParticles.sizeMax = Mathf.Max(roller.sizeMin, roller.sizeMax);
-                rollerParticles.tumbleSpeed = roller.tumbleSpeed;
-                rollerParticles.lifeTailSeconds = roller.lifeTailSeconds;
-                rollerParticles.masterGain = roller.masterGain;
-            }
-            if (look.drive)
-            {
-                rollerParticles.flipbookGrid = look.flipbookGrid;
-                rollerParticles.flipbookFps = look.flipbookFps;
-                rollerParticles.sizeHeroPower = look.sizeHeroPower;
-            }
-        }
-
         internal void ApplyTo(WaterSplashEmitter emitter)
         {
             if (emitter == null || !splash.drive) return;
@@ -173,7 +135,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         // ---- Draw-time material overrides (property blocks; assets never written) -----
 
-        /// <summary>Shared look over a particle draw (foam quads/spray, roller).</summary>
+        /// <summary>Shared look over a particle draw (foam quads/spray).</summary>
         internal void WriteLook(MaterialPropertyBlock mpb)
         {
             if (!look.drive) return;

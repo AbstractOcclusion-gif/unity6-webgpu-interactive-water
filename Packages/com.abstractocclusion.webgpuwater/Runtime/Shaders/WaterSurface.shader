@@ -80,8 +80,6 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             #include "WaterWaves.hlsl"
             #include "WaterVolume.hlsl" // brings WaterShared (via WaterCommon): POOL_RIM_HEIGHT etc.
             #include "WaterLargeWaves.hlsl" // open-water world-space wave normal (large-body path)
-            #include "WaterHeroWave.hlsl"   // surfable breaking wave (base offset + overturning lip sheet)
-            #include "WaterSurfCurl.hlsl"   // surf-front plunging lip sheet (auto-driven curl strip)
             #include "WaterFoamCommon.hlsl" // shared foam lighting constants/helpers (FOAM_LIGHT_WRAP etc.)
 
             // Look constants local to this surface pass (single-use here).
@@ -179,10 +177,6 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // _ClipmapMorphScale = 1 / band width (cells). Inert on the outermost level (start >= M/2).
             float  _ClipmapMorphStart;
             float  _ClipmapMorphScale;
-            // Hero-wave lip sheet: 1 = the dense strip mesh WaterHeroWave spawns (rides the clipmap
-            // world-metre mapping, adds the overturning curl, discards outside the curl region).
-            // Inert at the default (_IsHeroWave = 0).
-            float  _IsHeroWave;
             // 1 = sample the small wind-wave layer in WORLD metres (oceans), so its scale is independent
             // of the volume extent; 0 = pool space (bounded bodies, unchanged). Inert at the default.
             float  _OceanWorldWaves;
@@ -550,11 +544,6 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 float2 largeWaveSourceXZ : TEXCOORD3; // undisplaced world xz of the open-water wave,
                                                       // so the fragment normal reads the SOURCE point
                                                       // (not the chop-displaced worldPos)
-                float4 heroSheet : TEXCOORD4; // lip sheet: xyz = geometric normal (world),
-                                              // w = curl weight (0 = discard: base surface owns it).
-                                              // Shared by the hero wave (_IsHeroWave = 1) and the
-                                              // surf curl strip (_IsSurfCurl = 1) - a renderer is
-                                              // only ever one of them.
             };
 
             // Coordinate fed to the wind-wave layer (WaveHeight/WaveSlope). Bounded bodies sample in
@@ -640,34 +629,6 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     LargeBodyWaveHeightDispShore(sourceXZ, shoreVert, surfVert, lbwHeight, lbwDisp);
                     worldPos.y  += lbwHeight;
                     worldPos.xz += lbwDisp; // 0 when choppiness = 0
-                }
-                // Hero wave (surfable breaking wave). BASE offset on every open-water vertex, so the
-                // ocean itself rises/leans/collapses with the wave (one surface, no flat plane under
-                // it); the strip mesh (_IsHeroWave) evaluates the FULL curled surface instead and
-                // carries its geometric normal + curl weight to the fragment. NOT multiplied by the
-                // swell shoal factor - the hero wave IS the shoaling product. Inert when inactive.
-                o.heroSheet = float4(0.0, 1.0, 0.0, 0.0);
-                if (_HeroWaveActive > 0.5)
-                {
-                    float heroWeight;
-                    if (_IsHeroWave > 0.5)
-                    {
-                        worldPos += HeroWaveOffset(o.largeWaveSourceXZ, true, heroWeight);
-                        o.heroSheet = float4(HeroSheetNormal(o.largeWaveSourceXZ), heroWeight);
-                    }
-                    else
-                    {
-                        worldPos += HeroWaveOffset(o.largeWaveSourceXZ, false, heroWeight);
-                    }
-                }
-                // Surf-curl lip sheet (plunging breaker strip, WaterSurfCurl.hlsl). Full mode
-                // carries the whole test front; delta mode adds only the curl rotation on top of
-                // the base surface (which already renders the front via EvaluateSurfWaves above).
-                if (_IsSurfCurl > 0.5)
-                {
-                    float curlSheetWeight;
-                    worldPos += SurfCurlOffset(o.largeWaveSourceXZ, curlSheetWeight);
-                    o.heroSheet = float4(SurfCurlSheetNormal(o.largeWaveSourceXZ), curlSheetWeight);
                 }
                 // Surf swash film: over the beach the surface HUGS THE SAND (a thin film a few
                 // centimetres proud of it) wherever the swash has recently reached - a flat plane
@@ -905,12 +866,6 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
             fixed4 frag(v2f i) : SV_Target
             {
-                // Lip-sheet strips (hero wave / surf curl): only the sheet's own region survives;
-                // everywhere else the base ocean surface already renders the wave, so the strip
-                // discards to avoid a coplanar double surface.
-                if (_IsHeroWave > 0.5 && i.heroSheet.w < HERO_SHEET_MIN_WEIGHT) discard;
-                if (_IsSurfCurl > 0.5 && i.heroSheet.w < SURF_CURL_MIN_WEIGHT) discard;
-
                 float fade;
                 float4 info = SampleRipple(i.position, i.worldPos, fade);
 
@@ -950,20 +905,6 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                                                  shoreFrag.slopeTan,
                                                  shoreFrag.influence, _SurfBeatTime);
                 }
-                // Surf-curl lip dressing (live sheet only): inject the sheet's curl weight into
-                // the SAME whitewash/breaker signals the base water consumes downstream (surf foam
-                // layer + cresting SSS glow), so the lip whitens toward its tip and glows as it
-                // pitches. Full/test mode skips this: its widened keep-weight spans the whole test
-                // front, not just the lip.
-                if (_IsSurfCurl > 0.5 && _SurfCurlParams.z < 0.5)
-                {
-                    float curlLipWeight = saturate(i.heroSheet.w);
-                    surfFrag.whitewash = saturate(surfFrag.whitewash
-                                                  + curlLipWeight * SURF_CURL_FOAM_WHITEWASH);
-                    surfFrag.breaker = saturate(surfFrag.breaker
-                                                + curlLipWeight * SURF_CURL_FOAM_BREAKER);
-                }
-
                 // Open water: PoolNormalToWorld divides normal.xz by the (large) footprint extent,
                 // flattening the surface so screen-space refraction collapses on big bodies. Add a
                 // WORLD-space wave slope here (after that division) so open water keeps real normals
@@ -980,27 +921,22 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     normal = normalFoam.xyz;
                     surfGeomFoam = normalFoam.w;
                 }
-                // Hero wave: tilt by the base wave slope everywhere (matches the base vertex offset);
-                // on the lip sheet, blend toward its interpolated geometric normal by curl weight so
-                // the overturned surface shades correctly while its foot inherits the detailed normal.
-                if (_HeroWaveActive > 0.5)
-                {
-                    normal = ApplyHeroWaveNormal(normal, i.largeWaveSourceXZ, _WaveNormalStrength);
-                    if (_IsHeroWave > 0.5)
-                        normal = normalize(lerp(normal, i.heroSheet.xyz, saturate(i.heroSheet.w)));
-                }
-                // Surf-curl strip: blend toward the sheet's geometric normal by curl weight, same
-                // rule as the hero sheet - the overturned surface shades correctly while its foot
-                // inherits the detailed base normal.
-                if (_IsSurfCurl > 0.5)
-                    normal = normalize(lerp(normal, i.heroSheet.xyz, saturate(i.heroSheet.w)));
-                // Overturned barrel interior (the Cull-Front strip): its faces point away from the
-                // camera, so flip the sheet normal to face it. Shading then runs the air->water path
-                // below - the strip overrides _Underwater to 0 - instead of the underwater path that
-                // negates the normal and refracts the water-less opaque texture (the dark-glass bug).
-                if (_IsSurfCurl > 0.5 && _SurfCurlBackStrip > 0.5)
-                    normal = -normal;
                 float3 incomingRay = normalize(i.worldPos - _WorldSpaceCameraPos);
+
+                // Depth clarity (auto transparency): ONE curve from the baked bed depth drives the
+                // turbidity + underwater-fog reach below (and the deep-water tint in the shoreline
+                // block). Identity (1) when the feature is off or no bed is baked, so every existing
+                // body is unchanged. Blended toward the surf field's depth where it is live, so the
+                // clarity waterline agrees with the rendered shore.
+                float waterClarity = 1.0;
+                if (_UseBedDepth > 0.5 && _BedValid > 0.5)
+                {
+                    float bedPoolYClarity = tex2Dlod(_BedTex, float4(i.position.xz * 0.5 + 0.5, 0, 0)).r;
+                    float colDepthClarity = BedColumnDepthWorld(bedPoolYClarity, i.position.y, VolumeExtentSafe().y);
+                    if (_SurfActive > 0.5 && shoreFrag.influence > 0.0)
+                        colDepthClarity = lerp(colDepthClarity, shoreFrag.depth, saturate(shoreFrag.influence));
+                    waterClarity = WaterDepthClarity(colDepthClarity);
+                }
 
                 if (_Underwater > 0.5)
                 {
@@ -1030,7 +966,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     }
 
                     float3 bodyInscatterUnder = WaterInscatterColor(-incomingRay, _LightDir, _SunColor, 0.0);
-                    refractedColor = ApplyWaterOpacityTinted(refractedColor, bodyInscatterUnder); // turbidity from below too
+                    refractedColor = ApplyWaterOpacityTintedClarity(refractedColor, bodyInscatterUnder, waterClarity); // turbidity from below too
 
                     float tUnder = (1.0 - fresnel) * length(refractedRay);
                     tUnder = lerp(1.0, tUnder, _ReflectionStrength); // strength 0 = fully refracted
@@ -1157,7 +1093,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         // (scene eye-depth - surface eye-depth), so heavy fog reads through too.
                         float sceneEyeR = LinearEyeDepth(SAMPLE_DEPTH_TEXTURE_LOD(_CameraDepthTexture, float4(saturate(ruv), 0, 0)));
                         float surfEyeR  = -mul(UNITY_MATRIX_V, float4(i.worldPos, 1.0)).z;
-                        refractedColor = ApplyWaterVolume(refractedColor, max(0.0, sceneEyeR - surfEyeR), bodyInscatter);
+                        refractedColor = ApplyWaterVolumeClarity(refractedColor, max(0.0, sceneEyeR - surfEyeR), bodyInscatter, waterClarity);
                     }
                     else if (_LargeBody < 0.5)
                     {
@@ -1168,10 +1104,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         float3 pdFog = WorldDirToPool(refractedRay);
                         float2 tfog = IntersectCube(i.position, pdFog, POOL_BOX_MIN, POOL_BOX_MAX);
                         float3 exitWorld = PoolToWorld(i.position + pdFog * max(0.0, tfog.y));
-                        refractedColor = ApplyWaterVolume(refractedColor, length(exitWorld - i.worldPos), bodyInscatter);
+                        refractedColor = ApplyWaterVolumeClarity(refractedColor, length(exitWorld - i.worldPos), bodyInscatter, waterClarity);
                     }
 
-                    refractedColor = ApplyWaterOpacityTinted(refractedColor, bodyInscatter); // turbidity toward the body colour
+                    refractedColor = ApplyWaterOpacityTintedClarity(refractedColor, bodyInscatter, waterClarity); // turbidity toward the body colour
 
                     // ---- Ocean FFT whitecap foam: coverage sampled per pixel from the cascade (.w), on the
                     // same crests as the normal tilt, then broken into moving lace by the foam flipbook -
@@ -1440,8 +1376,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         // sand), so the film and the glaze have geometry to render on.
                         const float SHORE_CLIP_BIAS = 0.02; // metres of water kept past the waterline
                         clip(colDepth + SHORE_CLIP_BIAS + max(swashLevel, wetLevel));
+                        // Depth clarity ties the deep tint to the SAME curve as turbidity/fog: murkier
+                        // (lower clarity) = more deep tint. Falls back to the plain depth gradient when
+                        // clarity is off (WaterDepthClarity = 1 -> tint = shore), so bodies not using it
+                        // are byte-identical.
                         float shore = 1.0 - exp(-_ShorelineDepthScale * colDepth);
-                        outColor = lerp(outColor, _DeepWaterColor.rgb, saturate(shore * _ShorelineStrength));
+                        float tint = (_DepthClarityStrength > 0.0) ? (1.0 - WaterDepthClarity(colDepth)) : shore;
+                        outColor = lerp(outColor, _DeepWaterColor.rgb, saturate(tint * _ShorelineStrength));
                         // Wet-sand glaze: fragments above the CURRENT film but under the drying wet line
                         // show the darkened scene through a thin glossy sheet - wet sand with zero state.
                         float beachRise = -colDepth;                    // metres above the still level

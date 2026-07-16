@@ -262,7 +262,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             float surfaceRefY;
             UnderwaterSegment(sceneWorld, pathLen, deepestY, surfaceRefY);
             depthAttenuation = DownwellingAttenuation(deepestY, surfaceRefY);
-            return exp(-_WaterExtinction.rgb * (_WaterFogDensity * pathLen));
+            // Depth clarity: the SAME curve the surface shader uses above water (WaterDepthClarity).
+            // Murkier water (shallower bed) shortens the fog reach, so below- and above-water clarity
+            // stay consistent. Driven by the still-water column depth at the scene point; identity when
+            // the feature is off (returns 1) or off the shore field (deep sentinel -> deep-clarity end).
+            float clarity = WaterDepthClarity(ShoreShoalDepth(sceneWorld.xz));
+            float density = _WaterFogDensity * lerp(CLARITY_FOG_DENSITY_MAX, 1.0, clarity);
+            return exp(-_WaterExtinction.rgb * (density * pathLen));
         }
 
         // Interleaved-gradient dither (~+-0.5/255) added to the fog output to break the residual 8-bit
