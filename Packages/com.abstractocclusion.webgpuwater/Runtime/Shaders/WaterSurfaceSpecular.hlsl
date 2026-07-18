@@ -32,7 +32,18 @@
 // specular anti-aliasing; the sun's glitter path broadens toward the horizon instead
 // of aliasing into sparkle dust. The clamp stops a mirror-calm lobe blowing out HDR.
 #define SUN_SPEC_CLAMP              50.0   // max lobe value (multiplies the sun colour)
-#define GGX_EPSILON                 1e-5
+// Two SEPARATE guard epsilons - the two denominators live at wildly different
+// scales, and sharing one epsilon was a real bug:
+// - The NDF denominator at the lobe peak is pi * alpha^4 = pi * r^8, which drops
+//   below 1e-5 for EVERY roughness < ~0.2 (covering the 0.08/0.2 defaults). A
+//   1e-5 guard therefore CLAMPED the peak, dimming the sun core ~1900x at
+//   r = 0.08 and inverting the response (peak grew with roughness instead of
+//   sharpening). 1e-9 keeps r >= ~0.06 exact; below that the guard hands over
+//   to SUN_SPEC_CLAMP, which is the intended HDR ceiling anyway.
+// - The visibility denominator is O(NoL + NoV): order 1, only near zero at
+//   pathological grazing. 1e-5 remains the right div-by-zero guard there.
+#define GGX_NDF_EPSILON             1e-9
+#define GGX_VISIBILITY_EPSILON      1e-5
 // Anisotropic (vertically stretched) sky reflection: wave slopes tilt mostly about
 // horizontal axes, so a rough water mirror smears what it reflects VERTICALLY - the
 // classic elongated ocean reflection (KWS's ReflectionPreFiltering does this as an
@@ -269,8 +280,8 @@ float GgxLobeDistribution(float noh, float nol, float nov, float roughness)
     float alpha  = roughness * roughness;
     float alpha2 = alpha * alpha;
     float ndfDenom = noh * noh * (alpha2 - 1.0) + 1.0;
-    float ndf = alpha2 / max(UNITY_PI * ndfDenom * ndfDenom, GGX_EPSILON);
-    float visibility = 0.5 / max(lerp(2.0 * nol * nov, nol + nov, alpha), GGX_EPSILON);
+    float ndf = alpha2 / max(UNITY_PI * ndfDenom * ndfDenom, GGX_NDF_EPSILON);
+    float visibility = 0.5 / max(lerp(2.0 * nol * nov, nol + nov, alpha), GGX_VISIBILITY_EPSILON);
     return ndf * visibility * nol;
 }
 
