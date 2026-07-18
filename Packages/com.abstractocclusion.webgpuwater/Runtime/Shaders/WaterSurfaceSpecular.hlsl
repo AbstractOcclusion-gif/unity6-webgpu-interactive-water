@@ -44,6 +44,10 @@
 //   pathological grazing. 1e-5 remains the right div-by-zero guard there.
 #define GGX_NDF_EPSILON             1e-9
 #define GGX_VISIBILITY_EPSILON      1e-5
+// Squared-length floor under which a direction has cancelled to ~zero and
+// normalize() would return NaN (0/0). Used by the aniso-tap and half-vector
+// guards below; well under any visually meaningful vector (length < 1e-4).
+#define DEGENERATE_DIR_EPSILON      1e-8
 // Anisotropic (vertically stretched) sky reflection: wave slopes tilt mostly about
 // horizontal axes, so a rough water mirror smears what it reflects VERTICALLY - the
 // classic elongated ocean reflection (KWS's ReflectionPreFiltering does this as an
@@ -265,7 +269,13 @@ float3 SampleSkyEnvironmentAniso(float3 worldRay, float roughness)
     [unroll]
     for (int tap = 0; tap < SKY_ANISO_TAP_COUNT; tap++)
     {
-        float3 tapRay = normalize(worldRay + float3(0.0, spread * ANISO_TAP_OFFSETS[tap], 0.0));
+        // NaN guard: at the slider extremes (stretch x roughness = 1) the -1 tap
+        // offset exactly cancels a straight-up reflected ray and normalize(0)
+        // poisons the pixel. A degenerate tap falls back to the unoffset ray -
+        // the direction the smear is centred on, so the kernel weight is kept.
+        float3 tapVec = worldRay + float3(0.0, spread * ANISO_TAP_OFFSETS[tap], 0.0);
+        float3 tapRay = (dot(tapVec, tapVec) < DEGENERATE_DIR_EPSILON)
+                      ? worldRay : normalize(tapVec);
         tapRay.y = max(tapRay.y, REFLECTION_MIN_UP_Y);
         color += SampleSkyEnvironmentRough(normalize(tapRay), roughness) * ANISO_TAP_WEIGHTS[tap];
     }
@@ -300,7 +310,15 @@ float GgxLobe(float noh, float nol, float nov, float loh, float roughness)
 // reads as flat water away from the sun path. _SunSheen 0 = single-lobe (legacy). ----
 float3 SunSpecular(float3 normal, float3 viewDir, float roughness)
 {
-    float3 halfDir = normalize(viewDir + _LightDir);
+    // NaN guard: the half-vector is undefined when the view is exactly antipodal
+    // to the sun (viewDir + _LightDir cancels) and normalize(0) would sparkle
+    // NaN. The sun is then geometrically behind the shaded point, so the correct
+    // specular is none. Pure-ALU function: the per-fragment early return is
+    // WGSL-safe (no implicit-derivative samples in here).
+    float3 halfVec = viewDir + _LightDir;
+    if (dot(halfVec, halfVec) < DEGENERATE_DIR_EPSILON)
+        return float3(0.0, 0.0, 0.0);
+    float3 halfDir = normalize(halfVec);
     float noh = saturate(dot(normal, halfDir));
     float nov = saturate(dot(normal, viewDir));
     float loh = saturate(dot(_LightDir, halfDir));
