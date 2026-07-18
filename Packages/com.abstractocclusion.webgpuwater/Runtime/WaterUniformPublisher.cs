@@ -97,6 +97,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_CameraUnderwater = Shader.PropertyToID("_CameraUnderwater");
         static readonly int ID_UnderwaterSurfaceY = Shader.PropertyToID("_UnderwaterSurfaceY");
         static readonly int ID_UnderwaterUnbounded = Shader.PropertyToID("_UnderwaterUnbounded");
+        static readonly int ID_UnderwaterFogSimple = Shader.PropertyToID("_UnderwaterFogSimple");
         static readonly int ID_PeakedRefine = Shader.PropertyToID("_PeakedRefineSteps");
         static readonly int ID_UsePlanar = Shader.PropertyToID("_UsePlanar");
         static readonly int ID_PlanarTex = Shader.PropertyToID("_PlanarReflectionTex");
@@ -173,12 +174,15 @@ namespace AbstractOcclusion.WebGpuWater
         internal void PublishBodyGlobals() => WriteBodyUniforms(_globalSink);
 
         /// <summary>Camera-submerged flag + flat surface Y for the underwater fog pass. Global only
-        /// (it is camera state, not a per-object uniform), so it lives outside WriteBodyUniforms.</summary>
-        internal void PublishUnderwater(float cameraUnderwater, float surfaceY, float unbounded)
+        /// (it is camera state, not a per-object uniform), so it lives outside WriteBodyUniforms.
+        /// fogSimple 1 = the tier's Simple mode: the fog shader takes the closed-form flat-waterline
+        /// path (against surfaceY) instead of the per-pixel wavy-surface march.</summary>
+        internal void PublishUnderwater(float cameraUnderwater, float surfaceY, float unbounded, float fogSimple)
         {
             Shader.SetGlobalFloat(ID_CameraUnderwater, cameraUnderwater);
             Shader.SetGlobalFloat(ID_UnderwaterSurfaceY, surfaceY);
             Shader.SetGlobalFloat(ID_UnderwaterUnbounded, unbounded);
+            Shader.SetGlobalFloat(ID_UnderwaterFogSimple, fogSimple);
         }
 
         /// <summary>Push the body's placement-frame uniforms (volume + sim window) onto a

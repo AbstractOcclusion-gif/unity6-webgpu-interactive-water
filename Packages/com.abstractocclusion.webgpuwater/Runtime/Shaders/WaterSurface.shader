@@ -27,6 +27,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
         [HideInInspector] _SSRThickness ("SSR Thickness", Range(0.01,1.0)) = 0.2
         [HideInInspector] _RealRefraction ("Real (Screen-Space) Refraction", Float) = 0
         [HideInInspector] _RefractionDistortion ("Refraction Distortion", Range(0,0.2)) = 0.05
+        // Above-water look (WOW pass): physical Schlick Fresnel + GGX sun specular.
+        // _FresnelFloor = artistic minimum reflectance (0 = pure physics; the legacy
+        // curve behaved like a 0.25 floor, which mirrored the sky even straight down).
+        [HideInInspector] _FresnelFloor ("Fresnel Floor (artistic min reflectance)", Range(0,1)) = 0.0
+        // Perceptual roughness of the sun lobe at the camera; distance widening is added
+        // on top in the shader (see SUN_SPEC_DISTANCE_* constants).
+        [HideInInspector] _SunRoughness ("Sun Specular Roughness", Range(0.01,1)) = 0.08
         // Water fog is global now (driven by WaterController), shared with the
         // object/pool shaders so it's consistent however you view the water.
 
@@ -82,13 +89,59 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             #include "WaterLargeWaves.hlsl" // open-water world-space wave normal (large-body path)
             #include "WaterFoamCommon.hlsl" // shared foam lighting constants/helpers (FOAM_LIGHT_WRAP etc.)
 
+            // ---- Surf foam enhancement uniforms (FOAM-1/2/3, ALL RENDER-ONLY). Published as
+            // globals by WaterShoreDepthField beside the _Surf* set; unpublished = every feature
+            // off and the pass byte-identical. The scalar repartition weights live in
+            // WaterSurfWaves.hlsl (shared with the computes); these are surface-only. ----
+            sampler2D _SurfCrestFoamLut;   // R: crest-foam intensity over the lifecycle clock
+            float _SurfCrestFoamLutActive; // 1 = the artist pop curve replaces the built-in window
+            float _SurfCrestFoamGain;      // master gain on the curve-driven crest foam
+            float _SurfFoamTrailDissolve;  // seconds an aged deposit takes to rot into holes (0 = off)
+            float _SurfSwashFoam;          // swash foam strength (0 = feature off)
+            float _SurfSwashFoamWidth;     // metres of run-up height covered by the foam band
+            float _SurfSwashFoamDissolve;  // 0..1 how hard reflux age erodes the stranded line
+            float _SurfSwashStreak;        // 0..1 downslope streak stretch during the backwash
+            // How far age can push the pattern-dissolve threshold (a full push leaves only the
+            // brightest pattern peaks alive - lace filaments, then nothing).
+            #define SURF_TRAIL_ERODE_MAX   0.6
+            #define SURF_SWASH_ERODE_MAX   0.7
+            // Full-streak elongation factor of the backwash drain marks at _SurfSwashStreak = 1.
+            #define SURF_SWASH_STREAK_GAIN 3.0
+
             // Look constants local to this surface pass (single-use here).
+            // Legacy hard sun glint: kept ONLY for the underwater branch (TIR ceiling and
+            // rays through the Snell window). The above-water sun is the GGX lobe in
+            // SunSpecular below.
             #define SUN_GLINT_TINT          float3(10.0, 8.0, 6.0)
             #define SUN_GLINT_SHARPNESS     5000.0
             #define UNDERWATER_REFRACT_TINT float3(0.8, 1.0, 1.1)
-            #define FRESNEL_POWER           3.0
-            #define FRESNEL_MIN_ABOVE       0.25
+            // Above-water Fresnel is physical Schlick (1994): F0 derived from the air/water
+            // IOR (~0.02), grazing exponent 5. The old artistic curve (pow 3 lerped from a
+            // 0.25 floor) reflected a quarter of the sky looking straight DOWN, which
+            // flattened the surface; _FresnelFloor (default 0) keeps that override
+            // available as an opt-in. The underwater branch keeps the legacy curve.
+            #define FRESNEL_F0_WATER        (((IOR_WATER - IOR_AIR) * (IOR_WATER - IOR_AIR)) \
+                                           / ((IOR_WATER + IOR_AIR) * (IOR_WATER + IOR_AIR)))
+            #define FRESNEL_SCHLICK_POWER   5.0
+            #define FRESNEL_POWER           3.0    // legacy curve - underwater branch only
             #define FRESNEL_MIN_BELOW       0.5
+            // GGX sun specular (above water): the lobe's roughness grows with view distance
+            // (KWS trick) - far pixels average many unresolved wave facets, so widening the
+            // lobe is both the physically-motivated filter and the specular anti-aliasing;
+            // the sun's glitter path broadens toward the horizon instead of aliasing into
+            // sparkle dust. The clamp stops a mirror-calm lobe from blowing out HDR.
+            #define SUN_SPEC_DISTANCE_METERS    1000.0 // widening saturates at this camera distance
+            #define SUN_SPEC_DISTANCE_ROUGHNESS 0.12   // extra perceptual roughness added when saturated
+            #define SUN_SPEC_CLAMP              50.0   // max lobe value (multiplies the sun colour)
+            #define GGX_EPSILON                 1e-5
+            // Roughness -> sky-cube mip: Unity's perceptual remap (the UNITY_SPECCUBE_LOD_STEPS
+            // convention, mip = r * (1.7 - 0.7r) * steps) so the blur ramp behaves like probe
+            // reflections artists already know. Needs the bound cube to HAVE mips: the wizard's
+            // BuildSky now bakes them (regenerate the sky asset!) and imported skybox cubemaps
+            // have them by default; without mips the lod sample just clamps to the sharp top.
+            #define SKY_MIP_CURVE_SCALE 1.7
+            #define SKY_MIP_CURVE_BIAS  0.7
+            #define SKY_MIP_STEPS       6.0
             #define SSS_AMPLITUDE_EPSILON   1e-3   // guards the crest/amplitude ratio when the swell is flat
 
             // Peaked-look refine: short steps along the ripple normal sharpen wave crests.
@@ -192,6 +245,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             float4 _HorizonHazeColor;
             float  _HorizonHazeDensity;
             float _ReflectionStrength;
+            float _FresnelFloor;  // artistic minimum reflectance on the Schlick curve (0 = physical)
+            float _SunRoughness;  // perceptual roughness of the GGX sun lobe at the camera
             float _WaveNormalStrength; // global; scales the wind-wave tilt on the normal
             float _PeakedRefineSteps;  // per-body (quality tier); see PEAKED_REFINE_MAX_STEPS
             float3 _SunColor; // Unity directional light color * intensity (global)
@@ -679,12 +734,20 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 return tex2D(_PlanarReflectionTex, saturate(uv)).rgb;
             }
 
-            // Sample the environment (reflection probe / procedural sky) for a WORLD-space ray,
-            // plus the sun glint. This is what the water REFLECTS - never the analytic pool tiles.
+            // Legacy hard sun glint (pow-5000 disc). Underwater paths only - the above-water
+            // sun is the roughness-driven GGX lobe in SunSpecular, so folding this fixed disc
+            // into the above-water mirror would double the sun.
+            float3 LegacySunGlint(float3 worldRay)
+            {
+                return SUN_GLINT_TINT * _SunColor * pow(max(0.0, dot(_LightDir, worldRay)), SUN_GLINT_SHARPNESS);
+            }
+
+            // Sample the SKY environment (reflection probe / procedural sky) for a WORLD-space
+            // ray - no sun term. This is what the water REFLECTS - never the analytic pool tiles.
             // WGSL derivative uniformity: the grad variant exists for call sites inside NON-UNIFORM
             // control flow (getSurfaceRayColor's per-fragment up/down ray split), where texCUBE's
             // implicit derivatives are undefined - the caller hoists ddx/ddy of the ray beforehand.
-            float3 SampleEnvironmentGrad(float3 worldRay, float3 rayDdx, float3 rayDdy)
+            float3 SampleSkyEnvironmentGrad(float3 worldRay, float3 rayDdx, float3 rayDdy)
             {
                 // Reflection base is ALWAYS a plain cubemap in _Sky: the assigned Sky slot for procedural
                 // sky, or the scene's skybox cubemap when Reflect URP Probe is on (WaterUniformPublisher
@@ -692,19 +755,69 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 // which URP Forward+ (used on WebGPU) does not bind per-object, so the old probe path read
                 // the default/skybox and the plane showed no reflection.
                 float3 color = texCUBEgrad(_Sky, worldRay, rayDdx, rayDdy).rgb;
-                // Art-directed brightness of the reflected environment (sky OR probe). Applied before the
-                // sun glint so the glint stays a fixed specular regardless of the mirror intensity.
+                // Art-directed brightness of the reflected environment (sky OR probe). Applied before any
+                // sun term so the sun stays a fixed specular regardless of the mirror intensity.
                 color *= _EnvReflectionIntensity;
-                // sun glint - direction from _LightDir, tint/brightness from the Unity sun
-                color += SUN_GLINT_TINT * _SunColor * pow(max(0.0, dot(_LightDir, worldRay)), SUN_GLINT_SHARPNESS);
                 return color;
             }
 
-            // Implicit-derivative convenience for UNIFORM control flow (the reflection paths and the
-            // horizon haze, all gated on uniforms) - identical result, no hoisting needed there.
+            // Environment WITH the legacy sun glint - the underwater branch and the shared
+            // ray tracer (getSurfaceRayColor) keep this so their look is unchanged by the
+            // above-water GGX rework.
+            float3 SampleEnvironmentGrad(float3 worldRay, float3 rayDdx, float3 rayDdy)
+            {
+                return SampleSkyEnvironmentGrad(worldRay, rayDdx, rayDdy) + LegacySunGlint(worldRay);
+            }
+
+            // Implicit-derivative conveniences for UNIFORM control flow (the reflection paths and
+            // the horizon haze, all gated on uniforms) - identical results, no hoisting needed there.
             float3 SampleEnvironment(float3 worldRay)
             {
                 return SampleEnvironmentGrad(worldRay, ddx(worldRay), ddy(worldRay));
+            }
+
+            // Sky environment at a roughness-selected mip: a rough surface reflects a BLURRED
+            // sky. Explicit LOD, so it is WGSL-safe in any control flow; if the bound cube has
+            // no mips the lod clamps to 0 and this degrades to the old sharp mirror.
+            float3 SampleSkyEnvironmentRough(float3 worldRay, float roughness)
+            {
+                float mip = roughness * (SKY_MIP_CURVE_SCALE - SKY_MIP_CURVE_BIAS * roughness)
+                          * SKY_MIP_STEPS;
+                return texCUBElod(_Sky, float4(worldRay, mip)).rgb * _EnvReflectionIntensity;
+            }
+
+            // Shared surface roughness for the whole specular family: the artist knob plus the
+            // view-distance widening (see SUN_SPEC_DISTANCE_*). Drives BOTH the GGX sun lobe
+            // and the sky-reflection mip, so the sun and the mirror around it roughen together.
+            float EffectiveWaterRoughness(float viewDist)
+            {
+                return saturate(_SunRoughness
+                    + SUN_SPEC_DISTANCE_ROUGHNESS * saturate(viewDist / SUN_SPEC_DISTANCE_METERS));
+            }
+
+            // ---- GGX sun specular (above water). Replaces the fixed pow-5000 glint with a
+            // Trowbridge-Reitz lobe: NDF * Smith-joint visibility (Karis approximation) *
+            // Schlick Fresnel at the half-vector, times the sun colour. Roughness comes from
+            // EffectiveWaterRoughness, which is what widens the glitter path toward the
+            // horizon and suppresses far sparkle. ----
+            float3 SunSpecular(float3 normal, float3 viewDir, float roughness)
+            {
+                float alpha  = roughness * roughness;
+                float alpha2 = alpha * alpha;
+
+                float3 halfDir = normalize(viewDir + _LightDir);
+                float noh = saturate(dot(normal, halfDir));
+                float nol = saturate(dot(normal, _LightDir));
+                float nov = saturate(dot(normal, viewDir));
+                float loh = saturate(dot(_LightDir, halfDir));
+
+                float ndfDenom = noh * noh * (alpha2 - 1.0) + 1.0;
+                float ndf = alpha2 / max(UNITY_PI * ndfDenom * ndfDenom, GGX_EPSILON);
+                float visibility = 0.5 / max(lerp(2.0 * nol * nov, nol + nov, alpha), GGX_EPSILON);
+                float fresnelSpec = FRESNEL_F0_WATER
+                    + (1.0 - FRESNEL_F0_WATER) * pow(1.0 - loh, FRESNEL_SCHLICK_POWER);
+
+                return min(ndf * visibility * fresnelSpec * nol, SUN_SPEC_CLAMP) * _SunColor;
             }
 
             // ---- Manual URP main-light shadow tap (this pass is CGPROGRAM and cannot include URP's
@@ -1026,14 +1139,25 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 {
                     float3 reflectedRay = reflect(incomingRay, normal);
                     float3 refractedRay = refract(incomingRay, normal, IOR_AIR / IOR_WATER);
-                    float fresnel = lerp(FRESNEL_MIN_ABOVE, 1.0, pow(saturate(1.0 - dot(normal, -incomingRay)), FRESNEL_POWER));
+                    // Physical Schlick Fresnel from the air/water IOR: ~2% mirror straight down
+                    // (deep clear water at your feet), full mirror at grazing (the horizon).
+                    // saturate: float error can push the dot above 1 -> negative pow base -> NaN.
+                    float fresnelGrazing = pow(saturate(1.0 - dot(normal, -incomingRay)), FRESNEL_SCHLICK_POWER);
+                    float fresnel = max(FRESNEL_F0_WATER + (1.0 - FRESNEL_F0_WATER) * fresnelGrazing,
+                                        _FresnelFloor);
 
                     // Reflection samples the environment (sky / URP probe) for ANY reflected direction.
                     // getSurfaceRayColor would route a below-horizon ray - common at grazing angles and on
                     // wave slopes, exactly where Fresnel makes the reflection strongest - into the pool
                     // floor and return the TILES, which showed up as tile "highlights" and hid the probe.
                     // The underwater branch already samples the environment directly; match it here.
-                    float3 reflectedColor = SampleEnvironment(reflectedRay);
+                    // SKY only: the sun is added as the GGX lobe after the composite, so the legacy
+                    // glint must not ride along inside the mirror term (it would double the sun).
+                    // Sampled at the SHARED roughness mip: the mirror blurs with the same roughness
+                    // that widens the sun lobe - near-sharp at your feet, hazier toward the horizon.
+                    float surfaceViewDist = length(i.worldPos - _WorldSpaceCameraPos);
+                    float surfaceRoughness = EffectiveWaterRoughness(surfaceViewDist);
+                    float3 reflectedColor = SampleSkyEnvironmentRough(reflectedRay, surfaceRoughness);
 
                     // ---- Wave-crest subsurface glow: steep crests scatter sunlight toward the viewer,
                     // brightest looking INTO the sun. Crest steepness is the TRUE displacement-Jacobian fold
@@ -1275,7 +1399,21 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     // from both the ripple-foam and the ocean-whitecap sliders. ----
                     float surfFoamAlpha = 0.0;
                     float3 surfFoamLook = float3(0.0, 0.0, 0.0);
-                    float surfCoverage = saturate((surfFrag.whitewash + surfGeomFoam) * _SurfFoamStrength);
+                    // FOAM-1: artist pop curve. The LUT maps the front's lifecycle clock (overCap,
+                    // 0..SURF_CREST_LUT_OVERCAP_MAX) to crest-foam intensity, times the timing-free
+                    // lip footprint - the curve alone decides WHEN crest foam pops and how it holds/
+                    // releases. Inactive = 0 added; the legacy breaker window still feeds the sim
+                    // injection + SSS, so nothing is lost. tex2Dlod: no derivatives, WGSL-uniform.
+                    float surfCrestFoam = 0.0;
+                    if (_SurfCrestFoamLutActive > 0.5 && surfFrag.lipShape > 0.0)
+                    {
+                        float crestLutU = saturate(surfFrag.overCap / SURF_CREST_LUT_OVERCAP_MAX);
+                        float crestCurve = tex2Dlod(_SurfCrestFoamLut,
+                                                    float4(crestLutU, 0.5, 0.0, 0.0)).r;
+                        surfCrestFoam = crestCurve * surfFrag.lipShape * _SurfCrestFoamGain;
+                    }
+                    float surfCoverage = saturate((surfFrag.whitewash + surfCrestFoam + surfGeomFoam)
+                                                  * _SurfFoamStrength);
                     if (surfCoverage > FOAM_MASK_EPSILON)
                     {
                         // Same parallax lift as the ocean caps: foam reads as sitting ON the water.
@@ -1293,6 +1431,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         float surfContrast = lerp(OCEAN_WHITECAP_CONTRAST, OCEAN_WHITECAP_CONTRAST_DENSE, surfCoverage);
                         float surfSharpened = pow(saturate(surfPattern.r), surfContrast);
                         float surfThreshold = 1.0 - sqrt(surfCoverage);
+                        // FOAM-2: aged deposit rots into HOLES, not a uniform fade - age raises the
+                        // pattern-dissolve threshold, so old foam breaks into lace patches, then
+                        // filaments, then nothing (real sea foam dies by holes opening). trailAge
+                        // is bore-gated, so the bore head (age ~0) stays solid. 0 seconds = off.
+                        if (_SurfFoamTrailDissolve > 0.0)
+                            surfThreshold += saturate(surfFrag.trailAge / _SurfFoamTrailDissolve)
+                                           * SURF_TRAIL_ERODE_MAX;
                         float surfFoam = smoothstep(surfThreshold,
                                                     surfThreshold + max(_SurfFoamFeather, 1e-3),
                                                     surfSharpened);
@@ -1320,6 +1465,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
                     float3 outColor = lerp(refractedColor, reflectedColor,
                                            fresnel * _ReflectionStrength * (1.0 - foamMatte));
+
+                    // ---- GGX sun specular, added AFTER the fresnel composite: the lobe carries its
+                    // own Schlick term at the half-vector, so folding it into the reflection lerp
+                    // (which is weighted by the surface fresnel) would double-count Fresnel. Scaled
+                    // by the reflection dial and matted by foam exactly like the mirror term, which
+                    // also keeps reflection-off bodies sun-free like the legacy glint did. Shares
+                    // surfaceRoughness with the sky mip above (computed with reflectedColor). ----
+                    outColor += SunSpecular(normal, -incomingRay, surfaceRoughness)
+                              * (_ReflectionStrength * (1.0 - foamMatte));
 
                     // ---- Wave-crest subsurface glow, added emissively so it reads on EVERY sun-facing
                     // crest regardless of what is behind it (the earlier in-scatter form only showed where
@@ -1350,6 +1504,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     // as a dark wet-sand glaze instead of clipping away. Fully analytic (the swash and
                     // the drying wet line are closed-form functions of the wave clock); zero when the
                     // surf layer is off, so the classic hard waterline is byte-identical. ----
+                    // FOAM-3 swash foam accumulators - filled inside the bed-depth block below,
+                    // composited with the other foam layers after it (declared here for scope).
+                    float swashFoamAlpha = 0.0;
+                    float3 swashFoamLook = float3(0.0, 0.0, 0.0);
                     if (_UseBedDepth > 0.5 && _BedValid > 0.5)
                     {
                         float2 bedUV = i.position.xz * 0.5 + 0.5;
@@ -1403,6 +1561,78 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                                                                  / max(wetLevel, 1e-3));
                             float3 wetLook = refractedColor * 0.7 + reflectedColor * 0.12;
                             outColor = lerp(outColor, wetLook, glaze * 0.85);
+
+                            // ---- FOAM-3: swash foam. A foamy line rides the film's leading edge
+                            // up the beach, is STRANDED at the wash border (the wet line) at the
+                            // apex, then dissolves into holes and stretches into downslope drain
+                            // streaks through the reflux. Fully analytic: phase + levels are the
+                            // same closed forms as the film itself, so the foam can never desync
+                            // from the water it rides. Strength 0 = the block is skipped and the
+                            // beach is byte-identical. ----
+                            if (_SurfSwashFoam > 0.0 && _SurfActive > 0.5)
+                            {
+                                float swashT = max(_SurfPeriod, 0.5);
+                                // Same phase convention as EvaluateSurfSwash: 0 = crest arrival.
+                                float swashPhase = frac(_SurfBeatTime / swashT - 0.5);
+                                // Backwash progress: 0 through the uprush, 1 at full reflux.
+                                float refluxAge = smoothstep(SURF_SWASH_UPRUSH, 1.0, swashPhase);
+                                float swashBand = max(_SurfSwashFoamWidth, 0.01);
+                                // Bore edge: foam hugging the film's leading edge (rides up with
+                                // the uprush, retreats with the film - a thin working line).
+                                float edgeFoamW = saturate(1.0 - abs(beachRise - swashLevel) / swashBand);
+                                // Deposit: the line stranded at the wash border once the film has
+                                // turned - it appears AT the apex and ages through the backwash.
+                                float depositW = saturate(1.0 - abs(beachRise - wetLevel) / swashBand)
+                                               * refluxAge;
+                                float swashCoverage = saturate(max(edgeFoamW, depositW) * _SurfSwashFoam);
+                                if (swashCoverage > FOAM_MASK_EPSILON)
+                                {
+                                    // Downslope drain streaks: a LINEAR xz warp stretching the
+                                    // pattern along the local downslope axis (toward the water-
+                                    // line), growing with reflux age. Linear, so the hoisted
+                                    // gradients transform exactly (WGSL uniformity intact).
+                                    float2 streakAxis = shoreFrag.toShore;
+                                    float streakAlong = 1.0 / (1.0 + _SurfSwashStreak * refluxAge
+                                                                     * SURF_SWASH_STREAK_GAIN);
+                                    float2 swashXZ = i.largeWaveSourceXZ + streakAxis
+                                        * (dot(i.largeWaveSourceXZ, streakAxis) * (streakAlong - 1.0));
+                                    float2 swashDdx = foamWorldDdx + streakAxis
+                                        * (dot(foamWorldDdx, streakAxis) * (streakAlong - 1.0));
+                                    float2 swashDdy = foamWorldDdy + streakAxis
+                                        * (dot(foamWorldDdy, streakAxis) * (streakAlong - 1.0));
+                                    float swashDist = distance(i.largeWaveSourceXZ,
+                                                               _WorldSpaceCameraPos.xz);
+                                    float3 swashPattern = SampleOceanWhitecapPatternTiled(
+                                        swashXZ, swashDist, max(_SurfFoamTileSize, 1e-3),
+                                        swashDdx, swashDdy);
+                                    // Same contrast/threshold law as the surf whitewash, plus the
+                                    // reflux hole-erosion: age raises the dissolve threshold, so
+                                    // the stranded line rots into lace patches, then filaments.
+                                    float swashContrast = lerp(OCEAN_WHITECAP_CONTRAST,
+                                                               OCEAN_WHITECAP_CONTRAST_DENSE,
+                                                               swashCoverage);
+                                    float swashSharpened = pow(saturate(swashPattern.r), swashContrast);
+                                    float swashThreshold = 1.0 - sqrt(swashCoverage)
+                                        + refluxAge * _SurfSwashFoamDissolve * SURF_SWASH_ERODE_MAX;
+                                    float swashFoam = smoothstep(swashThreshold,
+                                                                 swashThreshold
+                                                                 + max(_SurfFoamFeather, 1e-3),
+                                                                 swashSharpened);
+                                    if (swashFoam > FOAM_MASK_EPSILON)
+                                    {
+                                        // Lit like the whitewash (wrapped sun over the surface
+                                        // normal); tinted by the shared surf foam colour so the
+                                        // line matches the bores that fed it. NOTE: the specular
+                                        // matte skips this layer (the beach zone is already pulled
+                                        // hard toward the refracted ground above).
+                                        float swashWrapped = FoamWrappedDiffuse(normal, _LightDir);
+                                        float3 swashTint = _SurfFoamColor.rgb
+                                            * lerp(swashPattern, float3(1.0, 1.0, 1.0), swashFoam);
+                                        swashFoamLook = FoamLitColor(swashTint, _SunColor, swashWrapped);
+                                        swashFoamAlpha = swashFoam * _SurfFoamColor.a;
+                                    }
+                                }
+                            }
                         }
                     }
                     // ---- Exclusive foam composite (looks evaluated above, before the reflection
@@ -1411,13 +1641,16 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     // the layers (never their stack) and the colour is their alpha-weighted blend, so a
                     // lone layer is bit-identical to the old per-layer lerp while overlap can no longer
                     // double-lay foam. ----
-                    float foamCombinedAlpha = max(max(oceanFoamAlpha, pondFoamAlpha), surfFoamAlpha);
+                    float foamCombinedAlpha = max(max(max(oceanFoamAlpha, pondFoamAlpha),
+                                                      surfFoamAlpha), swashFoamAlpha);
                     if (foamCombinedAlpha > 0.0)
                     {
                         float3 foamCombinedLook = (oceanFoamLook * oceanFoamAlpha
                                                    + pondFoamLook * pondFoamAlpha
-                                                   + surfFoamLook * surfFoamAlpha)
-                                                / max(oceanFoamAlpha + pondFoamAlpha + surfFoamAlpha, 1e-5);
+                                                   + surfFoamLook * surfFoamAlpha
+                                                   + swashFoamLook * swashFoamAlpha)
+                                                / max(oceanFoamAlpha + pondFoamAlpha
+                                                      + surfFoamAlpha + swashFoamAlpha, 1e-5);
                         outColor = lerp(outColor, foamCombinedLook, foamCombinedAlpha);
                     }
 

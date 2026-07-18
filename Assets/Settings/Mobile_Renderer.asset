@@ -91,7 +91,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7155a8d66d68e7348af229f0a29aae85, type: 3}
   m_Name: LargeBodyAtmosphereFeature
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.LargeBodyAtmosphereFeature
-  m_Active: 1
+  m_Active: 0
   godRayShader: {fileID: 4800000, guid: b96b932221599ec468e4bdd24b6b68ad, type: 3}
 --- !u!114 &8844371543007160279
 MonoBehaviour:

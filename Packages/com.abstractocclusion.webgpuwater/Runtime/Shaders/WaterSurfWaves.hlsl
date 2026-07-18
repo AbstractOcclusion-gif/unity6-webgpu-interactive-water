@@ -55,6 +55,15 @@ float _SurfFoamStrength;  // coverage scale of the whitewash/geometry foam layer
 float _SurfFoamFeather;   // dissolve softness at the coverage threshold (0 = hard-edged lace)
 float _SurfFoamTileSize;  // metres per foam-pattern tile on the surf
 float4 _SurfFoamColor;    // rgb tint, a = master opacity
+// Whitewash REPARTITION weights (FOAM-2). ALL RENDER-ONLY: foam never moves the surface, so none
+// of these are CPU-mirrored or validator-guarded. _SurfFoamRepartActive gates the whole set - a
+// body that never publishes it (0) collapses every weight to the legacy constants, so existing
+// scenes stay byte-identical. Published by WaterShoreDepthField (surface) and
+// ShoreFoamState.BindTo (sim + particle computes).
+float _SurfFoamRepartActive; // 1 = the repartition weights below are live
+float _SurfFoamBoreGain;     // whitewash weight of the bore head (1 = legacy)
+float _SurfFoamTrailGain;    // whitewash weight of the trailing deposit (1 = legacy)
+float _SurfFoamTrailLength;  // trailing-deposit length multiplier (1 = legacy)
 
 #define SURF_TWO_PI            6.28318530718
 #define SURF_MIN_DEPTH         0.05  // metre floor under every depth divide
@@ -89,6 +98,13 @@ float4 _SurfFoamColor;    // rgb tint, a = master opacity
 // The swash film rides this far (m) proud of the sand, so the film/glaze fragments WIN the depth
 // test against the opaque beach (a flat plane under the terrain would be entirely occluded).
 #define SURF_FILM_THICKNESS    0.03
+// Lifecycle x-axis span of the crest-foam pop LUT (FOAM-1): overCap 0..this maps to LUT u 0..1.
+// LOCKSTEP with WaterVolume.SurfCrestLutOverCapMax (the C# curve bake) - render-only foam, so it
+// is NOT a validator-guarded height pair; the comment is the contract.
+#define SURF_CREST_LUT_OVERCAP_MAX 2.0
+// Base weight of the trailing deposit inside the whitewash max() (the historic 0.4 - named so the
+// FOAM-2 repartition multiplies a constant, not a magic number).
+#define SURF_TRAIL_BASE_WEIGHT 0.4
 
 // --- Slope-aware breaker physics (SURF-PHYS) -----------------------------------------------------
 // The bathymetry now diversifies the coastline by itself: the baked beach slope (SDF texture A
@@ -249,8 +265,8 @@ float SurfGamma(float tanBeta)
 //   .y whitewash: 0..1 broken-bore coverage (foam fuel, trails behind the moving front)
 //   .z breaker:   0..1 "cresting/about to break" signal (thin line at the lip - foam + SSS fuel)
 // Everything the front lifecycle knows at one evaluation point - shared by the height/whitewash/
-// breaker composition (SurfFrontHeight below) and the plunging lip sheet (WaterSurfCurl.hlsl), so
-// the sheet can never drift from the surface it decorates. The CPU mirror reproduces the HEIGHT
+// breaker composition (SurfFrontHeight below) and the foam-side extras (SurfFrontFoamFromTerms),
+// so no consumer can drift from the surface it decorates. The CPU mirror reproduces the HEIGHT
 // composition only; splitting terms out changes no math.
 struct SurfFrontTerms
 {
@@ -343,10 +359,28 @@ float SurfFrontHeightFromTerms(SurfFrontTerms t)
     return lerp(t.height * t.profile, t.boreAmp * t.boreSech, t.broken);
 }
 
-float3 SurfFrontHeight(float2 worldXZ, float sWarp, float depth, float tanBeta, float time)
+// Foam-side signals of one front evaluation (ALL RENDER-ONLY - nothing here feeds height, so no
+// CPU mirror). Split out of SurfFrontHeight so consumers that also want the artist pop-curve
+// inputs (lipShape + the overCap already in the terms) get them from the SAME evaluation.
+struct SurfFrontFoam
 {
-    SurfFrontTerms t = SurfComputeFrontTerms(worldXZ, sWarp, depth, tanBeta, time);
-    float height = SurfFrontHeightFromTerms(t);
+    float whitewash; // 0..1 broken-bore + trailing-deposit + splash-down coverage
+    float breaker;   // 0..1 legacy cresting-lip signal (= lipShape x the built-in pop window)
+    float lipShape;  // WHERE crest foam can live (lip profile, plunge-widened, surge-killed) with
+                     // NO timing window - the FOAM-1 artist curve owns WHEN via overCap
+    float trailAge;  // seconds since the crest passed this point (0 at/ahead of the crest, grows
+                     // offshore through the deposit trail; bore-gated so unbroken fronts stay 0)
+};
+
+SurfFrontFoam SurfFrontFoamFromTerms(SurfFrontTerms t)
+{
+    SurfFrontFoam foam;
+    // FOAM-2 repartition: bore-head vs trailing-deposit weights + trail length. All lerped from
+    // the legacy constants by the publish gate, so unpublished bodies are byte-identical.
+    float repart = saturate(_SurfFoamRepartActive);
+    float boreWeight = lerp(1.0, _SurfFoamBoreGain, repart);
+    float trailWeight = lerp(1.0, _SurfFoamTrailGain, repart);
+    float trailLenMul = lerp(1.0, max(_SurfFoamTrailLength, 0.05), repart);
 
     // Whitewash: rides the bore and TRAILS OFFSHORE behind the shoreward-moving front (the churned
     // water is left behind as the front travels on; the shoreward side gets its foam from the sim
@@ -356,24 +390,39 @@ float3 SurfFrontHeight(float2 worldXZ, float sWarp, float depth, float tanBeta, 
     // exactly the "big slow band" failure. Gated by the set amplitude so lulls stay clean.
     // Breaker-type shaping (render-only): plunging throws a narrower, more intense whitewash;
     // surging produces none at all (its 'broken' is already killed above).
-    float trailLen = t.backLen * lerp(1.0, SURF_PLUNGE_TRAIL_NARROW, t.breakType.y);
+    float trailLen = t.backLen * lerp(1.0, SURF_PLUNGE_TRAIL_NARROW, t.breakType.y) * trailLenMul;
     float trail = (t.dAcross > 0.0) ? exp(-t.dAcross / trailLen) : 0.0;
-    float whitewash = t.broken * max(t.boreSech, 0.4 * trail) * saturate(t.setAmp)
+    float whitewash = t.broken
+                    * max(t.boreSech * boreWeight, SURF_TRAIL_BASE_WEIGHT * trail * trailWeight)
+                    * saturate(t.setAmp)
                     * (1.0 + SURF_PLUNGE_WHITEWASH_GAIN * t.breakType.y);
     // Splash-down lobe: the plunging jet churns its LANDING point (shoreward of the crest, where
     // dAcross is negative) while the front is still cresting - see SURF_PLUNGE_LANDING_*.
     float landing = t.breakType.y * t.cresting * (1.0 - t.broken) * saturate(t.setAmp)
                   * exp(-abs(t.dAcross + SURF_PLUNGE_LANDING_AHEAD * t.faceLen)
                         / max(SURF_PLUNGE_LANDING_WIDTH * t.faceLen, 1e-3));
-    whitewash = saturate(whitewash + landing * SURF_PLUNGE_LANDING_FOAM);
+    foam.whitewash = saturate(whitewash + landing * SURF_PLUNGE_LANDING_FOAM);
     // Thin cresting line right at the lip while the front is breaking (not yet fully broken).
-    // Plunging amplifies AND widens the lip (this signal gates the curl sheet); surging
-    // has no lip at all - the face never overturns.
+    // Plunging amplifies AND widens the lip; surging has no lip at all - the face never overturns.
+    // lipShape is the timing-free part; the legacy breaker keeps its built-in cresting window.
     float lipProfile = pow(t.profile, lerp(1.0, SURF_PLUNGE_BREAKER_WIDEN, t.breakType.y));
-    float breaker = t.cresting * (1.0 - t.broken) * lipProfile
-                  * (1.0 + SURF_PLUNGE_BREAKER_GAIN * t.breakType.y) * (1.0 - t.breakType.z);
+    foam.lipShape = lipProfile * (1.0 + SURF_PLUNGE_BREAKER_GAIN * t.breakType.y)
+                  * (1.0 - t.breakType.z);
+    foam.breaker = t.cresting * (1.0 - t.broken) * foam.lipShape;
+    // Deposit age: the front travels ~one wavelength per period, so metres behind the crest map
+    // to seconds since it passed. A render-only heuristic (the warp compresses true speed near
+    // the waterline) - good enough to drive the FOAM-2 hole-dissolve, never height.
+    float L = max(_SurfWavelength, 1.0);
+    float T = max(_SurfPeriod, 0.5);
+    foam.trailAge = t.broken * max(t.dAcross, 0.0) * (T / L);
+    return foam;
+}
 
-    return float3(height, whitewash, breaker);
+float3 SurfFrontHeight(float2 worldXZ, float sWarp, float depth, float tanBeta, float time)
+{
+    SurfFrontTerms t = SurfComputeFrontTerms(worldXZ, sWarp, depth, tanBeta, time);
+    SurfFrontFoam foam = SurfFrontFoamFromTerms(t);
+    return float3(SurfFrontHeightFromTerms(t), foam.whitewash, foam.breaker);
 }
 
 // Everything the surface / foam / CPU mirror needs from the front layer at one world xz.
@@ -384,6 +433,10 @@ struct SurfWaveSample
     float whitewash;  // 0..1 whitewash coverage (broken bore + trail)
     float breaker;    // 0..1 cresting-lip signal (foam + subsurface glow fuel)
     float mask;       // 0..1 where the front layer owns the surface (ambient-fade weight)
+    // FOAM-1/2 render-only extras (all 0 when inert, so non-surf consumers see no foam):
+    float overCap;    // the front's lifecycle clock H/(gamma*d) - x input of the artist pop LUT
+    float lipShape;   // mask-weighted timing-free lip footprint (multiply by the LUT sample)
+    float trailAge;   // seconds since the crest passed (drives the deposit hole-dissolve)
 };
 
 // The inert (all-zero) sample: one definition, so every early-out and every caller's default is
@@ -396,6 +449,9 @@ SurfWaveSample SurfWaveSampleInert()
     o.whitewash = 0.0;
     o.breaker = 0.0;
     o.mask = 0.0;
+    o.overCap = 0.0;
+    o.lipShape = 0.0;
+    o.trailAge = 0.0;
     return o;
 }
 
@@ -407,7 +463,7 @@ SurfWaveSample SurfWaveSampleInert()
 // the water shallows into the band - the tight wet fade keeps them running almost to the
 // waterline; a wide fade STRANDED the foam ~25 cm deep) x wet x field influence x shore exposure
 // (the swell-facing coast gets the surf; the lee side calms down). Shared by EvaluateSurfWaves and
-// the plunging lip sheet (WaterSurfCurl.hlsl), so the sheet's foot masks exactly like the surface.
+// every other surf consumer, so they all mask exactly like the surface.
 float SurfFieldMask(float depth, float2 toShore, float influence)
 {
     float band = max(_SurfBandDepth, 0.25);
@@ -439,7 +495,11 @@ SurfWaveSample EvaluateSurfWaves(float2 worldXZ, float depth, float sdfDist, flo
     if (mask <= 0.001 && lace <= 0.001) return o;
 
     float s = max(sdfDist, 0.0);
-    float3 front = SurfFrontHeight(worldXZ, SurfWarpDistance(s), depth, tanBeta, time); // (height, whitewash, breaker)
+    // ONE terms evaluation shared by height, whitewash/breaker AND the FOAM-1/2 extras (overCap /
+    // lipShape / trailAge) - same math SurfFrontHeight composes, just not thrown away.
+    SurfFrontTerms terms = SurfComputeFrontTerms(worldXZ, SurfWarpDistance(s), depth, tanBeta, time);
+    SurfFrontFoam frontFoam = SurfFrontFoamFromTerms(terms);
+    float frontHeight = SurfFrontHeightFromTerms(terms);
 
     // Slope by finite difference ALONG the shore-distance axis (the front varies along it by
     // construction). The FD step may straddle a cell edge and re-derive the front index - safe,
@@ -447,13 +507,16 @@ SurfWaveSample EvaluateSurfWaves(float2 worldXZ, float depth, float sdfDist, flo
     // difference stays bounded instead of spiking the normal.
     // grad(sdfDist) = -toShore, since distance grows offshore.
     float h1 = SurfFrontHeight(worldXZ, SurfWarpDistance(s + SURF_SLOPE_EPSILON), depth, tanBeta, time).x;
-    float dhds = (h1 - front.x) / SURF_SLOPE_EPSILON;
+    float dhds = (h1 - frontHeight) / SURF_SLOPE_EPSILON;
 
-    o.height = front.x * mask;
+    o.height = frontHeight * mask;
     o.slopeXZ = -toShore * (dhds * mask);
-    o.whitewash = saturate(front.y * mask + lace);
-    o.breaker = saturate(front.z * mask);
+    o.whitewash = saturate(frontFoam.whitewash * mask + lace);
+    o.breaker = saturate(frontFoam.breaker * mask);
     o.mask = mask;
+    o.overCap = terms.overCap;
+    o.lipShape = frontFoam.lipShape * mask;
+    o.trailAge = frontFoam.trailAge;
     return o;
 }
 

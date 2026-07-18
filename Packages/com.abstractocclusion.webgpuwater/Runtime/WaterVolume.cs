@@ -1143,6 +1143,44 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("Whitewash tint (RGB) and master opacity (A).")]
             public Color surfFoamColor = Color.white;
 
+            [Header("Surf foam enhancement (pop curve / repartition / swash) - all render-only")]
+            [Tooltip("Drive WHEN crest foam pops with the artist curve below instead of the " +
+                     "built-in window. Off = legacy look, byte-identical.")]
+            public bool surfCrestFoamCurveEnabled = false;
+            [Tooltip("Crest-foam intensity over the front's lifecycle clock (x = H over the " +
+                     "breaking limit, 0..2; breaking starts at ~1). The default bump reproduces " +
+                     "the built-in pop window - drag keys to pop earlier/later, add a small " +
+                     "early bump for pre-break spume, hold the tail for lingering lip foam.")]
+            public AnimationCurve surfCrestFoamCurve = new AnimationCurve(
+                new Keyframe(0.75f, 0f), new Keyframe(1.05f, 1f),
+                new Keyframe(1.5f, 0f), new Keyframe(2f, 0f));
+            [Tooltip("Master gain on the curve-driven crest foam.")]
+            [Range(0f, 3f)] public float surfCrestFoamGain = 1f;
+            [Tooltip("Whitewash weight of the BORE HEAD (the churned mound riding the broken " +
+                     "front). 1 = legacy balance.")]
+            [Range(0f, 2f)] public float surfFoamBoreGain = 1f;
+            [Tooltip("Whitewash weight of the TRAILING DEPOSIT left behind the front. 1 = " +
+                     "legacy balance.")]
+            [Range(0f, 2f)] public float surfFoamTrailGain = 1f;
+            [Tooltip("Length multiplier of the trailing deposit (1 = legacy). Longer trails " +
+                     "read as heavier churn; keep below ~2 so neighbouring fronts' foam never " +
+                     "merges into one static carpet.")]
+            [Range(0.2f, 3f)] public float surfFoamTrailLength = 1f;
+            [Tooltip("Seconds an aged deposit takes to rot into holes behind the bore (real " +
+                     "foam dies by holes opening, not by fading). 0 = off (legacy uniform look).")]
+            [Range(0f, 20f)] public float surfFoamTrailDissolve = 0f;
+            [Tooltip("Swash foam strength: a foamy line rides the uprush film, strands at the " +
+                     "wash border, then dissolves through the reflux. 0 = off.")]
+            [Range(0f, 2f)] public float surfSwashFoam = 0.8f;
+            [Tooltip("Metres of run-up height the swash foam band covers around the film edge " +
+                     "and the stranded line.")]
+            [Range(0.02f, 1f)] public float surfSwashFoamWidth = 0.25f;
+            [Tooltip("How hard reflux age erodes the stranded foam line into lace holes (0 = " +
+                     "the line only drains with the next uprush).")]
+            [Range(0f, 1f)] public float surfSwashFoamDissolve = 0.6f;
+            [Tooltip("Downslope streak stretch of the swash foam during the backwash - drain " +
+                     "marks running toward the waterline.")]
+            [Range(0f, 1f)] public float surfSwashStreak = 0.5f;
         }
 
         // Same-named forwarding accessors keep every reader unchanged (WaterBedBaker, the publisher).
@@ -1217,6 +1255,95 @@ namespace AbstractOcclusion.WebGpuWater
         internal float surfFoamFeather => bedDepthSettings.surfFoamFeather;
         internal float surfFoamTileSize => bedDepthSettings.surfFoamTileSize;
         internal Color surfFoamColor => bedDepthSettings.surfFoamColor;
+        internal float surfCrestFoamGain => bedDepthSettings.surfCrestFoamGain;
+        internal float surfFoamBoreGain => bedDepthSettings.surfFoamBoreGain;
+        internal float surfFoamTrailGain => bedDepthSettings.surfFoamTrailGain;
+        internal float surfFoamTrailLength => bedDepthSettings.surfFoamTrailLength;
+        internal float surfFoamTrailDissolve => bedDepthSettings.surfFoamTrailDissolve;
+        internal float surfSwashFoam => bedDepthSettings.surfSwashFoam;
+        internal float surfSwashFoamWidth => bedDepthSettings.surfSwashFoamWidth;
+        internal float surfSwashFoamDissolve => bedDepthSettings.surfSwashFoamDissolve;
+        internal float surfSwashStreak => bedDepthSettings.surfSwashStreak;
+
+        // ---- FOAM-1: crest-foam pop curve -> 1D LUT bake -----------------------------------
+        // The AnimationCurve is baked to a tiny R8 LUT the surface (tex2Dlod) and the foam sim
+        // (SampleLevel) both read. Rebaked whenever the curve's key signature changes, so play-
+        // mode curve tuning is live without any editor-side hook. Render-only foam - the max
+        // below is a LOCKSTEP comment contract with the shader, not a validator height pair.
+        internal const float SurfCrestLutOverCapMax = 2f; // LOCKSTEP: SURF_CREST_LUT_OVERCAP_MAX (WaterSurfWaves.hlsl)
+        const int SurfCrestLutResolution = 128;
+        [System.NonSerialized] Texture2D _surfCrestFoamLut;
+        [System.NonSerialized] float _surfCrestFoamLutSignature = float.NaN;
+
+        internal bool SurfCrestFoamLutActive
+            => bedDepthSettings.surfCrestFoamCurveEnabled
+               && bedDepthSettings.surfCrestFoamCurve != null
+               && bedDepthSettings.surfCrestFoamCurve.length > 0;
+
+        /// <summary>The baked pop-curve LUT (null when the curve is disabled/empty). Lazily
+        /// (re)baked on access - callers must gate on SurfCrestFoamLutActive.</summary>
+        internal Texture2D SurfCrestFoamLutTexture
+        {
+            get
+            {
+                if (!SurfCrestFoamLutActive) return null;
+                EnsureSurfCrestFoamLutBaked();
+                return _surfCrestFoamLut;
+            }
+        }
+
+        // Cheap per-frame change detection: fold every key's shape into one float. The indexer
+        // (curve[i]) does not allocate, unlike the .keys array property.
+        static float SurfCrestFoamCurveSignature(AnimationCurve curve)
+        {
+            float signature = curve.length;
+            for (int i = 0; i < curve.length; i++)
+            {
+                Keyframe key = curve[i];
+                signature = signature * 31f + key.time;
+                signature = signature * 31f + key.value;
+                signature = signature * 31f + key.inTangent;
+                signature = signature * 31f + key.outTangent;
+            }
+            return signature;
+        }
+
+        void EnsureSurfCrestFoamLutBaked()
+        {
+            AnimationCurve curve = bedDepthSettings.surfCrestFoamCurve;
+            float signature = SurfCrestFoamCurveSignature(curve);
+            if (_surfCrestFoamLut != null && signature == _surfCrestFoamLutSignature) return;
+
+            if (_surfCrestFoamLut == null)
+            {
+                _surfCrestFoamLut = new Texture2D(SurfCrestLutResolution, 1, TextureFormat.R8,
+                                                  mipChain: false, linear: true)
+                {
+                    name = "SurfCrestFoamLut",
+                    wrapMode = TextureWrapMode.Clamp,
+                    filterMode = FilterMode.Bilinear,
+                    hideFlags = HideFlags.HideAndDontSave,
+                };
+            }
+            var texels = new byte[SurfCrestLutResolution];
+            for (int i = 0; i < SurfCrestLutResolution; i++)
+            {
+                float overCap = (i / (float)(SurfCrestLutResolution - 1)) * SurfCrestLutOverCapMax;
+                texels[i] = (byte)Mathf.RoundToInt(Mathf.Clamp01(curve.Evaluate(overCap)) * 255f);
+            }
+            _surfCrestFoamLut.SetPixelData(texels, 0);
+            _surfCrestFoamLut.Apply(updateMipmaps: false, makeNoLongerReadable: false);
+            _surfCrestFoamLutSignature = signature;
+        }
+
+        void DestroySurfCrestFoamLut()
+        {
+            if (_surfCrestFoamLut == null) return;
+            if (Application.isPlaying) Destroy(_surfCrestFoamLut);
+            else DestroyImmediate(_surfCrestFoamLut);
+            _surfCrestFoamLut = null;
+            _surfCrestFoamLutSignature = float.NaN;
+        }
 
         // Legacy capture (pre-Phase-2 scenes) -> copied once by MigrateBedDepthV8. Hidden; do not edit.
         [SerializeField, HideInInspector, FormerlySerializedAs("useBedDepth")] bool _legacyUseBedDepth = false;
@@ -1583,6 +1710,7 @@ namespace AbstractOcclusion.WebGpuWater
         int _causticInterval = WaterQuality.Default.CausticInterval;
         int _readbackInterval = WaterQuality.Default.ReadbackInterval;
         int _maxFoamParticles = WaterQuality.Default.MaxFoamParticles;
+        WaterQuality.UnderwaterMode _underwaterFogMode = WaterQuality.Default.UnderwaterFog;
         /// <summary>Tier cap on the GPU foam-particle pool (WaterFoamParticles clamps to it).</summary>
         internal int FoamParticleBudget => _maxFoamParticles;
         // Per-body surface material instances so reflection keywords don't leak across bodies
@@ -1809,6 +1937,7 @@ namespace AbstractOcclusion.WebGpuWater
         void OnDisable()
         {
             RenderPipelineManager.beginCameraRendering -= OnBeginCameraRender;
+            DestroySurfCrestFoamLut(); // FOAM-1 LUT is lazy-baked, so it may exist pre-init too
             if (!_initialized) return; // never initialized (missing wiring / capability guard)
 
             _initialized = false;
@@ -2044,6 +2173,7 @@ namespace AbstractOcclusion.WebGpuWater
             _causticInterval = tier.CausticInterval;
             _readbackInterval = tier.ReadbackInterval;
             _maxFoamParticles = tier.MaxFoamParticles;
+            _underwaterFogMode = tier.UnderwaterFog;
 
             // One line per enable so a build's console shows exactly which knobs landed -
             // tier mismatches (stale build cache, wrong asset, missing serialized fields)
@@ -2051,7 +2181,8 @@ namespace AbstractOcclusion.WebGpuWater
             Debug.Log($"WaterVolume '{name}': quality tier applied - sim {_simRes}, caustics {causticResolution}, " +
                       $"mesh {(_meshDetail > 0 ? _meshDetail.ToString() : "authored")}, renderScale {_renderScale:0.##}, " +
                       $"realRefraction {_realRefractionAllowed}, godRays {_godRaysAllowed} ({_godRaySteps} steps), " +
-                      $"waves {_maxWaveCount}, refine {_peakedRefineSteps}, foamCap {_maxFoamParticles}", this);
+                      $"waves {_maxWaveCount}, refine {_peakedRefineSteps}, foamCap {_maxFoamParticles}, " +
+                      $"underwaterFog {_underwaterFogMode}", this);
         }
 
         // Scale the interactive-sim grid to the body's footprint at the chosen ripple quality so
@@ -3034,6 +3165,14 @@ namespace AbstractOcclusion.WebGpuWater
                 state.Greens = shoreGreens;
                 state.AmbientFade = surfAmbientFade;
                 state.ShoalDepth = shoreShoalDepth;
+                // FOAM-1/2: the pop-curve LUT + repartition weights, so the sim's injected foam
+                // pops and repartitions exactly like the rendered whitewash.
+                state.CrestFoamLutActive = SurfCrestFoamLutActive;
+                state.CrestFoamLut = SurfCrestFoamLutTexture;
+                state.CrestFoamGain = surfCrestFoamGain;
+                state.BoreGain = surfFoamBoreGain;
+                state.TrailGain = surfFoamTrailGain;
+                state.TrailLength = surfFoamTrailLength;
             }
             return state;
         }
@@ -3209,11 +3348,17 @@ namespace AbstractOcclusion.WebGpuWater
             bool submerged = ComputeCameraSubmerged(out float surfaceY);
             // Ocean fog is infinite, so it only matters when the camera is submerged. A bounded pond is a
             // finite fog volume clipped to its box, so it should render from ANY angle (circle it and see
-            // the murk inside) whenever Water Fog is on.
-            UnderwaterFogActive = waterFog && (IsOceanClipmap ? submerged : true);
+            // the murk inside) whenever Water Fog is on. The quality tier's Off mode wins over everything:
+            // the fullscreen pass never enqueues on tiers that can't afford it.
+            bool tierAllowsFog = _underwaterFogMode != WaterQuality.UnderwaterMode.Off;
+            UnderwaterFogActive = waterFog && tierAllowsFog && (IsOceanClipmap ? submerged : true);
             // The unbounded flag tells the shader to fog the whole below-surface half-space (ocean) vs
-            // clip the fog to this body's box (pond / bounded lake = a finite fog volume).
-            Publisher.PublishUnderwater(submerged ? 1f : 0f, surfaceY, IsOceanClipmap ? 1f : 0f);
+            // clip the fog to this body's box (pond / bounded lake = a finite fog volume). Simple mode
+            // swaps the shader's per-pixel wavy-waterline march for the closed-form flat waterline at
+            // surfaceY (wave-aware at the camera's xz, so the line still rides the local swell).
+            bool fogSimple = _underwaterFogMode == WaterQuality.UnderwaterMode.Simple;
+            Publisher.PublishUnderwater(submerged ? 1f : 0f, surfaceY, IsOceanClipmap ? 1f : 0f,
+                                        fogSimple ? 1f : 0f);
         }
 
         // A little beyond the [-1,1] footprint so an edge-on view of a pond still triggers; the shader

@@ -16,7 +16,7 @@ using UnityEngine;
 namespace AbstractOcclusion.WebGpuWater
 {
     [CreateAssetMenu(fileName = "WaterFoamProfile",
-                     menuName = "AbstractOcclusion/Water/Water Foam Profile")]
+                     menuName = "AbstractOcclusion/WebGpuWater/Water Foam Profile")]
     public sealed class WaterFoamProfile : ScriptableObject
     {
         // Shader property ids for the look/veil overrides (same names on FoamParticles

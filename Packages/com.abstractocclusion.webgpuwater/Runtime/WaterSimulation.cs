@@ -271,6 +271,12 @@ namespace AbstractOcclusion.WebGpuWater
                          CrestLength, CrestVariation, CrestPersistence, Directionality;
             public float ShoalDepth; // _ShoreShoalDepth: the particles' density glue shoals with it
             public Vector4 WindDir;  // xy = (cos, sin) of the swell heading
+            // FOAM-1/2 (render-only foam shaping, mirrored into the computes so injected foam
+            // matches the rendered whitewash): the pop-curve LUT + the repartition weights.
+            public Texture CrestFoamLut;    // baked pop curve (null = legacy fixed window)
+            public bool CrestFoamLutActive;
+            public float CrestFoamGain;     // matches the surface's _SurfCrestFoamGain
+            public float BoreGain, TrailGain, TrailLength; // _SurfFoam* repartition weights
 
             static readonly int ID_ShoreFoamActive = Shader.PropertyToID("_ShoreFoamActive");
             static readonly int ID_ShoreFoamGain = Shader.PropertyToID("_ShoreFoamGain");
@@ -299,6 +305,13 @@ namespace AbstractOcclusion.WebGpuWater
             static readonly int ID_SurfDirectionalitySim = Shader.PropertyToID("_SurfDirectionality");
             static readonly int ID_SurfWindDirXZSim = Shader.PropertyToID("_SurfWindDirXZ");
             static readonly int ID_ShoreShoalDepthSim = Shader.PropertyToID("_ShoreShoalDepth");
+            static readonly int ID_ShoreCrestFoamLutSim = Shader.PropertyToID("_ShoreCrestFoamLutSim");
+            static readonly int ID_ShoreCrestFoamLutActive = Shader.PropertyToID("_ShoreCrestFoamLutActive");
+            static readonly int ID_ShoreCrestFoamGain = Shader.PropertyToID("_ShoreCrestFoamGain");
+            static readonly int ID_SurfFoamRepartActive = Shader.PropertyToID("_SurfFoamRepartActive");
+            static readonly int ID_SurfFoamBoreGain = Shader.PropertyToID("_SurfFoamBoreGain");
+            static readonly int ID_SurfFoamTrailGain = Shader.PropertyToID("_SurfFoamTrailGain");
+            static readonly int ID_SurfFoamTrailLength = Shader.PropertyToID("_SurfFoamTrailLength");
 
             /// <summary>Push the surf-front uniforms + the Layer A field textures onto a compute
             /// kernel - the ONE binder every GPU consumer (ripple-sim foam injection, foam
@@ -313,7 +326,20 @@ namespace AbstractOcclusion.WebGpuWater
                               DepthTex != null ? DepthTex : Texture2D.blackTexture);
                 cs.SetTexture(kernel, ID_ShoreSDFTexSim,
                               SdfTex != null ? SdfTex : Texture2D.blackTexture);
+                // FOAM-1 LUT: always bound (black fallback - WebGPU must never see an unbound
+                // sampler); the active flag gates all reads.
+                bool lutActive = active && CrestFoamLutActive && CrestFoamLut != null;
+                cs.SetTexture(kernel, ID_ShoreCrestFoamLutSim,
+                              CrestFoamLut != null ? CrestFoamLut : Texture2D.blackTexture);
+                cs.SetFloat(ID_ShoreCrestFoamLutActive, lutActive ? 1f : 0f);
                 if (!active) return;
+                cs.SetFloat(ID_ShoreCrestFoamGain, CrestFoamGain);
+                // FOAM-2 repartition weights: published as live so the compute's whitewash
+                // matches the surface's (the gate lerps the weights in from the legacy constants).
+                cs.SetFloat(ID_SurfFoamRepartActive, 1f);
+                cs.SetFloat(ID_SurfFoamBoreGain, BoreGain);
+                cs.SetFloat(ID_SurfFoamTrailGain, TrailGain);
+                cs.SetFloat(ID_SurfFoamTrailLength, TrailLength);
                 cs.SetFloat(ID_ShoreFoamGain, FoamGain);
                 cs.SetFloat(ID_ShoreWaterlineFoamGain, WaterlineGain);
                 cs.SetFloat(ID_ShoreFoamTime, Time);

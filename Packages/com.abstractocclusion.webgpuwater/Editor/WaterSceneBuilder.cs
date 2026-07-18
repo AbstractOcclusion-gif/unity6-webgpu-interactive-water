@@ -39,6 +39,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             volume.causticsShader = shaders.Caustics;
             volume.obstacleShader = shaders.Obstacle;
             volume.occluderShader = Shader.Find("AbstractOcclusion/WebGpuWater/CausticOccluder");
+            // Ocean-only, optional: keep the prefab at parity with the wizard body so an ocean
+            // dropped from this prefab gets FFT waves + near-field caustics without hand-wiring.
+            volume.oceanFftCompute = AssetDatabase.LoadAssetAtPath<ComputeShader>(OceanFftComputePath);
+            volume.largeBodyCausticsShader = Shader.Find("AbstractOcclusion/WebGpuWater/LargeBodyCaustics");
             volume.waterMesh = grid;
             volume.tiles = tiles;
             volume.sky = sky;
@@ -161,6 +165,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             body.causticsShader = primary.causticsShader;
             body.obstacleShader = primary.obstacleShader;
             body.occluderShader = primary.occluderShader;
+            body.oceanFftCompute = primary.oceanFftCompute;
+            body.largeBodyCausticsShader = primary.largeBodyCausticsShader;
             body.waterMesh = primary.waterMesh;
             body.targetCamera = primary.targetCamera;
             body.sun = primary.sun;

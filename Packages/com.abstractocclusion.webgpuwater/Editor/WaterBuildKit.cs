@@ -578,7 +578,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // ---------------------------------------------------------------- textures
         internal static Cubemap BuildSky(int size)
         {
-            var cube = new Cubemap(size, TextureFormat.RGB24, false);
+            // WITH a mip chain: the water surface samples this cube at a roughness-driven mip
+            // (texCUBElod in WaterSurface.shader), so a rough/distant surface reflects a BLURRED
+            // sky. Without mips that lod sample silently clamps to mip 0 and the blur is dead.
+            // Apply() below regenerates the mips from the authored mip 0 (its default).
+            var cube = new Cubemap(size, TextureFormat.RGB24, true);
             CubemapFace[] faces = {
                 CubemapFace.PositiveX, CubemapFace.NegativeX,
                 CubemapFace.PositiveY, CubemapFace.NegativeY,

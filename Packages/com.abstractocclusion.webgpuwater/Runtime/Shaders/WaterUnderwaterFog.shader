@@ -10,6 +10,9 @@
 //   1 Inscatter: scene += fog * (1 - pathTransmittance) * depthAttenuation   (Blend One One)
 // Driven by WaterUnderwaterFogFeature (gated on WaterVolume.UnderwaterFogActive: ocean = submerged
 // only, pond = whenever Water Fog is on). U2: per-pixel wave-aware waterline - the surface crossing follows crests/troughs.
+// U3: quality-tier Simple mode (_UnderwaterFogSimple, a uniform so every pixel takes the same branch):
+// the closed-form flat waterline at _UnderwaterSurfaceY replaces the per-pixel crossing march - the
+// budget path for WebGPU/mobile tiers. Same absorption/inscatter/darkening either way.
 Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
 {
     SubShader
@@ -28,13 +31,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         #include "WaterWaves.hlsl"      // WaveHeight: wind-wave layer for the per-pixel waterline
         #include "WaterLargeWaves.hlsl" // LargeBodyWaveHeight: open-water swell/FFT; needs _WaveTime (above)
 
-        // LIVE post-transparent depth (includes the ZWrite-On water surface), handed over as a global by
-        // WaterUnderwaterFogPass. Sampling this instead of the opaque _CameraDepthTexture (captured BEFORE
-        // transparents, so no water) is what makes the underwater waterline follow the real waves.
-        TEXTURE2D_X(_WaterFogSceneDepth);
-
         float _UnderwaterSurfaceY;
         float _UnderwaterUnbounded; // 1 = ocean half-space, 0 = clip to this body's box (pond)
+        float _UnderwaterFogSimple; // 1 = tier Simple mode: flat waterline, skip the crossing march
         // Sun globals (published by WaterUniformPublisher) - not in this shader's include chain otherwise.
         // Needed so the underwater in-scatter can use the same lit WaterInscatterColor as the surface, for a
         // continuous colour crossing the waterline.
@@ -198,6 +197,23 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             surfaceRefY = sceneUnder ? sceneSurf : camSurf; // surface above the submerged endpoint
         }
 
+        // Simple-mode ocean path (tier budget path): the closed-form in-water span against the FLAT
+        // waterline at _UnderwaterSurfaceY - the CPU-published, wave-aware surface height at the
+        // CAMERA's xz, the same height that arms the submerge gate, so the fog and the gate can never
+        // disagree at the eye (and the waterline still rides the local swell as the camera bobs).
+        // No march, no per-pixel wave evaluation: a handful of ALU ops replaces up to
+        // UNDERWATER_CROSS_MAX_STEPS surface evaluations per pixel.
+        void OceanFlatPath(float3 sceneWorld, float3 cam,
+                           out float pathLen, out float deepestY, out float surfaceRefY)
+        {
+            float level = _UnderwaterSurfaceY;
+            pathLen = WaterPathLength(sceneWorld, cam, level);
+            // min against 'level' makes an in-air endpoint contribute its crossing at the waterline,
+            // so the deepest submerged point is exact in every camera-above/below combination.
+            deepestY = min(level, min(cam.y, sceneWorld.y));
+            surfaceRefY = level;
+        }
+
         // Pull a pond segment's ENTRY down to the wavy surface when it starts in AIR: the pool box top is
         // the flat rest plane (pool y = 0), so a wave trough sitting below it would otherwise fog the air
         // in the trough. Returns the surface crossing when the entry is above water; else keeps the entry.
@@ -218,8 +234,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
 
             if (_UnderwaterUnbounded > 0.5)
             {
-                // Ocean: the below-surface span, measured against the per-pixel WAVY surface.
-                OceanWavyPath(sceneWorld, cam, pathLen, deepestY, surfaceRefY);
+                // Ocean: the below-surface span. _UnderwaterFogSimple is a uniform, so this branch is
+                // coherent across the screen - Simple tiers never pay for the wavy march.
+                if (_UnderwaterFogSimple > 0.5)
+                    OceanFlatPath(sceneWorld, cam, pathLen, deepestY, surfaceRefY);
+                else
+                    OceanWavyPath(sceneWorld, cam, pathLen, deepestY, surfaceRefY);
                 return;
             }
 
@@ -244,13 +264,19 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
 
             // Convert the entry/exit back to world for a correct length (pool axes are scaled by extent),
             // then pull the entry down to the wavy surface so a trough no longer fogs the air above it.
+            // Simple mode keeps the box-top entry as-is: the pool top (pool y = 0) IS the flat
+            // waterline, so the clamp (which evaluates the wavy surface) is skipped along with the
+            // wavy downwelling reference - _VolumeCenter.y is the same rest plane the box top maps to.
             float3 enterWorld = PoolToWorld(originPool + rayPool * tEnter);
             float3 exitWorld = PoolToWorld(originPool + rayPool * tExit);
-            enterWorld = ClampEntryToSurface(enterWorld, exitWorld);
+            if (_UnderwaterFogSimple < 0.5)
+                enterWorld = ClampEntryToSurface(enterWorld, exitWorld);
 
             pathLen = length(exitWorld - enterWorld);
             deepestY = min(enterWorld.y, exitWorld.y);
-            surfaceRefY = SurfaceHeightAtXZ(enterWorld.xz); // wavy surface above the entry, for downwelling
+            surfaceRefY = (_UnderwaterFogSimple > 0.5)
+                        ? _VolumeCenter.y                    // flat rest plane (matches the box top)
+                        : SurfaceHeightAtXZ(enterWorld.xz);  // wavy surface above the entry, for downwelling
         }
 
         // Per-channel path transmittance for this pixel; also returns the depth-darkening term.

@@ -36,7 +36,7 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
         const float MatchTolerance = 1e-5f;
 
         const string LogPrefix = "[WaterWaveConstants] ";
-        const string MenuPath = "Window/AbstractOcclusion/Water/Validate Wave Constants";
+        const string MenuPath = "Window/AbstractOcclusion/WebGpuWater/Validate Wave Constants";
 
         // hlslDefine -> csharpConst. Every LBW_* #define in WaterLargeWaves.hlsl that has a
         // const counterpart in LargeWaveField.cs. SwellBaseAmplitude is intentionally absent:

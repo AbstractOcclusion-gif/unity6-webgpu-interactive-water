@@ -218,6 +218,14 @@ float4 _ShoreFieldCenterSim;    // xy = world XZ centre of the Layer A field
 float4 _ShoreFieldSizeSim;      // xy = world XZ half-extent of the Layer A field
 Texture2D<float>  _ShoreDepthTexSim;  SamplerState sampler_ShoreDepthTexSim; // column depth (m), half
 Texture2D<float4> _ShoreSDFTexSim;    SamplerState sampler_ShoreSDFTexSim;   // dir(0..1), dist, slope tan(beta)
+// FOAM-1: the crest-foam pop LUT - the SAME bake the surface samples as _SurfCrestFoamLut, bound
+// by ShoreFoamState.BindTo, so injected crest foam pops on exactly the artist's timing. Inactive =
+// the legacy fixed-weight breaker injection below.
+Texture2D<float4> _ShoreCrestFoamLutSim; SamplerState sampler_ShoreCrestFoamLutSim;
+float _ShoreCrestFoamLutActive; // 1 = pop curve drives the crest injection
+float _ShoreCrestFoamGain;      // matches the surface's _SurfCrestFoamGain
+// Legacy weight of the cresting-lip signal in the injection (the pre-pop-curve behaviour).
+static const float SURF_SIM_BREAKER_WEIGHT = 0.6;
 // Matches SHORE_BORDER_FEATHER in WaterShore.hlsl (compute cannot include that header - see above).
 #define SHORE_FOAM_BORDER_FEATHER 0.08
 
@@ -556,7 +564,18 @@ void Foam(uint3 id : SV_DispatchThreadID)
             // shore's exposure to the swell like everything else, so the lee side stays clean.
             float waterline = (1.0 - smoothstep(0.0, 1.0, shoreDepth))
                             * saturate(shoreDepth * 8.0) * influence * SurfExposure(toShore);
-            foam += (surfSim.whitewash + 0.6 * surfSim.breaker) * (_ShoreFoamGain * _FoamDtSteps);
+            // Crest injection: the artist pop curve when it is live (FOAM-1 - same LUT + inputs
+            // as the surface, so sim foam is born exactly when the eye sees the crest pop),
+            // the legacy fixed-weight breaker window otherwise.
+            float crestInject = SURF_SIM_BREAKER_WEIGHT * surfSim.breaker;
+            if (_ShoreCrestFoamLutActive > 0.5)
+            {
+                float crestLutU = saturate(surfSim.overCap / SURF_CREST_LUT_OVERCAP_MAX);
+                crestInject = _ShoreCrestFoamLutSim.SampleLevel(sampler_ShoreCrestFoamLutSim,
+                                                                float2(crestLutU, 0.5), 0).r
+                            * surfSim.lipShape * _ShoreCrestFoamGain;
+            }
+            foam += (surfSim.whitewash + crestInject) * (_ShoreFoamGain * _FoamDtSteps);
             foam += waterline * (_ShoreWaterlineFoamGain * _FoamDtSteps);
         }
     }

@@ -65,6 +65,19 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SurfFoamFeather = Shader.PropertyToID("_SurfFoamFeather");
         static readonly int ID_SurfFoamTileSize = Shader.PropertyToID("_SurfFoamTileSize");
         static readonly int ID_SurfFoamColor = Shader.PropertyToID("_SurfFoamColor");
+        // FOAM-1/2/3 (render-only foam enhancement set - see WaterSurfWaves.hlsl / WaterSurface.shader)
+        static readonly int ID_SurfCrestFoamLut = Shader.PropertyToID("_SurfCrestFoamLut");
+        static readonly int ID_SurfCrestFoamLutActive = Shader.PropertyToID("_SurfCrestFoamLutActive");
+        static readonly int ID_SurfCrestFoamGain = Shader.PropertyToID("_SurfCrestFoamGain");
+        static readonly int ID_SurfFoamRepartActive = Shader.PropertyToID("_SurfFoamRepartActive");
+        static readonly int ID_SurfFoamBoreGain = Shader.PropertyToID("_SurfFoamBoreGain");
+        static readonly int ID_SurfFoamTrailGain = Shader.PropertyToID("_SurfFoamTrailGain");
+        static readonly int ID_SurfFoamTrailLength = Shader.PropertyToID("_SurfFoamTrailLength");
+        static readonly int ID_SurfFoamTrailDissolve = Shader.PropertyToID("_SurfFoamTrailDissolve");
+        static readonly int ID_SurfSwashFoam = Shader.PropertyToID("_SurfSwashFoam");
+        static readonly int ID_SurfSwashFoamWidth = Shader.PropertyToID("_SurfSwashFoamWidth");
+        static readonly int ID_SurfSwashFoamDissolve = Shader.PropertyToID("_SurfSwashFoamDissolve");
+        static readonly int ID_SurfSwashStreak = Shader.PropertyToID("_SurfSwashStreak");
 
         // How many box-blur passes smooth the SDF direction field (see the header note).
         const int DirectionSmoothPasses = 2;
@@ -481,6 +494,27 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalFloat(ID_SurfFoamFeather, _body.surfFoamFeather);
             Shader.SetGlobalFloat(ID_SurfFoamTileSize, _body.surfFoamTileSize);
             Shader.SetGlobalColor(ID_SurfFoamColor, _body.surfFoamColor);
+            // FOAM-1: crest-foam pop curve LUT. Texture ALWAYS bound (black fallback) so no
+            // backend ever sees an unbound sampler; the active flag gates all reads.
+            bool crestLutActive = _body.SurfCrestFoamLutActive;
+            Texture2D crestLut = crestLutActive ? _body.SurfCrestFoamLutTexture : null;
+            Shader.SetGlobalTexture(ID_SurfCrestFoamLut,
+                                    crestLut != null ? crestLut : (Texture)Texture2D.blackTexture);
+            Shader.SetGlobalFloat(ID_SurfCrestFoamLutActive,
+                                  crestLutActive && crestLut != null ? 1f : 0f);
+            Shader.SetGlobalFloat(ID_SurfCrestFoamGain, _body.surfCrestFoamGain);
+            // FOAM-2: whitewash repartition (the gate lerps the weights in from the legacy
+            // constants, so bodies publishing here get the knobs, everything else stays legacy).
+            Shader.SetGlobalFloat(ID_SurfFoamRepartActive, 1f);
+            Shader.SetGlobalFloat(ID_SurfFoamBoreGain, _body.surfFoamBoreGain);
+            Shader.SetGlobalFloat(ID_SurfFoamTrailGain, _body.surfFoamTrailGain);
+            Shader.SetGlobalFloat(ID_SurfFoamTrailLength, _body.surfFoamTrailLength);
+            Shader.SetGlobalFloat(ID_SurfFoamTrailDissolve, _body.surfFoamTrailDissolve);
+            // FOAM-3: swash foam knobs (surface-only consumers).
+            Shader.SetGlobalFloat(ID_SurfSwashFoam, _body.surfSwashFoam);
+            Shader.SetGlobalFloat(ID_SurfSwashFoamWidth, _body.surfSwashFoamWidth);
+            Shader.SetGlobalFloat(ID_SurfSwashFoamDissolve, _body.surfSwashFoamDissolve);
+            Shader.SetGlobalFloat(ID_SurfSwashStreak, _body.surfSwashStreak);
         }
 
         /// <summary>True when the surf breaker-front layer runs on this body: bed depth on, surf

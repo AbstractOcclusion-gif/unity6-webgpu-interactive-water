@@ -26,6 +26,12 @@ namespace AbstractOcclusion.WebGpuWater
         const float DragSplashStrengthScale = 0.6f;   // drag splashes stay softer than impact splashes
         const float DragSplashRadiusScale = 4f;       // splash radius per ripple radius
 
+        // Touch only: a finger that lifts within this travel is a tap -> one ripple. Anything longer is a
+        // drag, which the FlyCamera claims for move/look (it uses the same threshold), so the two never
+        // both fire on one finger.
+        const float TapMaxTravelPixels = 16f;
+        const float TapSplashStrength = 0.5f;
+
         readonly WaterVolume _owner; // the primary body: camera/orbit/splash wiring + ripple look
 
         PointerMode _mode = PointerMode.None;
@@ -68,6 +74,19 @@ namespace AbstractOcclusion.WebGpuWater
             // No camera -> no rays to cast; skip input rather than NRE in PixelRay.
             if (_owner.targetCamera == null) return;
 
+#if ENABLE_INPUT_SYSTEM
+            // On touch, a finger drives the fly camera; only a tap (short-travel release) ripples the water.
+            // Route to the tap handler whenever a finger is down or was just lifted, so a drag never reaches
+            // the mouse path below (which would ripple every frame and fight the camera).
+            var touchscreen = Touchscreen.current;
+            if (touchscreen != null &&
+                (touchscreen.primaryTouch.press.isPressed || touchscreen.primaryTouch.press.wasReleasedThisFrame))
+            {
+                HandleTouchRipple(touchscreen);
+                return;
+            }
+#endif
+
             // While pinching (2+ fingers), don't ripple/orbit - let the camera zoom.
             if (MultiTouch()) { _mode = PointerMode.None; return; }
 
@@ -99,6 +118,29 @@ namespace AbstractOcclusion.WebGpuWater
                 _dragBody = null;
             }
         }
+
+#if ENABLE_INPUT_SYSTEM
+        // Touch: fire one ripple where a finger taps the water. Drags (camera) and multi-touch (pinch) are
+        // ignored here so they don't double up with the FlyCamera gestures.
+        void HandleTouchRipple(Touchscreen touchscreen)
+        {
+            if (MultiTouch()) return; // 2+ fingers -> camera pinch owns it
+
+            var primary = touchscreen.primaryTouch;
+            if (!primary.press.wasReleasedThisFrame) return; // the ripple lands when the tap lifts
+
+            Vector2 start = primary.startPosition.ReadValue();
+            Vector2 pos = primary.position.ReadValue();
+            if ((pos - start).magnitude > TapMaxTravelPixels) return; // travelled = a drag, not a tap
+
+            WaterVolume body = FindHitBody(PixelRay(pos), out Vector3 hit);
+            if (body == null) return;
+
+            body.AddRipple(hit.x, hit.z, _owner.RippleRadius, _owner.RippleStrength);
+            if (_owner.splashEmitter != null)
+                _owner.splashEmitter.EmitSplash(hit, TapSplashStrength, _owner.RippleRadius * DragSplashRadiusScale);
+        }
+#endif
 
         void DuringDrag(Vector2 m)
         {

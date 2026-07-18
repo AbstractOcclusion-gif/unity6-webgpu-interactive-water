@@ -147,6 +147,23 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                         "bedDepthSettings.surfFoamFeather",
                         "bedDepthSettings.surfFoamTileSize",
                         "bedDepthSettings.surfFoamColor");
+                    WaterEditorUI.SubHeading("Crest foam pop curve");
+                    DrawFields("bedDepthSettings.surfCrestFoamCurveEnabled");
+                    DrawFieldsIf(Prop("bedDepthSettings.surfCrestFoamCurveEnabled").boolValue,
+                        "bedDepthSettings.surfCrestFoamCurve",
+                        "bedDepthSettings.surfCrestFoamGain");
+                    WaterEditorUI.SubHeading("Whitewash repartition");
+                    DrawFields(
+                        "bedDepthSettings.surfFoamBoreGain",
+                        "bedDepthSettings.surfFoamTrailGain",
+                        "bedDepthSettings.surfFoamTrailLength",
+                        "bedDepthSettings.surfFoamTrailDissolve");
+                    WaterEditorUI.SubHeading("Swash foam");
+                    DrawFields(
+                        "bedDepthSettings.surfSwashFoam",
+                        "bedDepthSettings.surfSwashFoamWidth",
+                        "bedDepthSettings.surfSwashFoamDissolve",
+                        "bedDepthSettings.surfSwashStreak");
                 });
             });
         }

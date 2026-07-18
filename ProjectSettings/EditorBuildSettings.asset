@@ -19,10 +19,16 @@ EditorBuildSettings:
     path: Packages/com.abstractocclusion.webgpuwater/Samples/Demos/Scenes/10. WebGpu
       Pool.unity
     guid: 4ddd755844507c7499550c3bf9a153a0
-  - enabled: 1
+  - enabled: 0
     path: Packages/com.abstractocclusion.webgpuwater/Samples/Demos/Scenes/12. Ocean
       Demo.unity
     guid: 2dff43b3dd4552d4dba442407956b3cc
+  - enabled: 0
+    path: Packages/com.abstractocclusion.webgpuwater/Samples/Demos/Scenes/14. IslandDemo.unity
+    guid: 6247a18baca1218408733b56ce13307e
+  - enabled: 1
+    path: Assets/islandwebgpu.unity
+    guid: 8ab60d7100ffc1648996a466a3959d4c
   m_configObjects:
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   m_UseUCBPForAssetBundles: 0
