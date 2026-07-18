@@ -19,6 +19,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
         [HideInInspector] _EnvReflectionIntensity ("Env Reflection Intensity", Range(0,4)) = 1.0
         [HideInInspector] _UsePlanar ("Use Planar Reflection", Float) = 0
         [HideInInspector] _UseSSR ("Use Screen Space Reflection", Float) = 0
+        // Read by C# ONLY (WaterUniformPublisher seeds the volume's reflection mode from it);
+        // the pass itself never reads it, so it has no shader uniform.
         [HideInInspector] _UseUrpProbe ("Reflect URP Environment Probe (else procedural sky)", Float) = 0
         [HideInInspector] _ReflectionDistortion ("Reflection Distortion", Range(0,0.2)) = 0.05
         [HideInInspector] _SSRStrength ("SSR Strength", Range(0,1)) = 1.0
@@ -203,6 +205,20 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // so it lands on the horizon ring instead (which is what grazing water reflects).
             #define REFLECTION_MIN_UP_Y 0.02
             #define SSS_AMPLITUDE_EPSILON   1e-3   // guards the crest/amplitude ratio when the swell is flat
+            // Shallow-water clarity (surf run-out): under this column depth the shore band
+            // blends toward the refracted ground, so centimetres-deep water reads clear
+            // instead of flat opaque blue between the last bore and the beach.
+            #define SHALLOW_CLARITY_DEPTH 0.6   // metres; blend fully faded out at this depth
+            #define SHALLOW_CLARITY_BLEND 0.5   // max blend toward the refracted colour at depth 0
+            // Wet-sand glaze weights (swash zone): the thin film is centimetres of water ON
+            // the sand, so it pulls HARD toward the refracted ground (never blue ocean on the
+            // beach), and the drying glaze behind it mixes darkened ground + a sky sheen.
+            #define WET_FILM_MIN_TRANSPARENCY 0.6    // film pull toward the ground at the waterline
+            #define WET_FILM_DEPTH_GAIN       0.3    // extra pull as the film thins up-beach
+            #define WET_GLAZE_EDGE            0.25   // smoothstep width of the drying wet edge
+            #define WET_GLAZE_REFRACT         0.7    // refracted-ground weight in the wet look
+            #define WET_GLAZE_REFLECT         0.12   // reflected-sky weight in the wet look
+            #define WET_GLAZE_STRENGTH        0.85   // max glaze opacity over the base shading
 
             // Peaked-look refine: short steps along the ripple normal sharpen wave crests.
             // The step COUNT is tier-driven (_PeakedRefineSteps via the body's property
@@ -340,10 +356,20 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 return _CameraDepthTexture.SampleLevel(sampler_PointClamp, uv, 0.0).r;
             }
 
+            // Perspective divide of a ComputeScreenPos-style position -> [0,1] screen UV.
+            // ONE helper for every screen-space consumer (SSR march, planar mirror,
+            // refraction, contact foam) so the w-guard can never drift between them.
+            #define SCREEN_UV_MIN_W 1e-5   // guards the divide at/behind the camera plane
+            float2 ScreenUV(float4 screenPos)
+            {
+                return screenPos.xy / max(screenPos.w, SCREEN_UV_MIN_W);
+            }
+
             float _SSRStrength, _SSRStepSize, _SSRMaxSteps, _SSRThickness;
             float _RefractionDistortion;
             // Reflection mode flags (0/1), driven per body via the property block.
-            float _UsePlanar, _UseSSR, _UseUrpProbe, _RealRefraction;
+            // (_UseUrpProbe has NO uniform: its Property is read by C# only - see Properties.)
+            float _UsePlanar, _UseSSR, _RealRefraction;
             float _ProceduralPool; // 1 = this body draws the analytic/procedural pool (tiles); 0 = surface only
             float _EnvReflectionIntensity; // brightness of the reflected sky / URP probe (not the sun glint)
 
@@ -437,7 +463,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     // A hand-rolled clip.xy/clip.w*0.5+0.5 samples the mirrored row in a
                     // build and makes SSR reflections look screen-locked.
                     float4 sp = ComputeScreenPos(clip);
-                    float2 uv = sp.xy / max(sp.w, 1e-5);
+                    float2 uv = ScreenUV(sp);
                     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) break;
 
                     // explicit-LOD samples: safe inside a divergent loop (WebGPU)
@@ -689,6 +715,31 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 return SampleOceanWhitecapTiltTiled(worldXZ, _OceanFoamTileSize, worldDdx, worldDdy);
             }
 
+            // Tilt the shading normal by a foam relief tilt (xy = xz slope) in the surface's
+            // local tangent frame. ONE shared frame construction for every foam layer (ocean
+            // whitecap, pond foam, surf whitewash), so their relief shading can never diverge.
+            float3 ApplyFoamTiltToNormal(float3 normal, float2 tilt)
+            {
+                float3 tangent = normalize(cross(normal, float3(0.0, 0.0, 1.0)));
+                float3 bitangent = cross(normal, tangent);
+                return normalize(normal + tangent * tilt.x + bitangent * tilt.y);
+            }
+
+            // Shared KWS dissolve law for every whitecap-pipeline foam layer (ocean caps,
+            // surf whitewash, swash line): dense coverage RELAXES the contrast so heavy foam
+            // goes solid instead of staying lacy, and the dissolve threshold falls with
+            // sqrt(coverage) so mid coverage reaches further into the pattern.
+            // extraThreshold RAISES the cut (age/reflux erosion): aged foam rots into holes,
+            // then filaments, then nothing. Pass 0 for layers without an erosion term.
+            float FoamDissolve(float patternValue, float coverage, float feather, float extraThreshold)
+            {
+                float coverageSat = saturate(coverage);
+                float contrast = lerp(OCEAN_WHITECAP_CONTRAST, OCEAN_WHITECAP_CONTRAST_DENSE, coverageSat);
+                float sharpened = pow(saturate(patternValue), contrast);
+                float threshold = 1.0 - sqrt(coverageSat) + extraThreshold;
+                return smoothstep(threshold, threshold + max(feather, 1e-3), sharpened);
+            }
+
             struct appdata { float4 vertex : POSITION; };
             struct v2f
             {
@@ -825,6 +876,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 return o;
             }
 
+            // Roughness -> blur mip on the perceptual UNITY_SPECCUBE_LOD_STEPS-style curve
+            // (see SKY_MIP_*). ONE formula for the sky cube AND the planar RT, so both blur
+            // ramps stay in lockstep with the shared roughness knobs.
+            float RoughnessToSkyMip(float roughness)
+            {
+                return roughness * (SKY_MIP_CURVE_SCALE - SKY_MIP_CURVE_BIAS * roughness)
+                     * SKY_MIP_STEPS;
+            }
+
             // Sample the planar reflection RT at the fragment's screen UV, nudged by the
             // surface normal so ripples wobble the mirror image. Roughness picks the RT mip
             // (PlanarMirror now renders with a mip chain) and the shared vertical smear
@@ -833,10 +893,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // Explicit-LOD taps: WGSL-safe, no extra sampler.
             float3 SamplePlanarReflection(float4 screenPos, float3 normal, float roughness)
             {
-                float2 uv = screenPos.xy / max(screenPos.w, 1e-5);
+                float2 uv = ScreenUV(screenPos);
                 uv += normal.xz * _ReflectionDistortion;
-                float mip = roughness * (SKY_MIP_CURVE_SCALE - SKY_MIP_CURVE_BIAS * roughness)
-                          * SKY_MIP_STEPS;
+                float mip = RoughnessToSkyMip(roughness);
                 float spread = _ReflectionAnisoStretch * roughness * SCREEN_ANISO_SPREAD_MAX;
                 float3 color = float3(0.0, 0.0, 0.0);
                 [unroll]
@@ -860,7 +919,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // Sample the SKY environment (reflection probe / procedural sky) for a WORLD-space
             // ray - no sun term. This is what the water REFLECTS - never the analytic pool tiles.
             // WGSL derivative uniformity: the grad variant exists for call sites inside NON-UNIFORM
-            // control flow (getSurfaceRayColor's per-fragment up/down ray split), where texCUBE's
+            // control flow (GetSurfaceRayColor's per-fragment up/down ray split), where texCUBE's
             // implicit derivatives are undefined - the caller hoists ddx/ddy of the ray beforehand.
             float3 SampleSkyEnvironmentGrad(float3 worldRay, float3 rayDdx, float3 rayDdy)
             {
@@ -877,7 +936,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             }
 
             // Environment WITH the legacy sun glint - the underwater branch and the shared
-            // ray tracer (getSurfaceRayColor) keep this so their look is unchanged by the
+            // ray tracer (GetSurfaceRayColor) keep this so their look is unchanged by the
             // above-water GGX rework.
             float3 SampleEnvironmentGrad(float3 worldRay, float3 rayDdx, float3 rayDdy)
             {
@@ -896,9 +955,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // no mips the lod clamps to 0 and this degrades to the old sharp mirror.
             float3 SampleSkyEnvironmentRough(float3 worldRay, float roughness)
             {
-                float mip = roughness * (SKY_MIP_CURVE_SCALE - SKY_MIP_CURVE_BIAS * roughness)
-                          * SKY_MIP_STEPS;
-                return texCUBElod(_Sky, float4(worldRay, mip)).rgb * _EnvReflectionIntensity;
+                return texCUBElod(_Sky, float4(worldRay, RoughnessToSkyMip(roughness))).rgb
+                     * _EnvReflectionIntensity;
             }
 
             // ---- Crest-style detail normal: two CROSSING, SCROLLING samples of a tiling normal
@@ -1082,7 +1140,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             }
 
             // ---- WGSL derivative uniformity: gradient-fed clones of WaterCommon.hlsl's
-            // GetWallShadeSplit / GetWallColorShadowed. getSurfaceRayColor reaches the wall colour
+            // GetWallShadeSplit / GetWallColorShadowed. GetSurfaceRayColor reaches the wall colour
             // inside a PER-FRAGMENT (non-uniform) ray branch, where the include's implicit-derivative
             // tex2D taps of _CausticTex / _Tiles are undefined in WGSL - and the include can't take
             // gradients without changing every other caller. The maths below is byte-identical to
@@ -1136,7 +1194,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 return tex2Dgrad(_Tiles, uv, uvDdx, uvDdy).rgb * shade;
             }
 
-            float3 getSurfaceRayColor(float3 worldOrigin, float3 worldRay, float3 waterColor)
+            float3 GetSurfaceRayColor(float3 worldOrigin, float3 worldRay, float3 waterColor)
             {
                 // WGSL derivative uniformity: the down/up ray split below is per-fragment
                 // (non-uniform) and BOTH sides sample textures (pool tiles/caustic, sky cube).
@@ -1284,15 +1342,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
                     // TIR reflection reflects the ENVIRONMENT, tinted underwater - never the pool
                     // tiles. The reflected ray points back DOWN into the pool, so routing it through
-                    // getSurfaceRayColor used to sample the analytic wall (a stale baked-in tile
+                    // GetSurfaceRayColor used to sample the analytic wall (a stale baked-in tile
                     // reflection on the underside of the surface).
                     float3 reflectedColor = SampleEnvironment(reflectedRay) * UNDERWATER_COLOR;
-                    float3 refractedColor = getSurfaceRayColor(i.worldPos, refractedRay, float3(1.0, 1.0, 1.0)) * UNDERWATER_REFRACT_TINT;
+                    float3 refractedColor = GetSurfaceRayColor(i.worldPos, refractedRay, float3(1.0, 1.0, 1.0)) * UNDERWATER_REFRACT_TINT;
 
                     // Real transparency from below: sample the live scene above the surface.
                     if (_RealRefraction > 0.5)
                     {
-                        float2 ruvU = i.screenPos.xy / max(i.screenPos.w, 1e-5) + normal.xz * _RefractionDistortion;
+                        float2 ruvU = ScreenUV(i.screenPos) + normal.xz * _RefractionDistortion;
                         refractedColor = tex2D(_CameraOpaqueTexture, saturate(ruvU)).rgb * UNDERWATER_REFRACT_TINT;
                     }
 
@@ -1365,7 +1423,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                                         _FresnelFloor);
 
                     // Reflection samples the environment (sky / URP probe) for ANY reflected direction.
-                    // getSurfaceRayColor would route a below-horizon ray - common at grazing angles and on
+                    // GetSurfaceRayColor would route a below-horizon ray - common at grazing angles and on
                     // wave slopes, exactly where Fresnel makes the reflection strongest - into the pool
                     // floor and return the TILES, which showed up as tile "highlights" and hid the probe.
                     // The underwater branch already samples the environment directly; match it here.
@@ -1417,7 +1475,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     // crest is deep (sky/far behind), so it is added emissively after compositing instead.
                     float3 bodyInscatter = WaterInscatterColor(-incomingRay, _LightDir, _SunColor, 0.0);
 
-                    float3 refractedColor = getSurfaceRayColor(i.worldPos, refractedRay, ABOVEWATER_COLOR);
+                    float3 refractedColor = GetSurfaceRayColor(i.worldPos, refractedRay, ABOVEWATER_COLOR);
 
                     // ---- Reflection: analytic -> planar -> SSR (SSR wins where it hits). The toggles
                     // are uniform-driven (published per body via the property block), so they are live. ----
@@ -1435,7 +1493,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     // path runs, so the real-refraction view is never double-fogged. ----
                     if (_RealRefraction > 0.5)
                     {
-                        float2 ruv = i.screenPos.xy / max(i.screenPos.w, 1e-5);
+                        float2 ruv = ScreenUV(i.screenPos);
                         ruv += normal.xz * _RefractionDistortion;
                         refractedColor = tex2D(_CameraOpaqueTexture, saturate(ruv)).rgb * ABOVEWATER_COLOR;
 
@@ -1497,14 +1555,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                             float foamCamDist = distance(i.largeWaveSourceXZ, _WorldSpaceCameraPos.xz);
                             oceanFoamPattern = SampleOceanWhitecapPattern(oceanFoamSampleXZ, foamCamDist,
                                                                           foamWorldDdx, foamWorldDdy);
-                            // KWS contrast law: dense coverage RELAXES the contrast (heavy foam stops
-                            // being eroded into lace and goes solid) and the dissolve threshold falls
-                            // with sqrt(coverage) so mid coverage reaches further into the pattern.
-                            float coverageSat = saturate(coverage);
-                            float contrast = lerp(OCEAN_WHITECAP_CONTRAST, OCEAN_WHITECAP_CONTRAST_DENSE, coverageSat);
-                            float sharpened = pow(saturate(oceanFoamPattern.r), contrast);
-                            float threshold = 1.0 - sqrt(coverageSat);
-                            oceanFoam = smoothstep(threshold, threshold + max(_OceanFoamFeather, 1e-3), sharpened);
+                            // Shared KWS contrast/dissolve law (FoamDissolve above); no erosion term.
+                            oceanFoam = FoamDissolve(oceanFoamPattern.r, coverage, _OceanFoamFeather, 0.0);
                         }
                     }
 
@@ -1531,10 +1583,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         float2 oceanFoamTilt = SampleOceanWhitecapTilt(oceanFoamSampleXZ,
                                                                        foamWorldDdx, foamWorldDdy)
                                              * (_FoamNormalStrength * oceanFoam);
-                        float3 oceanFoamTangent = normalize(cross(normal, float3(0.0, 0.0, 1.0)));
-                        float3 oceanFoamBitangent = cross(normal, oceanFoamTangent);
-                        float3 oceanFoamNormal = normalize(normal + oceanFoamTangent * oceanFoamTilt.x
-                                                                  + oceanFoamBitangent * oceanFoamTilt.y);
+                        float3 oceanFoamNormal = ApplyFoamTiltToNormal(normal, oceanFoamTilt);
 
                         // Modulate the tint by the pattern so the foam carries internal light/dark detail
                         // instead of reading as a flat wash; whiten toward the peaks so dense foam stays bright.
@@ -1571,7 +1620,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         float contact = 0.0;
                         if (_SimWindowed < 0.5)
                         {
-                            float2 suv = i.screenPos.xy / max(i.screenPos.w, 1e-5);
+                            float2 suv = ScreenUV(i.screenPos);
                             float sceneEye = LinearEyeDepth(RawSceneDepth(suv));
                             float surfEye  = -mul(UNITY_MATRIX_V, float4(i.worldPos, 1.0)).z;
                             float behind   = sceneEye - surfEye; // > 0 when scene sits below the surface
@@ -1599,9 +1648,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
                             // ---- Foam relief: tilt the lighting normal by the foam's own
                             // normal map so the lace shades three-dimensionally. ----
-                            float3 foamTangent = normalize(cross(normal, float3(0.0, 0.0, 1.0)));
-                            float3 foamBitangent = cross(normal, foamTangent);
-                            float3 foamNormal = normalize(normal + foamTangent * tilt.x + foamBitangent * tilt.y);
+                            float3 foamNormal = ApplyFoamTiltToNormal(normal, tilt);
 
                             // ---- Lit foam: wrapped diffuse from the sun over an ambient
                             // floor, so foam shades with the waves instead of flat white. ----
@@ -1649,30 +1696,23 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         // world XZ, additive parallax - exact for this tap too (WGSL uniformity).
                         float3 surfPattern = SampleOceanWhitecapPatternTiled(surfSampleXZ, surfDist, surfTile,
                                                                              foamWorldDdx, foamWorldDdy);
-                        // KWS contrast law: dense coverage relaxes the contrast (heavy whitewash
-                        // goes solid) and the dissolve threshold falls with sqrt(coverage).
-                        float surfContrast = lerp(OCEAN_WHITECAP_CONTRAST, OCEAN_WHITECAP_CONTRAST_DENSE, surfCoverage);
-                        float surfSharpened = pow(saturate(surfPattern.r), surfContrast);
-                        float surfThreshold = 1.0 - sqrt(surfCoverage);
                         // FOAM-2: aged deposit rots into HOLES, not a uniform fade - age raises the
                         // pattern-dissolve threshold, so old foam breaks into lace patches, then
                         // filaments, then nothing (real sea foam dies by holes opening). trailAge
                         // is bore-gated, so the bore head (age ~0) stays solid. 0 seconds = off.
+                        float surfTrailErode = 0.0;
                         if (_SurfFoamTrailDissolve > 0.0)
-                            surfThreshold += saturate(surfFrag.trailAge / _SurfFoamTrailDissolve)
+                            surfTrailErode = saturate(surfFrag.trailAge / _SurfFoamTrailDissolve)
                                            * SURF_TRAIL_ERODE_MAX;
-                        float surfFoam = smoothstep(surfThreshold,
-                                                    surfThreshold + max(_SurfFoamFeather, 1e-3),
-                                                    surfSharpened);
+                        // Shared KWS contrast/dissolve law (FoamDissolve above) + the trail erosion.
+                        float surfFoam = FoamDissolve(surfPattern.r, surfCoverage, _SurfFoamFeather,
+                                                      surfTrailErode);
                         if (surfFoam > FOAM_MASK_EPSILON)
                         {
                             float2 surfTiltXY = SampleOceanWhitecapTiltTiled(surfSampleXZ, surfTile,
                                                                              foamWorldDdx, foamWorldDdy)
                                               * (_FoamNormalStrength * surfFoam);
-                            float3 surfFoamTangent = normalize(cross(normal, float3(0.0, 0.0, 1.0)));
-                            float3 surfFoamBitangent = cross(normal, surfFoamTangent);
-                            float3 surfFoamNormal = normalize(normal + surfFoamTangent * surfTiltXY.x
-                                                                     + surfFoamBitangent * surfTiltXY.y);
+                            float3 surfFoamNormal = ApplyFoamTiltToNormal(normal, surfTiltXY);
                             float surfWrapped = FoamWrappedDiffuse(surfFoamNormal, _LightDir);
                             float3 surfTint = _SurfFoamColor.rgb
                                 * lerp(surfPattern, float3(1.0, 1.0, 1.0), surfFoam);
@@ -1711,11 +1751,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     // bore and the beach. Keyed off the WORLD-FRAME shore field so it works on the
                     // windowed ocean too (the pool-bed block below is bounded-only). ----
                     if (_SurfActive > 0.5 && shoreFrag.influence > 0.0
-                        && shoreFrag.depth > 0.0 && shoreFrag.depth < 0.6)
+                        && shoreFrag.depth > 0.0 && shoreFrag.depth < SHALLOW_CLARITY_DEPTH)
                     {
-                        float shallowClarity = 1.0 - saturate(shoreFrag.depth / 0.6);
+                        float shallowClarity = 1.0 - saturate(shoreFrag.depth / SHALLOW_CLARITY_DEPTH);
                         outColor = lerp(outColor, refractedColor,
-                                        shallowClarity * 0.5 * shoreFrag.influence);
+                                        shallowClarity * SHALLOW_CLARITY_BLEND * shoreFrag.influence);
                     }
 
                     // ---- Shoreline gradient from the real terrain depth (baked bed map).
@@ -1777,13 +1817,16 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                             // reads wet-and-clear ("swash amplitude causes the blue water line" -
                             // the band must never look like blue ocean sitting on the beach).
                             float filmT = saturate(beachRise / max(wetLevel, 1e-3));
-                            outColor = lerp(outColor, refractedColor, 0.6 + 0.3 * filmT);
+                            outColor = lerp(outColor, refractedColor,
+                                            WET_FILM_MIN_TRANSPARENCY + WET_FILM_DEPTH_GAIN * filmT);
                             float aboveFilm = saturate((beachRise - swashLevel)
                                                        / max(wetLevel - swashLevel, 1e-3));
-                            float glaze = aboveFilm * smoothstep(0.0, 0.25, (wetLevel - beachRise)
+                            float glaze = aboveFilm * smoothstep(0.0, WET_GLAZE_EDGE,
+                                                                 (wetLevel - beachRise)
                                                                  / max(wetLevel, 1e-3));
-                            float3 wetLook = refractedColor * 0.7 + reflectedColor * 0.12;
-                            outColor = lerp(outColor, wetLook, glaze * 0.85);
+                            float3 wetLook = refractedColor * WET_GLAZE_REFRACT
+                                           + reflectedColor * WET_GLAZE_REFLECT;
+                            outColor = lerp(outColor, wetLook, glaze * WET_GLAZE_STRENGTH);
 
                             // ---- FOAM-3: swash foam. A foamy line rides the film's leading edge
                             // up the beach, is STRANDED at the wash border (the wet line) at the
@@ -1828,19 +1871,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                                     float3 swashPattern = SampleOceanWhitecapPatternTiled(
                                         swashXZ, swashDist, max(_SurfFoamTileSize, 1e-3),
                                         swashDdx, swashDdy);
-                                    // Same contrast/threshold law as the surf whitewash, plus the
+                                    // Same shared law as the whitewash (FoamDissolve), plus the
                                     // reflux hole-erosion: age raises the dissolve threshold, so
                                     // the stranded line rots into lace patches, then filaments.
-                                    float swashContrast = lerp(OCEAN_WHITECAP_CONTRAST,
-                                                               OCEAN_WHITECAP_CONTRAST_DENSE,
-                                                               swashCoverage);
-                                    float swashSharpened = pow(saturate(swashPattern.r), swashContrast);
-                                    float swashThreshold = 1.0 - sqrt(swashCoverage)
-                                        + refluxAge * _SurfSwashFoamDissolve * SURF_SWASH_ERODE_MAX;
-                                    float swashFoam = smoothstep(swashThreshold,
-                                                                 swashThreshold
-                                                                 + max(_SurfFoamFeather, 1e-3),
-                                                                 swashSharpened);
+                                    float swashFoam = FoamDissolve(swashPattern.r, swashCoverage,
+                                                                   _SurfFoamFeather,
+                                                                   refluxAge * _SurfSwashFoamDissolve
+                                                                   * SURF_SWASH_ERODE_MAX);
                                     if (swashFoam > FOAM_MASK_EPSILON)
                                     {
                                         // Lit like the whitewash (wrapped sun over the surface
