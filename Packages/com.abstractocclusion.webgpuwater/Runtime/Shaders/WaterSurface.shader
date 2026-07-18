@@ -357,7 +357,26 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 return o;
             }
 
-            fixed4 frag(v2f i) : SV_Target
+            // ================== frag stages (SHADER-SPLIT-3) ==================
+            // frag() is decomposed into single-responsibility stages that read in render
+            // order. Stage bodies are VERBATIM moves of the old frag blocks: each stage
+            // re-binds the shared-geometry fields to the original local names, so the
+            // moved code is unchanged - any behavior change here is a bug.
+
+            // Per-fragment surface geometry, evaluated ONCE and shared by every stage.
+            struct WaterGeomStage
+            {
+                float3 normal;       // world-space shading normal (detail folded in; NOT flipped for underwater)
+                float2 nxz;          // pool-space ripple+wind slope (foam flow/relief input)
+                float3 incomingRay;  // camera -> surface, normalized
+                float viewDist;      // metres from the camera to the surface
+                float roughness;     // shared specular roughness (EffectiveWaterRoughness at viewDist)
+                ShoreData shore;     // hoisted shore-substrate sample (inert off surf bodies)
+                SurfWaveSample surf; // hoisted surf-front sample (inert off surf bodies)
+                float surfGeomFoam;  // geometry foam from the surface's own Jacobian/slope
+            };
+
+            WaterGeomStage EvaluateSurfaceGeometry(v2f i)
             {
                 float fade;
                 float4 info = SampleRipple(i.position, i.worldPos, fade);
@@ -432,7 +451,23 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     normal = normalize(normal + float3(detailTilt.x, 0.0, detailTilt.y)
                                                 * _DetailNormalStrength);
                 }
+                WaterGeomStage g;
+                g.normal = normal;
+                g.nxz = nxz;
+                g.incomingRay = incomingRay;
+                g.viewDist = viewDistWorld;
+                // Shared by the whole specular family. Pure ALU, so evaluating it for BOTH
+                // sides costs nothing - the underwater path never reads it and the compiler
+                // strips it there.
+                g.roughness = EffectiveWaterRoughness(viewDistWorld);
+                g.shore = shoreFrag;
+                g.surf = surfFrag;
+                g.surfGeomFoam = surfGeomFoam;
+                return g;
+            }
 
+            float EvaluateWaterClarity(v2f i, ShoreData shoreFrag)
+            {
                 // Depth clarity (auto transparency): ONE curve from the baked bed depth drives the
                 // turbidity + underwater-fog reach below (and the deep-water tint in the shoreline
                 // block). Identity (1) when the feature is off or no bed is baked, so every existing
@@ -447,89 +482,115 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         colDepthClarity = lerp(colDepthClarity, shoreFrag.depth, saturate(shoreFrag.influence));
                     waterClarity = WaterDepthClarity(colDepthClarity);
                 }
+                return waterClarity;
+            }
 
-                if (_Underwater > 0.5)
+            // The whole seen-from-below path; returns the final pixel colour.
+            float4 UnderwaterStage(v2f i, WaterGeomStage g, float waterClarity)
+            {
+                // Original frag locals, re-bound: this side of the surface faces DOWN,
+                // so the shading normal is the geometry normal flipped.
+                float3 normal = -g.normal;
+                float3 incomingRay = g.incomingRay;
+                float2 nxz = g.nxz;
+                float3 reflectedRay = reflect(incomingRay, normal);
+                float3 refractedRay = refract(incomingRay, normal, IOR_WATER / IOR_AIR);
+                // Total internal reflection (common at grazing angles from below, eta > 1)
+                // returns a ZERO vector; tracing it divides by zero in IntersectCube and
+                // poisons the pixel with NaN. Fall back to the reflected ray.
+                if (dot(refractedRay, refractedRay) < 1e-6) refractedRay = reflectedRay;
+                // saturate: float error can push the dot above 1, making the pow base
+                // negative -> NaN sparkle.
+                float fresnel = lerp(FRESNEL_MIN_BELOW, 1.0, pow(saturate(1.0 - dot(normal, -incomingRay)), FRESNEL_POWER));
+
+                // TIR reflection reflects the ENVIRONMENT, tinted underwater - never the pool
+                // tiles. The reflected ray points back DOWN into the pool, so routing it through
+                // GetSurfaceRayColor used to sample the analytic wall (a stale baked-in tile
+                // reflection on the underside of the surface).
+                float3 reflectedColor = SampleEnvironment(reflectedRay) * UNDERWATER_COLOR;
+                float3 refractedColor = GetSurfaceRayColor(i.worldPos, refractedRay, float3(1.0, 1.0, 1.0)) * UNDERWATER_REFRACT_TINT;
+
+                // Real transparency from below: sample the live scene above the surface.
+                if (_RealRefraction > 0.5)
                 {
-                    normal = -normal;
-                    float3 reflectedRay = reflect(incomingRay, normal);
-                    float3 refractedRay = refract(incomingRay, normal, IOR_WATER / IOR_AIR);
-                    // Total internal reflection (common at grazing angles from below, eta > 1)
-                    // returns a ZERO vector; tracing it divides by zero in IntersectCube and
-                    // poisons the pixel with NaN. Fall back to the reflected ray.
-                    if (dot(refractedRay, refractedRay) < 1e-6) refractedRay = reflectedRay;
-                    // saturate: float error can push the dot above 1, making the pow base
-                    // negative -> NaN sparkle.
-                    float fresnel = lerp(FRESNEL_MIN_BELOW, 1.0, pow(saturate(1.0 - dot(normal, -incomingRay)), FRESNEL_POWER));
-
-                    // TIR reflection reflects the ENVIRONMENT, tinted underwater - never the pool
-                    // tiles. The reflected ray points back DOWN into the pool, so routing it through
-                    // GetSurfaceRayColor used to sample the analytic wall (a stale baked-in tile
-                    // reflection on the underside of the surface).
-                    float3 reflectedColor = SampleEnvironment(reflectedRay) * UNDERWATER_COLOR;
-                    float3 refractedColor = GetSurfaceRayColor(i.worldPos, refractedRay, float3(1.0, 1.0, 1.0)) * UNDERWATER_REFRACT_TINT;
-
-                    // Real transparency from below: sample the live scene above the surface.
-                    if (_RealRefraction > 0.5)
-                    {
-                        float2 ruvU = ScreenUV(i.screenPos) + normal.xz * _RefractionDistortion;
-                        refractedColor = tex2D(_CameraOpaqueTexture, saturate(ruvU)).rgb * UNDERWATER_REFRACT_TINT;
-                    }
-
-                    float3 bodyInscatterUnder = WaterInscatterColor(-incomingRay, _LightDir, _SunColor, 0.0);
-                    refractedColor = ApplyWaterOpacityTintedClarity(refractedColor, bodyInscatterUnder, waterClarity); // turbidity from below too
-
-                    float tUnder = (1.0 - fresnel) * length(refractedRay);
-                    tUnder = lerp(1.0, tUnder, _ReflectionStrength); // strength 0 = fully refracted
-                    float3 underColor = lerp(reflectedColor, refractedColor, tUnder);
-
-                    // ---- Foam seen from below: the same advected mask, but instead of lit
-                    // white it reads as a SILHOUETTE - dense foam blocks the sky coming
-                    // through the surface, thin lace scatters a faint sun glow through.
-                    // No contact foam here: the depth texture holds the scene ABOVE the
-                    // surface from this side, so the contact heuristic is meaningless. ----
-                    if (_FoamEnabled > 0.5)
-                    {
-                        float2 fcoord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
-                                                             : (WorldToSim(i.worldPos).xz * 0.5 + 0.5);
-                        float advected = SampleFoamMaskBilinear(fcoord);
-                        float edge = min(1.0 - abs(i.position.x), 1.0 - abs(i.position.z));
-                        float border = (_SimWindowed < 0.5) ? (1.0 - smoothstep(0.0, _FoamBorderWidth, edge)) : 0.0;
-                        float mask = saturate((advected + border) * _FoamStrength);
-
-                        // Same world-space pattern UV as the above-water side. Computed (with its
-                        // screen derivatives) BEFORE the mask branch: WGSL requires derivatives in
-                        // uniform control flow, and the branch below is per-fragment.
-                        float2 fuv = i.worldPos.xz / max(_FoamTileSize, 1e-3)
-                                   + normal.xz * FOAM_NORMAL_NUDGE;
-                        float2 fuvDdx = ddx(fuv);
-                        float2 fuvDdy = ddy(fuv);
-
-                        if (mask > FOAM_MASK_EPSILON)
-                        {
-                            float foamDist = distance(i.worldPos.xz, _WorldSpaceCameraPos.xz);
-                            float3 pattern; float core, lace, foamAlpha; float2 tilt;
-                            EvaluateFoam(fuv, fuvDdx, fuvDdy, nxz, mask, foamDist, pattern, core, lace, foamAlpha, tilt);
-
-                            // Applied BEFORE the downwelling dim below, so the silhouette
-                            // and its glow fade with eye depth like the rest of the scene.
-                            float sunThrough = saturate(_LightDir.y);
-                            underColor *= 1.0 - FOAM_UNDERSIDE_DARKEN * foamAlpha;
-                            underColor += _FoamColor.rgb * pattern * (FOAM_UNDERSIDE_GLOW * sunThrough * lace * mask);
-                        }
-                    }
-
-                    // Dim the underwater view by the CAMERA's depth: the deeper the eye, the less
-                    // downwelling light reaches it, so the whole submerged scene reads darker.
-                    // Measured against the analytic surface (rest + waves) directly above the eye,
-                    // not the flat centre plane, so depth stays consistent with the rest of the
-                    // shading when the surface is wind-driven.
-                    float3 camPool = WorldToPool(_WorldSpaceCameraPos);
-                    float camSurfaceY = PoolToWorld(float3(camPool.x,
-                        WaveHeight(WindWaveSampleXZ(camPool.xz, _WorldSpaceCameraPos.xz)), camPool.z)).y;
-                    underColor *= DownwellingAttenuation(_WorldSpaceCameraPos.y, camSurfaceY);
-                    return float4(underColor, 1.0);
+                    float2 ruvU = ScreenUV(i.screenPos) + normal.xz * _RefractionDistortion;
+                    refractedColor = tex2D(_CameraOpaqueTexture, saturate(ruvU)).rgb * UNDERWATER_REFRACT_TINT;
                 }
-                else
+
+                float3 bodyInscatterUnder = WaterInscatterColor(-incomingRay, _LightDir, _SunColor, 0.0);
+                refractedColor = ApplyWaterOpacityTintedClarity(refractedColor, bodyInscatterUnder, waterClarity); // turbidity from below too
+
+                float tUnder = (1.0 - fresnel) * length(refractedRay);
+                tUnder = lerp(1.0, tUnder, _ReflectionStrength); // strength 0 = fully refracted
+                float3 underColor = lerp(reflectedColor, refractedColor, tUnder);
+
+                // ---- Foam seen from below: the same advected mask, but instead of lit
+                // white it reads as a SILHOUETTE - dense foam blocks the sky coming
+                // through the surface, thin lace scatters a faint sun glow through.
+                // No contact foam here: the depth texture holds the scene ABOVE the
+                // surface from this side, so the contact heuristic is meaningless. ----
+                if (_FoamEnabled > 0.5)
+                {
+                    float2 fcoord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
+                                                         : (WorldToSim(i.worldPos).xz * 0.5 + 0.5);
+                    float advected = SampleFoamMaskBilinear(fcoord);
+                    float edge = min(1.0 - abs(i.position.x), 1.0 - abs(i.position.z));
+                    float border = (_SimWindowed < 0.5) ? (1.0 - smoothstep(0.0, _FoamBorderWidth, edge)) : 0.0;
+                    float mask = saturate((advected + border) * _FoamStrength);
+
+                    // Same world-space pattern UV as the above-water side. Computed (with its
+                    // screen derivatives) BEFORE the mask branch: WGSL requires derivatives in
+                    // uniform control flow, and the branch below is per-fragment.
+                    float2 fuv = i.worldPos.xz / max(_FoamTileSize, 1e-3)
+                               + normal.xz * FOAM_NORMAL_NUDGE;
+                    float2 fuvDdx = ddx(fuv);
+                    float2 fuvDdy = ddy(fuv);
+
+                    if (mask > FOAM_MASK_EPSILON)
+                    {
+                        float foamDist = distance(i.worldPos.xz, _WorldSpaceCameraPos.xz);
+                        float3 pattern; float core, lace, foamAlpha; float2 tilt;
+                        EvaluateFoam(fuv, fuvDdx, fuvDdy, nxz, mask, foamDist, pattern, core, lace, foamAlpha, tilt);
+
+                        // Applied BEFORE the downwelling dim below, so the silhouette
+                        // and its glow fade with eye depth like the rest of the scene.
+                        float sunThrough = saturate(_LightDir.y);
+                        underColor *= 1.0 - FOAM_UNDERSIDE_DARKEN * foamAlpha;
+                        underColor += _FoamColor.rgb * pattern * (FOAM_UNDERSIDE_GLOW * sunThrough * lace * mask);
+                    }
+                }
+
+                // Dim the underwater view by the CAMERA's depth: the deeper the eye, the less
+                // downwelling light reaches it, so the whole submerged scene reads darker.
+                // Measured against the analytic surface (rest + waves) directly above the eye,
+                // not the flat centre plane, so depth stays consistent with the rest of the
+                // shading when the surface is wind-driven.
+                float3 camPool = WorldToPool(_WorldSpaceCameraPos);
+                float camSurfaceY = PoolToWorld(float3(camPool.x,
+                    WaveHeight(WindWaveSampleXZ(camPool.xz, _WorldSpaceCameraPos.xz)), camPool.z)).y;
+                underColor *= DownwellingAttenuation(_WorldSpaceCameraPos.y, camSurfaceY);
+                return float4(underColor, 1.0);
+            }
+
+            fixed4 frag(v2f i) : SV_Target
+            {
+                WaterGeomStage geom = EvaluateSurfaceGeometry(i);
+                float waterClarity = EvaluateWaterClarity(i, geom.shore);
+
+                // Both paths gate on the SAME uniform, so control flow stays uniform
+                // (the WGSL derivative contract) exactly like the old if/else did.
+                if (_Underwater > 0.5)
+                    return UnderwaterStage(i, geom, waterClarity);
+
+                // Above-water path (extracted into stages in the next commit). Original
+                // frag locals, re-bound to the shared geometry stage.
+                float3 normal = geom.normal;
+                float2 nxz = geom.nxz;
+                float3 incomingRay = geom.incomingRay;
+                float viewDistWorld = geom.viewDist;
+                ShoreData shoreFrag = geom.shore;
+                SurfWaveSample surfFrag = geom.surf;
+                float surfGeomFoam = geom.surfGeomFoam;
                 {
                     float3 reflectedRay = reflect(incomingRay, normal);
                     float3 refractedRay = refract(incomingRay, normal, IOR_AIR / IOR_WATER);
@@ -1090,7 +1151,6 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                         float sdfInField = all(sdfUV == saturate(sdfUV)) ? 1.0 : 0.0;
                         outColor = lerp(outColor, sdfDbg, sdfInField);
                     }
-
                     return float4(outColor, 1.0);
                 }
             }
