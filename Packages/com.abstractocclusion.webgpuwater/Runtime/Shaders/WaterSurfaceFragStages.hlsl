@@ -865,21 +865,46 @@ float3 FinalCompositeStage(v2f i, WaterGeomStage g, float3 outColor,
     {
         float horizD = distance(i.worldPos, _WorldSpaceCameraPos);
         float haze = 1.0 - exp(-_HorizonHazeDensity * horizD);
-        // Haze target = what the camera actually RENDERED behind this pixel: URP draws the
-        // skybox before the opaque-colour copy, so at the far mesh edge _CameraOpaqueTexture
-        // IS the sky at the horizon - an exact colour match for ANY sky (procedural, gradient,
-        // cubemap, animating), no probe involved. The SH ambient probe was tried and rejected:
-        // unity_SHAr..SHC are never bound for this CGPROGRAM pass under URP Forward+ (zeros ->
-        // far water faded to black), the same per-object-binding failure as unity_SpecCube0
-        // (see SampleSkyEnvironmentGrad). Tiers without the opaque texture (no real refraction)
-        // fall back to the _Sky reflection cube along the view ray. Both branches are gated on
-        // uniforms, so the implicit-derivative samples are WGSL-safe here.
-        float3 skyBehind = (_RealRefraction > 0.5)
-            ? tex2D(_CameraOpaqueTexture, ScreenUV(i.screenPos)).rgb
-            : SampleEnvironment(incomingRay);
+        // Haze target = the rendered sky AT THE HORIZON in this pixel's azimuth, read from
+        // _CameraOpaqueTexture: URP draws the skybox before the opaque-colour copy and the
+        // water pass is transparent-queue, so the opaque texture holds the water-free scene -
+        // at the horizon line, the TRUE sky band for ANY sky type (procedural, gradient,
+        // cubemap, animating). The horizontal view direction is projected as a DIRECTION
+        // (w = 0 -> point at infinity, i.e. exactly where the skybox drew that azimuth).
+        // Sampling AT the horizon - not behind the pixel - is what makes a dense haze read
+        // as aerial perspective: over deep ocean the opaque pass behind mid-distance pixels
+        // is the BELOW-horizon skybox, so the behind-pixel variant turned thick fog into a
+        // pasted sky mirror. At the far mesh edge the projection converges to the fragment's
+        // own screen position, so the seamless water-sky join is preserved. Degenerate
+        // azimuth (looking straight down) or a horizon behind the camera (w ~ 0) falls back
+        // to the behind-pixel sample - haze is negligible in those poses anyway. Explicit-LOD
+        // sample, so the per-pixel UV selection is WGSL-safe. (The SH ambient probe was tried
+        // and rejected: unity_SHAr..SHC are never bound for this CGPROGRAM pass under URP
+        // Forward+ - zeros, far water faded to BLACK - the same per-object-binding failure
+        // as unity_SpecCube0, see SampleSkyEnvironmentGrad.)
+        #define HORIZON_AZIMUTH_MIN 1e-4   // below this the view ray is straight down; no azimuth
+        float3 skyAtHorizon;
+        if (_RealRefraction > 0.5)
+        {
+            float azimuthLen = length(incomingRay.xz);
+            float3 horizonDir = float3(incomingRay.x, 0.0, incomingRay.z)
+                              / max(azimuthLen, HORIZON_AZIMUTH_MIN);
+            float4 horizonClip = mul(UNITY_MATRIX_VP, float4(horizonDir, 0.0));
+            float2 horizonUV = saturate(ScreenUV(ComputeScreenPos(horizonClip)));
+            bool horizonUsable = azimuthLen > HORIZON_AZIMUTH_MIN
+                              && horizonClip.w > SCREEN_UV_MIN_W;
+            float2 hazeUV = horizonUsable ? horizonUV : ScreenUV(i.screenPos);
+            skyAtHorizon = tex2Dlod(_CameraOpaqueTexture, float4(hazeUV, 0.0, 0.0)).rgb;
+        }
+        else
+        {
+            // Tiers without the opaque texture keep the reflection-cube fallback
+            // (uniform gate, implicit derivatives allowed here).
+            skyAtHorizon = SampleEnvironment(incomingRay);
+        }
         // _HorizonHazeColor stays an optional bias: alpha 0 (default) = pure auto-match;
         // raise alpha to pull the haze toward a fixed atmosphere colour.
-        float3 hazeTarget = lerp(skyBehind, _HorizonHazeColor.rgb, _HorizonHazeColor.a);
+        float3 hazeTarget = lerp(skyAtHorizon, _HorizonHazeColor.rgb, _HorizonHazeColor.a);
         outColor = lerp(outColor, hazeTarget, haze);
     }
     // Legacy smoothstep stopgap (retired in a later increment): only when the new haze is
