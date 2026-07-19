@@ -11,10 +11,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 {
     public partial class WaterVolumeEditor
     {
-        // Scattering intensity is a multiplier on the body colour; a stored 0 would render the body
-        // black however good the preset colour is. When applying a preset, lift a zeroed intensity to
-        // this sensible default so the physical colour is actually visible.
-        const float JerlovMinScatterIntensity = 1f;
+        // Applying a preset sets brightness together with colour. The body colour already carries the
+        // physical cross-type magnitude, so a unit intensity reads correctly; the old default of 2
+        // over-brightened the derived colours (and a stored 0 would have rendered the body black).
+        const float JerlovScatterIntensity = 1f;
 
         void DrawJerlovWaterTypeSelector()
         {
@@ -36,9 +36,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             Prop("waterFogSettings.waterFog").boolValue = true;
 
             Prop("volumeScatterSettings.scatterColor").colorValue = preset.BodyColor;
-            SerializedProperty scatterIntensity = Prop("volumeScatterSettings.scatterIntensity");
-            if (scatterIntensity.floatValue <= 0f)
-                scatterIntensity.floatValue = JerlovMinScatterIntensity;
+            Prop("volumeScatterSettings.scatterIntensity").floatValue = JerlovScatterIntensity;
         }
     }
 }

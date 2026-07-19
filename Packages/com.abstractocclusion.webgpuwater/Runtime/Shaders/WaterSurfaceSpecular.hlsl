@@ -15,7 +15,6 @@
 // SunSpecular below.
 #define SUN_GLINT_TINT          float3(10.0, 8.0, 6.0)
 #define SUN_GLINT_SHARPNESS     5000.0
-#define UNDERWATER_REFRACT_TINT float3(0.8, 1.0, 1.1)
 // Above-water Fresnel is physical Schlick (1994): F0 derived from the air/water
 // IOR (~0.02), grazing exponent 5. The old artistic curve (pow 3 lerped from a
 // 0.25 floor) reflected a quarter of the sky looking straight DOWN, which

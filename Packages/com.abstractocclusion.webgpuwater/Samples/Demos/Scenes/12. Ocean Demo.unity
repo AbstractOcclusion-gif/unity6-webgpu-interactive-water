@@ -554,7 +554,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &639025606
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -999,12 +999,12 @@ MonoBehaviour:
     envReflectionIntensity: 1
     fresnelFloor: 0
     fresnelPower: 5
-    sunRoughness: 0.184
+    sunRoughness: 0.18
     roughnessFar: 0.494
     roughnessFarDistance: 3141
     roughnessFalloff: 3.02
     reflectionAnisoStretch: 0.093
-    sunSheen: 0.623
+    sunSheen: 0.188
     sunSheenRoughness: 0.293
     sunGrazeBoost: 0.298
     reflectionDistortion: 0.05
@@ -1036,9 +1036,9 @@ MonoBehaviour:
   _legacyObstacleFlipY: 1
   waterFogSettings:
     waterFog: 1
-    fogColor: {r: 0.10105374, g: 0.24248955, b: 0.3132075, a: 1}
-    fogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
-    fogDensity: 0
+    fogColor: {r: 0.19900046, g: 0.4264151, b: 0.16976145, a: 1}
+    fogExtinction: {r: 0.2865, g: 0.1779, b: 0.663, a: 1}
+    fogDensity: 0.01
     waterOpacity: 0
   _legacyWaterFog: 0
   _legacyFogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
@@ -1047,8 +1047,8 @@ MonoBehaviour:
   _legacyWaterOpacity: 0
   volumeScatterSettings:
     volumeScatter: 0
-    scatterColor: {r: 0.18128152, g: 0.55510145, b: 0.78113204, a: 1}
-    scatterIntensity: 0
+    scatterColor: {r: 0.3349, g: 0.6065, b: 0.2968, a: 1}
+    scatterIntensity: 1
     scatterAnisotropy: 0.51
     scatterAmbientTerm: 0.96
     scatterSunTerm: 1.06
@@ -1237,6 +1237,7 @@ MonoBehaviour:
   orbit: {fileID: 0}
   configureCamera: 0
   splashEmitter: {fileID: 0}
+  jerlovWaterType: 9
 --- !u!1 &1734502736
 GameObject:
   m_ObjectHideFlags: 0

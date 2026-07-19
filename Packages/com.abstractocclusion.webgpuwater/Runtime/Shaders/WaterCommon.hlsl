@@ -5,9 +5,6 @@
 
 #include "WaterShared.hlsl" // IOR_*, POOL_*, IntersectCube, ProjectCausticUV, rim consts
 
-static const float3 ABOVEWATER_COLOR = float3(0.25, 1.0, 1.25);
-static const float3 UNDERWATER_COLOR = float3(0.4, 0.9, 1.0);
-
 // Floor for the pool ambient-occlusion divide, so a point at the pool centre (length(p) -> 0)
 // can't drive the result to Inf.
 #define POOL_AO_MIN_DIST 1e-4

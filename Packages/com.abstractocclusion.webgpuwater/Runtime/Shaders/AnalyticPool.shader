@@ -142,7 +142,7 @@ Shader "AbstractOcclusion/WebGpuWater/AnalyticPool"
                 // Caustics are refracted SUNLIGHT: gate them so they vanish under a caster.
                 color += albedo * _CausticTint.rgb * (wallCaustic * _CausticStrength * causticShadowGate);
 
-                if (underwater) color *= UNDERWATER_COLOR * UNDERWATER_WALL_BOOST;
+                if (underwater) color *= UnderwaterViewTint() * UNDERWATER_WALL_BOOST;
 
                 // One surface height: the sampled sim surface converted to world Y, the same
                 // height the waterline cut above uses. Downwelling and fog measure depth

@@ -168,14 +168,14 @@ float4 UnderwaterStage(v2f i, WaterGeomStage g, float waterClarity)
     // tiles. The reflected ray points back DOWN into the pool, so routing it through
     // GetSurfaceRayColor used to sample the analytic wall (a stale baked-in tile
     // reflection on the underside of the surface).
-    float3 reflectedColor = SampleEnvironment(reflectedRay) * UNDERWATER_COLOR;
-    float3 refractedColor = GetSurfaceRayColor(i.worldPos, refractedRay, float3(1.0, 1.0, 1.0)) * UNDERWATER_REFRACT_TINT;
+    float3 reflectedColor = SampleEnvironment(reflectedRay) * UnderwaterViewTint();
+    float3 refractedColor = GetSurfaceRayColor(i.worldPos, refractedRay, float3(1.0, 1.0, 1.0)) * UnderwaterViewTint();
 
     // Real transparency from below: sample the live scene above the surface.
     if (_RealRefraction > 0.5)
     {
         float2 ruvU = ScreenUV(i.screenPos) + normal.xz * _RefractionDistortion;
-        refractedColor = tex2D(_CameraOpaqueTexture, saturate(ruvU)).rgb * UNDERWATER_REFRACT_TINT;
+        refractedColor = tex2D(_CameraOpaqueTexture, saturate(ruvU)).rgb * UnderwaterViewTint();
     }
 
     float3 bodyInscatterUnder = WaterInscatterColor(-incomingRay, _LightDir, _SunColor, 0.0);
@@ -332,7 +332,10 @@ float3 RefractionStage(v2f i, WaterGeomStage g, float waterClarity)
     // crest is deep (sky/far behind), so it is added emissively after compositing instead.
     float3 bodyInscatter = WaterInscatterColor(-incomingRay, _LightDir, _SunColor, 0.0);
 
-    float3 refractedColor = GetSurfaceRayColor(i.worldPos, refractedRay, ABOVEWATER_COLOR);
+    // No constant tint: for open/deep water GetSurfaceRayColor -> DeepWaterColor already lights the
+    // physical body colour via WaterInscatterColor, and the absorption below pulls the rest toward it,
+    // so a neutral tint hands the colour to the physical model instead of the old hardcoded cyan.
+    float3 refractedColor = GetSurfaceRayColor(i.worldPos, refractedRay, float3(1.0, 1.0, 1.0));
 
     // ---- Real transparency: sample the actual scene behind the surface, instead of
     // the analytic pool; else fog the ANALYTIC pool by the refracted chord. Only one
@@ -341,7 +344,7 @@ float3 RefractionStage(v2f i, WaterGeomStage g, float waterClarity)
     {
         float2 ruv = ScreenUV(i.screenPos);
         ruv += normal.xz * _RefractionDistortion;
-        refractedColor = tex2D(_CameraOpaqueTexture, saturate(ruv)).rgb * ABOVEWATER_COLOR;
+        refractedColor = tex2D(_CameraOpaqueTexture, saturate(ruv)).rgb; // tinted by the water absorption below
 
         // Fog the transmitted view by the water thickness behind the surface
         // (scene eye-depth - surface eye-depth), so heavy fog reads through too.

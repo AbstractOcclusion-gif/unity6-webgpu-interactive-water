@@ -27,6 +27,20 @@ float3 ApplyWaterOpacity(float3 color)
     return lerp(color, _WaterFogColor.rgb, saturate(_WaterOpacity));
 }
 
+// ---- Underwater view tint (physical; replaces the old hardcoded UNDERWATER_* constants) ----
+// The colour the water casts on the reflected/refracted view AT the surface boundary, seen from
+// below. Derived from the SAME per-channel extinction that drives the fog, so it follows the
+// selected water type instead of a constant. It uses a fixed representative near-surface path on
+// purpose: the eye-depth dimming of the whole submerged view is already owned by
+// DownwellingAttenuation AND the underwater fog pass (simple or complex), so this must NOT
+// re-integrate depth or it would double-darken. Clear water reproduces the old blue-green cast;
+// turbid types pull it green, matching their absorption.
+#define UNDERWATER_VIEW_DEPTH 1.0 // metres; a boundary-view path, deliberately not the full eye depth
+float3 UnderwaterViewTint()
+{
+    return exp(-_WaterExtinction.rgb * (_WaterFogDensity * UNDERWATER_VIEW_DEPTH));
+}
+
 // ---- Volume scattering (lit in-scatter) ---------------------------------
 // The flat _WaterFogColor is a picked colour that never responds to the sun. This instead lights a
 // picked body colour: _ScatterColor scaled by _ScatterIntensity and modulated by ambient + a sun
