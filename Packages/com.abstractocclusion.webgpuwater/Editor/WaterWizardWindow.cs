@@ -120,8 +120,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         [SerializeField] Mesh _newFloaterMesh;
         [SerializeField] float _newFloaterSize = DefaultFloaterSize;
 
-        // Boat creator (primitive hull by default; drop a mesh in for a custom hull).
-        [SerializeField] Mesh _boatHullMesh;
+        // Boat creator (primitive hull by default; drop a model prefab in for a custom hull).
+        [SerializeField] GameObject _boatHullModel;
         [SerializeField] bool _boatChaseCamera = true;
 
         [SerializeField] bool _createExpanded = true;
@@ -514,10 +514,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                                     "whatever water hosts it - build an ocean first for the full experience. " +
                                     "Drive with W/S and A/D.", MessageType.None);
 
-            _boatHullMesh = (Mesh)EditorGUILayout.ObjectField(
-                new GUIContent("Hull mesh (optional)", "Leave empty for the built-in primitive hull; assign a mesh " +
-                                                       "(e.g. your own boat model) for a custom hull with a convex collider."),
-                _boatHullMesh, typeof(Mesh), allowSceneObjects: false);
+            _boatHullModel = (GameObject)EditorGUILayout.ObjectField(
+                new GUIContent("Hull model (optional)", "Leave empty for the built-in primitive hull; assign a model " +
+                                                        "prefab (multi-mesh/material is fine) for a custom hull. The boat " +
+                                                        "ROOT stays at scale (1,1,1) with a collider auto-fitted to the " +
+                                                        "model's bounds, so nothing gets stretched."),
+                _boatHullModel, typeof(GameObject), allowSceneObjects: false);
             _boatChaseCamera = EditorGUILayout.Toggle(
                 new GUIContent("Chase camera", "Swap the scene camera's controller for a yaw-only follow camera " +
                                                "locked to the boat (orbit/fly are disabled, not removed)."),
@@ -527,7 +529,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             {
                 Undo.SetCurrentGroupName("Create Boat");
                 int undoGroup = Undo.GetCurrentGroup();
-                GameObject boat = CreateBoat(_boatHullMesh, withSplash: _splash);
+                GameObject boat = CreateBoat(_boatHullModel, withSplash: _splash);
                 if (boat == null) return;
                 if (_boatChaseCamera) FocusSceneOnBoat(boat);
                 Selection.activeObject = boat;
