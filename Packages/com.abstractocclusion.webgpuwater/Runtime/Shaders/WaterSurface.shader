@@ -164,6 +164,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             float2 _PatchPoolCenter;  // window centre in pool xz
             float2 _PatchPoolHalf;    // window half-size in pool units (per axis)
             float  _PatchDepthBias;   // view-space metres to pull the patch toward the camera so it wins over the coplanar far plane
+            // Chunk fill level as the surface plane's POOL-Y (published per body by WaterVolume.Chunk.cs;
+            // 0 = the rest plane, the default for every non-chunk body). Lowers / raises the disc so a
+            // chunk can be partly full; the sphere clip below reads the fragment's DISPLACED pool
+            // position, so the disc circle tracks the shape's cross-section at the chosen level for free.
+            float  _ChunkSurfacePoolY;
             // Unbounded-ocean clipmap: 1 = a camera-following world-locked geometry-clipmap LOD level
             // (authored in INTEGER CELL UNITS, scaled to metres by the transform, reaching the horizon),
             // 0 = pool-grid surfaces. Inert at the default (_IsClipmap = 0).
@@ -277,7 +282,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 {
                     float2 gridPoolXZ = (_IsPatch > 0.5) ? (_PatchPoolCenter + v.vertex.xy * _PatchPoolHalf)
                                                          : v.vertex.xy;
-                    poolFlat = float3(gridPoolXZ.x, 0.0, gridPoolXZ.y); // grid -> pool (x, 0, z)
+                    poolFlat = float3(gridPoolXZ.x, _ChunkSurfacePoolY, gridPoolXZ.y); // grid -> pool (x, level, z); level 0 for non-chunks
                     worldFlat = PoolToWorld(poolFlat);
                 }
                 // World position at the surface plane (height 0) picks the windowed UV; the
@@ -373,6 +378,16 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // after the disc and its wall pixels replace the overhang, so the overlap never shows.
             #define CHUNK_SPHERE_CLIP_MARGIN 0.02
 
+            // Chunk MESH footprint: clip the disc to the mesh's cross-section at the water line using the
+            // depth prepass (WaterChunkDepthFeature). Read by texel .Load - no sampler. This is a UnityCG
+            // shader, so plain Texture2D + single-arg LinearEyeDepth (not the URP-core macros the wall uses).
+            float _ChunkUseMesh;
+            Texture2D _ChunkFogFrontDepth;
+            Texture2D _ChunkFogBackDepth;
+            // Span-relative overdraw past the mesh's [front,back] so the disc rim meets the wall with a
+            // covered seam (the shell renders after and hides the overhang), like the sphere-clip margin.
+            #define CHUNK_MESH_CLIP_MARGIN 0.05
+
             fixed4 frag(v2f i) : SV_Target
             {
                 // Dry-interior exclusion (boat hull, sub room): kill the surface fragment
@@ -393,6 +408,30 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     float3 chunkPool = WorldToPool(i.worldPos);
                     // Keep fragments up to the margin PAST the unit sphere (covered-seam overdraw).
                     clip(1.0 + CHUNK_SPHERE_CLIP_MARGIN - dot(chunkPool, chunkPool));
+                }
+
+                // Chunk MESH footprint: carve the flat disc down to the mesh's cross-section at the water
+                // line. Keep the fragment only where its OWN depth lies inside the mesh's [front, back]
+                // span at this pixel (the Crest volume test) - the same two depth RTs the wall reads.
+                if (_ChunkUseMesh > 0.5)
+                {
+                    int2 chunkPixel = int2(i.pos.xy);
+                    // Linear eye depths of the mesh's front/back faces and of this disc fragment. A face
+                    // at the FAR plane means "not rasterised here" - a cleared texel (no mesh at this
+                    // pixel), or, for the front face only, the camera being INSIDE the mesh. Detected via
+                    // the far plane (_ProjectionParams.z) so no reversed-Z / SRP far-value macro is needed.
+                    float farPlane = _ProjectionParams.z;
+                    float linFrontRaw = LinearEyeDepth(_ChunkFogFrontDepth.Load(int3(chunkPixel, 0)).r);
+                    float linBackRaw  = LinearEyeDepth(_ChunkFogBackDepth.Load(int3(chunkPixel, 0)).r);
+                    bool frontEmpty = linFrontRaw >= farPlane * 0.99;
+                    bool backEmpty  = linBackRaw  >= farPlane * 0.99;
+                    clip((frontEmpty && backEmpty) ? -1.0 : 1.0); // no mesh at this pixel
+
+                    float linDisc  = LinearEyeDepth(i.pos.z);
+                    float linFront = frontEmpty ? 0.0 : linFrontRaw;      // camera inside: drop the near bound
+                    float linBack  = backEmpty  ? farPlane : linBackRaw;
+                    float margin   = max(linBack - linFront, 1e-4) * CHUNK_MESH_CLIP_MARGIN;
+                    clip((linDisc >= linFront - margin && linDisc <= linBack + margin) ? 1.0 : -1.0);
                 }
 
                 WaterGeomStage geom = EvaluateSurfaceGeometry(i);

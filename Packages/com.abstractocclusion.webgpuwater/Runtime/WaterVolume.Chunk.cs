@@ -8,6 +8,7 @@
 // the analytic pool renderer; the primitive (box / inscribed sphere) is resolved analytically in
 // WaterChunkWall.shader. Created lazily, HideAndDontSave (never serialized), parented to the body so
 // it is torn down with it.
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -16,8 +17,9 @@ namespace AbstractOcclusion.WebGpuWater
     public partial class WaterVolume
     {
         /// <summary>Chunk footprint. None = an ordinary (square-footprint) body. Box / Sphere turn the
-        /// body into a floating chunk: the shell fills the primitive below the surface.</summary>
-        public enum ChunkFootprint { None, Box, Sphere }
+        /// body into a floating chunk (analytic primitive). Mesh takes the water column's entry/exit
+        /// from an ARBITRARY closed mesh via the depth prepass (WaterChunkDepthFeature).</summary>
+        public enum ChunkFootprint { None, Box, Sphere, Mesh }
 
         [SerializeField, HideInInspector] internal ChunkFootprint chunkFootprint = ChunkFootprint.None;
         [SerializeField, HideInInspector] internal float chunkDensityBoost = 1f;
@@ -27,8 +29,41 @@ namespace AbstractOcclusion.WebGpuWater
         // waterline, drawn only on the near-plane "at 0" frames by WaterChunkWall.shader. Look-tune
         // knob - wire an inspector slider in WaterVolumeEditor.Chunk.cs like the others if desired.
         [SerializeField, HideInInspector] internal float chunkMeniscus = 0.5f;
+        // The closed mesh a Mesh-footprint chunk fills. Authored in POOL space [-1,1] (like the shell
+        // box), placed by the volume frame; the depth prepass rasterises its front/back faces.
+        [SerializeField, HideInInspector] internal Mesh chunkMesh;
+        // Fill level 0..1: how full the chunk is. 0.5 = the rest plane (surface at the shape's centre,
+        // the historical default); 1 = brim-full (surface at the top); 0 = empty. Maps to a pool-Y plane.
+        [SerializeField, HideInInspector] internal float chunkFillLevel = 0.5f;
 
         internal bool IsChunk => chunkFootprint != ChunkFootprint.None;
+
+        // Mesh-footprint chunk that actually has a mesh to prepass. The depth feature/pass gate on
+        // this so sphere/box chunks (analytic) never trigger the prepass.
+        internal bool IsMeshChunk => chunkFootprint == ChunkFootprint.Mesh && chunkMesh != null;
+        internal Mesh ChunkDepthMesh => chunkMesh;
+
+        // Scanned by WaterChunkDepthFeature (any-active gate) and WaterChunkDepthPass (draw list).
+        // Bodies is the package-wide registry (WaterVolume.Settings.cs).
+        internal static bool AnyMeshChunkActive()
+        {
+            for (int i = 0; i < Bodies.Count; i++)
+            {
+                WaterVolume body = Bodies[i];
+                if (body != null && body.isActiveAndEnabled && body.IsMeshChunk) return true;
+            }
+            return false;
+        }
+
+        internal static void CollectMeshChunks(List<WaterVolume> into)
+        {
+            into.Clear();
+            for (int i = 0; i < Bodies.Count; i++)
+            {
+                WaterVolume body = Bodies[i];
+                if (body != null && body.isActiveAndEnabled && body.IsMeshChunk) into.Add(body);
+            }
+        }
 
         // GPU pair: CHUNK_SHAPE_* in WaterChunkPrimitive.hlsl.
         const float ChunkShapeBoxValue = 0f;
@@ -63,6 +98,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_ChunkWaterFogDensity = Shader.PropertyToID("_WaterFogDensity");
         static readonly int ID_ChunkCameraUnderwater = Shader.PropertyToID("_ChunkCameraUnderwater");
         static readonly int ID_ChunkMeniscus = Shader.PropertyToID("_ChunkMeniscus");
+        static readonly int ID_ChunkUseMesh = Shader.PropertyToID("_ChunkUseMesh");
+        static readonly int ID_ChunkSurfacePoolY = Shader.PropertyToID("_ChunkSurfacePoolY");
 
         // Build the shell renderer once (lazily). Null material (shader missing in a build without the
         // Always-Included registration) leaves the shell absent - the surface still renders.
@@ -104,6 +141,14 @@ namespace AbstractOcclusion.WebGpuWater
             block.SetFloat(ID_ChunkSphereClip, isSphere ? 1f : 0f);
             block.SetFloat(ID_ChunkFogClamp, IsChunk ? 1f : 0f);
             block.SetFloat(ID_ChunkShape, isSphere ? ChunkShapeSphereValue : ChunkShapeBoxValue);
+            // Fill level -> surface pool-Y plane (0 = rest). Always written (0 off-chunk) so a body
+            // leaving chunk mode never keeps a stale level. The disc (WaterSurface) and the shell wall
+            // read the same value, so their waterlines stay locked together.
+            block.SetFloat(ID_ChunkSurfacePoolY, IsChunk ? (chunkFillLevel * 2f - 1f) : 0f);
+            // Mesh footprint flag, needed by BOTH the disc (WaterSurface clips itself to the mesh) and
+            // the shell wall (reads entry/exit from the depth prepass). Set here so the disc's block
+            // carries it; always written (0 off-chunk) so a body leaving mesh mode resets.
+            block.SetFloat(ID_ChunkUseMesh, chunkFootprint == ChunkFootprint.Mesh ? 1f : 0f);
             if (!IsChunk) return;
 
             // A chunk's fog comes from its OWN disc surface + shell, so the GPU fog gate is forced on

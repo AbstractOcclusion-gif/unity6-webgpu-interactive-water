@@ -64,6 +64,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
             // Meniscus line strength (0 = off). Published per-chunk by WaterVolume.Chunk.cs; 0 when
             // unpublished so a build that never sets it draws no line.
             float _ChunkMeniscus;
+            // MESH footprint: entry/exit distances come from the depth prepass (WaterChunkDepthFeature)
+            // instead of the analytic primitive. Read by texel LOAD (fetch, not Sample) so NO sampler
+            // unit is spent - the 16-sampler d3d11 budget is untouched. 0 = analytic box/sphere.
+            float _ChunkUseMesh;
+            // Fill level as the surface plane's POOL-Y (0 = rest plane). Lowers/raises the waterline
+            // the wall caps the column at, matching the disc (WaterSurface.shader reads the same value).
+            float _ChunkSurfacePoolY;
+            TEXTURE2D_X_FLOAT(_ChunkFogFrontDepth); // front faces: nearest entry into the mesh
+            TEXTURE2D_X_FLOAT(_ChunkFogBackDepth);  // back faces:  exit from the mesh
 
             #define CHUNK_SUN_WRAP 0.5
             #define CHUNK_COLUMN_EPSILON 1e-4
@@ -126,7 +135,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
                 float ripple = ChunkRippleHeight(poolXZ, worldPos);
                 float rippleLift = PoolToWorld(float3(poolXZ.x, ripple, poolXZ.y)).y
                                  - PoolToWorld(float3(poolXZ.x, 0.0, poolXZ.y)).y;
-                return baseline + rippleLift;
+                // Fill level: the world-Y shift of moving the surface plane from the rest pool-Y (0)
+                // to _ChunkSurfacePoolY. Zero for a full/rest chunk; negative lowers the waterline.
+                float levelLift = PoolToWorld(float3(poolXZ.x, _ChunkSurfacePoolY, poolXZ.y)).y
+                                - PoolToWorld(float3(poolXZ.x, 0.0, poolXZ.y)).y;
+                return baseline + rippleLift + levelLift;
             }
 
             float3 ChunkSurfaceReflection(float3 surfaceNormal, float3 viewDirWS)
@@ -161,14 +174,37 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
                 float3 rayDir = normalize(IN.positionWS - _WorldSpaceCameraPos);
                 float3 viewDirWS = -rayDir;
 
-                // Primitive interval along the view ray, in world metres (pool space is an affine image
-                // of world, so the pool-space t of a normalised world ray is the world t).
+                // Pool-space ray (pool space is an affine image of world, so the pool-space t of a
+                // normalised world ray is the world t). Used by the analytic path + the sun facet.
                 float3 poolOrigin = WorldToPool(_WorldSpaceCameraPos);
                 float3 poolDir    = WorldDirToPool(rayDir);
-                float2 t = ChunkIntersect(_ChunkShape, poolOrigin, poolDir);
+
+                float2 screenUV = GetNormalizedScreenSpaceUV(IN.positionCS);
+
+                // Primitive interval (tNear, tFar) along the view ray, in world metres. MESH chunks
+                // take it from the depth prepass (front = entry, back = exit), read by texel LOAD;
+                // sphere/box stay analytic. frontWS is kept for the reconstructed mesh normal below.
+                bool useMesh = _ChunkUseMesh > 0.5;
+                float2 t;
+                float3 frontWS = float3(0.0, 0.0, 0.0);
+                if (useMesh)
+                {
+                    uint2 pixel = uint2(IN.positionCS.xy);
+                    float rawFront = LOAD_TEXTURE2D_X(_ChunkFogFrontDepth, pixel).r;
+                    float rawBack  = LOAD_TEXTURE2D_X(_ChunkFogBackDepth,  pixel).r;
+                    // Cleared depth == far: no mesh at this pixel -> hand it back (disc / scene shows).
+                    clip((rawFront != UNITY_RAW_FAR_CLIP_VALUE && rawBack != UNITY_RAW_FAR_CLIP_VALUE) ? 1.0 : -1.0);
+                    frontWS       = ComputeWorldSpacePosition(screenUV, rawFront, UNITY_MATRIX_I_VP);
+                    float3 backWS = ComputeWorldSpacePosition(screenUV, rawBack,  UNITY_MATRIX_I_VP);
+                    t = float2(dot(frontWS - _WorldSpaceCameraPos, rayDir),
+                               dot(backWS  - _WorldSpaceCameraPos, rayDir));
+                }
+                else
+                {
+                    t = ChunkIntersect(_ChunkShape, poolOrigin, poolDir);
+                }
 
                 // Real scene behind the fragment caps the column at any geometry inside/behind the body.
-                float2 screenUV = GetNormalizedScreenSpaceUV(IN.positionCS);
                 float3 sceneWorld = ComputeWorldSpacePosition(screenUV, SampleSceneDepth(screenUV),
                                                               UNITY_MATRIX_I_VP);
                 float sceneDist = max(dot(sceneWorld - _WorldSpaceCameraPos, rayDir), 0.0);
@@ -289,10 +325,22 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
                     return half4(0.0, 0.0, 0.0, meniscus);               // premultiplied darken over the disc
                 }
 
-                // Entry surface normal: the analytic shell normal (pool -> world via the frame's
-                // inverse-transpose); top entries are discarded above, so no UP branch remains.
-                float3 poolEntry = poolOrigin + poolDir * entryT;
-                float3 surfaceN = PoolNormalToWorld(ChunkSurfaceNormalPool(_ChunkShape, poolEntry));
+                // Entry surface normal (top entries were discarded above, so no UP branch remains):
+                // MESH reconstructs it from the front-depth gradient; analytic maps the primitive's
+                // pool-space normal to world via the frame's inverse-transpose.
+                float3 surfaceN;
+                if (useMesh)
+                {
+                    // Front-face world position's screen-space gradient IS the face normal - cheap,
+                    // no normals RT. Noisy at silhouettes (a clipped neighbour's far position), but
+                    // the sides are fog-dominated so it never reads. Cross order gives an outward N.
+                    surfaceN = normalize(cross(ddy(frontWS), ddx(frontWS)));
+                }
+                else
+                {
+                    float3 poolEntry = poolOrigin + poolDir * entryT;
+                    surfaceN = PoolNormalToWorld(ChunkSurfaceNormalPool(_ChunkShape, poolEntry));
+                }
                 if (dot(surfaceN, viewDirWS) < 0.0) surfaceN = -surfaceN;
 
                 float sunWrap = saturate((dot(surfaceN, _LightDir) + CHUNK_SUN_WRAP) / (1.0 + CHUNK_SUN_WRAP));
