@@ -23,6 +23,10 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField, HideInInspector] internal float chunkDensityBoost = 1f;
         [SerializeField, HideInInspector] internal float chunkRefraction = 0.5f;
         [SerializeField, HideInInspector] internal float chunkReflectivity = 0.6f;
+        // Meniscus line strength (0 = off). A thin surface-tension darkening along the on-screen
+        // waterline, drawn only on the near-plane "at 0" frames by WaterChunkWall.shader. Look-tune
+        // knob - wire an inspector slider in WaterVolumeEditor.Chunk.cs like the others if desired.
+        [SerializeField, HideInInspector] internal float chunkMeniscus = 0.5f;
 
         internal bool IsChunk => chunkFootprint != ChunkFootprint.None;
 
@@ -58,6 +62,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_ChunkWaterFogEnabled = Shader.PropertyToID("_WaterFogEnabled");
         static readonly int ID_ChunkWaterFogDensity = Shader.PropertyToID("_WaterFogDensity");
         static readonly int ID_ChunkCameraUnderwater = Shader.PropertyToID("_ChunkCameraUnderwater");
+        static readonly int ID_ChunkMeniscus = Shader.PropertyToID("_ChunkMeniscus");
 
         // Build the shell renderer once (lazily). Null material (shader missing in a build without the
         // Always-Included registration) leaves the shell absent - the surface still renders.
@@ -157,6 +162,7 @@ namespace AbstractOcclusion.WebGpuWater
 
             bodyBlock.SetFloat(ID_ChunkRefraction, chunkRefraction);
             bodyBlock.SetFloat(ID_ChunkReflectivity, chunkReflectivity);
+            bodyBlock.SetFloat(ID_ChunkMeniscus, chunkMeniscus);
             _chunkShellRenderer.SetPropertyBlock(bodyBlock);
         }
 
@@ -169,6 +175,22 @@ namespace AbstractOcclusion.WebGpuWater
         void DisableChunkShell()
         {
             if (_chunkShellRenderer != null) SetRendererEnabled(_chunkShellRenderer, false);
+        }
+
+        // Fast play-mode enter (Domain Reload disabled) keeps these statics alive across sessions while
+        // the shell GameObjects they fed are gone - reset so the first chunk rebuilds cleanly and a
+        // destroyed material/mesh is never reused. Multi-chunk note: per-body state (frame, waves, fog,
+        // camera-underwater) already flows through each volume's OWN MaterialPropertyBlock, so it is
+        // per-instance; only this shared material/mesh needed resetting. Inter-chunk transparent SORT
+        // order (two chunks near each other) is a render-queue limitation the depth-RT rearchitecture
+        // addresses - a per-instance material would not fix it, so it is deliberately left shared.
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetChunkStaticState()
+        {
+            if (_chunkShellMaterial != null) Destroy(_chunkShellMaterial);
+            if (_chunkShellMesh != null) Destroy(_chunkShellMesh);
+            _chunkShellMaterial = null;
+            _chunkShellMesh = null;
         }
     }
 }

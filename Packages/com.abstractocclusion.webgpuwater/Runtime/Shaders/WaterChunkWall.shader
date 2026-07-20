@@ -61,6 +61,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
             // Decided per FRAME on the CPU (ComputeChunkCameraUnder) - a per-pixel test off the ray
             // interval flickered across the waterline band. Drives the veil-vs-backdrop split below.
             float _ChunkCameraUnderwater;
+            // Meniscus line strength (0 = off). Published per-chunk by WaterVolume.Chunk.cs; 0 when
+            // unpublished so a build that never sets it draws no line.
+            float _ChunkMeniscus;
 
             #define CHUNK_SUN_WRAP 0.5
             #define CHUNK_COLUMN_EPSILON 1e-4
@@ -73,6 +76,18 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
             // Bisection steps for the ray<->displaced-surface crossing, bounded to the primitive
             // span (<= the chunk diameter), so precision is span / 2^steps regardless of ray angle.
             #define CHUNK_WATERLINE_BISECT_STEPS 6
+            // Coarse march that finds waterline crossings the two-endpoint test misses (a crest hump
+            // or a trough MID-span - a double crossing). Each detected sign change is refined by the
+            // bisection above, so precision per crossing = span / (MARCH_STEPS * 2^BISECT_STEPS).
+            #define CHUNK_WATERLINE_MARCH_STEPS 8
+            // Meniscus: a thin surface-tension darkening along the on-screen waterline, shown only
+            // where the ray crosses the surface CLOSE to the eye (the "at 0" near-plane frames).
+            // SPAN_FRACTION = air-side line thickness as a fraction of the span; MAX_DISTANCE fades
+            // it out with crossing distance so a distant chunk never gets a dark ring; DARKEN caps
+            // the line's opacity. Strength is scaled by the per-chunk _ChunkMeniscus knob.
+            #define CHUNK_MENISCUS_SPAN_FRACTION 0.06
+            #define CHUNK_MENISCUS_MAX_DISTANCE 6.0
+            #define CHUNK_MENISCUS_DARKEN 0.55
 
             float2 ChunkClipToScreenUV(float4 clipPos)
             {
@@ -163,44 +178,92 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
 
                 // Waterline = THIS body's displaced surface (the SAME function the disc surface
                 // uses, via the shared per-body block) -> the shell and the disc meet with no seam.
-                // Solved by BISECTION on the bounded primitive span (the underwater fog shader's
-                // pattern): classify the two endpoints by their signed gap to the surface, then
-                // bisect the sign change. Angle-robust by construction - the former fixed-point
-                // solve divided by rayDir.y, which DIVERGED for grazing rays (the crossing xz leapt
-                // metres between iterations) and confettied the whole waterline band.
-                float sA = entryT;
-                float sB = exitT;
-                float3 pA = _WorldSpaceCameraPos + rayDir * sA;
-                float3 pB = _WorldSpaceCameraPos + rayDir * sB;
-                float gapA = pA.y - ChunkSurfaceHeightWorld(pA.xz, pA);
-                float gapB = pB.y - ChunkSurfaceHeightWorld(pB.xz, pB);
-                bool enteredThroughTop = gapA >= 0.0 && gapB < 0.0;
-                float wavyTopY = pA.y - gapA; // surface height over the entry (downwelling reference)
-                if (gapA >= 0.0 && gapB >= 0.0)
-                {
-                    exitT = entryT; // whole span in air -> zero column, clipped below
-                }
-                else if (gapA != gapB && (gapA >= 0.0 || gapB >= 0.0))
-                {
-                    // Exactly one waterline crossing inside the span: bisect it.
-                    bool nearInAir = gapA >= 0.0;
-                    [unroll]
-                    for (int bisect = 0; bisect < CHUNK_WATERLINE_BISECT_STEPS; bisect++)
-                    {
-                        float sM = (sA + sB) * 0.5;
-                        float3 pM = _WorldSpaceCameraPos + rayDir * sM;
-                        float gapM = pM.y - ChunkSurfaceHeightWorld(pM.xz, pM);
-                        if ((gapM >= 0.0) == nearInAir) sA = sM; else sB = sM;
-                    }
-                    float sCross = (sA + sB) * 0.5;
-                    float3 pCross = _WorldSpaceCameraPos + rayDir * sCross;
-                    wavyTopY = ChunkSurfaceHeightWorld(pCross.xz, pCross);
-                    if (nearInAir) entryT = sCross; // air -> water: entered through the waterline
-                    else           exitT  = sCross; // water -> air: capped at the waterline
-                }
-                // else: whole span submerged -> no waterline cap.
+                // Waterline solve by a coarse MARCH + per-crossing bisection over the primitive span,
+                // replacing the endpoint-only classification (which saw only the two span ends and so
+                // missed a crest hump or a trough MID-span - a double crossing - either over-fogging
+                // through the hump or dropping a submerged segment). We accumulate the TRUE submerged
+                // length, so 0 / 1 / 2+ crossings are handled uniformly. Bounded to the span and never
+                // dividing by rayDir.y, so grazing rays stay robust (the old fixed-point solve
+                // confettied them). Reduces to the previous result in the single-crossing common case.
+                float spanStart = entryT;
+                float spanEnd   = exitT;                 // = min(t.y, sceneDist)
+                float spanLen   = max(spanEnd - spanStart, 0.0);
 
-                float column = max(exitT - entryT, 0.0);
+                float sPrev = spanStart;
+                float3 pPrev = _WorldSpaceCameraPos + rayDir * sPrev;
+                float gapPrev = pPrev.y - ChunkSurfaceHeightWorld(pPrev.xz, pPrev);
+                bool nearInAir = gapPrev >= 0.0; // nearest point of the span is above the surface
+
+                float submergedColumn = 0.0;
+                float firstEntryT = spanEnd; // start of the first submerged segment (refraction entry)
+                float lastExitT   = spanStart;
+                float wavyTopY = pPrev.y - gapPrev; // surface over the entry (downwelling reference)
+                bool haveEntry = false;
+
+                // [loop] not [unroll]: the nested surface-sampling body is too large to unroll
+                // (D3D bails), and SampleWaterBicubic uses tex2Dlod so dynamic flow is valid - the
+                // same choice WaterUnderwaterFog.shader makes for its scan + refine.
+                [loop]
+                for (int march = 1; march <= CHUNK_WATERLINE_MARCH_STEPS; march++)
+                {
+                    float sCur = spanStart + spanLen * ((float)march / CHUNK_WATERLINE_MARCH_STEPS);
+                    float3 pCur = _WorldSpaceCameraPos + rayDir * sCur;
+                    float gapCur = pCur.y - ChunkSurfaceHeightWorld(pCur.xz, pCur);
+                    bool prevWater = gapPrev < 0.0;
+                    bool curWater  = gapCur  < 0.0;
+
+                    if (prevWater && curWater)
+                    {
+                        // Fully submerged sub-interval.
+                        if (!haveEntry) { firstEntryT = sPrev; wavyTopY = pPrev.y - gapPrev; haveEntry = true; }
+                        submergedColumn += sCur - sPrev;
+                        lastExitT = sCur;
+                    }
+                    else if (prevWater != curWater)
+                    {
+                        // One crossing in this sub-interval: bisect for the exact boundary.
+                        float a = sPrev, b = sCur;
+                        bool aInAir = gapPrev >= 0.0;
+                        [loop]
+                        for (int bisect = 0; bisect < CHUNK_WATERLINE_BISECT_STEPS; bisect++)
+                        {
+                            float sM = (a + b) * 0.5;
+                            float3 pM = _WorldSpaceCameraPos + rayDir * sM;
+                            float gapM = pM.y - ChunkSurfaceHeightWorld(pM.xz, pM);
+                            if ((gapM >= 0.0) == aInAir) a = sM; else b = sM;
+                        }
+                        float sCross = (a + b) * 0.5;
+                        if (curWater) // air -> water: a submerged segment begins at the crossing
+                        {
+                            if (!haveEntry)
+                            {
+                                firstEntryT = sCross;
+                                float3 pC = _WorldSpaceCameraPos + rayDir * sCross;
+                                wavyTopY = ChunkSurfaceHeightWorld(pC.xz, pC);
+                                haveEntry = true;
+                            }
+                            submergedColumn += sCur - sCross;
+                            lastExitT = sCur;
+                        }
+                        else // water -> air: a submerged segment ends at the crossing
+                        {
+                            if (!haveEntry) { firstEntryT = sPrev; wavyTopY = pPrev.y - gapPrev; haveEntry = true; }
+                            submergedColumn += sCross - sPrev;
+                            lastExitT = sCross;
+                        }
+                    }
+                    // else both endpoints in air: no submerged contribution from this sub-interval.
+
+                    sPrev = sCur; pPrev = pCur; gapPrev = gapCur;
+                }
+
+                // Ownership (same semantics as before): the nearest point is in air AND the span
+                // reaches water -> the ray looks DOWN through the waterline, which is the disc's pixel.
+                bool enteredThroughTop = nearInAir && haveEntry;
+                entryT = firstEntryT;
+                exitT  = lastExitT;
+
+                float column = submergedColumn;
                 clip(column - CHUNK_COLUMN_EPSILON); // no water here (off the shape / above the surface)
 
                 // Ownership split vs the disc surface (deterministic: the shell material renders
@@ -209,8 +272,22 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
                 // full fogged column (chunk fog clamp), and the disc's sphere clip overshoots the
                 // rim slightly (CHUNK_SPHERE_CLIP_MARGIN) so this shared boundary stays covered.
                 // The shell must not paint it twice - and must NOT replace it with the opaque
-                // backdrop, which never contains transparents (that erased the disc). Discard.
-                clip(enteredThroughTop ? -1.0 : 1.0);
+                // backdrop, which never contains transparents (that erased the disc). Normally
+                // discard. EXCEPTION: right at the waterline TOUCH, lay a thin premultiplied MENISCUS
+                // line (a surface-tension darkening) over the disc, concentrated where the air column
+                // before the water is thin and faded by crossing distance, so it appears only on the
+                // near-plane "at 0" frames and never as a ring around a distant chunk. Off at
+                // _ChunkMeniscus = 0. Rays outside the line still discard (the disc owns them).
+                if (enteredThroughTop)
+                {
+                    float airColumn = entryT - spanStart;                 // air travelled before water
+                    float bandWidth = CHUNK_MENISCUS_SPAN_FRACTION * max(spanLen, CHUNK_COLUMN_EPSILON);
+                    float atLine   = saturate(1.0 - airColumn / max(bandWidth, CHUNK_COLUMN_EPSILON));
+                    float nearFade = saturate(1.0 - entryT / CHUNK_MENISCUS_MAX_DISTANCE);
+                    float meniscus = _ChunkMeniscus * CHUNK_MENISCUS_DARKEN * atLine * nearFade;
+                    clip(meniscus - CHUNK_COLUMN_EPSILON);                // outside the line: disc owns it
+                    return half4(0.0, 0.0, 0.0, meniscus);               // premultiplied darken over the disc
+                }
 
                 // Entry surface normal: the analytic shell normal (pool -> world via the frame's
                 // inverse-transpose); top entries are discarded above, so no UP branch remains.
