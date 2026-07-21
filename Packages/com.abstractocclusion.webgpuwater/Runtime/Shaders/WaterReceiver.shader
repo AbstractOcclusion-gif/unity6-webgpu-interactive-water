@@ -131,25 +131,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
                 float3 normalTS = UnpackNormalScale(SAMPLE_TEXTURE2D(_BumpMap, sampler_BumpMap, uv), _BumpScale);
                 float3 N = normalize(normalTS.x * tangentWS + normalTS.y * bitangentWS + normalTS.z * vertexNormalWS);
 
-                float4 shadowCoord = TransformWorldToShadowCoord(IN.positionWS);
-                Light mainLight = GetMainLight(shadowCoord);
-                float ndl = saturate(dot(N, mainLight.direction));
-                float3 ambient = SampleSH(N);
-                float3 color = albedo * (ambient + mainLight.color * (ndl * mainLight.shadowAttenuation));
-
-                // Smoothness-driven specular from the main light (Blinn-Phong with URP's
-                // smoothness -> exponent remap). Gated by ndl so a back-lit face never
-                // speculates; folded in before downwelling so depth dims it too.
-                float3 viewDirWS = normalize(GetWorldSpaceViewDir(IN.positionWS));
-                float3 halfDirWS = normalize(mainLight.direction + viewDirWS);
-                float specExponent = exp2(_Smoothness * 10.0 + 1.0);
-                float specTerm = pow(saturate(dot(N, halfDirWS)), specExponent) * ndl * mainLight.shadowAttenuation;
-                color += mainLight.color * _SpecColor.rgb * specTerm;
-
-                // Everything below is water-column shading. Gate it on the body's footprint
-                // so an object that merely sits below the water plane's Y but OUTSIDE the body
-                // (e.g. beside the pool) receives no darkening, caustics, tint or fog. The
-                // surface cut itself still uses the real sampled sim (ripple) height.
+                // Water-column geometry FIRST: the underwater flag and the refracted occluder shadow are
+                // needed by the main-light lighting below, so a submerged face is shadowed by the refracted
+                // occluder (matching the pool floor + caustics) instead of URP's un-refracted shadow map -
+                // which, applied here as well, painted a SECOND, offset shadow beside the caustic one.
                 float3 poolPos = WorldToPool(IN.positionWS);
                 float inside = FootprintMaskPool(poolPos);
 
@@ -175,33 +160,55 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
                 float2 wuv = poolPos.xz * 0.5 + 0.5;
                 float simH = SampleWaterHeightBilinear(wuv);
                 float surfaceY = PoolToWorld(float3(poolPos.x, simH, poolPos.z)).y;
+                bool underwater = (waterMask > 0.5 && poolPos.y < simH);
+
+                // Caustic map sampled ONCE up front with explicit gradients (WGSL-safe: an implicit-
+                // derivative sample inside the per-fragment waterline branch below is undefined on WebGPU).
+                // Green = this body's refracted occluder shadow (1 = lit); red = the caustic pattern.
+                float3 refractedLight = -refract(-_LightDir, float3(0,1,0), IOR_AIR / IOR_WATER);
+                // Pool-space refracted ray: ProjectCausticUV's xz/y ratio is only valid in pool space, so
+                // convert here - otherwise the projection is wrong on non-uniform (deep) bodies. Uniform
+                // extents preserve the ratio, so those are byte-identical.
+                float2 cuv = ProjectCausticUV(poolPos, WorldDirToPool(refractedLight));
+                float4 causticSample = SAMPLE_TEXTURE2D_GRAD(_CausticTex, sampler_CausticTex, cuv, ddx(cuv), ddy(cuv));
+
+                float4 shadowCoord = TransformWorldToShadowCoord(IN.positionWS);
+                Light mainLight = GetMainLight(shadowCoord);
+                float ndl = saturate(dot(N, mainLight.direction));
+                float3 ambient = SampleSH(N);
+                // Underwater, the direct-light shadow follows the REFRACTED occluder (caustic green,
+                // 1 = lit) like the caustics and the pool floor - NOT URP's un-refracted shadow map,
+                // which lands offset at depth and drew the second shadow. Above water / no occluder wired:
+                // the real shadow map. (URP's shadow on shaders we DON'T own - e.g. Standard Lit - stays
+                // un-refracted and we cannot intercept it; use WaterReceiver on submerged objects instead.)
+                float lightShadow = (underwater && _CausticOccluderActive > 0.5)
+                                    ? OccluderLitFromGreen(poolPos.y, causticSample.g)
+                                    : mainLight.shadowAttenuation;
+                float3 color = albedo * (ambient + mainLight.color * (ndl * lightShadow));
+
+                // Smoothness-driven specular from the main light (Blinn-Phong with URP's
+                // smoothness -> exponent remap). Gated by ndl so a back-lit face never
+                // speculates; folded in before downwelling so depth dims it too.
+                float3 viewDirWS = normalize(GetWorldSpaceViewDir(IN.positionWS));
+                float3 halfDirWS = normalize(mainLight.direction + viewDirWS);
+                float specExponent = exp2(_Smoothness * 10.0 + 1.0);
+                float specTerm = pow(saturate(dot(N, halfDirWS)), specExponent) * ndl * lightShadow;
+                color += mainLight.color * _SpecColor.rgb * specTerm;
 
                 // Less light reaches the object the deeper it sits (downwelling), applied to
                 // the ambient + direct term. No-op above the surface / when the feature is off.
                 if (waterMask > 0.5) color *= DownwellingAttenuation(IN.positionWS.y, surfaceY);
 
                 // projected caustics where this point is below the surface AND inside footprint.
-                // The caustic UV and its screen gradients are computed OUTSIDE the branch and the
-                // sample uses SAMPLE_TEXTURE2D_GRAD: an implicit-derivative sample inside this
-                // per-fragment (non-uniform) branch is undefined in WGSL and breaks mip selection
-                // along the waterline on WebGPU (same contract as the pool-trace Grad clones).
-                float3 refractedLight = -refract(-_LightDir, float3(0,1,0), IOR_AIR / IOR_WATER);
-                float2 cuv = ProjectCausticUV(poolPos, refractedLight);
-                float2 cuvDdx = ddx(cuv);
-                float2 cuvDdy = ddy(cuv);
-                if (waterMask > 0.5 && poolPos.y < simH)
+                if (underwater)
                 {
-                    float4 causticSample = SAMPLE_TEXTURE2D_GRAD(_CausticTex, sampler_CausticTex, cuv, cuvDdx, cuvDdy);
                     float caustic = causticSample.r;
                     // Caustics soften with depth at their own independent rate (world depth,
                     // consistent with the downwelling term above).
                     float causticFade = DepthFadeScalar(IN.positionWS.y, surfaceY, _CausticDepthFade);
-                    // Underwater the object shadow follows the refracted light (caustic green channel,
-                    // 1 = lit when nothing is submerged), matching the pool floor; the raw shadow-map
-                    // fallback remains only for setups without the occluder shader wired - it is
-                    // un-refracted, so it drags other bodies' caster shadows across pool boundaries.
-                    float causticShadow = (_CausticOccluderActive > 0.5) ? causticSample.g : mainLight.shadowAttenuation;
-                    color += albedo * _CausticTint.rgb * (caustic * _CausticStrength * causticFade * causticShadow);
+                    // Same refracted occluder shadow the direct light used above, so the shadow and the
+                    // caustic ripples stay registered.
+                    color += albedo * _CausticTint.rgb * (caustic * _CausticStrength * causticFade * lightShadow);
                     color *= _UnderwaterTint.rgb;
                 }
 

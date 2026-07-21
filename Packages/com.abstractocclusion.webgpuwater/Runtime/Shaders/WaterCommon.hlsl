@@ -4,6 +4,7 @@
 #define WEBGL_WATER_COMMON_INCLUDED
 
 #include "WaterShared.hlsl" // IOR_*, POOL_*, IntersectCube, ProjectCausticUV, rim consts
+#include "WaterVolume.hlsl"  // WorldDirToPool (pool-space refracted ray for ProjectCausticUV); include-guarded
 
 // Floor for the pool ambient-occlusion divide, so a point at the pool centre (length(p) -> 0)
 // can't drive the result to Inf.
@@ -140,17 +141,22 @@ float GetWallShadeSplit(float3 p, float3 normal, float3 pDdx, float3 pDdy, out f
 
     float3 refractedLight = -refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
     float diffuse = max(0.0, dot(refractedLight, normal));
+    // Pool-space refracted ray for the caustic projection: ProjectCausticUV's xz/y ratio is only
+    // valid in pool space, so a WORLD direction mis-projects on non-uniform (deep) bodies. Uniform
+    // extents preserve the ratio (byte-identical). The diffuse term above stays in world space.
+    float3 poolRefract = WorldDirToPool(refractedLight);
     // Manual bilinear (not tex2D): WebGPU point-samples float32 textures, which turned
     // the above/below-waterline cut into a blocky stair-step in builds.
     float4 info = SampleWaterBilinear(p.xz * 0.5 + 0.5);
     if (p.y < info.r)
     {
-        float2 cuv = ProjectCausticUV(p, refractedLight);
-        float2 cuvDdx = ProjectCausticUV(p + pDdx, refractedLight) - cuv;
-        float2 cuvDdy = ProjectCausticUV(p + pDdy, refractedLight) - cuv;
+        float2 cuv = ProjectCausticUV(p, poolRefract);
+        float2 cuvDdx = ProjectCausticUV(p + pDdx, poolRefract) - cuv;
+        float2 cuvDdy = ProjectCausticUV(p + pDdy, poolRefract) - cuv;
         float4 caustic = tex2Dgrad(_CausticTex, cuv, cuvDdx, cuvDdy);
-        // Caller scales this (diffuse * focus * rim-occluder) by its own caustic strength.
-        causticTerm = diffuse * caustic.r * caustic.g;
+        // Green is the occluder's depth: this point is shadowed only below it (OccluderLitFromGreen).
+        // With no occluder green stays 1 (floor) -> lit -> byte-identical to the old caustic.g == 1.
+        causticTerm = diffuse * caustic.r * OccluderLitFromGreen(p.y, caustic.g);
     }
     else
     {

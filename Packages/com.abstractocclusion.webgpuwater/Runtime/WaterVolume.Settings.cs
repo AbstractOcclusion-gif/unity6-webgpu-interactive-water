@@ -27,9 +27,27 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] internal Camera targetCamera;
         [SerializeField] internal Light sun;             // directional light: drives water, caustics AND real shadows
 
-        [Header("Look / surfaces")]
+        [Header("Textures")]
+        // All author-time texture inputs for the water SURFACE look live under this one section (the
+        // inspector's "Textures" section gathers these plus the detailNormalSettings map below). The foam
+        // pattern and ocean whitecap were previously authored only on the water material; when left empty
+        // here that material value is kept untouched, so existing scenes are unchanged.
         [SerializeField] internal Texture tiles;         // pool tile albedo sampled by the water reflection (assign your own)
         [SerializeField] internal Cubemap sky;           // sky cubemap for above-water reflections
+
+        [Tooltip("Surface foam pattern - a single seamless tile, or a flipbook when the grid below is a real " +
+                 "grid. Empty = keep the water material's own foam texture (_FoamTex).")]
+        [SerializeField] internal Texture foamPatternTexture;
+        [Tooltip("Foam flipbook grid (cols, rows). (1,1) = a single seamless tiling texture, no flipbook.")]
+        [SerializeField] internal Vector2Int foamPatternGrid = new Vector2Int(1, 1);
+        [Tooltip("Foam flipbook frame rate (frames/sec). 0 = a static tile.")]
+        [Range(0f, 30f)] [SerializeField] internal float foamPatternFps = 10f;
+        [Tooltip("Procedural relief strength derived from the foam pattern (and shared by the ocean whitecap).")]
+        [Range(0f, 3f)] [SerializeField] internal float foamReliefStrength = 1f;
+
+        [Tooltip("Ocean wave whitecap - a single tiling texture. Empty = keep the water material's own " +
+                 "whitecap texture (_OceanWhitecapTex).")]
+        [SerializeField] internal Texture oceanWhitecapTexture;
 
         [Tooltip("Interactive-ripple detail on a bounded body: higher = a denser sim grid (crisper, " +
                  "rounder ripples) with a matched surface mesh, at more GPU cost. No effect on windowed oceans.")]

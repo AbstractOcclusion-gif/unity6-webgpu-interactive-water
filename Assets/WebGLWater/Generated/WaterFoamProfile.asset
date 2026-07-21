@@ -1,0 +1,56 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0e816f6b662842e45b344a2c2b234aa9, type: 3}
+  m_Name: WaterFoamProfile
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterFoamProfile
+  look:
+    drive: 1
+    tint: {r: 0.95, g: 0.98, b: 1, a: 1}
+    opacity: 0.85
+    particleAtlas: {fileID: 0}
+    flipbookGrid: {x: 2, y: 2}
+    flipbookFps: 0
+    sizeHeroPower: 1
+  ambient:
+    drive: 1
+    spawnThreshold: 0.25
+    spawnRate: 30
+    maxSpawnPerFrame: 256
+    sprayChance: 0.15
+    sprayLaunchSpeed: 0.6
+    lifeRange: {x: 1.5, y: 4}
+    sizeRange: {x: 0.02, y: 0.06}
+    spawnMaxDistance: 120
+    sprayLifeRange: {x: 0.5, y: 1.2}
+    spraySizeRange: {x: 0.02, y: 0.05}
+    depositLifeRange: {x: 0.5, y: 1}
+    depositSizeRange: {x: 0.02, y: 0.05}
+  veil:
+    drive: 1
+    opacity: 0.5
+    densityLowGain: 0.6
+    densityHighGain: 0.15
+    breakupTexture: {fileID: 0}
+    breakupTiling: 4
+    breakupStrength: 0.3
+  splash:
+    drive: 1
+    maxParticlesPerBurst: 48
+    upwardBias: 1
+    outwardSpread: 1.3
+    dropletSize: 0.02
+    lifetime: {x: 0.6, y: 1.3}
+    crownMinStrength: 0.25
+    crownBaseSize: 0.4
+    crownLifetime: 0.5
+    crownTint: {r: 0.95, g: 0.98, b: 1, a: 1}
+    crownOpacity: 1

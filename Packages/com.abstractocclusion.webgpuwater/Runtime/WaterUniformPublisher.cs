@@ -59,6 +59,12 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FoamEnabled = Shader.PropertyToID("_FoamEnabled");
         static readonly int ID_FoamStrength = Shader.PropertyToID("_FoamStrength");
         static readonly int ID_FoamTileSize = Shader.PropertyToID("_FoamTileSize");
+        // Body-owned surface texture inputs (Textures section): bound only when assigned on the body.
+        static readonly int ID_FoamTex = Shader.PropertyToID("_FoamTex");
+        static readonly int ID_FoamTexFrames = Shader.PropertyToID("_FoamTexFrames");
+        static readonly int ID_FoamTexFPS = Shader.PropertyToID("_FoamTexFPS");
+        static readonly int ID_FoamNormalStrength = Shader.PropertyToID("_FoamNormalStrength");
+        static readonly int ID_OceanWhitecapTex = Shader.PropertyToID("_OceanWhitecapTex");
         static readonly int ID_FoamBorder = Shader.PropertyToID("_FoamBorderWidth");
         static readonly int ID_FoamContact = Shader.PropertyToID("_FoamContactDepth");
         static readonly int ID_FoamFeather = Shader.PropertyToID("_FoamFeather");
@@ -424,6 +430,22 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_FoamContact, _body.foamContactDepth);
             sink.SetFloat(ID_FoamFeather, _body.foamFeather);
             sink.SetFloat(ID_FoamCoreCut, _body.foamCoreCut);
+
+            // Body-owned surface textures (Textures section). Each is bound ONLY when assigned on the body,
+            // so a body that leaves it empty keeps whatever the water material authored - existing scenes are
+            // unchanged. The flipbook grid/rate ride along only when the foam pattern itself is body-owned.
+            if (_body.foamPatternTexture != null)
+            {
+                sink.SetTexture(ID_FoamTex, _body.foamPatternTexture);
+                sink.SetVector(ID_FoamTexFrames,
+                    new Vector4(_body.foamPatternGrid.x, _body.foamPatternGrid.y, 0f, 0f));
+                sink.SetFloat(ID_FoamTexFPS, _body.foamPatternFps);
+            }
+            if (_body.oceanWhitecapTexture != null)
+                sink.SetTexture(ID_OceanWhitecapTex, _body.oceanWhitecapTexture);
+            // Relief is shared by the foam pattern and the whitecap: push it when EITHER is body-owned.
+            if (_body.foamPatternTexture != null || _body.oceanWhitecapTexture != null)
+                sink.SetFloat(ID_FoamNormalStrength, _body.foamReliefStrength);
         }
 
         // A write target for the per-body uniforms: either a MaterialPropertyBlock or the

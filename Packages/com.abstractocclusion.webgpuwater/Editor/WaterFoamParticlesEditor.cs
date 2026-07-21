@@ -17,6 +17,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // Screen-Space Density is enum index 0 (FoamRenderMode.ScreenSpaceDensity); Quads is 1.
         const int DensityModeIndex = (int)WaterFoamParticles.FoamRenderMode.ScreenSpaceDensity;
 
+        SerializedProperty _useParticles;
         SerializedProperty _volume, _compute, _material, _renderMode, _densityMaterial, _profile;
         SerializedProperty _capacity;
         SerializedProperty _spawnThreshold, _spawnRate, _maxSpawnPerFrame, _sprayChance, _sprayLaunchSpeed;
@@ -41,6 +42,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         void OnEnable()
         {
+            _useParticles = serializedObject.FindProperty("useParticles");
             _volume = serializedObject.FindProperty("volume");
             _compute = serializedObject.FindProperty("particleCompute");
             _material = serializedObject.FindProperty("particleMaterial");
@@ -77,6 +79,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             WaterEditorUI.DrawHeader("Water Foam Particles", "GPU foam + spray pool");
             serializedObject.Update();
+
+            EditorGUILayout.PropertyField(_useParticles,
+                new GUIContent("Use Particles",
+                    "Master switch: off skips ALL particles on this body - no simulation, no compute dispatch, " +
+                    "no draw (ambient foam and event splashes both stop)."));
+            EditorGUILayout.Space();
 
             var profile = _profile.objectReferenceValue as WaterFoamProfile;
             _ambientDriven = profile != null && profile.ambient.drive;

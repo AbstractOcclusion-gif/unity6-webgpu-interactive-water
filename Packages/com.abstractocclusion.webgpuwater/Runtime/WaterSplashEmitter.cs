@@ -193,6 +193,10 @@ namespace AbstractOcclusion.WebGpuWater
 
             WaterVolume body = WaterVolume.BodyContaining(surfacePos);
             WaterFoamParticles gpuSpray = body != null ? body.GetComponent<WaterFoamParticles>() : null;
+            // Body-wide particle master (WaterFoamParticles "Use Particles"): off = this body emits NO splash
+            // at all - GPU droplets AND the Shuriken crown - matching the ambient foam the same switch silences.
+            // A body with no foam system has no switch, so it keeps splashing as before.
+            if (gpuSpray != null && !gpuSpray.UseParticles) return;
             if (gpuSpray != null && gpuSpray.isActiveAndEnabled)
             {
                 // Map the burst shaping onto the GPU request; per-droplet jitter runs in-kernel.

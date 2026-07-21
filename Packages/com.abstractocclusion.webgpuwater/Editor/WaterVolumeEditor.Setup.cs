@@ -17,12 +17,16 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             });
         }
 
+        // One dedicated section for every author-time SURFACE texture slot + its tweaks. The foam pattern
+        // and ocean whitecap used to be reachable only on the water material; they live on the body now, so
+        // all surface textures are configured from one place. Empty foam/whitecap slots keep the material's.
         void DrawLookSection()
         {
-            _showLook = WaterEditorUI.Section("Look / Surfaces", _showLook, () =>
+            _showLook = WaterEditorUI.Section("Textures", _showLook, () =>
             {
                 DrawFieldsIf(Bounded, "tiles"); // pool tile albedo - bounded bodies only
                 DrawFields("sky");
+
                 // Crest-style crossing scrolling detail normals: off (flat) until a tiling
                 // water-normal texture is assigned; the sliders shape the layer once it is.
                 WaterEditorUI.SubHeading("Detail normals (micro ripples)");
@@ -31,6 +35,20 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "detailNormalSettings.strength",
                     "detailNormalSettings.tileMeters",
                     "detailNormalSettings.scrollSpeed");
+
+                WaterEditorUI.SubHeading("Surface foam pattern");
+                EditorGUILayout.HelpBox("Empty keeps the water material's own foam texture. Assign here to " +
+                    "drive it from this body; the flipbook grid/rate and relief apply once a texture is set.",
+                    MessageType.None);
+                DrawFields("foamPatternTexture");
+                DrawFieldsIf(Prop("foamPatternTexture").objectReferenceValue != null,
+                    "foamPatternGrid", "foamPatternFps");
+
+                WaterEditorUI.SubHeading("Ocean whitecap");
+                DrawFields("oceanWhitecapTexture");
+
+                WaterEditorUI.SubHeading("Foam relief (foam pattern + whitecap)");
+                DrawFields("foamReliefStrength");
             });
         }
 

@@ -138,6 +138,11 @@ Shader "AbstractOcclusion/WebGpuWater/GodRays"
                 int steps = max(1, (int)_GodRaySteps); // guard against divide-by-zero at 0 steps
                 float dt = (tExit - tEnter) / steps;
                 float3 refractedLight = -refract(-_LightDir, float3(0, 1, 0), IOR_AIR / IOR_WATER);
+                // Pool-space refracted ray for ProjectCausticUV: its xz/y ratio is only valid in pool
+                // space, so a WORLD direction mis-projects mid-water samples on non-uniform (deep) bodies -
+                // the shafts then drift off the floor/caustic shadow with depth. Hoisted out of the march
+                // (constant per fragment); uniform extents preserve the ratio, so those stay byte-identical.
+                float3 poolRefract = WorldDirToPool(refractedLight);
                 float surfaceLevel = _VolumeCenter.y; // world Y of the water surface
 
                 // Dithered march: per-pixel [0,1) start offset (see InterleavedGradientNoise).
@@ -181,8 +186,8 @@ Shader "AbstractOcclusion/WebGpuWater/GodRays"
                     float pe = -mul(UNITY_MATRIX_V, float4(pWorld, 1.0)).z; // eye depth of sample
                     if (pe > sceneEye) break;                              // behind solid geometry
 
-                    // project the sample down the refracted light onto the caustic map
-                    float2 cuv = ProjectCausticUV(pPool, refractedLight);
+                    // project the sample down the refracted light onto the caustic map (pool-space ray)
+                    float2 cuv = ProjectCausticUV(pPool, poolRefract);
                     float4 causticSample = SAMPLE_TEXTURE2D_LOD(_CausticTex, sampler_CausticTex, cuv, 0);
                     float caustic = causticSample.r;
 
@@ -192,7 +197,11 @@ Shader "AbstractOcclusion/WebGpuWater/GodRays"
                     // BEND with the caustics instead of following the un-refracted shadow map. The shadow
                     // map is the legacy fallback (also carries non-object casters when no occluder ran).
                     float4 shadowCoord = TransformWorldToShadowCoord(pWorld);
-                    float shadow = (_CausticOccluderActive > 0.5) ? causticSample.g : MainLightRealtimeShadow(shadowCoord);
+                    // Green now stores the occluder's DEPTH: this sample is shadowed only where it lies
+                    // BELOW that occluder, so a shaft darkens under the object, not above it too.
+                    float shadow = (_CausticOccluderActive > 0.5)
+                                 ? OccluderLitFromGreen(pPool.y, causticSample.g)
+                                 : MainLightRealtimeShadow(shadowCoord);
                     // Carved presence: a dry volume between this sample and the sun blocks the
                     // direct beam (analytic box shadow, refraction-aware, matching the fog's
                     // in-scatter shadowing).

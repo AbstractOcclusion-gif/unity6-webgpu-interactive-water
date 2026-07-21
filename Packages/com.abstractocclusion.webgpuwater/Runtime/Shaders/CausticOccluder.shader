@@ -16,7 +16,11 @@ Shader "AbstractOcclusion/WebGpuWater/CausticOccluder"
             Cull Off
             ZWrite Off
             ZTest Always
-            Blend Off
+            // GREEN = normalised occluder DEPTH, MIN-blended so the SHALLOWEST occluder along each ray
+            // wins (casts the longest shadow, from its top down). Base is 1 (floor = no occluder), left by
+            // the caustic pass; consumers read it via OccluderLitFromGreen (shadow only BELOW that depth).
+            Blend One One
+            BlendOp Min
             ColorMask G // only the occluder-shadow (green) channel; never touch caustic intensity (red)
 
             HLSLPROGRAM
@@ -33,13 +37,17 @@ Shader "AbstractOcclusion/WebGpuWater/CausticOccluder"
             float3 _LightDir; // normalized direction toward the light
 
             struct Attributes { float4 positionOS : POSITION; };
-            struct Varyings   { float4 positionCS : SV_POSITION; };
+            struct Varyings   { float4 positionCS : SV_POSITION; float occDepth : TEXCOORD0; };
 
             Varyings vert(Attributes IN)
             {
                 Varyings o;
                 float3 worldPos = TransformObjectToWorld(IN.positionOS.xyz);
                 float3 poolPos  = WorldToPool(worldPos);
+                // This vertex's normalised depth (0 surface .. 1 floor) - written to green so consumers know
+                // WHERE the shadow starts. Min-blend keeps the shallowest, so the shadow spans from the
+                // object's top down to the floor, never above it.
+                o.occDepth = saturate(-poolPos.y / POOL_HEIGHT);
                 // Refracted light, upward convention - identical to the floor's ProjectCausticUV call.
                 float3 refractedLight = -refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
                 // Walk the vertex down the refracted ray to the pool floor IN POOL SPACE, then project
@@ -55,7 +63,7 @@ Shader "AbstractOcclusion/WebGpuWater/CausticOccluder"
                 // shadow far off the map where the rasterizer clips it; it just must not divide by zero.
                 float poolLightY = abs(poolLight.y) < RAY_SLAB_EPSILON ? RAY_SLAB_EPSILON : poolLight.y;
                 float3 floorPool = poolPos - ((poolPos.y + POOL_HEIGHT) / poolLightY) * poolLight;
-                float2 uv  = ProjectCausticUV(floorPool, refractedLight); // caustic-map UV in [0,1]
+                float2 uv  = ProjectCausticUV(floorPool, poolLight); // caustic-map UV in [0,1] (pool-space ray)
                 float2 ndc = uv * 2.0 - 1.0;
                 // Match Caustics.shader's manual render-target Y-flip so the occluder write and the
                 // floor's sample agree on every backend (_ProjectionParams.x is -1 when flipped).
@@ -65,7 +73,7 @@ Shader "AbstractOcclusion/WebGpuWater/CausticOccluder"
 
             half4 frag(Varyings IN) : SV_Target
             {
-                return half4(0.0, 0.0, 0.0, 0.0); // green = 0: this texel's refracted ray is occluded
+                return half4(0.0, IN.occDepth, 0.0, 0.0); // green = this occluder's depth (min-blended)
             }
             ENDHLSL
         }

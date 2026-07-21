@@ -54,36 +54,23 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
         // specular exactly when a real sea glitters hardest. 0 = physical NoL (unchanged).
         [HideInInspector] _SunGrazeBoost ("Sun Graze Boost (wrapped NoL)", Range(0,1)) = 0
 
-        [Header(Detail Normals)]
-        // Crest-style micro-detail: two CROSSING, SCROLLING samples of a tiling normal map at two
-        // world scales, crossfaded by camera distance. The default "bump" map unpacks to a flat
-        // normal, so the feature is INERT until a real tiling water-normal texture is assigned -
-        // every existing scene is unchanged.
-        _DetailNormalTex ("Detail Normal (tiling water normals)", 2D) = "bump" {}
-        _DetailNormalStrength ("Detail Normal Strength", Range(0, 2)) = 0.6
-        _DetailNormalScale ("Detail Normal Tile (world metres)", Range(1, 100)) = 18
-        _DetailNormalSpeed ("Detail Normal Scroll (metres per second)", Range(0, 2)) = 0.25
-        // Water fog is global now (driven by WaterController), shared with the
-        // object/pool shaders so it's consistent however you view the water.
-
-        [Header(Foam)]
-        // Grid (1,1) = a single seamless TILING texture (hardware Repeat, like the ocean
-        // whitecap - assign any soft foam tile); a real grid = an animated flipbook whose
-        // cells are inset-sampled. Pattern world size comes from the WaterVolume's
-        // Foam Pattern Size (published as _FoamTileSize), not this texture's ST.
-        _FoamTex ("Foam Pattern (single tile or flipbook)", 2D) = "white" {}
-        _FoamTexFrames ("Foam Flipbook Grid (cols, rows)", Vector) = (1, 1, 0, 0)
-        _FoamTexFPS ("Foam Flipbook Frame Rate", Range(0, 30)) = 10
-        // Relief is derived procedurally from the pattern (Crest-style finite differences,
-        // same as the ocean whitecap since its rework) - no foam normal map anymore;
-        // materials that still serialize _FoamNormalTex keep it as inert data.
-        _FoamNormalStrength ("Foam Relief Strength (procedural)", Range(0, 3)) = 1
-
-        [Header(Ocean Wave Foam)]
-        _OceanWhitecapTex ("Ocean Whitecap (single tiling texture)", 2D) = "white" {}
-        // Whitecap relief is now derived procedurally from the albedo (Crest-style finite
-        // differences), so no whitecap normal-map slot; materials that still serialize
-        // _OceanWhitecapNormalTex keep it as inert data.
+        // Surface texture inputs - detail normals, the foam pattern + its flipbook controls, and the
+        // ocean whitecap - are authored on the WaterVolume "Textures" section (the single place) and
+        // published to these slots per body. Kept as [HideInInspector] (same convention as the
+        // reflection/refraction block above) so the shader keeps their defaults + variants while the
+        // material inspector stays clean. A body that leaves a slot empty keeps whatever the material
+        // already had, so existing scenes are unchanged. Foam pattern world size comes from the volume's
+        // Foam Pattern Size (published as _FoamTileSize), not the texture's ST. Relief for the foam
+        // pattern and the ocean whitecap is derived procedurally (Crest-style finite differences).
+        [HideInInspector] _DetailNormalTex ("Detail Normal (tiling water normals)", 2D) = "bump" {}
+        [HideInInspector] _DetailNormalStrength ("Detail Normal Strength", Range(0, 2)) = 0.6
+        [HideInInspector] _DetailNormalScale ("Detail Normal Tile (world metres)", Range(1, 100)) = 18
+        [HideInInspector] _DetailNormalSpeed ("Detail Normal Scroll (metres per second)", Range(0, 2)) = 0.25
+        [HideInInspector] _FoamTex ("Foam Pattern (single tile or flipbook)", 2D) = "white" {}
+        [HideInInspector] _FoamTexFrames ("Foam Flipbook Grid (cols, rows)", Vector) = (1, 1, 0, 0)
+        [HideInInspector] _FoamTexFPS ("Foam Flipbook Frame Rate", Range(0, 30)) = 10
+        [HideInInspector] _FoamNormalStrength ("Foam Relief Strength (procedural)", Range(0, 3)) = 1
+        [HideInInspector] _OceanWhitecapTex ("Ocean Whitecap (single tiling texture)", 2D) = "white" {}
     }
     SubShader
     {

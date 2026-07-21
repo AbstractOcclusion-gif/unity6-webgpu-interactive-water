@@ -166,6 +166,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
              + Mathf.Abs(direction.y) * extents.y
              + Mathf.Abs(direction.z) * extents.z;
 
+        // Each probe gets a draggable sphere handle: grab it in the Scene view to place the point directly,
+        // instead of typing local offsets. Edits go through SerializedProperty, so Undo and prefab
+        // overrides work the same as the auto-place button.
         void OnSceneGUI()
         {
             var pump = (WaterSprayPump)target;
@@ -173,15 +176,24 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             SerializedProperty probes = serializedObject.FindProperty("probes");
             if (probes == null || probes.arraySize == 0) return;
 
+            Transform t = pump.transform;
             float radius = Mathf.Max(GizmoRadiusFloor, ResolveWorldBounds(pump).size.magnitude * GizmoRadiusFraction);
+
+            EditorGUI.BeginChangeCheck();
             for (int i = 0; i < probes.arraySize; i++)
             {
                 SerializedProperty element = probes.GetArrayElementAtIndex(i);
-                Vector3 world = pump.transform.TransformPoint(element.FindPropertyRelative("localOffset").vector3Value);
+                SerializedProperty offset = element.FindPropertyRelative("localOffset");
                 var mode = (WaterSprayMode)element.FindPropertyRelative("mode").enumValueIndex;
+
+                Vector3 world = t.TransformPoint(offset.vector3Value);
                 Handles.color = ModeColor(mode);
-                Handles.SphereHandleCap(0, world, Quaternion.identity, radius, EventType.Repaint);
+                Vector3 moved = Handles.FreeMoveHandle(world, radius, Vector3.zero, Handles.SphereHandleCap);
+                if (moved != world)
+                    offset.vector3Value = t.InverseTransformPoint(moved); // store back in the object's local space
             }
+            if (EditorGUI.EndChangeCheck())
+                serializedObject.ApplyModifiedProperties(); // one Undo step + marks the scene/prefab dirty
         }
 
         static Color ModeColor(WaterSprayMode mode) => mode switch

@@ -162,6 +162,15 @@ namespace AbstractOcclusion.WebGpuWater
         // Local compute keyword: turns on the FFT-crest spawn source for the ocean body only.
         const string KeywordOceanCrest = "OCEAN_CREST_FOAM";
 
+        [Tooltip("Master switch for this foam-particle system: off skips ALL particles - simulation, " +
+                 "spawning, splash bursts and drawing (no compute dispatch). Ambient foam and event " +
+                 "splashes both stop.")]
+        [SerializeField] internal bool useParticles = true;
+
+        /// <summary>Body-wide particle master. False = this body emits no foam AND no splash particles;
+        /// WaterSplashEmitter reads this so the splash crown/droplets obey the same one switch.</summary>
+        internal bool UseParticles => useParticles;
+
         [Header("Wiring")]
         [Tooltip("The water body this system spawns from. Defaults to the WaterVolume on this GameObject.")]
         [SerializeField] internal WaterVolume volume;
@@ -393,6 +402,7 @@ namespace AbstractOcclusion.WebGpuWater
         // window/schedule for this frame.
         void LateUpdate()
         {
+            if (!useParticles) return; // master gate: no simulation, no dispatch, no draw
             if (volume == null || !volume.isActiveAndEnabled) return;
             // Defensive: OnEnable can bail before allocating (compute/material assigned later in
             // the inspector, then the component re-enabled mid-setup) - never dispatch or draw
@@ -594,6 +604,7 @@ namespace AbstractOcclusion.WebGpuWater
         // projection matches this frame's ACTUAL view exactly (no LateUpdate-order lag).
         void OnBeginCameraRendering(ScriptableRenderContext context, Camera cam)
         {
+            if (!useParticles) return; // master gate: never dispatch the deferred density splat while off
             if (!_densityPending || cam != _densityCamera) return;
             if (_particles == null || _density == null || _densityDepth == null) return;
 
@@ -639,7 +650,7 @@ namespace AbstractOcclusion.WebGpuWater
                                      int dropletCount, float upSpeed, float outSpeed,
                                      Vector2 dropletLifeRange, float dropletSize)
         {
-            if (!isActiveAndEnabled || _pendingBursts.Count >= MaxBurstsPerFrame) return;
+            if (!useParticles || !isActiveAndEnabled || _pendingBursts.Count >= MaxBurstsPerFrame) return;
             _pendingBursts.Add(new BurstRequest
             {
                 center = surfacePos,

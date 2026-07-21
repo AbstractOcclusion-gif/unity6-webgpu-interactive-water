@@ -42,6 +42,15 @@ namespace AbstractOcclusion.WebGpuWater
         const float DefaultSprayRadius = 0.25f;
         const float DefaultPlowWeight = 0.5f;
 
+        // Per-probe spray scale is stored as a boost ABOVE the base, so the field's serialized default of
+        // zero means "no change". A plain multiplier can't work here: C# struct fields can't carry a
+        // default of 1, and every probe already serialized (or added by growing the array) would come back
+        // as 0 and silently mute its spray. effectiveScale = BaseSprayScale + sizeBoost, floored at zero.
+        const float BaseSprayScale = 1.0f;
+        const float MinSprayScale = 0f;      // a negative boost past -1 must not invert radius/velocity
+        const float MinSizeBoost = -1.0f;    // inspector range floor: -1 mutes this probe
+        const float MaxSizeBoost = 4.0f;     // inspector range ceiling: +4 -> 5x base
+
         // ---- internal guards ----
         // Below this frame time the finite-difference speeds are numerically unstable: a single hitched
         // frame would read as an enormous impact and fire a false burst, so such frames are skipped.
@@ -61,6 +70,11 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("Boat = point driving into water, plunge + plow (own wake ignored); Rock = water rising " +
                      "at a static point (ripples included); Both = either.")]
             public WaterSprayMode mode;
+
+            [Tooltip("Extra spray for THIS probe above the pump base, scaling both burst size and intensity. " +
+                     "0 = base, 0.5 = +50% (e.g. a beefier bow row), -1 mutes this probe.")]
+            [Range(MinSizeBoost, MaxSizeBoost)]
+            public float sizeBoost;
         }
 
         [Header("Probes")]
@@ -202,8 +216,11 @@ namespace AbstractOcclusion.WebGpuWater
             float span = Mathf.Max(MinImpactSpeedSpan, maxImpactSpeed - minImpactSpeed);
             float strength = Mathf.Clamp01((signal - minImpactSpeed) / span);
 
+            // Per-probe boost lets one pump throw a bigger, more intense sheet at chosen points (a bow row)
+            // while the rest stay at base. Same style: it scales the burst, not the emitter's foam profile.
+            float sprayScale = Mathf.Max(MinSprayScale, BaseSprayScale + probes[index].sizeBoost);
             Vector3 surfacePoint = new Vector3(world.x, surfaceHeight, world.z);
-            activeEmitter.EmitSplash(surfacePoint, strength, sprayRadius);
+            activeEmitter.EmitSplash(surfacePoint, strength * sprayScale, sprayRadius * sprayScale);
             state.NextEmitTime = Time.time + emitCooldownSeconds;
         }
 

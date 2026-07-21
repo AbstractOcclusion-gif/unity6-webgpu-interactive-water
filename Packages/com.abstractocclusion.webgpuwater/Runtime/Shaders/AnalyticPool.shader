@@ -138,7 +138,9 @@ Shader "AbstractOcclusion/WebGpuWater/AnalyticPool"
                 // same projection (1 = lit where nothing is submerged); use it below the waterline, keep
                 // the real shadow map for the sunlit rim above. The shadow-map fallback remains only for
                 // setups without the occluder shader wired (_CausticOccluderActive 0).
-                float occluderShadow = tex2D(_CausticTex, ProjectCausticUV(i.position, -refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER))).g;
+                float occluderGreen = tex2D(_CausticTex, ProjectCausticUV(i.position, WorldDirToPool(-refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER)))).g;
+                // Green is the occluder's depth: this floor/wall point is shadowed only below that depth.
+                float occluderShadow = OccluderLitFromGreen(i.position.y, occluderGreen);
                 float objectShadow = (_CausticOccluderActive > 0.5 && underwater) ? occluderShadow : urpShadow;
                 // wallCaustic already carries the green occlusion, so when the pass is active the
                 // refracted shadow is baked into it - don't also multiply the un-refracted shadow map on top.

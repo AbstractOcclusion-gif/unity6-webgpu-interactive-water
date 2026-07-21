@@ -99,4 +99,20 @@ float2 ProjectCausticUV(float3 poolPos, float3 refractedLight)
            * 0.5 + 0.5;
 }
 
+// Soft depth band (normalised pool depth) over which the occluder shadow fades in just below the
+// occluder, so its top edge isn't a hard step.
+#define OCCLUDER_SHADOW_SOFTEN 0.03
+
+// The caustic RT's GREEN channel encodes the NORMALISED DEPTH (0 at the surface, 1 at the floor) of the
+// SHALLOWEST submerged occluder along this refracted ray - min-blended by CausticOccluder, and 1 (floor,
+// = no occluder) where nothing is submerged. A point is in shadow ONLY where it lies BELOW that occluder,
+// i.e. its own depth exceeds the stored one; above the occluder it is lit. This gives the shadow a top,
+// so a shaft/wall is no longer darkened both above AND below the object. Returns the LIT factor (1 lit,
+// 0 shadowed). poolPosY is the point's pool-space Y (surface 0, floor -POOL_HEIGHT).
+float OccluderLitFromGreen(float poolPosY, float greenDepth)
+{
+    float pointDepth = saturate(-poolPosY / POOL_HEIGHT); // 0 surface .. 1 floor
+    return 1.0 - saturate((pointDepth - greenDepth) / OCCLUDER_SHADOW_SOFTEN);
+}
+
 #endif // WEBGL_WATER_SHARED_INCLUDED
