@@ -78,7 +78,18 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             EnsureGenFolder();
             Undo.SetCurrentGroupName("Add Foam Particles");
             AddFoamParticles(volume, MaterialFolderForActiveScene());
+
+            // Ambient foam + spray are gated on the body's Foam flag (the turbulence gate), so the
+            // retrofitted component would simulate NOTHING on a body whose Foam is off - the button
+            // would look broken. Enable Foam so one click gives visible foam, matching Create Water.
+            if (!volume.Foam)
+            {
+                Undo.RecordObject(volume, "Add Foam Particles");
+                volume.Foam = true;
+            }
+
             Selection.activeObject = volume.gameObject;
+            Debug.Log($"[WebGL Water] Foam particles added to '{volume.name}' and Foam enabled.");
         }
 
         // Upgrade the shared splash materials (Generated/SplashDroplet.mat + SplashCrown.mat)

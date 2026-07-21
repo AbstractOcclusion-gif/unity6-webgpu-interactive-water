@@ -107,6 +107,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string SplashDropletMaterialPath = Gen + "/SplashDroplet.mat";
         internal const string SplashCrownMaterialPath = Gen + "/SplashCrown.mat";
         internal const string SplashCrownSheetPath = Gen + "/SplashFlipbook_8x8.png";
+        // The crown flipbook ships inside the package's Samples~ folder, which Unity never imports.
+        // This is its path RELATIVE to the resolved package root; the wizard copies it out to
+        // SplashCrownSheetPath on first build (see LoadOrProvisionCrownSheet) so the crown is textured
+        // even in projects that never imported the demo samples.
+        const string CrownSheetPackageRelativePath = "Samples~/Demos/Common/SplashFlipbook_8x8.png";
         // KWS-style packed droplet (R mass / G shine / B dissolve noise / A thickness). The
         // legacy Gen/Droplet.png (RGB white, shape in A) is left on disk untouched for old
         // materials still on the legacy shader path.
@@ -266,6 +271,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             volume.provideSplashEmitter = withSplash;
             if (withSplash) volume.splashEmitter = CreateSplashEmitter(volume.transform);
 
+            // ONE profile is the single tweak surface for foam + splash: auto-create it and
+            // point BOTH components at it, so a new body is configured from one asset instead
+            // of two components carrying duplicated knobs.
+            if (withFoamParticles || withSplash)
+                AssignFoamProfileToBody(volume, LoadOrCreateFoamProfile(ctx.Folder));
+
             EditorUtility.SetDirty(volume);
             return volume;
         }
@@ -337,6 +348,47 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 });
 
             EditorUtility.SetDirty(particles);
+        }
+
+        // Load (or create) the body's shared foam+splash profile: ONE asset per material folder,
+        // the single surface both components read. Its sections default to Drive=on, so it takes
+        // over the instant it is assigned.
+        internal static WaterFoamProfile LoadOrCreateFoamProfile(string materialFolder)
+        {
+            string path = materialFolder + "/WaterFoamProfile.asset";
+            var existing = AssetDatabase.LoadAssetAtPath<WaterFoamProfile>(path);
+            if (existing != null) return existing;
+
+            var profile = ScriptableObject.CreateInstance<WaterFoamProfile>();
+            AssetDatabase.CreateAsset(profile, path);
+            AssetDatabase.SaveAssets();
+            return profile;
+        }
+
+        // Point BOTH of a body's foam components (GPU foam particles + splash emitter) at one
+        // profile, so foam and splash are tweaked in a single place. Editor-safe (Undo + dirty);
+        // either component may be absent.
+        internal static void AssignFoamProfileToBody(WaterVolume body, WaterFoamProfile profile)
+        {
+            if (body == null || profile == null) return;
+
+            var foam = body.GetComponent<WaterFoamParticles>();
+            if (foam != null)
+            {
+                Undo.RecordObject(foam, "Assign Foam Profile");
+                foam.profile = profile;
+                EditorUtility.SetDirty(foam);
+            }
+
+            var emitter = body.splashEmitter != null
+                ? body.splashEmitter
+                : body.GetComponentInChildren<WaterSplashEmitter>();
+            if (emitter != null)
+            {
+                Undo.RecordObject(emitter, "Assign Foam Profile");
+                emitter.profile = profile;
+                EditorUtility.SetDirty(emitter);
+            }
         }
 
         // ---------------------------------------------------------------- demo props
@@ -771,7 +823,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             crownPSR.pivot = new Vector3(0f, 0.5f, 0f);
             crownPSR.sharedMaterial = LoadOrCreateSplashMaterial(
                 SplashCrownMaterialPath,
-                LoadFlipbook(SplashCrownSheetPath, TextureWrapMode.Clamp, false, linear: true));
+                LoadOrProvisionCrownSheet());
             splashEmitter.crownParticles = crownPS;
             return splashEmitter;
         }
@@ -783,7 +835,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             EnsureGenFolder();
             LoadOrCreateSplashMaterial(SplashDropletMaterialPath, LoadOrBuildDroplet(DropletTexturePath));
             LoadOrCreateSplashMaterial(SplashCrownMaterialPath,
-                LoadFlipbook(SplashCrownSheetPath, TextureWrapMode.Clamp, false, linear: true));
+                LoadOrProvisionCrownSheet());
             AssetDatabase.SaveAssets();
         }
 
@@ -1039,6 +1091,41 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 imp.SaveAndReimport();
             }
             return AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+        }
+
+        // The crown sheet is an authored 8x8 art asset (not procedurally buildable like the droplet),
+        // and it lives only in the package's Samples~ folder, which Unity does not import. So a project
+        // that never imported the demos has nothing for LoadFlipbook to load and the crown renders
+        // untextured. Provision it once by copying the packaged source into Generated, then load it with
+        // the crown's import settings (packed DATA sheet -> linear, clamped, no mips).
+        static Texture2D LoadOrProvisionCrownSheet()
+        {
+            if (!File.Exists(SplashCrownSheetPath))
+            {
+                string packagedSheet = PackagedCrownSheetPath();
+                if (packagedSheet == null || !File.Exists(packagedSheet))
+                {
+                    Debug.LogWarning($"WebGL Water: crown flipbook not found in the package " +
+                                     $"('{CrownSheetPackageRelativePath}'); the splash crown will be untextured.");
+                    return null;
+                }
+
+                Directory.CreateDirectory(Path.GetDirectoryName(SplashCrownSheetPath));
+                File.Copy(packagedSheet, SplashCrownSheetPath, overwrite: false);
+                AssetDatabase.ImportAsset(SplashCrownSheetPath);
+            }
+
+            return LoadFlipbook(SplashCrownSheetPath, TextureWrapMode.Clamp, mipmaps: false, linear: true);
+        }
+
+        // Physical path of the crown sheet inside the package's Samples~ folder. resolvedPath differs
+        // between embedded and registry/tarball installs, so it is resolved via the package system
+        // rather than assumed to sit under the project's Packages folder.
+        static string PackagedCrownSheetPath()
+        {
+            UnityEditor.PackageManager.PackageInfo package =
+                UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(WaterBuildKit).Assembly);
+            return package == null ? null : Path.Combine(package.resolvedPath, CrownSheetPackageRelativePath);
         }
 
         // ---------------------------------------------------------------- helpers

@@ -81,7 +81,52 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "so they are greyed out here. Tune the profile - or clear it, or turn off its " +
                     "Splash Drive toggle - to edit them on this component.",
                     MessageType.Info);
+            else if (_profile.objectReferenceValue == null)
+                EditorGUILayout.HelpBox(
+                    "No Foam Profile assigned. These splash controls and the body's Foam Particles are " +
+                    "then two SEPARATE control points on two components. To configure both from ONE place, " +
+                    "assign a Water Foam Profile: its 'Apply To Selected Body' button points the foam " +
+                    "particles AND this emitter at the same asset in one click.",
+                    MessageType.Warning);
+
+            DrawFoamProfileLink();
             EditorGUILayout.Space();
+        }
+
+        // One-click jump to the single tweak surface. When no profile exists yet it is created and
+        // pointed at BOTH this emitter and the body's foam particles, so foam + splash are configured
+        // from one asset instead of two components.
+        void DrawFoamProfileLink()
+        {
+            var linked = _profile.objectReferenceValue as WaterFoamProfile;
+            if (linked != null)
+            {
+                if (GUILayout.Button("Edit Foam Profile"))
+                {
+                    Selection.activeObject = linked;
+                    EditorGUIUtility.PingObject(linked);
+                }
+                return;
+            }
+
+            if (!GUILayout.Button("Create & Assign Foam Profile (one place for foam + splash)"))
+                return;
+
+            var emitter = target as WaterSplashEmitter;
+            var body = emitter != null ? emitter.GetComponentInParent<WaterVolume>() : null;
+            WaterBuildKit.EnsureGenFolder();
+            var created = WaterBuildKit.LoadOrCreateFoamProfile(WaterBuildKit.Gen);
+            if (body != null)
+            {
+                WaterBuildKit.AssignFoamProfileToBody(body, created);
+                serializedObject.Update();
+            }
+            else
+            {
+                _profile.objectReferenceValue = created;
+            }
+            Selection.activeObject = created;
+            EditorGUIUtility.PingObject(created);
         }
 
         void DrawWiring()

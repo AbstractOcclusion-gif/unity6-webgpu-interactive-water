@@ -710,12 +710,15 @@ namespace AbstractOcclusion.WebGpuWater
             }
 
             // Spray pass: ALWAYS drawn as billboards, with its own droplet material (falls back to the
-            // foam material when none is assigned) and its own flipbook (_DrawKind = spray-only). No
-            // profile look override here, so spray keeps its material's own look, independent of foam.
+            // foam material when none is assigned) and its own flipbook (_DrawKind = spray-only). The
+            // shared look's tint + opacity ride over the spray too (a "shared look" the spray ignored
+            // read as a dead color/opacity knob); the spray keeps its OWN atlas/grid, so the shared
+            // sprite sheet - authored for the foam's flipbook grid - is not forced onto it.
             Material sprayDrawMaterial = sprayMaterial != null ? sprayMaterial : particleMaterial;
             volume.WriteBodyProps(_sprayMpb);
             _sprayMpb.SetBuffer(ID_ParticlesShader, _particles);
             WaterParticlePool.WriteFlipbook(_sprayMpb, sprayFlipbookGrid, sprayFlipbookFps);
+            if (profile != null) profile.WriteSprayLook(_sprayMpb);
             _sprayMpb.SetFloat(ID_DrawKind, DrawKindSpray);
 
             var sprayRp = new RenderParams(sprayDrawMaterial)

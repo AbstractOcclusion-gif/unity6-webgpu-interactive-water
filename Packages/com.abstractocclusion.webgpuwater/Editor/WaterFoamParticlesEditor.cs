@@ -120,6 +120,15 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "every frame, so those fields are greyed out here. Tune the profile - or clear it, " +
                     "or turn off that section's Drive toggle - to edit them on this component.",
                     MessageType.Info);
+            else
+                EditorGUILayout.HelpBox(
+                    "No Foam Profile assigned. These foam controls and the body's Splash Emitter are then " +
+                    "two SEPARATE control points on two components. To configure both from ONE place, " +
+                    "assign a Water Foam Profile: its 'Apply To Selected Body' button points this and the " +
+                    "splash emitter at the same asset in one click.",
+                    MessageType.Warning);
+
+            DrawFoamProfileLink();
 
             if (!DeviceSupportsDensity())
                 EditorGUILayout.HelpBox(
@@ -127,6 +136,44 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "Density falls back to Quads at runtime.", MessageType.None);
 
             EditorGUILayout.Space();
+        }
+
+        // One-click jump to the single tweak surface. When no profile exists yet it is created and
+        // pointed at BOTH this component and the body's splash emitter, so foam + splash are
+        // configured from one asset instead of two components.
+        void DrawFoamProfileLink()
+        {
+            var linked = _profile.objectReferenceValue as WaterFoamProfile;
+            if (linked != null)
+            {
+                if (GUILayout.Button("Edit Foam Profile"))
+                {
+                    Selection.activeObject = linked;
+                    EditorGUIUtility.PingObject(linked);
+                }
+                return;
+            }
+
+            if (!GUILayout.Button("Create & Assign Foam Profile (one place for foam + splash)"))
+                return;
+
+            var particles = target as WaterFoamParticles;
+            var body = particles != null
+                ? (particles.volume != null ? particles.volume : particles.GetComponentInParent<WaterVolume>())
+                : null;
+            WaterBuildKit.EnsureGenFolder();
+            var created = WaterBuildKit.LoadOrCreateFoamProfile(WaterBuildKit.Gen);
+            if (body != null)
+            {
+                WaterBuildKit.AssignFoamProfileToBody(body, created);
+                serializedObject.Update();
+            }
+            else
+            {
+                _profile.objectReferenceValue = created;
+            }
+            Selection.activeObject = created;
+            EditorGUIUtility.PingObject(created);
         }
 
         static string MissingList(bool compute, bool material, bool density)

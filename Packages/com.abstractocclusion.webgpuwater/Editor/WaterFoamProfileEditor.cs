@@ -25,6 +25,17 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // The optional profile reference every foam component carries; set by "Apply to selected body".
         const string ProfileRefField = "profile";
 
+        // Plain-language map of which particles each section actually drives. Shown as a HelpBox at the
+        // top so the four sections are not guessed at from field names alone.
+        const string SectionGuide =
+            "What each section drives:\n" +
+            "• Shared Look — appearance of ALL foam particles (tint, opacity, sprite, flipbook, " +
+            "size bias). The splash crown keeps its own tint/opacity in Splash.\n" +
+            "• Ambient Foam & Spray — the always-on surface sim (WaterFoamParticles): floating foam " +
+            "patches, the airborne mist droplets they fling, and the foam a landed droplet deposits.\n" +
+            "• Density Veil — the screen-space density wash (FoamDensityComposite), not sprites.\n" +
+            "• Splash — impact & pump bursts (WaterSplashEmitter): the droplet fan and the crown ring.";
+
         // Section expanded state (editor-session only). Open by default so every knob is discoverable.
         bool _lookExpanded = true;
         bool _ambientExpanded = true;
@@ -34,6 +45,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         public override void OnInspectorGUI()
         {
             WaterEditorUI.DrawHeader("Water Foam Profile", "one asset drives a body's whole foam story");
+
+            EditorGUILayout.HelpBox(SectionGuide, MessageType.None);
+            EditorGUILayout.Space();
 
             DrawPresetRow();
 

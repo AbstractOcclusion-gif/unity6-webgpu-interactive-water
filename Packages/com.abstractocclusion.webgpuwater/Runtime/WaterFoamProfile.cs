@@ -158,13 +158,23 @@ namespace AbstractOcclusion.WebGpuWater
 
         // ---- Draw-time material overrides (property blocks; assets never written) -----
 
-        /// <summary>Shared look over a particle draw (foam quads/spray).</summary>
+        /// <summary>Shared look over the foam-quad draw: tint, opacity, and the shared atlas.</summary>
         internal void WriteLook(MaterialPropertyBlock mpb)
         {
             if (!look.drive) return;
             mpb.SetColor(ID_Tint, look.tint);
             mpb.SetFloat(ID_ParticleOpacity, look.opacity);
             if (look.particleAtlas != null) mpb.SetTexture(ID_ParticleTex, look.particleAtlas);
+        }
+
+        /// <summary>Shared look over the spray-droplet draw: tint + opacity only. The atlas is left to
+        /// the spray's own material because the spray runs a separate flipbook grid (sprayFlipbookGrid);
+        /// forcing the shared sheet, authored for the foam grid, would misplay the spray flipbook.</summary>
+        internal void WriteSprayLook(MaterialPropertyBlock mpb)
+        {
+            if (!look.drive) return;
+            mpb.SetColor(ID_Tint, look.tint);
+            mpb.SetFloat(ID_ParticleOpacity, look.opacity);
         }
 
         /// <summary>Veil values over the density composite draw.</summary>
