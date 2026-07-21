@@ -8,13 +8,17 @@
 // Each probe carries its own mode, so one object can mix a Boat-mode bow row with Rock-mode points:
 //   - Rock : reacts to how fast the WATER rises toward the point (incoming waves/ripples included) -
 //            a fixed rock or pier throwing spray as a wave slams it.
-//   - Boat : reacts to how fast the POINT drives down into the water, sampled against the analytic
-//            surface only, so a hull's own emitted wake can't re-trigger it - spray off a bow.
-//   - Both : fires on either source (the unified closing speed).
+//   - Boat : reacts to the point driving into the water - both a vertical plunge AND, via
+//            horizontalPlowWeight, horizontal speed across flat water (bow spray) - sampled against the
+//            analytic surface only, so a hull's own emitted wake can't re-trigger it.
+//   - Both : fires on either source (rising water OR a moving point).
 //
-// Step 3 of the "WOW pass": per-probe modes. All same-sampling probes are gathered into one batched
-// WaterVolume.SampleHeights call into reused buffers (at most two calls total: ripples-included and
-// analytic-only), so an N-probe pump still allocates nothing per frame.
+// Step 7 of the "WOW pass": flat-water plow. A bow gliding fast over calm water has no vertical motion,
+// so the earlier closing-speed signal missed it; horizontalPlowWeight scales the point's own horizontal
+// ground speed into the Boat/Both trigger (0 = off, vertical motion only).
+//
+// All same-sampling probes are gathered into one batched WaterVolume.SampleHeights call into reused
+// buffers (at most two: ripples-included and analytic-only), so an N-probe pump allocates nothing per frame.
 using UnityEngine;
 
 namespace AbstractOcclusion.WebGpuWater
@@ -22,8 +26,8 @@ namespace AbstractOcclusion.WebGpuWater
     /// <summary>What a spray probe reacts to. See <see cref="WaterSprayPump"/> for the per-mode signal.</summary>
     public enum WaterSprayMode
     {
-        Both, // default: rising water OR a descending point
-        Boat, // the point driving down into the water; analytic surface only (ignores own wake)
+        Both, // default: rising water OR a moving point
+        Boat, // the point driving into the water (plunge + horizontal plow); analytic surface only
         Rock, // the water rising toward a (near-)static point; interactive ripples included
     }
 
@@ -36,6 +40,7 @@ namespace AbstractOcclusion.WebGpuWater
         const float DefaultMaxImpactSpeed = 4.0f;
         const float DefaultEmitCooldownSeconds = 0.06f;
         const float DefaultSprayRadius = 0.25f;
+        const float DefaultPlowWeight = 0.5f;
 
         // ---- internal guards ----
         // Below this frame time the finite-difference speeds are numerically unstable: a single hitched
@@ -53,8 +58,8 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("Local-space offset from this object's origin where the surface is sampled and spray is thrown.")]
             public Vector3 localOffset;
 
-            [Tooltip("Boat = point driving into water (own wake ignored); Rock = water rising at a static " +
-                     "point (ripples included); Both = either.")]
+            [Tooltip("Boat = point driving into water, plunge + plow (own wake ignored); Rock = water rising " +
+                     "at a static point (ripples included); Both = either.")]
             public WaterSprayMode mode;
         }
 
@@ -73,6 +78,10 @@ namespace AbstractOcclusion.WebGpuWater
 
         [Tooltip("Trigger speed that produces the strongest spray; faster impacts clamp to full strength.")]
         [Min(0f)] [SerializeField] float maxImpactSpeed = DefaultMaxImpactSpeed;
+
+        [Tooltip("Flat-water bow spray: scales the point's own horizontal ground speed into the Boat/Both " +
+                 "trigger, so a hull gliding fast across calm water sprays with no vertical motion. 0 = off.")]
+        [Min(0f)] [SerializeField] float horizontalPlowWeight = DefaultPlowWeight;
 
         [Tooltip("Minimum seconds between two bursts from ONE probe, so a sustained impact doesn't emit every frame.")]
         [Min(0f)] [SerializeField] float emitCooldownSeconds = DefaultEmitCooldownSeconds;
@@ -170,7 +179,7 @@ namespace AbstractOcclusion.WebGpuWater
             float surfaceHeight = sample.Height;
             TryEmit(index, mode, world, surfaceHeight, deltaSeconds);
 
-            _states[index].PreviousProbeY = world.y;
+            _states[index].PreviousProbePosition = world;
             _states[index].PreviousSurfaceHeight = surfaceHeight;
             _states[index].HasHistory = true;
         }
@@ -183,9 +192,13 @@ namespace AbstractOcclusion.WebGpuWater
             if (Time.time < state.NextEmitTime) return;               // cooling down
             if (emitter == null) return;                              // warned once in Start; nothing to emit through
 
+            Vector3 previous = state.PreviousProbePosition;
             float surfaceRise = (surfaceHeight - state.PreviousSurfaceHeight) / deltaSeconds; // > 0 water rising
-            float probeDescent = (state.PreviousProbeY - world.y) / deltaSeconds;             // > 0 point sinking
-            float signal = TriggerSignal(mode, surfaceRise, probeDescent);
+            float probeDescent = (previous.y - world.y) / deltaSeconds;                       // > 0 point sinking
+            float horizontalSpeed =
+                new Vector2(world.x - previous.x, world.z - previous.z).magnitude / deltaSeconds;
+
+            float signal = TriggerSignal(mode, surfaceRise, probeDescent, horizontalPlowWeight * horizontalSpeed);
             if (signal < minImpactSpeed) return;
 
             float span = Mathf.Max(MinImpactSpeedSpan, maxImpactSpeed - minImpactSpeed);
@@ -197,14 +210,14 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         // Rock keys off the water alone (a static probe's own motion shouldn't matter); Boat keys off the
-        // point driving into the water; Both is their sum - exactly the closing speed of steps 1-2.
-        static float TriggerSignal(WaterSprayMode mode, float surfaceRise, float probeDescent)
+        // point driving in - its vertical plunge plus the horizontal plow term; Both is their union.
+        static float TriggerSignal(WaterSprayMode mode, float surfaceRise, float probeDescent, float horizontalPlow)
         {
             switch (mode)
             {
                 case WaterSprayMode.Rock: return surfaceRise;
-                case WaterSprayMode.Boat: return probeDescent;
-                default:                  return surfaceRise + probeDescent;
+                case WaterSprayMode.Boat: return probeDescent + horizontalPlow;
+                default:                  return surfaceRise + probeDescent + horizontalPlow;
             }
         }
 
@@ -223,11 +236,12 @@ namespace AbstractOcclusion.WebGpuWater
             for (int i = 0; i < _states.Length; i++) _states[i].HasHistory = false;
         }
 
-        // Per-probe temporal state, one entry per point. Probe Y and surface height are kept separately (not
-        // just their gap) so Rock and Boat can read the surface-only and point-only rates independently.
+        // Per-probe temporal state, one entry per point. Probe position and surface height are kept
+        // separately (not just their gap) so Rock reads the surface-only rate, Boat the point-only rates
+        // (vertical descent and horizontal plow), independently.
         struct ProbeState
         {
-            public float PreviousProbeY;
+            public Vector3 PreviousProbePosition;
             public float PreviousSurfaceHeight;
             public float NextEmitTime;
             public bool HasHistory;
