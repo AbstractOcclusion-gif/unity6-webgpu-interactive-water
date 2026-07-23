@@ -187,7 +187,7 @@ MonoBehaviour:
   radius: 0
   strength: 0.03
   maxStepDistance: 5
-  wakeFadeSpeed: 2
+  wakeFadeSpeed: 8
 --- !u!1 &177695279
 GameObject:
   m_ObjectHideFlags: 0
@@ -534,7 +534,7 @@ GameObject:
   - component: {fileID: 334840196}
   - component: {fileID: 334840195}
   - component: {fileID: 334840194}
-  - component: {fileID: 334840193}
+  - component: {fileID: 334840203}
   m_Layer: 0
   m_Name: Boat
   m_TagString: Untagged
@@ -542,22 +542,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &334840193
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 334840192}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 2359f40ac11d5cc4a8a8c59039409a91, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterSplash
-  emitter: {fileID: 0}
-  minImpactSpeed: 0.4
-  maxImpactSpeed: 3
-  rippleStrength: 0.04
 --- !u!114 &334840194
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -565,7 +549,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 334840192}
-  m_Enabled: 0
+  m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: bbcdd9a68e9064f4183d7e323cbcf8bd, type: 3}
   m_Name: 
@@ -760,6 +744,29 @@ Transform:
   - {fileID: 388901861}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &334840203
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 334840192}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3bd8fb958cdc9ff49ac1ae4c67a90547, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterSprayPump
+  probes:
+  - localOffset: {x: 0, y: -0.11, z: 0.5}
+    mode: 1
+    sizeBoost: 0
+  surfaceBand: 0.25
+  minImpactSpeed: 0.6
+  maxImpactSpeed: 4
+  horizontalPlowWeight: 1
+  emitCooldownSeconds: 0.06
+  sprayRadius: 0.25
+  emitter: {fileID: 0}
 --- !u!4 &388901861 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: 3ef06c926d4222f469fd82e238c1fc5c, type: 3}
@@ -5648,7 +5655,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterSplashEmitter
   particles: {fileID: 529376547}
-  profile: {fileID: 0}
+  profile: {fileID: 11400000, guid: 096db223712859741bc8affb5f738dd9, type: 2}
   maxParticlesPerBurst: 48
   upwardBias: 1
   outwardSpread: 1.3
@@ -6059,13 +6066,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 961739749}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0.8535508, z: 0, w: 0.52100974}
-  m_LocalPosition: {x: 0, y: 11.98, z: -10}
+  m_LocalRotation: {x: -0.030490737, y: 0.85208786, z: 0.049951836, w: 0.52011675}
+  m_LocalPosition: {x: 0, y: 10.87, z: -10}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 117.2, z: 0}
+  m_LocalEulerAnglesHint: {x: -6.71, y: 117.2, z: 0}
 --- !u!114 &961739755
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -11007,6 +11014,8 @@ MonoBehaviour:
   chunkRefraction: 0.5
   chunkReflectivity: 0.6
   chunkMeniscus: 0.5
+  chunkGodRayStrength: 0
+  chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
   discSurface: 0
@@ -11022,11 +11031,13 @@ MonoBehaviour:
   sun: {fileID: 177695280}
   tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
   sky: {fileID: 8900000, guid: 85bd64faed533b54a88c144de0f680b6, type: 3}
-  foamPatternTexture: {fileID: 0}
+  foamPatternTexture: {fileID: 2800000, guid: 36879cca61e843178dae153ccadd00e8, type: 3}
   foamPatternGrid: {x: 1, y: 1}
   foamPatternFps: 10
   foamReliefStrength: 1
-  oceanWhitecapTexture: {fileID: 0}
+  oceanWhitecapTexture: {fileID: 2800000, guid: 4c464eb5767892e4ba061b40d0bd260a, type: 3}
+  oceanWhitecapGrid: {x: 1, y: 1}
+  oceanWhitecapFps: 10
   rippleQuality: 2
   bodyType: 2
   volumeExtent: {x: 500, y: 100, z: 500}
@@ -11050,7 +11061,7 @@ MonoBehaviour:
     oceanDetailFalloff: 0.03
     horizonFadeDistance: 9000
     horizonHazeColor: {r: 0.15688857, g: 0.24528301, b: 0.20912164, a: 0}
-    horizonHazeDensity: 0.003
+    horizonHazeDensity: 0.001
     largeGodRayColor: {r: 0.5264151, g: 0.94304496, b: 1, a: 1}
     largeGodRayDensity: 1
     largeGodRaySteps: 24
@@ -11098,7 +11109,7 @@ MonoBehaviour:
   isPrimary: 1
   autoLinkReceivers: 1
   quality: {fileID: 11400000, guid: 9d725521a0e492e49a009888cfe28ca6, type: 2}
-  enableCulling: 1
+  enableCulling: 0
   activationDistance: 1000
   reflectionSettings:
     useScreenSpaceReflection: 1
@@ -11168,11 +11179,13 @@ MonoBehaviour:
     sssPinchMin: 0.1
     sssPinchMax: 0.6
     sssPinchFalloff: 1.5
+  refractShadows: 0
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
     depthDarkenStrength: 1
     causticDepthFade: 0.5
+    screenSpaceCaustics: 0
     godRayDepthFade: 0.5
     linkDepthToFog: 0
   _legacyDepthDarken: 0
@@ -11215,6 +11228,7 @@ MonoBehaviour:
     surfSwashAmplitude: 1
     surfFoamGain: 1.2
     surfWaterlineFoam: 0.5
+    surfSmallWaveFoam: 0
     surfFoamStrength: 1
     surfFoamFeather: 0.2
     surfFoamTileSize: 8
@@ -11263,6 +11277,7 @@ MonoBehaviour:
       m_PostInfinity: 2
       m_RotationOrder: 4
     surfCrestFoamGain: 1
+    surfFoamCrestCap: 0
     surfFoamBoreGain: 1
     surfFoamTrailGain: 1
     surfFoamTrailLength: 1
@@ -11271,6 +11286,7 @@ MonoBehaviour:
     surfSwashFoamWidth: 0.25
     surfSwashFoamDissolve: 0.6
     surfSwashStreak: 0.5
+    surfSwashDepositGain: 0
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
   _legacyBedResolution: 256
@@ -11339,7 +11355,7 @@ MonoBehaviour:
     stepsPerFrame: 1
     rippleStrength: 0.01
     rippleRadius: 0.03
-    rippleChoppiness: 0.56
+    rippleChoppiness: 0.03
     seedRipplesOnStart: 1
     conserveVolume: 1
     conserveMaxCorrection: 0.05
@@ -11371,9 +11387,9 @@ MonoBehaviour:
   volume: {fileID: 1579798799}
   particleCompute: {fileID: 7200000, guid: 60b46151fe09abd4b97f5f1feaa54593, type: 3}
   particleMaterial: {fileID: 2100000, guid: 28fcccd712d481e4888246c158e55772, type: 2}
-  renderMode: 0
+  renderMode: 1
   densityMaterial: {fileID: 2100000, guid: cc801976c649049469e4d607163ec5fa, type: 2}
-  profile: {fileID: 11400000, guid: 69520b33cdc5fe745a469f4d9846b6f7, type: 2}
+  profile: {fileID: 11400000, guid: 096db223712859741bc8affb5f738dd9, type: 2}
   capacity: 4096
   spawnThreshold: 0.25
   spawnRate: 30
@@ -11391,7 +11407,7 @@ MonoBehaviour:
   sprayFlipbookFps: 0
   depositLifeRange: {x: 0.5, y: 1}
   depositSizeRange: {x: 0.02, y: 0.05}
-  gravity: 4
+  gravity: 1
   flowDrift: 0.25
   windDriftSpeed: 0.02
   drag: 2
