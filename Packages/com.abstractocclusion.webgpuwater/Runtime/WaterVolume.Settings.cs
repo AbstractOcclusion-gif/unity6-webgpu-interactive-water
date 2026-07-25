@@ -195,6 +195,15 @@ namespace AbstractOcclusion.WebGpuWater
                      "(softening per metre): deep beams read broad and slow instead of razor sharp, like real " +
                      "light losing focus. 0 = sharp at any depth.")]
             [Range(0f, 1f)] public float largeGodRayCausticDepthSoften = 0.25f;
+            [Tooltip("Speed of the caustic's OWN ripple field (1 = physical wave speed for its wavelength). " +
+                     "The caustic runs a dedicated small-wave layer decoupled from the surface (the surface's " +
+                     "small content is FFT-driven and cannot be slowed), so beam/shimmer pace is a direct dial.")]
+            [Range(0.05f, 1f)] public float largeCausticTimeScale = 0.5f;
+            [Tooltip("Dominant wavelength (metres) of the caustic's own ripple field - the small waves that " +
+                     "trigger the shafts. Smaller = finer, denser beams; larger = broad slow bands.")]
+            [Range(0.5f, 10f)] public float largeCausticRippleScale = 3f;
+            [Tooltip("Strength of the dedicated caustic ripples. 0 = caustic from the smoothed swell only.")]
+            [Range(0f, 2f)] public float largeCausticRippleStrength = 1f;
 
             [Header("Ocean foam (whitecaps)")]
             [Tooltip("Wind speed (m/s) below which the FFT ocean grows NO whitecaps (KWS foams above ~4). Tie " +
@@ -418,6 +427,9 @@ namespace AbstractOcclusion.WebGpuWater
         internal float LargeGodRayCausticStrength => IsOceanClipmap ? largeGodRayCausticStrength : 0f;
         internal float LargeGodRayCausticSmooth => ocean.largeGodRayCausticSmooth;
         internal float LargeGodRayCausticDepthSoften => ocean.largeGodRayCausticDepthSoften;
+        internal float LargeCausticTimeScale => ocean.largeCausticTimeScale;
+        internal float LargeCausticRippleScale => ocean.largeCausticRippleScale;
+        internal float LargeCausticRippleStrength => ocean.largeCausticRippleStrength;
 
         [Header("Water body (multi-instance)")]
         [Tooltip("Renderers driven by THIS body via a MaterialPropertyBlock (surface above/under, " +

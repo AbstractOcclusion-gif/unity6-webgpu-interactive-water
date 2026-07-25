@@ -67,7 +67,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "ocean.largeGodRayExtinction",
                     "ocean.largeGodRayCausticStrength",
                     "ocean.largeGodRayCausticSmooth",
-                    "ocean.largeGodRayCausticDepthSoften"),
+                    "ocean.largeGodRayCausticDepthSoften",
+                    "ocean.largeCausticTimeScale",
+                    "ocean.largeCausticRippleScale",
+                    "ocean.largeCausticRippleStrength"),
                 contentEnabled: IsOcean);
         }
 

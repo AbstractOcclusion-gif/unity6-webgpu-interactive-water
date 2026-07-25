@@ -19,6 +19,9 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_VolumeExtent = Shader.PropertyToID("_VolumeExtent");
         static readonly int ID_VolumeRot = Shader.PropertyToID("_VolumeRot");
         static readonly int ID_CausticSmooth = Shader.PropertyToID("_LargeGodRayCausticSmooth");
+        static readonly int ID_CausticTime = Shader.PropertyToID("_LargeCausticTime");
+        static readonly int ID_CausticRippleScale = Shader.PropertyToID("_LargeCausticRippleScale");
+        static readonly int ID_CausticRippleStrength = Shader.PropertyToID("_LargeCausticRippleStrength");
 
         // Green channel of the caustic RT starts at 1 (unshadowed) so floor fragments that sample
         // outside the drawn caustic footprint read "lit", not black, now that green drives the
@@ -166,6 +169,13 @@ namespace AbstractOcclusion.WebGpuWater
             // God-ray caustic smoothing radius (Ocean God Rays block): set here like the window frame,
             // because this pass renders before the owner publishes its per-body block.
             _largeBodyMaterial.SetFloat(ID_CausticSmooth, _owner.LargeGodRayCausticSmooth);
+            // Dedicated caustic ripple field (the KWS arrangement - see the shader): the caustic's
+            // small-wave trigger is its OWN analytic ripple layer on its own clock, because the
+            // surface's small content is FFT-texture driven (ignores analytic time scaling and
+            // sweeps too fast to read). Scale/strength/speed are direct artist knobs.
+            _largeBodyMaterial.SetFloat(ID_CausticTime, _owner.WaveTime * _owner.LargeCausticTimeScale);
+            _largeBodyMaterial.SetFloat(ID_CausticRippleScale, _owner.LargeCausticRippleScale);
+            _largeBodyMaterial.SetFloat(ID_CausticRippleStrength, _owner.LargeCausticRippleStrength);
 
             _cb.Clear();
             _cb.SetRenderTarget(_target);

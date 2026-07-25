@@ -53,6 +53,47 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyCaustics"
             // slow swell only (the surface itself keeps its full detail). 0 = legacy full spectrum.
             float _LargeGodRayCausticSmooth;
 
+            // Dedicated caustic ripple field - the fast, small-wave content of the caustic, fully
+            // DECOUPLED from the rendered surface (the KWS arrangement: their caustic source is an
+            // independent slow flipbook nobody correlates with the waves). Physically the smallest
+            // waves dominate caustic focusing (curvature ~ amplitude * k^2), but the surface's own
+            // small content is FFT-texture driven - it ignores any analytic time scale and sweeps
+            // too fast to read. So the caustic gets ITS OWN ripples on its own clock: wavelength,
+            // strength and speed are direct knobs, the visible surface is untouched, and the
+            // smoothed swell above still anchors the pattern to the big waves.
+            float _LargeCausticTime;           // owner wave clock * largeCausticTimeScale
+            float _LargeCausticRippleScale;    // dominant ripple wavelength (metres)
+            float _LargeCausticRippleStrength; // field strength (0 = legacy surface-driven caustic)
+
+            // SELF-CONTAINED: when the field is active it REPLACES the surface height entirely -
+            // with an FFT ocean, LargeBodyWaveHeight is the live FFT texture, which no clock can
+            // slow, so any surface contribution reintroduces uncontrolled motion. The field brings
+            // its own gentle SWELL octave (waves 6-8, at 6/10/17x the ripple scale) so broad slow
+            // bands underlie the fine dapple. Time scale 0 = a frozen caustic, by construction.
+            void CausticField(float2 p, out float2 slope, out float height)
+            {
+                slope = float2(0.0, 0.0);
+                height = 0.0;
+                [unroll]
+                for (int i = 0; i < 9; i++)
+                {
+                    float ang = 2.399963 * float(i) + 0.7;                // golden-angle spread
+                    float2 dir = float2(cos(ang), sin(ang));
+                    float jitter = frac(sin(ang * 12.9898) * 43758.5453); // per-wave wavelength variety
+                    // Waves 0-5: the ripple octave at the knob scale (the caustic TRIGGER);
+                    // 6-8: the swell octave, at a gentler steepness.
+                    float octave = (i < 6) ? 1.0 : ((i == 6) ? 6.0 : ((i == 7) ? 10.0 : 17.0));
+                    float steep = (i < 6) ? 0.02 : 0.012;                // amplitude = steep * lambda
+                    float lambda = _LargeCausticRippleScale * octave * (0.75 + 0.6 * jitter);
+                    float k = 6.2831853 / max(lambda, 0.05);
+                    float omega = sqrt(9.81 * k);                         // deep-water dispersion
+                    float phase = dot(dir, p) * k - omega * _LargeCausticTime + float(i) * 1.7;
+                    float amp = steep * lambda;
+                    slope += dir * (amp * k * cos(phase));
+                    height += amp * sin(phase);
+                }
+            }
+
             struct appdata { float4 vertex : POSITION; };
             struct v2f
             {
@@ -79,17 +120,29 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyCaustics"
                 float refPlaneY = surfaceY - LARGE_CAUSTIC_REFERENCE_DEPTH;
 
                 // Base tilt from the interactive ripple sim, softened + weighted DOWN: it is coarse over a
-                // large window, so it must not dominate. The analytic ocean swell is the primary focus.
+                // large window, so it must not dominate. It stays LIVE in every mode - wake/splash
+                // caustics must track the thing that made them.
                 float4 info = SampleWaterBilinear(windowNorm * 0.5 + 0.5);
                 float2 rippleTilt = info.ba * (CAUSTIC_NORMAL_SOFTEN * CAUSTIC_RIPPLE_WEIGHT);
                 float3 normal = float3(rippleTilt.x, sqrt(max(0.0, 1.0 - dot(rippleTilt, rippleTilt))), rippleTilt.y);
-                // Fold in the large-body swell so the caustic - and the volumetric beams that sample it -
-                // focus light through the ACTUAL visible wave shape (crisp, resolution-independent), like
-                // KWS. Same function + strength the surface uses, so the beams line up with the waves.
-                // Smoothed mode (radius > 0): band-limited slope from height differences over the radius
-                // (see _LargeGodRayCausticSmooth above) - the sim normal convention is n.xz = -grad h,
+                float causticFieldHeight = 0.0;
+                bool dedicatedField = _LargeCausticRippleStrength > 0.0;
+                if (dedicatedField)
+                {
+                    // Self-contained caustic field on its own clock (see CausticField above): the
+                    // surface height is NOT sampled at all in this mode - with an FFT ocean it is
+                    // the live FFT texture, which would reintroduce motion no knob controls.
+                    float2 fieldSlope;
+                    CausticField(worldXZ, fieldSlope, causticFieldHeight);
+                    normal.xz -= fieldSlope * (_WaveNormalStrength * _LargeCausticRippleStrength);
+                    normal = normalize(normal);
+                }
+                // Legacy surface-driven paths (field strength 0): fold in the large-body swell so the
+                // caustic focuses through the ACTUAL visible wave shape. Smoothed mode (radius > 0):
+                // band-limited slope from height differences over the radius (see
+                // _LargeGodRayCausticSmooth above) - the sim normal convention is n.xz = -grad h,
                 // matching the ripple tilt this normal already carries.
-                if (_LargeGodRayCausticSmooth > 0.0)
+                else if (_LargeGodRayCausticSmooth > 0.0)
                 {
                     float r = _LargeGodRayCausticSmooth;
                     float2 slope = float2(
@@ -107,8 +160,10 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyCaustics"
                 float3 refractedLight = refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER); // undisturbed
                 float3 ray           = refract(-_LightDir, normal,               IOR_AIR / IOR_WATER); // through the surface
 
-                // Displaced surface point: analytic swell height + the (soft) interactive ripple height.
-                float waveHeight = LargeBodyWaveHeight(worldXZ) + info.r * _SimExtent.y * CAUSTIC_RIPPLE_WEIGHT;
+                // Displaced surface point: the active mode's wave height + the (soft) interactive
+                // ripple height. Dedicated mode uses its own field height - same no-surface rule.
+                float waveHeight = (dedicatedField ? causticFieldHeight : LargeBodyWaveHeight(worldXZ))
+                                 + info.r * _SimExtent.y * CAUSTIC_RIPPLE_WEIGHT;
                 float3 flatPos = float3(worldXZ.x, surfaceY, worldXZ.y);
                 float3 dispPos = float3(worldXZ.x, surfaceY + waveHeight, worldXZ.y);
 

@@ -36,6 +36,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         protected override void Dispose(bool disposing)
         {
+            _pass?.Dispose(); // releases the persistent temporal-history RTs
             CoreUtils.Destroy(_material);
             _material = null;
             _pass = null;
