@@ -30,8 +30,12 @@ namespace AbstractOcclusion.WebGpuWater
 
         public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
         {
-            if (_pass == null) return;                     // shader unassigned / not created
-            if (!WaterVolume.UnderwaterFogActive) return;  // ocean: submerged only; pond: whenever fog is on
+            if (_pass == null) return; // shader unassigned / not created
+            // Fog: ocean = submerged only, pond = whenever fog is on. Waterline: the near plane
+            // straddles the surface (partial submersion) - it arms BEFORE the eye submerges, so
+            // the crossing shows a meniscus line instead of a hard pop. The pass records only
+            // the sub-passes whose gate is set.
+            if (!WaterVolume.UnderwaterFogActive && !WaterVolume.WaterlineActive) return;
             renderer.EnqueuePass(_pass);
         }
 

@@ -327,6 +327,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             ApplyReflection(body);
             ApplyFoam(body);
             bool openWater = ApplyOpenWater(body);
+            ApplyLookDefaults(body);
 
             ApplyCameraMode(body);
 
@@ -347,6 +348,53 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         void ApplyBaseType(WaterVolume body)
         {
             body.WaterFog = _kind == WaterKind.SurfaceWithFog;
+        }
+
+        // ---- authoring look defaults -----------------------------------------
+        // Baseline every wizard-built body starts from (independent of type/toggles):
+        // real screen-space refraction, the straight URP shadow map (refract-shadows OFF -
+        // the refracted occluder path is the opt-in; ON by surprise reads as "harsh shadows"),
+        // a light fog density, wind waves scaled to the body's REAL size, and the package's
+        // default surface textures. Values are the wizard's opinion only - the body's own
+        // inspector serializes and can change every one afterwards.
+        const float DefaultFogDensity = 0.2f;
+        const float DefaultDetailNormalStrength = 0.2f;
+        // Wind-wave scale limits: KEEP in sync with WindWaveSettings.waveScaleMeters' [Range].
+        const float WaveScaleMetersMin = 1f;
+        const float WaveScaleMetersMax = 500f;
+        // Default texture files under WaterBuildKit.DefaultTexturesRoot. Note the deliberate
+        // crossover: the Foam2 sheet reads best as the ocean WHITECAP and the OceanWhitecap
+        // sheet as the turbulence FOAM pattern (chosen by eye, not by filename).
+        const string WhitecapTextureFile = "Foam2.png";
+        const string FoamPatternTextureFile = "OceanWhitecap.png";
+        const string DetailNormalTextureFile = "water detail.png";
+
+        void ApplyLookDefaults(WaterVolume body)
+        {
+            // Internal fields (InternalsVisibleTo), same direct path as rippleQuality above.
+            body.refractShadows = false;
+            body.foamPatternTexture = LoadDefaultTexture(FoamPatternTextureFile);
+            body.oceanWhitecapTexture = LoadDefaultTexture(WhitecapTextureFile);
+
+            // Private serialized blocks go through the shared property-path registry.
+            var serialized = new SerializedObject(body);
+            serialized.FindProperty(WaterVolumePropertyPaths.RealRefraction).boolValue = true;
+            serialized.FindProperty(WaterVolumePropertyPaths.FogDensity).floatValue = DefaultFogDensity;
+            // Wind-wave scale follows the body's real horizontal half-extent (the wizard's extent
+            // IS metres: pool [-1,1] maps to +/-extent), so a 100 m lake gets 100 m wave fetch
+            // instead of the fixed 10 m default that made big bodies ripple like ponds.
+            serialized.FindProperty(WaterVolumePropertyPaths.WaveScaleMeters).floatValue =
+                Mathf.Clamp(Mathf.Max(_extent.x, _extent.z), WaveScaleMetersMin, WaveScaleMetersMax);
+            serialized.FindProperty(WaterVolumePropertyPaths.DetailNormalTexture).objectReferenceValue =
+                LoadDefaultTexture(DetailNormalTextureFile);
+            serialized.FindProperty(WaterVolumePropertyPaths.DetailNormalStrength).floatValue =
+                DefaultDetailNormalStrength;
+            // Ocean bodies express "god rays" through the fullscreen ocean shafts (the legacy
+            // god-ray box the build kit rigs is pool-scaled); same shared default intensity.
+            if (_kind == WaterKind.OpenWaterOcean && _godRays)
+                serialized.FindProperty(WaterVolumePropertyPaths.LargeGodRayDensity).floatValue =
+                    DefaultGodRayDensity;
+            serialized.ApplyModifiedProperties(); // rides the Create Water undo group
         }
 
         // Open water turns on for the Ocean type, or for any bounded type whose footprint outgrows the

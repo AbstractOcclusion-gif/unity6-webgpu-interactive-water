@@ -13,8 +13,19 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string UnboundedOcean = "ocean.unboundedOcean";
         internal const string ScreenSpaceReflection = "reflectionSettings.useScreenSpaceReflection";
         internal const string PlanarReflection = "reflectionSettings.usePlanarReflection";
+        internal const string RealRefraction = "reflectionSettings.realRefraction";
         internal const string BodyType = "bodyType";
         internal const string EnableLargeBodyWindow = "enableLargeBodyWindow";
+
+        // Water fog block (wizard look defaults).
+        internal const string FogDensity = "waterFogSettings.fogDensity";
+
+        // Detail-normal block (Textures section; wizard look defaults).
+        internal const string DetailNormalTexture = "detailNormalSettings.texture";
+        internal const string DetailNormalStrength = "detailNormalSettings.strength";
+
+        // Ocean god rays (wizard look defaults).
+        internal const string LargeGodRayDensity = "ocean.largeGodRayDensity";
 
         // Ocean block (large waves / swell / horizon), used by the feature-showcase builder
         // and the ocean inspector section.

@@ -26,7 +26,7 @@ RenderSettings:
   m_AmbientIntensity: 1
   m_AmbientMode: 0
   m_SubtractiveShadowColor: {r: 0.42, g: 0.478, b: 0.627, a: 1}
-  m_SkyboxMaterial: {fileID: 2100000, guid: b0a5c454d7c0a8442acc65f502494e32, type: 2}
+  m_SkyboxMaterial: {fileID: 10304, guid: 0000000000000000f000000000000000, type: 0}
   m_HaloStrength: 0.5
   m_FlareStrength: 1
   m_FlareFadeSpeed: 3
@@ -148,7 +148,7 @@ Light:
   serializedVersion: 12
   m_Type: 1
   m_Color: {r: 1, g: 1, b: 1, a: 1}
-  m_Intensity: 0.7
+  m_Intensity: 1
   m_Range: 10
   m_SpotAngle: 30
   m_InnerSpotAngle: 21.80208
@@ -239,13 +239,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 177695279}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.034678046, y: -0.5274053, z: 0.021551605, w: 0.8486322}
+  m_LocalRotation: {x: 0.30153742, y: -0.49345985, z: 0.18739854, w: 0.7940116}
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 773898433}
-  m_LocalEulerAnglesHint: {x: 4.68, y: -63.72, z: 0}
+  m_LocalEulerAnglesHint: {x: 41.59, y: -63.72, z: 0}
 --- !u!1 &230721764
 GameObject:
   m_ObjectHideFlags: 0
@@ -5390,7 +5390,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &639025606
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5500,8 +5500,8 @@ MonoBehaviour:
     m_Bits: 1
   m_VolumeTrigger: {fileID: 0}
   m_VolumeFrameworkUpdateModeOption: 2
-  m_RenderPostProcessing: 1
-  m_Antialiasing: 2
+  m_RenderPostProcessing: 0
+  m_Antialiasing: 0
   m_AntialiasingQuality: 2
   m_StopNaN: 0
   m_Dithering: 0
@@ -5766,11 +5766,13 @@ MonoBehaviour:
   sun: {fileID: 177695280}
   tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
   sky: {fileID: 8900000, guid: 85bd64faed533b54a88c144de0f680b6, type: 3}
-  foamPatternTexture: {fileID: 0}
+  foamPatternTexture: {fileID: 2800000, guid: 36879cca61e843178dae153ccadd00e8, type: 3}
   foamPatternGrid: {x: 1, y: 1}
   foamPatternFps: 10
   foamReliefStrength: 1
-  oceanWhitecapTexture: {fileID: 0}
+  oceanWhitecapTexture: {fileID: 2800000, guid: 1ee279c16b027ad48a8eb248749ff66c, type: 3}
+  oceanWhitecapGrid: {x: 1, y: 1}
+  oceanWhitecapFps: 10
   rippleQuality: 3
   bodyType: 2
   volumeExtent: {x: 500, y: 100, z: 500}
@@ -5794,7 +5796,7 @@ MonoBehaviour:
     oceanDetailFalloff: 0.03
     horizonFadeDistance: 9000
     horizonHazeColor: {r: 0.15688857, g: 0.24528301, b: 0.20912164, a: 0}
-    horizonHazeDensity: 0.001
+    horizonHazeDensity: 0.234
     largeGodRayColor: {r: 0.5264151, g: 0.94304496, b: 1, a: 1}
     largeGodRayDensity: 1
     largeGodRaySteps: 24
@@ -5849,18 +5851,18 @@ MonoBehaviour:
     usePlanarReflection: 1
     reflectUrpProbe: 0
     realRefraction: 1
-    reflectionStrength: 1
+    reflectionStrength: 0.578
     envReflectionIntensity: 0.52
     fresnelFloor: 0
     fresnelPower: 2.22
-    sunRoughness: 0.15
-    roughnessFar: 0.12
-    roughnessFarDistance: 500
-    roughnessFalloff: 4
-    reflectionAnisoStretch: 0.08
-    sunSheen: 0.25
-    sunSheenRoughness: 0.49
-    sunGrazeBoost: 0.73
+    sunRoughness: 0.165
+    roughnessFar: 0.18
+    roughnessFarDistance: 609
+    roughnessFalloff: 2.13
+    reflectionAnisoStretch: 0.158
+    sunSheen: 0.01
+    sunSheenRoughness: 0.394
+    sunGrazeBoost: 0.397
     reflectionDistortion: 0.05
     ssrStrength: 1
     ssrStepSize: 0.03
@@ -5912,7 +5914,7 @@ MonoBehaviour:
     sssPinchMin: 0.1
     sssPinchMax: 0.6
     sssPinchFalloff: 1.5
-  refractShadows: 1
+  refractShadows: 0
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
@@ -5961,6 +5963,7 @@ MonoBehaviour:
     surfSwashAmplitude: 1
     surfFoamGain: 1.2
     surfWaterlineFoam: 0.5
+    surfSmallWaveFoam: 0
     surfFoamStrength: 1
     surfFoamFeather: 0.2
     surfFoamTileSize: 8
@@ -6009,6 +6012,7 @@ MonoBehaviour:
       m_PostInfinity: 2
       m_RotationOrder: 4
     surfCrestFoamGain: 1
+    surfFoamCrestCap: 0
     surfFoamBoreGain: 1
     surfFoamTrailGain: 1
     surfFoamTrailLength: 1
@@ -6017,6 +6021,7 @@ MonoBehaviour:
     surfSwashFoamWidth: 0.25
     surfSwashFoamDissolve: 0.6
     surfSwashStreak: 0.5
+    surfSwashDepositGain: 0
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
   _legacyBedResolution: 256

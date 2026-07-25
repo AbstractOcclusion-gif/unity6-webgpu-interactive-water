@@ -10,8 +10,11 @@
 [Pp]rofilerCaptures/
 [Rr]ecordings/
 
-# Asset meta data should only be ignored when the corresponding asset is also ignored
-!/[Aa]ssets/**/*.meta
+# Local project content: the package under Packages/com.abstractocclusion.webgpuwater is the
+# product; Assets/ only holds local test scenes, imported package samples and scratch content,
+# so the whole folder (including Assets/Samples) stays out of the repo.
+/[Aa]ssets/
+/[Aa]ssets.meta
 
 # Visual Studio / Rider / IDE
 .vs/
@@ -36,7 +39,6 @@ sysinfo.txt
 *.unitypackage
 crashlytics-build.properties
 
-# Asset Store publishing tools (local dev tool, embedded package - not for the repo)
+# Asset Store publishing tools (local dev tool, embedded package - not for the repo).
+# (The Assets/AssetStoreTools entries are gone: the whole /Assets/ folder is ignored above.)
 /[Pp]ackages/com.unity.asset-store-tools/
-/[Aa]ssets/AssetStoreTools/
-/[Aa]ssets/AssetStoreTools.meta

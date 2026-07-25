@@ -24,7 +24,7 @@
                                / ((IOR_WATER + IOR_AIR) * (IOR_WATER + IOR_AIR)))
 #define FRESNEL_SCHLICK_POWER   5.0
 #define FRESNEL_POWER           3.0    // legacy curve - underwater branch only
-#define FRESNEL_MIN_BELOW       0.5
+#define FRESNEL_MIN_BELOW       0.5    // legacy curve's floor - underwater branch only
 // GGX sun specular (above water): the lobe's roughness grows with view distance
 // (KWS trick, ramp knobs published per body) - far pixels average many unresolved
 // wave facets, so widening the lobe is both the physically-motivated filter and the
@@ -103,6 +103,41 @@ float _SSRStrength, _SSRStepSize, _SSRMaxSteps, _SSRThickness;
 float _UsePlanar, _UseSSR, _RealRefraction;
 
 float _EnvReflectionIntensity; // brightness of the reflected sky / URP probe (not the sun glint)
+
+// ---- Underside (seen-from-below) look: its own fresnel/mirror family, published per body
+// by the WaterVolume "Underwater Surface" block, so the below-water view no longer rides the
+// above-water constants (the legacy curve's hard-coded 0.5 floor mirrored half the environment
+// even looking straight up, burying the transparency). Consumed by UnderwaterStage and
+// EvaluateSurfaceGeometry in WaterSurfaceFragStages.hlsl. ----
+float _UnderFresnelPhysical;      // 1 = physical Snell-window fresnel below; 0 = the legacy curve
+float _UnderTirSoftness;          // blend width into the TIR mirror at the Snell window's edge
+float _UnderFresnelFloor;         // artistic minimum underside reflectance (physical mode only)
+float _UnderReflectionStrength;   // strength of the underside (TIR) mirror; 0 = fully transparent
+float _UnderMirrorWaterBlend;     // mirror source: 0 = tinted sky (legacy) .. 1 = water in-scatter
+float _FoamUndersideDarken;       // how hard dense foam silhouettes darken the surface from below
+float _FoamUndersideGlow;         // sunlit glow scattered through thin foam lace from below
+float _UnderDetailNormalStrength; // detail-normal tilt on the underside (0 = off, the legacy look)
+// Global mirror of WaterVolume.UnderwaterFogActive (PublishUnderwater): 1 when the fullscreen
+// underwater fog pass will paint this frame. The underside stage reads it to skip its own
+// camera-depth downwelling dim, which that pass would otherwise apply a second time.
+float _UnderwaterFogArmed;
+
+// Below-water Fresnel (unpolarized Schlick evaluated at the TRANSMITTED angle - the standard
+// dense-to-rare form): the same F0 as the above-water curve, so the surface is ~2% mirror
+// straight up, and total internal reflection falls out exactly where sin^2(theta_t) reaches 1
+// (the ~48.6 deg Snell-window edge; pow(1 - cosT, 5) reaches 1 there, so the curve is
+// continuous into the mirror). 'tirSoftness' widens the final blend into the full mirror so
+// the ring can be softened against wave shimmer; 0 keeps the near-physical hard edge.
+float FresnelBelowWater(float cosIncident, float tirSoftness)
+{
+    float eta = IOR_WATER / IOR_AIR;
+    float sinSqTransmitted = eta * eta * (1.0 - cosIncident * cosIncident);
+    float cosTransmitted = sqrt(saturate(1.0 - sinSqTransmitted));
+    float schlick = FRESNEL_F0_WATER
+                  + (1.0 - FRESNEL_F0_WATER) * pow(1.0 - cosTransmitted, FRESNEL_SCHLICK_POWER);
+    float tir = smoothstep(1.0 - max(tirSoftness, 1e-4), 1.0, sinSqTransmitted);
+    return lerp(schlick, 1.0, tir);
+}
 
 // Screen-space ray march along 'dir' from world 'p0'. On a depth hit it
 // returns the scene colour and sets hit=1; otherwise hit=0 (caller falls

@@ -209,50 +209,6 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 379994159}
   m_Mesh: {fileID: 4300000, guid: 9c96c412df7a2564fb77e5eed80cb811, type: 2}
---- !u!1 &474038758
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 474038760}
-  - component: {fileID: 474038759}
-  m_Layer: 0
-  m_Name: DemoTxt
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &474038759
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 474038758}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 69904ac0b712b8743983192648287e25, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::AbstractOcclusion.WebGpuWater.Demo.DemoOverlay
---- !u!4 &474038760
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 474038758}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 1.51383, y: 2.1999, z: 0.62818}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &961739749
 GameObject:
   m_ObjectHideFlags: 0
@@ -5509,6 +5465,8 @@ MonoBehaviour:
   chunkRefraction: 0.5
   chunkReflectivity: 0.6
   chunkMeniscus: 0.5
+  chunkGodRayStrength: 0
+  chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
   discSurface: 0
@@ -5529,6 +5487,8 @@ MonoBehaviour:
   foamPatternFps: 5
   foamReliefStrength: 1
   oceanWhitecapTexture: {fileID: 2800000, guid: 1ee279c16b027ad48a8eb248749ff66c, type: 3}
+  oceanWhitecapGrid: {x: 1, y: 1}
+  oceanWhitecapFps: 10
   rippleQuality: 2
   bodyType: 0
   volumeExtent: {x: 1, y: 1, z: 1}
@@ -5670,11 +5630,13 @@ MonoBehaviour:
     sssPinchMin: 0.1
     sssPinchMax: 0.6
     sssPinchFalloff: 1.5
+  refractShadows: 1
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
     depthDarkenStrength: 1
     causticDepthFade: 0.5
+    screenSpaceCaustics: 0
     godRayDepthFade: 0.5
     linkDepthToFog: 0
   _legacyDepthDarken: 0
@@ -5717,6 +5679,7 @@ MonoBehaviour:
     surfSwashAmplitude: 1
     surfFoamGain: 1.2
     surfWaterlineFoam: 0.5
+    surfSmallWaveFoam: 0
     surfFoamStrength: 1
     surfFoamFeather: 0.2
     surfFoamTileSize: 8
@@ -5765,6 +5728,7 @@ MonoBehaviour:
       m_PostInfinity: 2
       m_RotationOrder: 4
     surfCrestFoamGain: 1
+    surfFoamCrestCap: 0
     surfFoamBoreGain: 1
     surfFoamTrailGain: 1
     surfFoamTrailLength: 1
@@ -5773,6 +5737,7 @@ MonoBehaviour:
     surfSwashFoamWidth: 0.25
     surfSwashFoamDissolve: 0.6
     surfSwashStreak: 0.5
+    surfSwashDepositGain: 0
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
   _legacyBedResolution: 256
@@ -11080,4 +11045,3 @@ SceneRoots:
   m_Roots:
   - {fileID: 961739753}
   - {fileID: 2063225403}
-  - {fileID: 474038760}

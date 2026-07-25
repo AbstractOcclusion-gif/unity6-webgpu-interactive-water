@@ -90,6 +90,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string PropRealRefraction = "_RealRefraction";
         internal const string KeywordRealRefraction = "_REAL_REFRACTION";
         internal const string PropGodRayColor = "_GodRayColor";
+        internal const string PropGodRayDensity = "_GodRayDensity";
         internal const string PropFoamTex = "_FoamTex";
         internal const string PropFoamTexFrames = "_FoamTexFrames";
         internal const string PropParticleTex = "_ParticleTex";
@@ -126,6 +127,16 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         // Cooler, more underwater-blue god rays than the shader's warm default (1.0, 0.97, 0.85).
         static readonly Color DefaultGodRayColor = new Color(0.70f, 0.85f, 1.0f, 1f);
+        // Authoring default for god-ray intensity: calmer than the shader's 1.5 (which reads
+        // overblown on a fresh body). Shared by the legacy god-ray material AND the wizard's
+        // ocean god-ray density so "god rays" mean the same strength on every body type.
+        internal const float DefaultGodRayDensity = 0.8f;
+
+        // Default surface textures the wizard assigns onto a new WaterVolume's Textures block.
+        // They live in the package's IMPORTED Runtime/Textures folder (with their authored .meta
+        // import settings - the detail map stays a Normal Map), unlike the crown sheet, which is
+        // provisioned out of Samples~ because it is copied into consumer-project Gen assets.
+        internal const string DefaultTexturesRoot = "Packages/com.abstractocclusion.webgpuwater/Runtime/Textures";
 
         // Demo camera framing. FOV/clip planes come from WaterVolume's internal constants (the
         // single source of truth; the volume's activation distance is coupled to the far clip).
@@ -721,6 +732,17 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             m.SetVector(PropFoamTexFrames, new Vector4(FoamFlipbookCols, FoamFlipbookRows, 0f, 0f));
         }
 
+        // A default surface texture from the package's imported Runtime/Textures folder. Null (with
+        // a loud warning) if the package copy is missing, so a broken install fails visibly instead
+        // of silently building an untextured body.
+        internal static Texture LoadDefaultTexture(string fileName)
+        {
+            var texture = AssetDatabase.LoadAssetAtPath<Texture>(DefaultTexturesRoot + "/" + fileName);
+            if (texture == null)
+                Debug.LogWarning($"[WebGL Water] Default texture '{fileName}' not found under {DefaultTexturesRoot}; the corresponding slot stays empty.");
+            return texture;
+        }
+
         // Underwater god-ray volume (caustic-masked light shafts). Returns null if the shader is
         // missing (the feature is simply absent then).
         internal static GameObject CreateGodRays(Transform parent, string folder)
@@ -729,7 +751,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             if (sfGodRays == null) return null;
 
             var godRayMat = LoadOrCreateMaterial(folder + "/GodRays.mat", sfGodRays,
-                                                 m => m.SetColor(PropGodRayColor, DefaultGodRayColor));
+                                                 m =>
+                                                 {
+                                                     m.SetColor(PropGodRayColor, DefaultGodRayColor);
+                                                     m.SetFloat(PropGodRayDensity, DefaultGodRayDensity);
+                                                 });
             var go = CreateRenderer(GodRaysObjectName, SaveAsset(BuildGodRayBox(), GodRayBoxMeshPath),
                                     godRayMat, parent);
             var gmr = go.GetComponent<MeshRenderer>();

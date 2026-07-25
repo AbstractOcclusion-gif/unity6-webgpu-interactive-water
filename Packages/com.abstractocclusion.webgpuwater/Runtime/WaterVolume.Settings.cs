@@ -162,10 +162,11 @@ namespace AbstractOcclusion.WebGpuWater
                      "it overrides the reflected sky: 0 = pure sky (seamless, the natural default), 1 = fully " +
                      "this colour (a coloured haze band). Only used when Horizon Haze Density > 0.")]
             public Color horizonHazeColor = DefaultHorizonHazeColor;
-            [Tooltip("Exponential distance-haze density (per metre) that dissolves the far ocean surface into " +
-                     "the sky - the real replacement for Horizon Fade Distance. 0 = off. Tiny values fade over " +
-                     "kilometres; raise it to pull the haze nearer.")]
-            [Min(0f)] public float horizonHazeDensity = 0f;
+            [Tooltip("Horizon haze AMOUNT (0 = off, 1 = strongest) - the far ocean dissolves toward the " +
+                     "horizon sky colour. Mapped internally to a gentle distance-haze so the whole 0..1 range " +
+                     "is usable; ~0.3-0.5 reads as a light atmospheric haze. (Previously a raw per-metre " +
+                     "density where anything over ~0.001 saturated instantly - re-enter as a 0..1 amount.)")]
+            [Range(0f, 1f)] public float horizonHazeDensity = 0f;
 
             [Header("Ocean god rays (large-body light shafts)")]
             [Tooltip("Shaft colour, multiplied by the sun colour. Only used when God Ray Density > 0.")]
@@ -591,6 +592,68 @@ namespace AbstractOcclusion.WebGpuWater
         internal float SSRMaxSteps => reflectionSettings.ssrMaxSteps;
         internal float SSRThickness => reflectionSettings.ssrThickness;
         internal float RefractionDistortion => reflectionSettings.refractionDistortion;
+
+        /// <summary>How the surface reads seen FROM BELOW (the _Underwater = 1 sheet), plus the
+        /// screen-space waterline drawn while the camera crosses it. The above-water look lives in
+        /// <see cref="ReflectionSettings"/>; this block owns the underside, which previously ran on
+        /// hard-coded legacy constants (a 0.5 minimum mirror that buried the transparency).</summary>
+        [System.Serializable]
+        public sealed class UnderwaterSurfaceSettings
+        {
+            [Tooltip("Physical below-water Fresnel: a transparent Snell window overhead (~2% mirror " +
+                     "straight up, like the above-water side) turning into a true total-internal-" +
+                     "reflection mirror past the ~48.6° critical angle. Off = the legacy curve, " +
+                     "a uniform half-mirror sheen that overrides the transparency everywhere.")]
+            public bool physicalFresnel = true;
+            [Tooltip("Width of the blend into the total-internal-reflection mirror at the Snell " +
+                     "window's edge. 0 = the near-physical hard edge (can shimmer on waves); " +
+                     "higher = a softer, wider ring.")]
+            [Range(0f, 0.5f)] public float tirEdgeSoftness = 0.08f;
+            [Tooltip("Minimum underside reflectance regardless of angle (physical mode only). " +
+                     "0 = physical. The legacy curve behaved like 0.5.")]
+            [Range(0f, 1f)] public float fresnelFloor = 0f;
+            [Tooltip("Strength of the reflected term seen from below (the TIR mirror). Independent " +
+                     "of the above-water Reflection Strength. 0 = a glass-clear ceiling.")]
+            [Range(0f, 1f)] public float reflectionStrength = 1f;
+            [Tooltip("What the mirror outside the Snell window shows: 0 = the sky environment " +
+                     "tinted by the water (legacy), 1 = the water body's own in-scatter colour " +
+                     "(reads as the depths mirrored on the surface). Blendable.")]
+            [Range(0f, 1f)] public float mirrorWaterBlend = 0.5f;
+            [Tooltip("How strongly dense foam patches darken the surface seen from below (the " +
+                     "silhouette blocking the sky).")]
+            [Range(0f, 1f)] public float foamSilhouetteDarken = 0.6f;
+            [Tooltip("Sunlit glow scattered through thin foam lace seen from below.")]
+            [Range(0f, 1f)] public float foamSunGlow = 0.4f;
+            [Tooltip("Detail-normal tilt on the underside (uses the Textures section's detail " +
+                     "normal map; needs one assigned). 0 = off, the historical ceiling look; " +
+                     "raise so the underside carries the same micro-ripple as the top.")]
+            [Range(0f, 2f)] public float detailNormalStrength = 0f;
+            [Tooltip("Waterline meniscus: a thin darkened band along the on-screen waterline while " +
+                     "the camera crosses the surface (partial submersion), so entering/leaving the " +
+                     "water shows a line instead of a hard pop.")]
+            public bool meniscus = true;
+            [Tooltip("Meniscus band thickness, screen pixels.")]
+            [Range(1f, 16f)] public float meniscusWidthPixels = 5f;
+            [Tooltip("Meniscus opacity at the crossing (how hard the line darkens).")]
+            [Range(0f, 1f)] public float meniscusStrength = 0.7f;
+        }
+
+        [SerializeField] UnderwaterSurfaceSettings underwaterSurfaceSettings = new UnderwaterSurfaceSettings();
+
+        internal bool UnderwaterPhysicalFresnel => underwaterSurfaceSettings.physicalFresnel;
+        internal float UnderwaterTirEdgeSoftness => underwaterSurfaceSettings.tirEdgeSoftness;
+        internal float UnderwaterFresnelFloor => underwaterSurfaceSettings.fresnelFloor;
+        internal float UnderwaterReflectionStrength => underwaterSurfaceSettings.reflectionStrength;
+        internal float UnderwaterMirrorWaterBlend => underwaterSurfaceSettings.mirrorWaterBlend;
+        internal float FoamUndersideDarken => underwaterSurfaceSettings.foamSilhouetteDarken;
+        internal float FoamUndersideGlow => underwaterSurfaceSettings.foamSunGlow;
+        // No texture -> strength 0, same convention as DetailNormalStrength above: the shader's
+        // uniform gate then skips the detail taps on the underside too.
+        internal float UnderwaterDetailNormalStrength
+            => detailNormalSettings.texture != null ? underwaterSurfaceSettings.detailNormalStrength : 0f;
+        internal bool MeniscusEnabled => underwaterSurfaceSettings.meniscus;
+        internal float MeniscusWidthPixels => underwaterSurfaceSettings.meniscusWidthPixels;
+        internal float MeniscusStrength => underwaterSurfaceSettings.meniscusStrength;
 
         // Legacy capture (pre-Phase-2 scenes) -> copied once by MigrateReflectionsV7. Hidden; do not edit.
         [SerializeField, HideInInspector, FormerlySerializedAs("reflectionMode")] ReflectionMode _legacyReflectionMode = ReflectionMode.SSR;

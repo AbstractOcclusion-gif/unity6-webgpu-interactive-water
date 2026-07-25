@@ -53,6 +53,18 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
         // Wrapped NoL for the sun lobes: at a grazing (horizon) sun, plain NoL kills the
         // specular exactly when a real sea glitters hardest. 0 = physical NoL (unchanged).
         [HideInInspector] _SunGrazeBoost ("Sun Graze Boost (wrapped NoL)", Range(0,1)) = 0
+        // Underside (seen-from-below) look - driven by the WaterVolume "Underwater Surface"
+        // block, same [HideInInspector] convention as the reflection family above. Physical
+        // fresnel = the Snell window (clear overhead, true TIR mirror past ~48.6 deg); the
+        // legacy curve's 0.5 floor mirrored half the environment even straight up.
+        [HideInInspector] _UnderFresnelPhysical ("Underside Physical Fresnel (0/1)", Float) = 1
+        [HideInInspector] _UnderTirSoftness ("Underside TIR Edge Softness", Range(0,0.5)) = 0.08
+        [HideInInspector] _UnderFresnelFloor ("Underside Fresnel Floor", Range(0,1)) = 0.0
+        [HideInInspector] _UnderReflectionStrength ("Underside Reflection Strength", Range(0,1)) = 1.0
+        [HideInInspector] _UnderMirrorWaterBlend ("Underside Mirror Water Blend", Range(0,1)) = 0.5
+        [HideInInspector] _FoamUndersideDarken ("Underside Foam Silhouette Darken", Range(0,1)) = 0.6
+        [HideInInspector] _FoamUndersideGlow ("Underside Foam Sun Glow", Range(0,1)) = 0.4
+        [HideInInspector] _UnderDetailNormalStrength ("Underside Detail Normal Strength", Range(0,2)) = 0.0
 
         // Surface texture inputs - detail normals, the foam pattern + its flipbook controls, and the
         // ocean whitecap - are authored on the WaterVolume "Textures" section (the single place) and
@@ -360,7 +372,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                                 ? (position.xz * 0.5 + 0.5)
                                 : (WorldToSim(float3(o.largeWaveSourceXZ.x, worldPos.y,
                                                      o.largeWaveSourceXZ.y)).xz * 0.5 + 0.5);
-                            if (SampleFoamMaskBilinear(depUV) > FOAM_MASK_EPSILON)
+                            if (SampleFoamMaskWindowed(depUV) > FOAM_MASK_EPSILON)
                                 geomReach = beachRise; // hold the film onto the sand under the deposit
                         }
                         if (geomReach > 1e-3)

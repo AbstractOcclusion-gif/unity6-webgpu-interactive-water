@@ -70,10 +70,10 @@ float _ShoreSwashDepositGain;  // FOAM-5: >0 = persistent swash deposits live in
 // makes it pulse in rings, which reads as visually wrong.)
 // Foam lighting (FOAM_LIGHT_WRAP / FOAM_AMBIENT) lives in WaterFoamCommon.hlsl,
 // shared with FoamParticles/SplashParticles so every foam element shades alike.
-// Seen from BELOW, dense foam blocks the sky transmitted through the surface,
-// while thin lace scatters a faint sunlit glow through.
-#define FOAM_UNDERSIDE_DARKEN 0.6
-#define FOAM_UNDERSIDE_GLOW   0.4
+// Seen from BELOW, dense foam blocks the sky transmitted through the surface, while thin
+// lace scatters a faint sunlit glow through. The two weights are per-body tunables now
+// (_FoamUndersideDarken/_FoamUndersideGlow, Underwater Surface block, declared in
+// WaterSurfaceSpecular.hlsl); the shipped defaults match the old hard-coded 0.6/0.4.
 // Ocean whitecap anti-tiling: a second, rotated, differently-scaled octave of the foam pattern
 // is combined with the first so no single texture tile is resolvable toward the horizon. This is
 // continuous (unlike a hashed triangle grid it has no cell seams), so it is safe on every
@@ -147,6 +147,34 @@ float SampleFoamMaskBilinear(float2 uv)
     float c01 = tex2Dlod(_FoamMask, float4(baseUV + float2(0.0, texel.y), 0, 0)).r;
     float c11 = tex2Dlod(_FoamMask, float4(baseUV + texel, 0, 0)).r;
     return lerp(lerp(c00, c10, f.x), lerp(c01, c11, f.x), f.y);
+}
+
+// Window-edge fade for foam-mask reads (mirrors SampleRipple's out-of-window guard).
+// The foam RT clamps, so an unguarded windowed read past the border repeats the edge
+// texels - any foam at the window edge smears into horizon-length bands (visible as
+// vertical/horizontal streaks at distance). The sim deliberately does NOT fade its
+// own edges (WaterSim.compute: "Edge softening is a render-side concern"), so the
+// render-side read owns the border: 0 at/beyond the window edge, ramping in over the
+// same _SimEdgeFadeTexels band the ripple fade uses. Whole-body bodies
+// (_SimWindowed = 0) return 1, keeping the bounded-pool path byte-identical.
+float FoamWindowFade(float2 uv)
+{
+    if (_SimWindowed < 0.5) return 1.0;
+    if (any(uv < 0.0) || any(uv > 1.0)) return 0.0;
+    float band = max(_SimEdgeFadeTexels, 0.0) * _WaterTexel.x; // texels -> UV
+    float2 edgeDist = min(uv, 1.0 - uv);
+    return saturate(min(edgeDist.x, edgeDist.y) / max(band, 1e-5));
+}
+
+// Foam-mask read for every pool/window foam coord: the bilinear sample scaled by the
+// window fade. The early return skips the four mask taps everywhere beyond the
+// window. tex2Dlod-based, so (like SampleFoamMaskBilinear) it stays valid in any
+// control flow.
+float SampleFoamMaskWindowed(float2 uv)
+{
+    float fade = FoamWindowFade(uv);
+    if (fade <= 0.0) return 0.0;
+    return SampleFoamMaskBilinear(uv) * fade;
 }
 
 // Flipbook frame pair + crossfade weight for the current time. Both the foam

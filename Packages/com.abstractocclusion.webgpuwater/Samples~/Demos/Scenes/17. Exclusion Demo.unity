@@ -217,7 +217,7 @@ Light:
   serializedVersion: 12
   m_Type: 1
   m_Color: {r: 1, g: 1, b: 1, a: 1}
-  m_Intensity: 0.7
+  m_Intensity: 0.9
   m_Range: 10
   m_SpotAngle: 30
   m_InnerSpotAngle: 21.80208
@@ -1225,13 +1225,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 961739749}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0.8535508, z: 0, w: 0.52100974}
-  m_LocalPosition: {x: 0, y: 11.98, z: -10}
+  m_LocalRotation: {x: 0, y: 0.025304608, z: 0, w: 0.9996798}
+  m_LocalPosition: {x: 0, y: 5.5, z: -10}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 117.2, z: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 2.9, z: 0}
 --- !u!114 &961739755
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1251,7 +1251,7 @@ MonoBehaviour:
     m_Bits: 39
   resolutionScale: 0.5
   clipPlaneOffset: 0.02
-  enableReflection: 0
+  enableReflection: 1
 --- !u!114 &961739756
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -11005,7 +11005,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterSplashEmitter
   particles: {fileID: 1294087253}
-  profile: {fileID: 0}
+  profile: {fileID: 11400000, guid: 096db223712859741bc8affb5f738dd9, type: 2}
   maxParticlesPerBurst: 48
   upwardBias: 1
   outwardSpread: 1.3
@@ -11072,6 +11072,8 @@ MonoBehaviour:
   chunkRefraction: 0.5
   chunkReflectivity: 0.6
   chunkMeniscus: 0.5
+  chunkGodRayStrength: 0
+  chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
   discSurface: 0
@@ -11091,7 +11093,9 @@ MonoBehaviour:
   foamPatternGrid: {x: 1, y: 1}
   foamPatternFps: 10
   foamReliefStrength: 1
-  oceanWhitecapTexture: {fileID: 0}
+  oceanWhitecapTexture: {fileID: 2800000, guid: 1ee279c16b027ad48a8eb248749ff66c, type: 3}
+  oceanWhitecapGrid: {x: 1, y: 1}
+  oceanWhitecapFps: 0
   rippleQuality: 2
   bodyType: 2
   volumeExtent: {x: 500, y: 100, z: 500}
@@ -11104,10 +11108,10 @@ MonoBehaviour:
   simWindowEdgeFadeTexels: 8
   ocean:
     openWater: 1
-    largeWaveAmplitude: 0.2
-    largeWaveChoppiness: 0.7
-    swellHeight: 0.1
-    swellWavelength: 80
+    largeWaveAmplitude: 0.4
+    largeWaveChoppiness: 0.3
+    swellHeight: 0.7
+    swellWavelength: 110
     unboundedOcean: 1
     edgeFeatherMeters: 10
     clipmapGridResolution: 64
@@ -11115,17 +11119,17 @@ MonoBehaviour:
     oceanDetailFalloff: 0.03
     horizonFadeDistance: 9000
     horizonHazeColor: {r: 0.15688857, g: 0.24528301, b: 0.20912164, a: 0}
-    horizonHazeDensity: 0.003
+    horizonHazeDensity: 1
     largeGodRayColor: {r: 0.5264151, g: 0.94304496, b: 1, a: 1}
     largeGodRayDensity: 1
     largeGodRaySteps: 24
     largeGodRayAnisotropy: 0.29
     largeGodRayExtinction: 0
     largeGodRayCausticStrength: 4
-    oceanFoamWindThreshold: 8
-    oceanFoamCoverage: 0.85
-    oceanFoamStrength: 0.75
-    oceanFoamFadeRate: 2.73
+    oceanFoamWindThreshold: 2
+    oceanFoamCoverage: 0.9
+    oceanFoamStrength: 0.9
+    oceanFoamFadeRate: 0.66
     oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
     oceanFoamTileSize: 8
     oceanFoamFeather: 0.723
@@ -11233,11 +11237,13 @@ MonoBehaviour:
     sssPinchMin: 0.1
     sssPinchMax: 0.6
     sssPinchFalloff: 1.5
+  refractShadows: 1
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
     depthDarkenStrength: 1
     causticDepthFade: 0.5
+    screenSpaceCaustics: 0
     godRayDepthFade: 0.5
     linkDepthToFog: 0
   _legacyDepthDarken: 0
@@ -11280,6 +11286,7 @@ MonoBehaviour:
     surfSwashAmplitude: 1
     surfFoamGain: 1.2
     surfWaterlineFoam: 0.5
+    surfSmallWaveFoam: 0
     surfFoamStrength: 1
     surfFoamFeather: 0.2
     surfFoamTileSize: 8
@@ -11328,6 +11335,7 @@ MonoBehaviour:
       m_PostInfinity: 2
       m_RotationOrder: 4
     surfCrestFoamGain: 1
+    surfFoamCrestCap: 0
     surfFoamBoreGain: 1
     surfFoamTrailGain: 1
     surfFoamTrailLength: 1
@@ -11336,6 +11344,7 @@ MonoBehaviour:
     surfSwashFoamWidth: 0.25
     surfSwashFoamDissolve: 0.6
     surfSwashStreak: 0.5
+    surfSwashDepositGain: 0
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
   _legacyBedResolution: 256
@@ -11344,7 +11353,7 @@ MonoBehaviour:
   _legacyShorelineStrength: 0.8
   windWaveSettings:
     windWaves: 1
-    windSpeed: 2
+    windSpeed: 4
     windFromDegrees: 0
     waveScaleMeters: 500
     waveCount: 12
@@ -11436,9 +11445,9 @@ MonoBehaviour:
   volume: {fileID: 1579798799}
   particleCompute: {fileID: 7200000, guid: 60b46151fe09abd4b97f5f1feaa54593, type: 3}
   particleMaterial: {fileID: 2100000, guid: 28fcccd712d481e4888246c158e55772, type: 2}
-  renderMode: 0
+  renderMode: 1
   densityMaterial: {fileID: 2100000, guid: cc801976c649049469e4d607163ec5fa, type: 2}
-  profile: {fileID: 11400000, guid: 69520b33cdc5fe745a469f4d9846b6f7, type: 2}
+  profile: {fileID: 11400000, guid: 096db223712859741bc8affb5f738dd9, type: 2}
   capacity: 4096
   spawnThreshold: 0.25
   spawnRate: 30

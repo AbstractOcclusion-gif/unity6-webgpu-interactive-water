@@ -49,6 +49,28 @@ bool InsideExclusion(float3 worldPos)
     return false;
 }
 
+// Deepest NORMALISED interior depth of a point across the active volumes: 0 = outside
+// every box (or exactly on a face), rising toward EXCLUSION_BOX_HALF_EXTENT at a box
+// centre. Per box it is the smallest per-axis inset from the faces, in unit-box coords,
+// so a thin shell near the boundary stays thin whatever the authored box size. Lets a
+// consumer FADE by intrusion depth instead of the binary InsideExclusion - the foam
+// particles use it so a dry volume sweeping into sprites (a moving boat hull) dissolves
+// them instead of one-frame popping them.
+float ExclusionInteriorDepth(float3 worldPos)
+{
+    int count = (int)_ExclusionCount;
+    float depth = 0.0;
+    [loop]
+    for (int i = 0; i < count; i++)
+    {
+        float3 boxLocal = mul(_ExclusionWorldToBox[i], float4(worldPos, 1.0)).xyz;
+        float3 inset = EXCLUSION_BOX_HALF_EXTENT - abs(boxLocal);
+        float boxDepth = min(inset.x, min(inset.y, inset.z)); // < 0 when outside this box
+        depth = max(depth, boxDepth);
+    }
+    return depth;
+}
+
 // Total length of the ray segment [origin, origin + dir * maxDist] that lies inside
 // exclusion volumes - the DRY span the fog/god-ray integrals subtract. Per box: transform
 // the ray into unit-box space and slab-test there (IntersectCube). The direction is
@@ -277,6 +299,18 @@ float3 ExclusionBoundaryPaneShade(float3 origin, float3 segDir, float spanLen, f
 #define EXCLUSION_PRISM_AXIS_EPSILON  1e-5
 #define EXCLUSION_PRISM_SLOPE_EPSILON 1e-6
 
+// Finite shadow reach, in box light-axis THICKNESSES (the world metres the sweep needs to
+// cross the box, ~1/|boxUp|): full shadow out to NEAR box-thicknesses down-light of the
+// box, refilled to nothing by FAR. The unbounded prism painted a near-black dot with a
+// small halo at the exact anti-(refracted-)sun direction - the vanishing point of an
+// INFINITE shadow column: the one view ray parallel to the sweep axis stayed inside the
+// prism for its whole wet span, so sunVisibility hit 0 however long the span. Physically
+// the column refills with ambient in-scatter within a few box-thicknesses anyway. The
+// near/far pair is averaged into a linear ramp (two extra interval clips per box), so the
+// closed form - and its band-free guarantee - stays intact.
+#define EXCLUSION_SHADOW_REACH_NEAR 2.0
+#define EXCLUSION_SHADOW_REACH_FAR  6.0
+
 // Clip the interval [tMin, tMax] by the half-line of the linear constraint c0 + c1*t <= 0.
 void ExclusionConstrainInterval(float c0, float c1, inout float tMin, inout float tMax)
 {
@@ -344,13 +378,37 @@ float ExclusionBoxShadowedLength(int i, float3 origin, float3 segDir, float span
         }
     }
 
-    float shadowed = max(tMax - tMin, 0.0);
-    if (shadowed <= 0.0) return 0.0;
-    // The ray's own dry chord through the box lies inside the prism (s -> 0) but is carved
-    // air, not shadowed water: remove its overlap with the shadow interval.
+    if (tMax - tMin <= 0.0) return 0.0;
+
+    // Finite reach: the sweep distance s a shadowed point needs to reach the box is
+    // max_j lo_j(t) (world metres, upLeg is unit length), so "within reach R" is one more
+    // linear constraint per sweeping axis: lo_j(t) - R <= 0. Clip a COPY of the prism
+    // interval at the NEAR and FAR reach and average the two lengths - a linear falloff
+    // of the shadow between them, still closed-form. sThickness converts reach from
+    // box-thicknesses to metres (the sweep crosses the unit box in ~1/|boxUp| metres).
+    // The ray's own dry chord through the box lies inside the prism (s -> 0) but is
+    // carved air, not shadowed water: its overlap leaves each clipped interval.
+    float sThickness = 1.0 / max(length(boxUp), EXCLUSION_PRISM_AXIS_EPSILON);
     float2 chord = IntersectCube(boxOrigin, boxDir, EXCLUSION_BOX_MIN, EXCLUSION_BOX_MAX);
-    float chordOverlap = max(min(chord.y, tMax) - max(chord.x, tMin), 0.0);
-    return max(shadowed - chordOverlap, 0.0);
+    float shadowed = 0.0;
+    [unroll]
+    for (int c = 0; c < 2; c++)
+    {
+        float reach = ((c == 0) ? EXCLUSION_SHADOW_REACH_NEAR : EXCLUSION_SHADOW_REACH_FAR)
+                    * sThickness;
+        float tMinC = tMin;
+        float tMaxC = tMax;
+        [unroll]
+        for (int j3 = 0; j3 < 3; j3++)
+        {
+            if (!axisSweeps[j3]) continue;
+            ExclusionConstrainInterval(loIntercept[j3] - reach, slope[j3], tMinC, tMaxC);
+        }
+        float len = max(tMaxC - tMinC, 0.0);
+        float chordOverlap = max(min(chord.y, tMaxC) - max(chord.x, tMinC), 0.0);
+        shadowed += 0.5 * max(len - chordOverlap, 0.0);
+    }
+    return shadowed;
 }
 
 // Sun visibility of a wet span: the continuous fraction of its WET length (wetLen, the

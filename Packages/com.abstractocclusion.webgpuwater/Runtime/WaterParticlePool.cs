@@ -13,6 +13,48 @@ namespace AbstractOcclusion.WebGpuWater
     {
         static readonly int ID_FlipbookGrid = Shader.PropertyToID("_ParticleFlipbookGrid");
         static readonly int ID_FlipbookFps = Shader.PropertyToID("_ParticleFlipbookFps");
+        static readonly int ID_Particles = Shader.PropertyToID("_Particles");
+
+        // One dead particle for the global fallback binding below. Only the STRIDE matters
+        // (12 floats = 48 bytes; MUST match FoamParticle in WaterFoamParticles.compute /
+        // FoamParticles.shader): the slot is all zeroes, and life = 0 marks it dead.
+        const int DeadParticleStrideBytes = 48;
+        const int DeadParticleCount = 1;
+
+        static GraphicsBuffer _deadFallback;
+
+        // Bind a single dead particle GLOBALLY under _Particles. Any draw of the procedural
+        // particle shader that carries no per-draw buffer - the material inspector's preview
+        // sphere, asset-thumbnail renders, the material dropped onto a plain renderer by
+        // mistake - then reads life = 0 (out-of-range structured loads return zero on every
+        // supported backend), emits degenerate quads and stays silent, instead of D3D12
+        // refusing the draw ("requires a buffer (SRV) _Particles ... but none provided") and
+        // spamming the console. Real draws are unaffected: the per-draw
+        // MaterialPropertyBlock binding always wins over the global.
+#if UNITY_EDITOR
+        [UnityEditor.InitializeOnLoadMethod] // previews happen outside play mode too
+#endif
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterAssembliesLoaded)]
+        static void InstallGlobalDeadFallback()
+        {
+            if (_deadFallback != null && _deadFallback.IsValid()) return;
+            _deadFallback = new GraphicsBuffer(GraphicsBuffer.Target.Structured,
+                                               DeadParticleCount, DeadParticleStrideBytes);
+            _deadFallback.SetData(
+                new float[DeadParticleCount * DeadParticleStrideBytes / sizeof(float)]);
+            Shader.SetGlobalBuffer(ID_Particles, _deadFallback);
+#if UNITY_EDITOR
+            UnityEditor.AssemblyReloadEvents.beforeAssemblyReload += DisposeGlobalDeadFallback;
+#else
+            Application.quitting += DisposeGlobalDeadFallback;
+#endif
+        }
+
+        static void DisposeGlobalDeadFallback()
+        {
+            _deadFallback?.Dispose();
+            _deadFallback = null;
+        }
 
         /// <summary>Allocate the tier-capped, pow2-rounded particle pool plus its zeroed
         /// counters buffer, and return the pow2 capacity. The pool is zero-initialised

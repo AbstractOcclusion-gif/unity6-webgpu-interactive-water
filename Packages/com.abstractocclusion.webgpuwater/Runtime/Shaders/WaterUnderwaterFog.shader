@@ -403,5 +403,67 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             }
             ENDHLSL
         }
+
+        // ---- Pass 2: screen-space waterline meniscus (partial submersion) ----
+        // A thin surface-tension darkening along the ON-SCREEN waterline when the camera sits at
+        // the surface. Each pixel evaluates the signed gap of its NEAR-PLANE point against the
+        // displaced surface (SurfaceSignedGap; Simple tiers: the flat waterline at
+        // _UnderwaterSurfaceY, matching the fog), and the gap is converted to SCREEN PIXELS
+        // through its own screen derivative, so the band holds a constant pixel thickness at any
+        // FOV / aspect / camera roll / resolution. Enqueued only while the near plane straddles
+        // the surface (WaterVolume.WaterlineActive) - including the frames where the binary
+        // submerge gate still reads 'above', which used to show a raw hard cut at the crossing.
+        Pass
+        {
+            Name "WaterUnderwaterFogWaterline"
+            Blend SrcAlpha OneMinusSrcAlpha
+
+            HLSLPROGRAM
+            #pragma vertex Vert
+            #pragma fragment FragWaterline
+            #pragma target 4.0
+
+            float _WaterlineWidthPx;  // meniscus band thickness, screen pixels
+            float _WaterlineStrength; // meniscus opacity at the crossing
+
+            // Guard for the metres-per-pixel derivative (degenerate at a perfectly surface-
+            // parallel view), and the alpha below which the fragment discards instead of
+            // paying the blend.
+            #define WATERLINE_METERS_PER_PIXEL_MIN 1e-5
+            #define WATERLINE_MIN_ALPHA            0.004
+
+            half4 FragWaterline(Varyings input) : SV_Target
+            {
+                // World position of this pixel ON the near plane (not the scene depth): the
+                // meniscus sits on the camera's 'lens' - exactly the near-plane cut through
+                // the water surface.
+                float3 nearWorld = ComputeWorldSpacePosition(input.uv, UNITY_NEAR_CLIP_VALUE,
+                                                             UNITY_MATRIX_I_VP);
+                // Dry-interior exclusion (boat cockpit at eye level): no water at the near
+                // plane means no meniscus. WGSL-safe: discard demotes the invocation while
+                // helpers keep feeding the fwidth below, the same contract the surface
+                // shader's exclusion discard relies on.
+                if (InsideExclusion(nearWorld)) discard;
+                // Bounded body: the surface (and so its waterline) ends at the pool footprint.
+                if (_UnderwaterUnbounded < 0.5)
+                {
+                    float3 nearPool = WorldToPool(nearWorld);
+                    if (max(abs(nearPool.x), abs(nearPool.z)) > 1.0) discard;
+                }
+                float gap = (_UnderwaterFogSimple > 0.5)
+                          ? nearWorld.y - _UnderwaterSurfaceY
+                          : SurfaceSignedGap(nearWorld);
+                // Metres of gap per screen pixel at this pixel (derivatives in uniform control
+                // flow, WGSL-safe): dividing by it turns the world gap into a pixel distance
+                // from the line, making the band thickness a true pixel count.
+                float metersPerPixel = max(fwidth(gap), WATERLINE_METERS_PER_PIXEL_MIN);
+                float pixelsFromLine = abs(gap) / metersPerPixel;
+                float band = 1.0 - smoothstep(0.0, max(_WaterlineWidthPx, 1.0), pixelsFromLine);
+                float alpha = band * _WaterlineStrength;
+                clip(alpha - WATERLINE_MIN_ALPHA); // off-band pixels: no blend cost
+                return half4(0.0, 0.0, 0.0, alpha); // pure darkening, like the chunk wall meniscus
+            }
+            ENDHLSL
+        }
     }
 }

@@ -178,7 +178,7 @@ ParticleSystemRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: defef1ba89e773a4480a25f2504a266f, type: 2}
+  - {fileID: 2100000, guid: 2b1eaf485cc59674c88dda7e3ca2d131, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -5382,7 +5382,7 @@ ParticleSystemRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: ac8aedb79c3f2b54392e126b79c491cb, type: 2}
+  - {fileID: 2100000, guid: 909b276cc9362bf4e8526facffff30c2, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -10914,6 +10914,8 @@ MonoBehaviour:
   foamPatternFps: 10
   foamReliefStrength: 1
   oceanWhitecapTexture: {fileID: 0}
+  oceanWhitecapGrid: {x: 1, y: 1}
+  oceanWhitecapFps: 10
   rippleQuality: 2
   bodyType: 0
   volumeExtent: {x: 1.5, y: 1.5, z: 1.5}
@@ -11104,6 +11106,7 @@ MonoBehaviour:
     surfSwashAmplitude: 1
     surfFoamGain: 1.2
     surfWaterlineFoam: 0.5
+    surfSmallWaveFoam: 0
     surfFoamStrength: 1
     surfFoamFeather: 0.2
     surfFoamTileSize: 8
@@ -11152,6 +11155,7 @@ MonoBehaviour:
       m_PostInfinity: 2
       m_RotationOrder: 4
     surfCrestFoamGain: 1
+    surfFoamCrestCap: 0
     surfFoamBoreGain: 1
     surfFoamTrailGain: 1
     surfFoamTrailLength: 1
@@ -11160,6 +11164,7 @@ MonoBehaviour:
     surfSwashFoamWidth: 0.25
     surfSwashFoamDissolve: 0.6
     surfSwashStreak: 0.5
+    surfSwashDepositGain: 0
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
   _legacyBedResolution: 256
@@ -11346,7 +11351,7 @@ ParticleSystemRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: defef1ba89e773a4480a25f2504a266f, type: 2}
+  - {fileID: 2100000, guid: 2b1eaf485cc59674c88dda7e3ca2d131, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -16545,7 +16550,7 @@ ParticleSystemRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: defef1ba89e773a4480a25f2504a266f, type: 2}
+  - {fileID: 2100000, guid: 2b1eaf485cc59674c88dda7e3ca2d131, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -21594,7 +21599,7 @@ ParticleSystemRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: ac8aedb79c3f2b54392e126b79c491cb, type: 2}
+  - {fileID: 2100000, guid: 909b276cc9362bf4e8526facffff30c2, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -26463,7 +26468,7 @@ ParticleSystemRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: ac8aedb79c3f2b54392e126b79c491cb, type: 2}
+  - {fileID: 2100000, guid: 909b276cc9362bf4e8526facffff30c2, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -31527,6 +31532,8 @@ MonoBehaviour:
   foamPatternFps: 10
   foamReliefStrength: 1
   oceanWhitecapTexture: {fileID: 0}
+  oceanWhitecapGrid: {x: 1, y: 1}
+  oceanWhitecapFps: 10
   rippleQuality: 2
   bodyType: 0
   volumeExtent: {x: 2, y: 1, z: 1.2}
@@ -31717,6 +31724,7 @@ MonoBehaviour:
     surfSwashAmplitude: 1
     surfFoamGain: 1.2
     surfWaterlineFoam: 0.5
+    surfSmallWaveFoam: 0
     surfFoamStrength: 1
     surfFoamFeather: 0.2
     surfFoamTileSize: 8
@@ -31765,6 +31773,7 @@ MonoBehaviour:
       m_PostInfinity: 2
       m_RotationOrder: 4
     surfCrestFoamGain: 1
+    surfFoamCrestCap: 0
     surfFoamBoreGain: 1
     surfFoamTrailGain: 1
     surfFoamTrailLength: 1
@@ -31773,6 +31782,7 @@ MonoBehaviour:
     surfSwashFoamWidth: 0.25
     surfSwashFoamDissolve: 0.6
     surfSwashStreak: 0.5
+    surfSwashDepositGain: 0
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
   _legacyBedResolution: 256
@@ -32036,6 +32046,8 @@ MonoBehaviour:
   foamPatternFps: 10
   foamReliefStrength: 1
   oceanWhitecapTexture: {fileID: 0}
+  oceanWhitecapGrid: {x: 1, y: 1}
+  oceanWhitecapFps: 10
   rippleQuality: 2
   bodyType: 0
   volumeExtent: {x: 2, y: 5, z: 1}
@@ -32226,6 +32238,7 @@ MonoBehaviour:
     surfSwashAmplitude: 1
     surfFoamGain: 1.2
     surfWaterlineFoam: 0.5
+    surfSmallWaveFoam: 0
     surfFoamStrength: 1
     surfFoamFeather: 0.2
     surfFoamTileSize: 8
@@ -32274,6 +32287,7 @@ MonoBehaviour:
       m_PostInfinity: 2
       m_RotationOrder: 4
     surfCrestFoamGain: 1
+    surfFoamCrestCap: 0
     surfFoamBoreGain: 1
     surfFoamTrailGain: 1
     surfFoamTrailLength: 1
@@ -32282,6 +32296,7 @@ MonoBehaviour:
     surfSwashFoamWidth: 0.25
     surfSwashFoamDissolve: 0.6
     surfSwashStreak: 0.5
+    surfSwashDepositGain: 0
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
   _legacyBedResolution: 256
@@ -32499,50 +32514,6 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1767378498}
   m_Mesh: {fileID: 4300000, guid: 1743e319e728aed4492ad2fd6a98d6d2, type: 2}
---- !u!1 &1782787614
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 1782787616}
-  - component: {fileID: 1782787615}
-  m_Layer: 0
-  m_Name: demoTxt
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &1782787615
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1782787614}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 69904ac0b712b8743983192648287e25, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::AbstractOcclusion.WebGpuWater.Demo.DemoOverlay
---- !u!4 &1782787616
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1782787614}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1959454025
 GameObject:
   m_ObjectHideFlags: 0
@@ -32988,4 +32959,3 @@ SceneRoots:
   m_Roots:
   - {fileID: 961739753}
   - {fileID: 419550136}
-  - {fileID: 1782787616}

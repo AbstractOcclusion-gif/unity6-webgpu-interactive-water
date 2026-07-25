@@ -136,6 +136,16 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_DetailNormalStrength = Shader.PropertyToID("_DetailNormalStrength");
         static readonly int ID_DetailNormalScale = Shader.PropertyToID("_DetailNormalScale");
         static readonly int ID_DetailNormalSpeed = Shader.PropertyToID("_DetailNormalSpeed");
+        static readonly int ID_UnderFresnelPhysical = Shader.PropertyToID("_UnderFresnelPhysical");
+        static readonly int ID_UnderTirSoftness = Shader.PropertyToID("_UnderTirSoftness");
+        static readonly int ID_UnderFresnelFloor = Shader.PropertyToID("_UnderFresnelFloor");
+        static readonly int ID_UnderReflectionStrength = Shader.PropertyToID("_UnderReflectionStrength");
+        static readonly int ID_UnderMirrorWaterBlend = Shader.PropertyToID("_UnderMirrorWaterBlend");
+        static readonly int ID_FoamUndersideDarken = Shader.PropertyToID("_FoamUndersideDarken");
+        static readonly int ID_FoamUndersideGlow = Shader.PropertyToID("_FoamUndersideGlow");
+        static readonly int ID_UnderDetailNormalStrength = Shader.PropertyToID("_UnderDetailNormalStrength");
+        static readonly int ID_WaterlineWidthPx = Shader.PropertyToID("_WaterlineWidthPx");
+        static readonly int ID_WaterlineStrength = Shader.PropertyToID("_WaterlineStrength");
         static readonly int ID_ReflectionDistortion = Shader.PropertyToID("_ReflectionDistortion");
         static readonly int ID_SSRStrength = Shader.PropertyToID("_SSRStrength");
         static readonly int ID_SSRStepSize = Shader.PropertyToID("_SSRStepSize");
@@ -274,6 +284,15 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalFloat(ID_UnderwaterFogArmed, fogArmed);
         }
 
+        /// <summary>Screen-space waterline (meniscus) tunables for the fog material's waterline
+        /// pass. Global like PublishUnderwater (camera/screen state, primary-driven); the pass
+        /// itself is gated by WaterVolume.WaterlineActive, so stale values never draw.</summary>
+        internal void PublishWaterline(float widthPixels, float strength)
+        {
+            Shader.SetGlobalFloat(ID_WaterlineWidthPx, widthPixels);
+            Shader.SetGlobalFloat(ID_WaterlineStrength, strength);
+        }
+
         /// <summary>Push the body's placement-frame uniforms (volume + sim window) onto a
         /// compute shader so GPU consumers share the exact same transforms as the render side.</summary>
         internal void WriteSimFrameUniforms(ComputeShader cs)
@@ -410,6 +429,17 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_DetailNormalStrength, _body.DetailNormalStrength);
             sink.SetFloat(ID_DetailNormalScale, _body.DetailNormalScale);
             sink.SetFloat(ID_DetailNormalSpeed, _body.DetailNormalSpeed);
+
+            // Underside (seen-from-below) look: its own fresnel/mirror family (Underwater Surface
+            // block), so the below-water view no longer rides the above-water constants.
+            sink.SetFloat(ID_UnderFresnelPhysical, _body.UnderwaterPhysicalFresnel ? 1f : 0f);
+            sink.SetFloat(ID_UnderTirSoftness, _body.UnderwaterTirEdgeSoftness);
+            sink.SetFloat(ID_UnderFresnelFloor, _body.UnderwaterFresnelFloor);
+            sink.SetFloat(ID_UnderReflectionStrength, _body.UnderwaterReflectionStrength);
+            sink.SetFloat(ID_UnderMirrorWaterBlend, _body.UnderwaterMirrorWaterBlend);
+            sink.SetFloat(ID_FoamUndersideDarken, _body.FoamUndersideDarken);
+            sink.SetFloat(ID_FoamUndersideGlow, _body.FoamUndersideGlow);
+            sink.SetFloat(ID_UnderDetailNormalStrength, _body.UnderwaterDetailNormalStrength);
 
             // Reflection base cubemap, PER BODY (via the property block) so multiple bodies with
             // different Sky slots / reflection modes never stomp a shared global. Procedural sky = the

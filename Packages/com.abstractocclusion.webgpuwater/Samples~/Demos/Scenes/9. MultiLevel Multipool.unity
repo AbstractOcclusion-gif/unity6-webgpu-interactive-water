@@ -396,6 +396,8 @@ MonoBehaviour:
   chunkRefraction: 0.5
   chunkReflectivity: 0.6
   chunkMeniscus: 0.5
+  chunkGodRayStrength: 0
+  chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
   discSurface: 0
@@ -416,6 +418,8 @@ MonoBehaviour:
   foamPatternFps: 10
   foamReliefStrength: 1
   oceanWhitecapTexture: {fileID: 0}
+  oceanWhitecapGrid: {x: 1, y: 1}
+  oceanWhitecapFps: 10
   rippleQuality: 2
   bodyType: 0
   volumeExtent: {x: 2.5, y: 1, z: 2.5}
@@ -557,11 +561,13 @@ MonoBehaviour:
     sssPinchMin: 0.1
     sssPinchMax: 0.6
     sssPinchFalloff: 1.5
+  refractShadows: 1
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
     depthDarkenStrength: 1
     causticDepthFade: 0.5
+    screenSpaceCaustics: 0
     godRayDepthFade: 0.5
     linkDepthToFog: 0
   _legacyDepthDarken: 0
@@ -604,6 +610,7 @@ MonoBehaviour:
     surfSwashAmplitude: 1
     surfFoamGain: 1.2
     surfWaterlineFoam: 0.5
+    surfSmallWaveFoam: 0
     surfFoamStrength: 1
     surfFoamFeather: 0.2
     surfFoamTileSize: 8
@@ -652,6 +659,7 @@ MonoBehaviour:
       m_PostInfinity: 2
       m_RotationOrder: 4
     surfCrestFoamGain: 1
+    surfFoamCrestCap: 0
     surfFoamBoreGain: 1
     surfFoamTrailGain: 1
     surfFoamTrailLength: 1
@@ -660,6 +668,7 @@ MonoBehaviour:
     surfSwashFoamWidth: 0.25
     surfSwashFoamDissolve: 0.6
     surfSwashStreak: 0.5
+    surfSwashDepositGain: 0
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
   _legacyBedResolution: 256
@@ -672,7 +681,7 @@ MonoBehaviour:
     windFromDegrees: 0
     waveScaleMeters: 2
     waveCount: 12
-    waveAmplitudeScale: 4
+    waveAmplitudeScale: 2
     waveDirectionSpread: 2
     waveNormalStrength: 1
   _legacyWindWaves: 1
@@ -1170,6 +1179,8 @@ MonoBehaviour:
   chunkRefraction: 0.5
   chunkReflectivity: 0.6
   chunkMeniscus: 0.5
+  chunkGodRayStrength: 0
+  chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
   discSurface: 0
@@ -1190,6 +1201,8 @@ MonoBehaviour:
   foamPatternFps: 10
   foamReliefStrength: 1
   oceanWhitecapTexture: {fileID: 0}
+  oceanWhitecapGrid: {x: 1, y: 1}
+  oceanWhitecapFps: 10
   rippleQuality: 2
   bodyType: 0
   volumeExtent: {x: 2.5, y: 1, z: 2.5}
@@ -1331,11 +1344,13 @@ MonoBehaviour:
     sssPinchMin: 0.1
     sssPinchMax: 0.6
     sssPinchFalloff: 1.5
+  refractShadows: 1
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
     depthDarkenStrength: 1
     causticDepthFade: 0.5
+    screenSpaceCaustics: 0
     godRayDepthFade: 0.5
     linkDepthToFog: 0
   _legacyDepthDarken: 0
@@ -1378,6 +1393,7 @@ MonoBehaviour:
     surfSwashAmplitude: 1
     surfFoamGain: 1.2
     surfWaterlineFoam: 0.5
+    surfSmallWaveFoam: 0
     surfFoamStrength: 1
     surfFoamFeather: 0.2
     surfFoamTileSize: 8
@@ -1426,6 +1442,7 @@ MonoBehaviour:
       m_PostInfinity: 2
       m_RotationOrder: 4
     surfCrestFoamGain: 1
+    surfFoamCrestCap: 0
     surfFoamBoreGain: 1
     surfFoamTrailGain: 1
     surfFoamTrailLength: 1
@@ -1434,6 +1451,7 @@ MonoBehaviour:
     surfSwashFoamWidth: 0.25
     surfSwashFoamDissolve: 0.6
     surfSwashStreak: 0.5
+    surfSwashDepositGain: 0
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
   _legacyBedResolution: 256
@@ -1446,7 +1464,7 @@ MonoBehaviour:
     windFromDegrees: 0
     waveScaleMeters: 2
     waveCount: 12
-    waveAmplitudeScale: 4
+    waveAmplitudeScale: 2
     waveDirectionSpread: 2
     waveNormalStrength: 1
   _legacyWindWaves: 1
@@ -2098,6 +2116,8 @@ MonoBehaviour:
   chunkRefraction: 0.5
   chunkReflectivity: 0.6
   chunkMeniscus: 0.5
+  chunkGodRayStrength: 0
+  chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
   discSurface: 0
@@ -2118,6 +2138,8 @@ MonoBehaviour:
   foamPatternFps: 10
   foamReliefStrength: 1
   oceanWhitecapTexture: {fileID: 0}
+  oceanWhitecapGrid: {x: 1, y: 1}
+  oceanWhitecapFps: 10
   rippleQuality: 2
   bodyType: 0
   volumeExtent: {x: 2.5, y: 1, z: 2.5}
@@ -2259,11 +2281,13 @@ MonoBehaviour:
     sssPinchMin: 0.1
     sssPinchMax: 0.6
     sssPinchFalloff: 1.5
+  refractShadows: 1
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
     depthDarkenStrength: 1
     causticDepthFade: 0.5
+    screenSpaceCaustics: 0
     godRayDepthFade: 0.5
     linkDepthToFog: 0
   _legacyDepthDarken: 0
@@ -2306,6 +2330,7 @@ MonoBehaviour:
     surfSwashAmplitude: 1
     surfFoamGain: 1.2
     surfWaterlineFoam: 0.5
+    surfSmallWaveFoam: 0
     surfFoamStrength: 1
     surfFoamFeather: 0.2
     surfFoamTileSize: 8
@@ -2354,6 +2379,7 @@ MonoBehaviour:
       m_PostInfinity: 2
       m_RotationOrder: 4
     surfCrestFoamGain: 1
+    surfFoamCrestCap: 0
     surfFoamBoreGain: 1
     surfFoamTrailGain: 1
     surfFoamTrailLength: 1
@@ -2362,6 +2388,7 @@ MonoBehaviour:
     surfSwashFoamWidth: 0.25
     surfSwashFoamDissolve: 0.6
     surfSwashStreak: 0.5
+    surfSwashDepositGain: 0
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
   _legacyBedResolution: 256
@@ -2374,7 +2401,7 @@ MonoBehaviour:
     windFromDegrees: 0
     waveScaleMeters: 2
     waveCount: 12
-    waveAmplitudeScale: 4
+    waveAmplitudeScale: 2
     waveDirectionSpread: 2
     waveNormalStrength: 1
   _legacyWindWaves: 1
@@ -2780,6 +2807,8 @@ MonoBehaviour:
   chunkRefraction: 0.5
   chunkReflectivity: 0.6
   chunkMeniscus: 0.5
+  chunkGodRayStrength: 0
+  chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
   discSurface: 0
@@ -2800,6 +2829,8 @@ MonoBehaviour:
   foamPatternFps: 10
   foamReliefStrength: 1
   oceanWhitecapTexture: {fileID: 0}
+  oceanWhitecapGrid: {x: 1, y: 1}
+  oceanWhitecapFps: 10
   rippleQuality: 2
   bodyType: 0
   volumeExtent: {x: 2, y: 1.2, z: 2}
@@ -2941,11 +2972,13 @@ MonoBehaviour:
     sssPinchMin: 0.1
     sssPinchMax: 0.6
     sssPinchFalloff: 1.5
+  refractShadows: 1
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
     depthDarkenStrength: 1
     causticDepthFade: 0.5
+    screenSpaceCaustics: 0
     godRayDepthFade: 0.5
     linkDepthToFog: 0
   _legacyDepthDarken: 0
@@ -2988,6 +3021,7 @@ MonoBehaviour:
     surfSwashAmplitude: 1
     surfFoamGain: 1.2
     surfWaterlineFoam: 0.5
+    surfSmallWaveFoam: 0
     surfFoamStrength: 1
     surfFoamFeather: 0.2
     surfFoamTileSize: 8
@@ -3036,6 +3070,7 @@ MonoBehaviour:
       m_PostInfinity: 2
       m_RotationOrder: 4
     surfCrestFoamGain: 1
+    surfFoamCrestCap: 0
     surfFoamBoreGain: 1
     surfFoamTrailGain: 1
     surfFoamTrailLength: 1
@@ -3044,6 +3079,7 @@ MonoBehaviour:
     surfSwashFoamWidth: 0.25
     surfSwashFoamDissolve: 0.6
     surfSwashStreak: 0.5
+    surfSwashDepositGain: 0
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
   _legacyBedResolution: 256

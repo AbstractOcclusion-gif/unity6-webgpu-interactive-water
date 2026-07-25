@@ -258,7 +258,7 @@ Transform:
   m_GameObject: {fileID: 320337592}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalPosition: {x: 500, y: 0, z: 500}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -280,9 +280,9 @@ MonoBehaviour:
   useParticles: 1
   volume: {fileID: 320337595}
   particleCompute: {fileID: 7200000, guid: 60b46151fe09abd4b97f5f1feaa54593, type: 3}
-  particleMaterial: {fileID: 2100000, guid: d177db3a050694e48b010b52fbbd2dae, type: 2}
+  particleMaterial: {fileID: 2100000, guid: 28fcccd712d481e4888246c158e55772, type: 2}
   renderMode: 1
-  densityMaterial: {fileID: 2100000, guid: f4b3ef8895f5d184f95a76f03881e259, type: 2}
+  densityMaterial: {fileID: 2100000, guid: cc801976c649049469e4d607163ec5fa, type: 2}
   profile: {fileID: 11400000, guid: 096db223712859741bc8affb5f738dd9, type: 2}
   capacity: 4096
   spawnThreshold: 0.25
@@ -297,8 +297,8 @@ MonoBehaviour:
   sprayMaterial: {fileID: 0}
   sprayLifeRange: {x: 0.5, y: 1.2}
   spraySizeRange: {x: 0.02, y: 0.05}
-  sprayFlipbookGrid: {x: 1, y: 1}
-  sprayFlipbookFps: 0
+  sprayFlipbookGrid: {x: 2, y: 2}
+  sprayFlipbookFps: 5
   depositLifeRange: {x: 0.5, y: 1}
   depositSizeRange: {x: 0.02, y: 0.05}
   gravity: 4
@@ -337,11 +337,11 @@ MonoBehaviour:
   largeBodyCausticsShader: {fileID: 4800000, guid: 20ef2245624802e47920d7462ca2609d, type: 3}
   obstacleShader: {fileID: 4800000, guid: f7773dcd41650a8469d01f11390d88e0, type: 3}
   occluderShader: {fileID: 4800000, guid: 271a530771d546944a5b7d2242fbdc6c, type: 3}
-  waterMesh: {fileID: 4300000, guid: 7baf28a3e9bfeb34db7d6e5acd51d579, type: 2}
+  waterMesh: {fileID: 4300000, guid: 9c96c412df7a2564fb77e5eed80cb811, type: 2}
   targetCamera: {fileID: 961739752}
   sun: {fileID: 344495926}
   tiles: {fileID: 2800000, guid: bd694d32029dc6940942630c30097792, type: 3}
-  sky: {fileID: 8900000, guid: 80a87e2baa7d1c64e9d3681697e3399c, type: 2}
+  sky: {fileID: 8900000, guid: 90846655472c1354b8fb1a3cb2a47920, type: 2}
   foamPatternTexture: {fileID: 2800000, guid: 36879cca61e843178dae153ccadd00e8, type: 3}
   foamPatternGrid: {x: 1, y: 1}
   foamPatternFps: 5
@@ -533,7 +533,7 @@ MonoBehaviour:
     surfCrestLength: 20
     surfCrestVariation: 1
     surfCrestPersistence: 0.559
-    surfDirectionality: 0.71
+    surfDirectionality: 0.122
     surfLean: 0.4
     surfAmbientFade: 0.72
     surfSwashAmplitude: 1.1
@@ -867,7 +867,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 155e883813e90f849abfa8ffee2c6c7c, type: 2}
+  - {fileID: 2100000, guid: 694233826e203b340b1a37299f446644, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -898,7 +898,7 @@ MeshFilter:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 363101713}
-  m_Mesh: {fileID: 4300000, guid: 7baf28a3e9bfeb34db7d6e5acd51d579, type: 2}
+  m_Mesh: {fileID: 4300000, guid: 9c96c412df7a2564fb77e5eed80cb811, type: 2}
 --- !u!1 &908253350
 GameObject:
   m_ObjectHideFlags: 0
@@ -6192,7 +6192,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 2e225173f7fc443458334eb6934840c0, type: 2}
+  - {fileID: 2100000, guid: 70871daf480363b4e9e3342ee75e145b, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -6223,7 +6223,7 @@ MeshFilter:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1576200160}
-  m_Mesh: {fileID: 4300000, guid: 7baf28a3e9bfeb34db7d6e5acd51d579, type: 2}
+  m_Mesh: {fileID: 4300000, guid: 9c96c412df7a2564fb77e5eed80cb811, type: 2}
 --- !u!1 &1578026274
 GameObject:
   m_ObjectHideFlags: 0

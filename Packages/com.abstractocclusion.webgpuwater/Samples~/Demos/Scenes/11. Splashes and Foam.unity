@@ -343,9 +343,9 @@ MonoBehaviour:
   volume: {fileID: 78187644}
   particleCompute: {fileID: 7200000, guid: 60b46151fe09abd4b97f5f1feaa54593, type: 3}
   particleMaterial: {fileID: 2100000, guid: 28fcccd712d481e4888246c158e55772, type: 2}
-  renderMode: 0
+  renderMode: 1
   densityMaterial: {fileID: 2100000, guid: cc801976c649049469e4d607163ec5fa, type: 2}
-  profile: {fileID: 11400000, guid: 69520b33cdc5fe745a469f4d9846b6f7, type: 2}
+  profile: {fileID: 11400000, guid: 52381614be686ed488c5f2c8dce0c32d, type: 2}
   capacity: 4096
   spawnThreshold: 0.25
   spawnRate: 50
@@ -359,8 +359,8 @@ MonoBehaviour:
   sprayMaterial: {fileID: 0}
   sprayLifeRange: {x: 0.5, y: 1.2}
   spraySizeRange: {x: 0.02, y: 0.05}
-  sprayFlipbookGrid: {x: 1, y: 1}
-  sprayFlipbookFps: 0
+  sprayFlipbookGrid: {x: 2, y: 2}
+  sprayFlipbookFps: 5
   depositLifeRange: {x: 0.5, y: 1}
   depositSizeRange: {x: 0.02, y: 0.05}
   gravity: 4
@@ -409,6 +409,8 @@ MonoBehaviour:
   foamPatternFps: 0
   foamReliefStrength: 1
   oceanWhitecapTexture: {fileID: 2800000, guid: 1ee279c16b027ad48a8eb248749ff66c, type: 3}
+  oceanWhitecapGrid: {x: 1, y: 1}
+  oceanWhitecapFps: 10
   rippleQuality: 2
   bodyType: 0
   volumeExtent: {x: 2.5, y: 1, z: 2.5}
@@ -599,6 +601,7 @@ MonoBehaviour:
     surfSwashAmplitude: 1
     surfFoamGain: 1.2
     surfWaterlineFoam: 0.5
+    surfSmallWaveFoam: 0
     surfFoamStrength: 1
     surfFoamFeather: 0.2
     surfFoamTileSize: 8
@@ -647,6 +650,7 @@ MonoBehaviour:
       m_PostInfinity: 2
       m_RotationOrder: 4
     surfCrestFoamGain: 1
+    surfFoamCrestCap: 0
     surfFoamBoreGain: 1
     surfFoamTrailGain: 1
     surfFoamTrailLength: 1
@@ -655,6 +659,7 @@ MonoBehaviour:
     surfSwashFoamWidth: 0.25
     surfSwashFoamDissolve: 0.6
     surfSwashStreak: 0.5
+    surfSwashDepositGain: 0
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
   _legacyBedResolution: 256
@@ -684,9 +689,9 @@ MonoBehaviour:
     foamDecay: 0.936
     foamDecayResidual: 0.9
     foamDecayRate: 0.26
-    foamSpread: 0.3
+    foamSpread: 0.063
     foamGenThreshold: 0
-    foamMinWaveHeight: 0.1
+    foamMinWaveHeight: 0.0565
     foamAdvect: 1.2
     foamFromSpeed: 18.9
     foamFromCurvature: 30
@@ -697,10 +702,10 @@ MonoBehaviour:
     foamWakeStrength: 0
     foamWakeRadiusScale: 1.5
     foamColor: {r: 1, g: 1, b: 1, a: 1}
-    foamPatternSize: 3
-    foamStrength: 1.41
+    foamPatternSize: 2
+    foamStrength: 1.041
     foamFeather: 0.341
-    foamCoreCut: 0.84
+    foamCoreCut: 0.301
     foamBorderWidth: 0
     foamContactDepth: 0
   _legacyFoam: 1
@@ -1386,50 +1391,6 @@ MonoBehaviour:
   m_ShadowLayerMask: 1
   m_RenderingLayers: 1
   m_ShadowRenderingLayers: 1
---- !u!1 &543042077
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 543042079}
-  - component: {fileID: 543042078}
-  m_Layer: 0
-  m_Name: DemoTxt
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &543042078
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 543042077}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 69904ac0b712b8743983192648287e25, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::AbstractOcclusion.WebGpuWater.Demo.DemoOverlay
---- !u!4 &543042079
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 543042077}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 8, y: 0, z: 8}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &593898589
 GameObject:
   m_ObjectHideFlags: 0
@@ -1704,7 +1665,7 @@ ParticleSystemRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: defef1ba89e773a4480a25f2504a266f, type: 2}
+  - {fileID: 2100000, guid: 2b1eaf485cc59674c88dda7e3ca2d131, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -6595,22 +6556,22 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterSplashEmitter
   particles: {fileID: 1258019920}
-  profile: {fileID: 11400000, guid: 096db223712859741bc8affb5f738dd9, type: 2}
-  maxParticlesPerBurst: 48
-  upwardBias: 1
-  outwardSpread: 1.3
-  dropletSize: 0.02
-  lifetime: {x: 0.6, y: 1.3}
-  popDuration: 0.12
+  profile: {fileID: 11400000, guid: 52381614be686ed488c5f2c8dce0c32d, type: 2}
+  maxParticlesPerBurst: 18
+  upwardBias: 1.15
+  outwardSpread: 0.55
+  dropletSize: 0.1
+  lifetime: {x: 1, y: 1.5}
+  popDuration: 0.371
   driftStrength: 2
-  driftDamping: 2.5
+  driftDamping: 1.11
   surfaceRideHeight: 0.004
   crownParticles: {fileID: 2070626954}
-  crownMinStrength: 0.25
-  crownBaseSize: 0.4
-  crownLifetime: 0.5
-  crownTint: {r: 0.95, g: 0.98, b: 1, a: 1}
-  crownOpacity: 1
+  crownMinStrength: 0.763
+  crownBaseSize: 0.5
+  crownLifetime: 0.8
+  crownTint: {r: 1, g: 1, b: 1, a: 1}
+  crownOpacity: 0.531
 --- !u!1 &1779334941
 GameObject:
   m_ObjectHideFlags: 0
@@ -7062,7 +7023,7 @@ ParticleSystemRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: ac8aedb79c3f2b54392e126b79c491cb, type: 2}
+  - {fileID: 2100000, guid: 909b276cc9362bf4e8526facffff30c2, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -11845,4 +11806,3 @@ SceneRoots:
   m_Roots:
   - {fileID: 868114112}
   - {fileID: 39050256}
-  - {fileID: 543042079}

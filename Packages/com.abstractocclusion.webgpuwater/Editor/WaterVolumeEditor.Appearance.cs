@@ -52,6 +52,34 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             });
         }
 
+        // The surface seen FROM BELOW + the camera-crossing waterline. Its own section (not a
+        // Reflections sub-block): the underside used to run on hard-coded constants, and artists
+        // looking for "why is it milky underwater" should find one obvious foldout.
+        void DrawUnderwaterSurfaceSection()
+        {
+            _showUnderwaterSurface = WaterEditorUI.Section("Underwater Surface (seen from below)",
+                _showUnderwaterSurface, () =>
+            {
+                DrawFields("underwaterSurfaceSettings.physicalFresnel");
+                DrawFieldsIf(Prop("underwaterSurfaceSettings.physicalFresnel").boolValue,
+                    "underwaterSurfaceSettings.tirEdgeSoftness",
+                    "underwaterSurfaceSettings.fresnelFloor");
+                DrawFields(
+                    "underwaterSurfaceSettings.reflectionStrength",
+                    "underwaterSurfaceSettings.mirrorWaterBlend",
+                    "underwaterSurfaceSettings.detailNormalStrength");
+                WaterEditorUI.SubHeading("Foam seen from below");
+                DrawFields(
+                    "underwaterSurfaceSettings.foamSilhouetteDarken",
+                    "underwaterSurfaceSettings.foamSunGlow");
+                WaterEditorUI.SubHeading("Waterline (partial submersion)");
+                DrawFields("underwaterSurfaceSettings.meniscus");
+                DrawFieldsIf(Prop("underwaterSurfaceSettings.meniscus").boolValue,
+                    "underwaterSurfaceSettings.meniscusWidthPixels",
+                    "underwaterSurfaceSettings.meniscusStrength");
+            });
+        }
+
         void DrawWaterFogSection()
         {
             _showWaterFog = WaterEditorUI.SectionWithToggle(

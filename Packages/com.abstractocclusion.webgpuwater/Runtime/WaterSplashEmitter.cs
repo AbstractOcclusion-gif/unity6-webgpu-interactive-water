@@ -22,6 +22,12 @@ namespace AbstractOcclusion.WebGpuWater
         // Below this depth past the surface a droplet is considered "landed".
         const float SurfaceContactBand = 0.01f;
 
+        // EmitSplash amountScale: 1 = the caller's burst at its authored size, 0 = fully muted.
+        // The scale touches ONLY the droplet count, never the launch speeds, so "more spray"
+        // and "faster spray" stay independent knobs (per-probe pump boosts rely on this).
+        const float BaseAmountScale = 1f;
+        const float MutedAmountScale = 0f;
+
         // Crown size mapping: base size scales between these factors with impact
         // strength, plus a contribution from the impact radius.
         const float CrownMinSizeFactor = 0.6f;
@@ -180,16 +186,24 @@ namespace AbstractOcclusion.WebGpuWater
         /// the body's GPU foam-particle system when one is present (spray unification: every
         /// airborne droplet shares the KIND_SPRAY tech + look); the Shuriken system here then
         /// only plays the crown flipbook. Bodies without a GPU system keep the legacy
-        /// Shuriken droplet burst.</summary>
-        public void EmitSplash(Vector3 surfacePos, float strength, float radius)
+        /// Shuriken droplet burst. amountScale scales ONLY the droplet count (spray volume):
+        /// launch speed, droplet size, spread and opacity are untouched, so a boosted caller
+        /// throws MORE spray, never FASTER spray. 0 mutes the burst (crown included).</summary>
+        public void EmitSplash(Vector3 surfacePos, float strength, float radius, float amountScale = BaseAmountScale)
         {
             if (particles == null) return;
             // Master profile: applied at emit time (splashes are event-driven; there is no
             // per-frame dispatch to hook like the GPU systems).
             if (profile != null) profile.ApplyTo(this);
             strength = Mathf.Clamp01(strength);
+            amountScale = Mathf.Max(MutedAmountScale, amountScale);
+            if (amountScale <= MutedAmountScale) return; // muted caller (e.g. a probe boosted to -1)
             int count = Mathf.Clamp(Mathf.RoundToInt(strength * maxParticlesPerBurst),
                                     MinBurstCount, maxParticlesPerBurst);
+            // Amount multiplies AFTER the per-burst clamp, on purpose: maxParticlesPerBurst caps an
+            // UNBOOSTED burst, and a boosted caller is meant to exceed it. Hard safety stays
+            // downstream - the GPU path clamps to MaxBurstDroplets, Shuriken to main.maxParticles.
+            count = Mathf.Max(1, Mathf.RoundToInt(count * amountScale));
 
             WaterVolume body = WaterVolume.BodyContaining(surfacePos);
             WaterFoamParticles gpuSpray = body != null ? body.GetComponent<WaterFoamParticles>() : null;

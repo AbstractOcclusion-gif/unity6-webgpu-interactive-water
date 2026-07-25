@@ -3,7 +3,9 @@
 // Particles spawn on the GPU where the sim's foam/turbulence is strong, drift with
 // the surface flow, and are drawn by FoamParticles.shader straight from the buffer
 // (no CPU round trip). WebGPU-safe by construction:
-//   - no Append/Consume buffers: a ring cursor advanced with InterlockedAdd,
+//   - no Append/Consume buffers: a ring cursor advanced with InterlockedAdd claims
+//     DEAD slots only (bounded probe; a saturated pool drops the spawn, never a
+//     living particle - see ClaimPoolSlot),
 //   - the sim state is read with Load + manual bilinear (r32/float RTs are not
 //     filterable on WebGPU),
 //   - fixed-capacity pool; dead slots are skipped by the vertex shader.
@@ -67,6 +69,24 @@ static const float FRAME_KILL_MARGIN = 0.02;
 // fixed). The hard kill stays as the backstop where the frame has no sim data.
 static const float FRAME_FADE_BAND = 0.15;
 static const float FRAME_FADE_AGE_BOOST = 3.0;
+
+// Exclusion-volume fade (same idiom as the window-edge band): a dry volume sweeping INTO
+// live sprites - a moving boat hull plowing through its own bow spray - must not hard-pop
+// them out in one frame. Inside a volume the particle ages faster instead, ramping with
+// the normalised interior depth (ExclusionInteriorDepth): a face graze dissolves over a
+// few tenths of a second, the deep interior still vanishes near-instantly so nothing
+// lingers floating in a dry room.
+static const float EXCLUSION_FADE_SHELL = 0.2;      // unit-box depth over which the boost ramps
+static const float EXCLUSION_FADE_AGE_BOOST_MIN = 4.0;   // at a face graze
+static const float EXCLUSION_FADE_AGE_BOOST_MAX = 30.0;  // deep inside
+
+// Slot claim (ClaimPoolSlot): ring-cursor probes per spawn before giving up. The old raw
+// "cursor & mask" claim OVERWROTE whatever lived at the cursor, so under spawn pressure
+// (a moving boat's wake saturating the budget) the ring wrapped in a handful of frames and
+// stomped mid-life particles pool-wide - the whole foam field strobed. Probing for DEAD
+// slots and DROPPING the spawn when none is found turns overload into graceful saturation:
+// new foam is lost for a frame, living foam is never killed.
+static const uint SLOT_CLAIM_PROBES = 8u;
 
 // World-anchored spawn identity: spawn decisions are keyed on a fixed WORLD lattice
 // instead of window texel ids, so what emits belongs to the water surface, not to
@@ -266,6 +286,25 @@ float OceanCrestFoamAt(float2 worldXZ)
 
 // ---------------------------------------------------------------- helpers
 int2 ClampTexel(int2 p) { return clamp(p, int2(0, 0), int2((int)_Size - 1, (int)_Size - 1)); }
+
+// Claim a pool slot WITHOUT stomping a living particle: advance the ring cursor and take
+// the first dead slot among SLOT_CLAIM_PROBES probes; all-alive probes = the pool is
+// saturated, so the caller drops the spawn. Each probe consumes a unique cursor value
+// (InterlockedAdd), so concurrent claimants never contend for the same slot within a
+// frame's normal range; the rare same-frame wrap collision writes one spawn over another
+// FRESH spawn - the same soft-cap spirit as the frame budgets, never a mid-life kill.
+bool ClaimPoolSlot(out uint slot)
+{
+    for (uint probe = 0u; probe < SLOT_CLAIM_PROBES; probe++)
+    {
+        uint cursor;
+        InterlockedAdd(Counters[COUNTER_RING_CURSOR], 1, cursor);
+        slot = cursor & (_Capacity - 1u); // capacity is a power of two
+        if (Particles[slot].life <= 0.0) return true;
+    }
+    slot = 0u;
+    return false;
+}
 
 // Pcg/Rand01 come from WaterParticleCommon.hlsl (shared with WaterSurfRoller.compute).
 
@@ -473,15 +512,20 @@ void Spawn(uint3 id : SV_DispatchThreadID)
     // for a given patch of water no longer flickers as the window slides across it.
     if (Rand01(spawnKey, _FrameSeed) >= probability) return;
 
+    // Never born inside a dry volume (a boat hull): the Update kernel would fade it out
+    // right away, so spawning there is at best a one-frame flash. Post-roll (spawning
+    // texels only) and gated on the volume count, so volume-free scenes pay nothing.
+    // texelWorld.y is the surface-plane height - close enough against people-sized boxes.
+    if (_ExclusionCount > 0.5 && InsideExclusion(texelWorld)) return;
+
     // Per-frame budget: count first, back out if over. A few threads may race past
     // the limit; the budget is a soft cap, so that is acceptable.
     uint frameSpawns;
     InterlockedAdd(Counters[COUNTER_FRAME_SPAWNS], 1, frameSpawns);
     if (frameSpawns >= _MaxSpawnPerFrame) return;
 
-    uint cursor;
-    InterlockedAdd(Counters[COUNTER_RING_CURSOR], 1, cursor);
-    uint slot = cursor & (_Capacity - 1u); // capacity is a power of two
+    uint slot;
+    if (!ClaimPoolSlot(slot)) return; // pool saturated: drop the spawn, never kill live foam
 
     float4 info = Sim.Load(int3(texel, 0));
     float r0 = Rand01(id.xy, _FrameSeed ^ 0x9E3779B9u);
@@ -563,6 +607,19 @@ void SpawnBurst(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID)
     float r2 = Rand01(key, salt ^ 0x85EBCA6Bu);
     float r3 = Rand01(key, salt ^ 0xC2B2AE35u);
 
+    float angle = r0 * 6.2831853;
+    float2 dir = float2(cos(angle), sin(angle));
+    float ring = burst.radius * BURST_RING_RADIUS_SCALE * r1;
+    float2 spawnXZ = burst.center.xz + dir * ring;
+
+    // Never born inside a dry volume: a pump probe sitting at a hull edge spawns half its
+    // ring inside the boat's exclusion box, and each of those droplets flashed for exactly
+    // one frame before Update culled it - per-burst strobing at the bow. Tested at the
+    // TRUE world height (burst.center.y is the surface), before any budget is consumed.
+    if (_ExclusionCount > 0.5
+        && InsideExclusion(float3(spawnXZ.x, burst.center.y + BURST_SPAWN_HEIGHT, spawnXZ.y)))
+        return;
+
     // Per-frame burst budget (count first, back out if over - the same soft-cap idiom as
     // Spawn): a storm of impact events can no longer flush a quarter-plus of the pool in
     // one frame. Own counter, so bursts never starve behind the turbulence budget.
@@ -570,18 +627,13 @@ void SpawnBurst(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID)
     InterlockedAdd(Counters[COUNTER_BURST_SPAWNS], 1, burstSpawns);
     if (burstSpawns >= _Capacity / BURST_FRAME_CAP_DIVISOR) return;
 
-    uint cursor;
-    InterlockedAdd(Counters[COUNTER_RING_CURSOR], 1, cursor);
-    uint slot = cursor & (_Capacity - 1u);
-
-    float angle = r0 * 6.2831853;
-    float2 dir = float2(cos(angle), sin(angle));
-    float ring = burst.radius * BURST_RING_RADIUS_SCALE * r1;
+    uint slot;
+    if (!ClaimPoolSlot(slot)) return; // pool saturated: drop the droplet, never kill live foam
 
     FoamParticle particle;
-    particle.worldPos = float3(burst.center.x + dir.x * ring,
+    particle.worldPos = float3(spawnXZ.x,
                                BURST_SPAWN_HEIGHT, // y = height ABOVE the local surface
-                               burst.center.z + dir.y * ring);
+                               spawnXZ.y);
     float outSpeed = burst.outSpeed * lerp(BURST_OUT_JITTER_MIN, BURST_OUT_JITTER_MAX, r2);
     float upSpeed = burst.upSpeed * lerp(BURST_UP_JITTER_MIN, BURST_UP_JITTER_MAX, r3);
     particle.velocity = float3(dir.x * outSpeed, upSpeed, dir.y * outSpeed);
@@ -630,21 +682,30 @@ void Update(uint3 id : SV_DispatchThreadID)
 
     if (particle.age >= particle.life) { particle.life = 0.0; Particles[slot] = particle; return; }
 
-    // Dry-interior exclusion: foam riding (or spray arcing through) a dry room / boat hull is
-    // killed - the surface it would sit on is discarded there, so a surviving sprite would
-    // float in the dry void. Covers spawn AND drift-in (a moving boat sweeps over its own
-    // wake foam). Gated on the volume count: scenes without exclusion volumes never pay the
-    // extra surface evaluation.
+    // Dry-interior exclusion: foam riding (or spray arcing through) a dry room / boat hull
+    // must go - the surface it would sit on is discarded there. But the old hard kill
+    // (life = 0) popped sprites out in ONE frame, and a moving hull plows its box through
+    // the bow spray it just threw, so the whole plume strobed. Instead the particle AGES
+    // faster the deeper it intrudes (the window-edge fade idiom): a swept-over droplet
+    // dissolves over a few tenths of a second, anything deep inside a dry room still
+    // vanishes near-instantly. Gated on the volume count: volume-free scenes pay nothing.
     if (_ExclusionCount > 0.5)
     {
         // Stored y is a height offset ABOVE the local water surface; lift to true world Y.
         float3 exclusionProbe = particle.worldPos;
         exclusionProbe.y += SurfaceWorldY(particle.worldPos, simNorm);
-        if (InsideExclusion(exclusionProbe))
+        float interiorDepth = ExclusionInteriorDepth(exclusionProbe);
+        if (interiorDepth > 0.0)
         {
-            particle.life = 0.0;
-            Particles[slot] = particle;
-            return;
+            float intrusion = saturate(interiorDepth / EXCLUSION_FADE_SHELL);
+            particle.age += _DeltaTime * lerp(EXCLUSION_FADE_AGE_BOOST_MIN,
+                                              EXCLUSION_FADE_AGE_BOOST_MAX, intrusion);
+            if (particle.age >= particle.life)
+            {
+                particle.life = 0.0;
+                Particles[slot] = particle;
+                return;
+            }
         }
     }
 

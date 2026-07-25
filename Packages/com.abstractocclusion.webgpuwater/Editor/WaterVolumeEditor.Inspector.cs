@@ -21,6 +21,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         bool _showChunk = false;
         bool _showPerformance = false;
         bool _showReflections = false;
+        bool _showUnderwaterSurface = false;
         bool _showSimulation = false;
         bool _showRipple = false;
         bool _showWindWaves = false;
@@ -66,6 +67,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             Sync(ref _showChunk, nameof(_showChunk), load);
             Sync(ref _showPerformance, nameof(_showPerformance), load);
             Sync(ref _showReflections, nameof(_showReflections), load);
+            Sync(ref _showUnderwaterSurface, nameof(_showUnderwaterSurface), load);
             Sync(ref _showSimulation, nameof(_showSimulation), load);
             Sync(ref _showRipple, nameof(_showRipple), load);
             Sync(ref _showWindWaves, nameof(_showWindWaves), load);
@@ -133,6 +135,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     // Everything that changes pixels but not motion.
                     DrawLookSection();
                     DrawReflectionsSection();
+                    DrawUnderwaterSurfaceSection();
                     DrawWaterFogSection();
                     DrawVolumeScatterSection();
                     DrawDepthAttenuationSection();

@@ -104,13 +104,17 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
     // than the FFT cascades resolve, sampled in WORLD metres at the undisplaced source
     // xz (like the foam) so it rides the waves and is body-size independent. Added as
     // an xz tilt exactly like the FFT cascade tilt. Inert with the default "bump"
-    // texture or strength 0; above-water only, so the underwater ceiling and every
-    // legacy path keep their look. Both gates are uniforms (WGSL-safe branch). ----
-    if (_DetailNormalStrength > 0.0 && _Underwater < 0.5)
+    // texture or strength 0. The underside has its OWN strength (Underwater Surface
+    // block; default 0 = the historical detail-free ceiling), so raising it lets the
+    // seen-from-below surface carry the same micro-ripple as the top. Both the side
+    // pick and the gate are uniforms (WGSL-safe branch). ----
+    float detailNormalStrength = (_Underwater > 0.5) ? _UnderDetailNormalStrength
+                                                     : _DetailNormalStrength;
+    if (detailNormalStrength > 0.0)
     {
         float2 detailTilt = DetailNormalTilt(i.largeWaveSourceXZ, viewDistWorld);
         normal = normalize(normal + float3(detailTilt.x, 0.0, detailTilt.y)
-                                    * _DetailNormalStrength);
+                                    * detailNormalStrength);
     }
     WaterGeomStage g;
     g.normal = normal;
@@ -160,15 +164,29 @@ float4 UnderwaterStage(v2f i, WaterGeomStage g, float waterClarity)
     // returns a ZERO vector; tracing it divides by zero in IntersectCube and
     // poisons the pixel with NaN. Fall back to the reflected ray.
     if (dot(refractedRay, refractedRay) < 1e-6) refractedRay = reflectedRay;
-    // saturate: float error can push the dot above 1, making the pow base
-    // negative -> NaN sparkle.
-    float fresnel = lerp(FRESNEL_MIN_BELOW, 1.0, pow(saturate(1.0 - dot(normal, -incomingRay)), FRESNEL_POWER));
+    // Underside Fresnel. Physical (the default): the SNELL WINDOW - the same ~2% F0 as the
+    // above-water side straight up (the ceiling overhead is nearly glass-clear), rising to a
+    // true total-internal-reflection mirror past the ~48.6 deg critical angle. Legacy: the
+    // original artistic curve, whose hard-coded 0.5 floor mirrored half the environment even
+    // straight up and buried the transparency. The mode gate is a uniform (WGSL-safe branch).
+    // saturate: float error can push the dot above 1, making the pow base negative -> NaN sparkle.
+    float cosIncident = saturate(dot(normal, -incomingRay));
+    float fresnel;
+    if (_UnderFresnelPhysical > 0.5)
+        fresnel = max(FresnelBelowWater(cosIncident, _UnderTirSoftness), _UnderFresnelFloor);
+    else
+        fresnel = lerp(FRESNEL_MIN_BELOW, 1.0, pow(1.0 - cosIncident, FRESNEL_POWER));
 
     // TIR reflection reflects the ENVIRONMENT, tinted underwater - never the pool
     // tiles. The reflected ray points back DOWN into the pool, so routing it through
     // GetSurfaceRayColor used to sample the analytic wall (a stale baked-in tile
-    // reflection on the underside of the surface).
-    float3 reflectedColor = SampleEnvironment(reflectedRay) * UnderwaterViewTint();
+    // reflection on the underside of the surface). _UnderMirrorWaterBlend then pulls
+    // the mirror toward the body's own in-scatter colour: a real TIR mirror shows the
+    // DEPTHS, not the sky, so blending toward the water colour reads truer; 0 keeps
+    // the legacy tinted-sky mirror.
+    float3 bodyInscatterUnder = WaterInscatterColor(-incomingRay, _LightDir, _SunColor, 0.0);
+    float3 reflectedColor = lerp(SampleEnvironment(reflectedRay) * UnderwaterViewTint(),
+                                 bodyInscatterUnder, _UnderMirrorWaterBlend);
     float3 refractedColor = GetSurfaceRayColor(i.worldPos, refractedRay, float3(1.0, 1.0, 1.0)) * UnderwaterViewTint();
 
     // Real transparency from below: sample the live scene above the surface.
@@ -178,11 +196,12 @@ float4 UnderwaterStage(v2f i, WaterGeomStage g, float waterClarity)
         refractedColor = tex2D(_CameraOpaqueTexture, saturate(ruvU)).rgb * UnderwaterViewTint();
     }
 
-    float3 bodyInscatterUnder = WaterInscatterColor(-incomingRay, _LightDir, _SunColor, 0.0);
     refractedColor = ApplyWaterOpacityTintedClarity(refractedColor, bodyInscatterUnder, waterClarity); // turbidity from below too
 
+    // The underside mirror strength is its OWN knob (it used to ride the above-water
+    // _ReflectionStrength): 0 = fully refracted, a glass-clear ceiling.
     float tUnder = (1.0 - fresnel) * length(refractedRay);
-    tUnder = lerp(1.0, tUnder, _ReflectionStrength); // strength 0 = fully refracted
+    tUnder = lerp(1.0, tUnder, _UnderReflectionStrength); // strength 0 = fully refracted
     float3 underColor = lerp(reflectedColor, refractedColor, tUnder);
 
     // ---- Foam seen from below: the same advected mask, but instead of lit
@@ -194,7 +213,7 @@ float4 UnderwaterStage(v2f i, WaterGeomStage g, float waterClarity)
     {
         float2 fcoord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
                                              : (WorldToSim(i.worldPos).xz * 0.5 + 0.5);
-        float advected = SampleFoamMaskBilinear(fcoord);
+        float advected = SampleFoamMaskWindowed(fcoord);
         float edge = min(1.0 - abs(i.position.x), 1.0 - abs(i.position.z));
         float border = (_SimWindowed < 0.5) ? (1.0 - smoothstep(0.0, _FoamBorderWidth, edge)) : 0.0;
         float mask = saturate((advected + border) * _FoamStrength);
@@ -216,8 +235,8 @@ float4 UnderwaterStage(v2f i, WaterGeomStage g, float waterClarity)
             // Applied BEFORE the downwelling dim below, so the silhouette
             // and its glow fade with eye depth like the rest of the scene.
             float sunThrough = saturate(_LightDir.y);
-            underColor *= 1.0 - FOAM_UNDERSIDE_DARKEN * foamAlpha;
-            underColor += _FoamColor.rgb * pattern * (FOAM_UNDERSIDE_GLOW * sunThrough * lace * mask);
+            underColor *= 1.0 - _FoamUndersideDarken * foamAlpha;
+            underColor += _FoamColor.rgb * pattern * (_FoamUndersideGlow * sunThrough * lace * mask);
         }
     }
 
@@ -226,10 +245,18 @@ float4 UnderwaterStage(v2f i, WaterGeomStage g, float waterClarity)
     // Measured against the analytic surface (rest + waves) directly above the eye,
     // not the flat centre plane, so depth stays consistent with the rest of the
     // shading when the surface is wind-driven.
-    float3 camPool = WorldToPool(_WorldSpaceCameraPos);
-    float camSurfaceY = PoolToWorld(float3(camPool.x,
-        WaveHeight(WindWaveSampleXZ(camPool.xz, _WorldSpaceCameraPos.xz)), camPool.z)).y;
-    underColor *= DownwellingAttenuation(_WorldSpaceCameraPos.y, camSurfaceY);
+    // ONLY when the fullscreen fog pass will not paint (_UnderwaterFogArmed = 0):
+    // that pass applies the SAME camera-depth downwelling to these pixels (the
+    // deepest wet point of an up-look ray IS the eye), so applying it here too
+    // double-darkened the underside sheet whenever fog + depth darkening were on.
+    // The gate is a uniform (WGSL-safe branch).
+    if (_UnderwaterFogArmed < 0.5)
+    {
+        float3 camPool = WorldToPool(_WorldSpaceCameraPos);
+        float camSurfaceY = PoolToWorld(float3(camPool.x,
+            WaveHeight(WindWaveSampleXZ(camPool.xz, _WorldSpaceCameraPos.xz)), camPool.z)).y;
+        underColor *= DownwellingAttenuation(_WorldSpaceCameraPos.y, camSurfaceY);
+    }
     return float4(underColor, 1.0);
 }
 
@@ -493,7 +520,7 @@ FoamLayer PondFoamLayer(v2f i, WaterGeomStage g)
         float3 foamSourcePos = float3(i.largeWaveSourceXZ.x, i.worldPos.y, i.largeWaveSourceXZ.y);
         float2 fcoord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
                                              : (WorldToSim(foamSourcePos).xz * 0.5 + 0.5);
-        float advected = SampleFoamMaskBilinear(fcoord);
+        float advected = SampleFoamMaskWindowed(fcoord);
 
         // shoreline foam against the pool walls (whole-body only; a window has no walls)
         float edge = min(1.0 - abs(i.position.x), 1.0 - abs(i.position.z));
@@ -773,7 +800,7 @@ float3 ShorelineStage(v2f i, WaterGeomStage g, float3 outColor, float3 refracted
                 ? (i.position.xz * 0.5 + 0.5)
                 : (WorldToSim(float3(i.largeWaveSourceXZ.x, i.worldPos.y,
                                      i.largeWaveSourceXZ.y)).xz * 0.5 + 0.5);
-            if (SampleFoamMaskBilinear(depUV) > FOAM_MASK_EPSILON)
+            if (SampleFoamMaskWindowed(depUV) > FOAM_MASK_EPSILON)
                 shoreKeep = max(shoreKeep, -colDepth); // -colDepth = beachRise (lift onto the sand)
         }
         clip(colDepth + SHORE_CLIP_BIAS + shoreKeep);
@@ -941,7 +968,13 @@ float3 FinalCompositeStage(v2f i, WaterGeomStage g, float3 outColor,
     if (_HorizonHazeDensity > 0.0)
     {
         float horizD = distance(i.worldPos, _WorldSpaceCameraPos);
-        float haze = 1.0 - exp(-_HorizonHazeDensity * horizD);
+        // _HorizonHazeDensity is now a 0..1 AMOUNT, not a raw per-metre density: horizon distances
+        // run to km, so a raw density saturated the whole ocean above ~0.001 (not a volumetric fog).
+        // Map the amount to a gentle max per-metre density so the whole 0..1 slider is usable, and
+        // ~0.3-0.5 reads as a light haze. HORIZON_HAZE_MAX_DENSITY = the density at amount 1 (set at
+        // the old saturation point, so it's the ceiling, not the floor - lower it for a softer max).
+        #define HORIZON_HAZE_MAX_DENSITY 0.001
+        float haze = 1.0 - exp(-_HorizonHazeDensity * HORIZON_HAZE_MAX_DENSITY * horizD);
         // Haze target = the rendered sky AT THE HORIZON in this pixel's azimuth, read from
         // _CameraOpaqueTexture: URP draws the skybox before the opaque-colour copy and the
         // water pass is transparent-queue, so the opaque texture holds the water-free scene -
@@ -988,8 +1021,21 @@ float3 FinalCompositeStage(v2f i, WaterGeomStage g, float3 outColor,
             float toCentre = 1.0 - smoothstep(0.0, HORIZON_EDGE_BLEND, edgeMinY);
             // Degenerate azimuth (straight down) or horizon behind the camera: fully the centre band.
             if (azimuthLen <= HORIZON_AZIMUTH_MIN || horizonClip.w <= SCREEN_UV_MIN_W) toCentre = 1.0;
-            float3 perAzimuth = tex2Dlod(_CameraOpaqueTexture,
-                                         float4(saturate(horizonUVraw), 0.0, 0.0)).rgb;
+            // Horizontally BLUR the per-azimuth sample: each water column samples ONE horizon point,
+            // so a single skybox texel would STRETCH straight down the column as a vertical line. The
+            // haze wants the broad horizon COLOUR, not its texels, so average a few taps across x
+            // (5-tap, weights sum to 1). Widen HORIZON_BLUR_STEP if the skybox texels read coarse.
+            // centreBand is x-fixed (uniform), so it needs no blur.
+            #define HORIZON_BLUR_STEP 0.006  // UV x-offset per blur tap
+            float2 huv = saturate(horizonUVraw);
+            float2 hb1 = float2(HORIZON_BLUR_STEP, 0.0);
+            float2 hb2 = float2(2.0 * HORIZON_BLUR_STEP, 0.0);
+            float3 perAzimuth =
+                  tex2Dlod(_CameraOpaqueTexture, float4(huv, 0, 0)).rgb * 0.34
+                + tex2Dlod(_CameraOpaqueTexture, float4(saturate(huv + hb1), 0, 0)).rgb * 0.24
+                + tex2Dlod(_CameraOpaqueTexture, float4(saturate(huv - hb1), 0, 0)).rgb * 0.24
+                + tex2Dlod(_CameraOpaqueTexture, float4(saturate(huv + hb2), 0, 0)).rgb * 0.09
+                + tex2Dlod(_CameraOpaqueTexture, float4(saturate(huv - hb2), 0, 0)).rgb * 0.09;
             float3 centreBand = tex2Dlod(_CameraOpaqueTexture,
                                          float4(0.5, saturate(horizonUVraw.y), 0.0, 0.0)).rgb;
             skyAtHorizon = lerp(perAzimuth, centreBand, toCentre);

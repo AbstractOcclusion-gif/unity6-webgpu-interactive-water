@@ -24,6 +24,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         const int AbsorbShaderPass = 0;
         const int InscatterShaderPass = 1;
+        const int WaterlineShaderPass = 2;
 
         readonly Material _material;
         readonly ProfilingSampler _sampler = new ProfilingSampler("WaterUnderwaterFog");
@@ -44,9 +45,18 @@ namespace AbstractOcclusion.WebGpuWater
             TextureHandle cameraColor = resources.activeColorTexture;
             if (!cameraColor.IsValid()) return;
 
-            // Order matters: absorb (scene *= transmittance) then inscatter (scene += fog).
-            RecordFogPass(renderGraph, resources, cameraColor, AbsorbShaderPass, "WaterUnderwaterFog.Absorb");
-            RecordFogPass(renderGraph, resources, cameraColor, InscatterShaderPass, "WaterUnderwaterFog.Inscatter");
+            // Order matters: absorb (scene *= transmittance) then inscatter (scene += fog),
+            // then the waterline meniscus ON TOP of the fogged scene (it darkens the final
+            // crossing band, whichever side of it is fogged). The same per-frame gates the
+            // feature enqueued on decide which sub-passes record - fog and waterline arm
+            // independently (a straddling near plane arms the line before the eye submerges).
+            if (WaterVolume.UnderwaterFogActive)
+            {
+                RecordFogPass(renderGraph, resources, cameraColor, AbsorbShaderPass, "WaterUnderwaterFog.Absorb");
+                RecordFogPass(renderGraph, resources, cameraColor, InscatterShaderPass, "WaterUnderwaterFog.Inscatter");
+            }
+            if (WaterVolume.WaterlineActive)
+                RecordFogPass(renderGraph, resources, cameraColor, WaterlineShaderPass, "WaterUnderwaterFog.Waterline");
         }
 
         void RecordFogPass(RenderGraph renderGraph, UniversalResourceData resources,

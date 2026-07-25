@@ -387,6 +387,19 @@ namespace AbstractOcclusion.WebGpuWater
             _initialized = false;
             if (Primary == this) Primary = FindNextPrimary(this);
             Bodies.Remove(this);
+            // Last body out (scene teardown / File > New Scene): the static fog gate and the
+            // underwater globals it mirrors are only ever WRITTEN by a live primary body, so
+            // without this reset they keep the LAST scene's values - and the fullscreen
+            // WaterUnderwaterFogFeature (which lives on the URP renderer asset, active in
+            // every scene) keeps enqueueing on the stale gate and paints the dead scene's
+            // water fog into the new one. When other bodies remain, the next primary
+            // republishes on its next frame, so no reset is needed.
+            if (Bodies.Count == 0)
+            {
+                UnderwaterFogActive = false;
+                WaterlineActive = false; // same static-gate pattern: the meniscus pass reads it too
+                Publisher.PublishUnderwater(0f, 0f, 0f, 0f, 0f);
+            }
             DisposeModules();      // disposes the six eager collaborator modules (sim, obstacle, caustics,
                                    // surface sampler, ocean FFT, sim window) - releases the same GPU
                                    // resources the inline disposal did, and clears the sampler/window refs.
