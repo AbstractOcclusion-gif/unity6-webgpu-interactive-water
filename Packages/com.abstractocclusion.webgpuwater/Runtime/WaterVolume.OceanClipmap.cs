@@ -3,12 +3,38 @@
 // the nested-LOD annulus levels (above + under twins), their world-lattice snapping and geomorph
 // uniforms, and build / per-frame placement / teardown. The template mesh itself comes from
 // LargeWaterClipmap; the level-count/reach derivations live with the Ocean settings.
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace AbstractOcclusion.WebGpuWater
 {
     public partial class WaterVolume
     {
+        /// <summary>Every LIVE renderer currently drawing this body's ocean surface (the clipmap
+        /// levels, the near-field window patches, and the base plane sheets when enabled), for the
+        /// underwater fog's surface-depth prepass. The prepass re-draws each with its OWN mesh,
+        /// matrix, material and property block, so it displaces exactly like the visible surface
+        /// by construction.</summary>
+        internal void CollectOceanSurfaceRenderers(List<Renderer> into)
+        {
+            AddLiveRenderer(into, surfaceAbove);
+            AddLiveRenderer(into, surfaceUnder);
+            AddLiveRenderer(into, _patchRenderer);
+            AddLiveRenderer(into, _patchUnderRenderer);
+            if (_clipmapLevels == null) return;
+            for (int i = 0; i < _clipmapLevels.Length; i++)
+            {
+                AddLiveRenderer(into, _clipmapLevels[i].above);
+                AddLiveRenderer(into, _clipmapLevels[i].under);
+            }
+        }
+
+        static void AddLiveRenderer(List<Renderer> into, Renderer renderer)
+        {
+            if (renderer != null && renderer.enabled && renderer.gameObject.activeInHierarchy)
+                into.Add(renderer);
+        }
+
         // geometry clipmap (see LargeWaterClipmap). One shared uniform-grid template is drawn as N nested
         // LOD levels; each level scales the template to its cell size and SNAPS its centre to that level's
         // own world lattice, so its vertices never slide under the world-space waves as the camera follows

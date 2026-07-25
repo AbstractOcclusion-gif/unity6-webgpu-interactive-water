@@ -108,6 +108,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_LargeGodRayAnisotropy = Shader.PropertyToID("_LargeGodRayAnisotropy");
         static readonly int ID_LargeGodRayExtinction = Shader.PropertyToID("_LargeGodRayExtinction");
         static readonly int ID_LargeGodRayCausticStrength = Shader.PropertyToID("_LargeGodRayCausticStrength");
+        static readonly int ID_LargeGodRayCausticDepthSoften = Shader.PropertyToID("_LargeGodRayCausticDepthSoften");
         static readonly int ID_CameraUnderwater = Shader.PropertyToID("_CameraUnderwater");
         static readonly int ID_UnderwaterSurfaceY = Shader.PropertyToID("_UnderwaterSurfaceY");
         static readonly int ID_UnderwaterUnbounded = Shader.PropertyToID("_UnderwaterUnbounded");
@@ -146,6 +147,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_UnderDetailNormalStrength = Shader.PropertyToID("_UnderDetailNormalStrength");
         static readonly int ID_WaterlineWidthPx = Shader.PropertyToID("_WaterlineWidthPx");
         static readonly int ID_WaterlineStrength = Shader.PropertyToID("_WaterlineStrength");
+        static readonly int ID_WaterlineWarp = Shader.PropertyToID("_WaterlineWarp");
         static readonly int ID_ReflectionDistortion = Shader.PropertyToID("_ReflectionDistortion");
         static readonly int ID_SSRStrength = Shader.PropertyToID("_SSRStrength");
         static readonly int ID_SSRStepSize = Shader.PropertyToID("_SSRStepSize");
@@ -287,10 +289,11 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>Screen-space waterline (meniscus) tunables for the fog material's waterline
         /// pass. Global like PublishUnderwater (camera/screen state, primary-driven); the pass
         /// itself is gated by WaterVolume.WaterlineActive, so stale values never draw.</summary>
-        internal void PublishWaterline(float widthPixels, float strength)
+        internal void PublishWaterline(float widthPixels, float strength, float warp)
         {
             Shader.SetGlobalFloat(ID_WaterlineWidthPx, widthPixels);
             Shader.SetGlobalFloat(ID_WaterlineStrength, strength);
+            Shader.SetGlobalFloat(ID_WaterlineWarp, warp);
         }
 
         /// <summary>Push the body's placement-frame uniforms (volume + sim window) onto a
@@ -361,6 +364,7 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_LargeGodRayAnisotropy, _body.LargeGodRayAnisotropy);
             sink.SetFloat(ID_LargeGodRayExtinction, _body.LargeGodRayExtinction);
             sink.SetFloat(ID_LargeGodRayCausticStrength, _body.LargeGodRayCausticStrength);
+            sink.SetFloat(ID_LargeGodRayCausticDepthSoften, _body.LargeGodRayCausticDepthSoften);
 
             sink.SetVectorArray(ID_WaveA, _body.WaveBank.PackedA);
             sink.SetVectorArray(ID_WaveB, _body.WaveBank.PackedB);
@@ -374,7 +378,7 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_FogEnabled, _body.WaterFog ? 1f : 0f);
             sink.SetFloat(ID_WaterOpacity, _body.waterOpacity);
 
-            // Crest-style lit volume scattering: turns the flat fog colour into a sun-lit in-scatter.
+            // Lit volume scattering: turns the flat fog colour into a sun-lit in-scatter.
             sink.SetFloat(ID_ScatterEnabled, _body.volumeScatter ? 1f : 0f);
             sink.SetColor(ID_ScatterColor, _body.scatterColor);
             sink.SetFloat(ID_ScatterIntensity, _body.scatterIntensity);

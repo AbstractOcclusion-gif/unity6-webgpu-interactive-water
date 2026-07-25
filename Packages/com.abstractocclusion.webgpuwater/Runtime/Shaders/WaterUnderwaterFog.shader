@@ -34,6 +34,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         float _UnderwaterSurfaceY;
         float _UnderwaterUnbounded; // 1 = ocean half-space, 0 = clip to this body's box (pond)
         float _UnderwaterFogSimple; // 1 = tier Simple mode: flat waterline, skip the crossing march
+        // Ocean-surface eye-depth prepass (KWS-style rendered waterline): the DISPLACED surface's
+        // linear eye depth per pixel (0 = no surface rasterised there), written by WaterSurface's
+        // "OceanSurfaceEyeDepth" pass via WaterUnderwaterFogPass. When valid, the fog's crossing
+        // comes from this - the rendered surface itself - instead of the bounded analytic march.
+        TEXTURE2D(_OceanSurfaceEyeDepth);
+        float _OceanSurfaceDepthValid; // 1 = the prepass ran this frame (set by the fog pass)
         // Sun globals (published by WaterUniformPublisher) - not in this shader's include chain otherwise.
         // Needed so the underwater in-scatter can use the same lit WaterInscatterColor as the surface, for a
         // continuous colour crossing the waterline.
@@ -59,6 +65,25 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // WaterLargeWaves above) - the crossing-search band brackets the highest surf crest the
         // set jitter can produce, so it must be the SAME constant, not a hand copy.
         #define UNDERWATER_SURF_SETAMP_MAX   SURF_SETAMP_JITTER_MAX
+        // Fraction of the march reach where the wavy crossing starts fading to the flat fallback
+        // (fully flat AT the reach), so the wavy->flat handover is a blend, not a seam.
+        #define UNDERWATER_SEAM_BLEND_START  0.75
+        // Arm-fade split distances (ArmWeightFor): a wet span starting within NEAR metres of the
+        // camera is the LENS region (submerged lens pixels - including half-submersion, where the
+        // crossing sits centimetres in front of the eye) and gets full fog instantly; a span
+        // starting past FAR is genuine from-above murk on water ahead and takes the approach
+        // ramp. Blended between.
+        #define ARM_LENS_NEAR 0.5
+        #define ARM_LENS_FAR  2.0
+        // The murk's approach ramp: full when the camera reaches the surface, zero this many
+        // metres ABOVE it. SPATIAL, current-frame (the KWS lesson taken fully - no temporal
+        // state anywhere): the transition lasts exactly as long as the physical crossing, at any
+        // wave speed, so it can never read slow or drag behind the water. KEEP smaller than
+        // WaterVolume's FogArmBandMeters, so the pass only toggles where this fade is already 0.
+        #define MURK_FADE_ABOVE_METERS 0.25
+        // camSurfaceY sentinel for bounded bodies: far above any camera, so the murk ramp
+        // saturates to 1 (a pond's box fog is a volume seen from ANY side, never gated).
+        #define POND_CAM_SURF_SENTINEL 1e8
 
         struct Attributes { uint vertexID : SV_VertexID; };
         struct Varyings   { float4 positionCS : SV_POSITION; float2 uv : TEXCOORD0; };
@@ -108,9 +133,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // meniscus: no fog over a trough, fog under a crest.
         void OceanWavyPath(float3 sceneWorld, float3 cam,
                            out float pathLen, out float deepestY, out float surfaceRefY,
-                           out float3 wetStart)
+                           out float3 wetStart, out float camSurfaceY)
         {
             float camSurf = SurfaceHeightAtXZ(cam.xz);
+            camSurfaceY = camSurf; // the murk arm-fade's reference (ArmWeightFor)
             float sceneSurf = SurfaceHeightAtXZ(sceneWorld.xz);
             bool camUnder = cam.y <= camSurf;
             bool sceneUnder = sceneWorld.y <= sceneSurf;
@@ -157,7 +183,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             float startDist = saturate(tFlat - tBand) * rayLen;  // skip the deep water below the band
             float3 prev = cam + dir * startDist;
             float gapPrev = SurfaceSignedGap(prev);
-            float3 hit = cam + ray * saturate(tFlat);            // fallback: flat waterline (far horizon)
+            float3 hitFlat = cam + ray * saturate(tFlat);        // flat waterline (far horizon)
+            float3 hit = hitFlat;
+            // Where the march's reach ends: crossings found near it fade toward the flat fallback
+            // (below), so the wavy->flat handover at the cap is a blend, not a visible seam line.
+            float marchReach = startDist + UNDERWATER_CROSS_MAX_STEPS * UNDERWATER_CROSS_STEP_METRES;
             [loop]
             for (int s = 1; s <= UNDERWATER_CROSS_MAX_STEPS; s++)
             {
@@ -165,8 +195,77 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 if (d >= rayLen) break;                          // reached the scene end
                 float3 p = cam + dir * d;
                 float gap = SurfaceSignedGap(p);
-                if (gapPrev * gap <= 0.0) { hit = RefineSurfaceCrossing(prev, gapPrev, p); break; }
+                if (gapPrev * gap <= 0.0)
+                {
+                    // Wavy crossing, faded toward the flat one over the march's last quarter: a hard
+                    // switch at the step cap printed a seam where the fog waterline snapped from the
+                    // waves to the rest plane at ~the march distance.
+                    float seam = smoothstep(marchReach * UNDERWATER_SEAM_BLEND_START, marchReach, d);
+                    hit = lerp(RefineSurfaceCrossing(prev, gapPrev, p), hitFlat, seam);
+                    break;
+                }
                 prev = p; gapPrev = gap;
+            }
+
+            float3 underEnd = sceneUnder ? sceneWorld : cam;
+            pathLen = length(underEnd - hit);
+            deepestY = min(hit.y, underEnd.y);
+            surfaceRefY = sceneUnder ? sceneSurf : camSurf; // surface above the submerged endpoint
+            wetStart = camUnder ? cam : hit;                // wet span runs [start -> far end] along the ray
+        }
+
+        // Rendered-surface ocean path (the KWS trick): the crossing is the DISPLACED surface's own
+        // eye depth at this pixel, so the fog waterline matches the drawn waves EXACTLY at any
+        // distance - no march, no step cap, no flat-plane fallback mismatch at long range. Pixels
+        // with no surface rasterised (looking straight down at the floor, or past the clipmap's
+        // reach) fall back to the flat rest-plane crossing, exactly like the march's own far
+        // fallback. Structure mirrors OceanWavyPath so the outputs stay drop-in compatible.
+        void OceanPrepassPath(float2 uv, float3 sceneWorld, float3 cam,
+                              out float pathLen, out float deepestY, out float surfaceRefY,
+                              out float3 wetStart, out float camSurfaceY)
+        {
+            float camSurf = SurfaceHeightAtXZ(cam.xz);
+            camSurfaceY = camSurf; // the murk arm-fade's reference (ArmWeightFor)
+            float sceneSurf = SurfaceHeightAtXZ(sceneWorld.xz);
+            bool camUnder = cam.y <= camSurf;
+            bool sceneUnder = sceneWorld.y <= sceneSurf;
+            wetStart = cam;
+
+            // Whole segment on one side of the surface: no crossing to look up.
+            if (camUnder && sceneUnder)
+            {
+                pathLen = length(sceneWorld - cam);
+                deepestY = min(cam.y, sceneWorld.y);
+                surfaceRefY = (cam.y <= sceneWorld.y) ? camSurf : sceneSurf;
+                return;
+            }
+            if (!camUnder && !sceneUnder)
+            {
+                pathLen = 0.0;
+                deepestY = _VolumeCenter.y;
+                surfaceRefY = camSurf;
+                return;
+            }
+
+            // Mixed: take the crossing from the rendered surface's eye depth at this pixel.
+            float3 ray = sceneWorld - cam;
+            float rayLen = max(length(ray), 1e-4);
+            float3 dir = ray / rayLen;
+            float surfaceEye = LOAD_TEXTURE2D(_OceanSurfaceEyeDepth,
+                                              int2(uv * _ScaledScreenParams.xy)).r;
+            // Eye depth is view-space Z; divide by the ray/forward cosine for distance along the ray.
+            float3 camForward = -UNITY_MATRIX_V[2].xyz;
+            float hitDist = surfaceEye / max(dot(dir, camForward), 1e-4);
+            float3 hit;
+            if (surfaceEye > 0.0 && hitDist < rayLen)
+            {
+                hit = cam + dir * hitDist;
+            }
+            else
+            {
+                // No surface at this pixel: flat rest-plane crossing (the march's far fallback).
+                float dySafe = ray.y + (ray.y >= 0.0 ? 1e-4 : -1e-4);
+                hit = cam + ray * saturate((_VolumeCenter.y - cam.y) / dySafe);
             }
 
             float3 underEnd = sceneUnder ? sceneWorld : cam;
@@ -184,9 +283,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // UNDERWATER_CROSS_MAX_STEPS surface evaluations per pixel.
         void OceanFlatPath(float3 sceneWorld, float3 cam,
                            out float pathLen, out float deepestY, out float surfaceRefY,
-                           out float3 wetStart)
+                           out float3 wetStart, out float camSurfaceY)
         {
             float level = _UnderwaterSurfaceY;
+            camSurfaceY = level; // the murk arm-fade's reference (flat, matching this tier's waterline)
             pathLen = WaterPathLength(sceneWorld, cam, level);
             // min against 'level' makes an in-air endpoint contribute its crossing at the waterline,
             // so the deepest submerged point is exact in every camera-above/below combination.
@@ -217,19 +317,25 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // World-space length of the in-water part of the camera->scene ray, the deepest submerged point's
         // world Y (for downwelling), and the displaced surface height above it (the depth reference).
         // pathLen 0 = this pixel's ray never enters the water.
-        void UnderwaterSegment(float3 sceneWorld, out float pathLen, out float deepestY, out float surfaceRefY,
-                               out float3 wetStart)
+        void UnderwaterSegment(float2 uv, float3 sceneWorld, out float pathLen, out float deepestY,
+                               out float surfaceRefY, out float3 wetStart, out float camSurfaceY)
         {
             float3 cam = _WorldSpaceCameraPos;
+            // Bounded bodies: sentinel far above any camera, so the murk arm-fade saturates to 1
+            // (their box fog is a volume seen from any side, never a gated fullscreen state).
+            camSurfaceY = POND_CAM_SURF_SENTINEL;
 
             if (_UnderwaterUnbounded > 0.5)
             {
-                // Ocean: the below-surface span. _UnderwaterFogSimple is a uniform, so this branch is
-                // coherent across the screen - Simple tiers never pay for the wavy march.
+                // Ocean: the below-surface span. All three gates are uniforms, so the branch is
+                // coherent across the screen - Simple tiers never pay for the wavy march, and when
+                // the rendered-surface prepass ran, nobody does (the crossing is a texture load).
                 if (_UnderwaterFogSimple > 0.5)
-                    OceanFlatPath(sceneWorld, cam, pathLen, deepestY, surfaceRefY, wetStart);
+                    OceanFlatPath(sceneWorld, cam, pathLen, deepestY, surfaceRefY, wetStart, camSurfaceY);
+                else if (_OceanSurfaceDepthValid > 0.5)
+                    OceanPrepassPath(uv, sceneWorld, cam, pathLen, deepestY, surfaceRefY, wetStart, camSurfaceY);
                 else
-                    OceanWavyPath(sceneWorld, cam, pathLen, deepestY, surfaceRefY, wetStart);
+                    OceanWavyPath(sceneWorld, cam, pathLen, deepestY, surfaceRefY, wetStart, camSurfaceY);
                 return;
             }
 
@@ -275,16 +381,41 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // live in WaterExclusion.hlsl: the exclusion wall's above-water fog reconstruction
         // shares them, so both views of the carve shade identically.
 
-        // Per-channel path transmittance for this pixel; also returns the depth-darkening term
-        // and the sun visibility of the wet span past the exclusion volumes (1 = unshadowed).
-        float3 UnderwaterFog(float2 uv, out float3 depthAttenuation, out float sunVisibility)
+        // Per-pixel arm fade (the KWS lesson): KWS/Crest have NO temporal fade - their underwater
+        // effect is binary per pixel against the RASTERIZED surface, frame-exact by construction,
+        // with the meniscus hiding the edge. Match that where it matters: a ray that STARTS in
+        // water gets FULL fog instantly (the below-line lens region - its edge is the per-pixel
+        // waterline, current-frame GPU math, no readback staleness). Only the through-surface murk
+        // (camera-above rays crossing into the water ahead) fades - and even that fade is SPATIAL,
+        // driven by the camera's live height above the surface, never by time: the gate can flip
+        // a frame early/late for free because the murk is already zero that far from the water.
+        float ArmWeightFor(float3 wetStart, float pathLen, float camSurfaceY)
+        {
+            if (pathLen <= 0.0) return 1.0; // no fog on this ray; weight is moot
+            float heightAbove = _WorldSpaceCameraPos.y - camSurfaceY;
+            float murkWeight = 1.0 - saturate(heightAbove / MURK_FADE_ABOVE_METERS);
+            // Distance to where this ray's water STARTS: ~0..near-plane for the submerged part
+            // of the lens, metres for genuine from-above murk. Smooth blend so no ring appears
+            // where the two regimes meet during a half-submerged frame.
+            float startDist = distance(wetStart, _WorldSpaceCameraPos);
+            float murkiness = smoothstep(ARM_LENS_NEAR, ARM_LENS_FAR, startDist);
+            return lerp(1.0, murkWeight, murkiness);
+        }
+
+        // Per-channel path transmittance for this pixel; also returns the depth-darkening term,
+        // the sun visibility of the wet span past the exclusion volumes (1 = unshadowed), and the
+        // per-pixel arm-fade weight (see ArmWeightFor).
+        float3 UnderwaterFog(float2 uv, out float3 depthAttenuation, out float sunVisibility,
+                             out float armWeight)
         {
             float3 sceneWorld = SceneWorldPos(uv);
             float pathLen;
             float deepestY;
             float surfaceRefY;
             float3 wetStart;
-            UnderwaterSegment(sceneWorld, pathLen, deepestY, surfaceRefY, wetStart);
+            float camSurfaceY;
+            UnderwaterSegment(uv, sceneWorld, pathLen, deepestY, surfaceRefY, wetStart, camSurfaceY);
+            armWeight = ArmWeightFor(wetStart, pathLen, camSurfaceY);
             // Dry-interior exclusion: the part of the wet span that crosses an exclusion volume is
             // AIR, so carve it out of the fog integral. Zero volumes = the loops never run. When
             // the whole span is dry (camera in a submerged room looking at its own wall), the
@@ -362,8 +493,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             {
                 float3 depthAttenuation;
                 float sunVisibilityUnused; // absorption is sun-independent; only the in-scatter shadows
-                float3 pathTransmittance = UnderwaterFog(input.uv, depthAttenuation, sunVisibilityUnused);
-                return half4(pathTransmittance * depthAttenuation + FogDither(input.positionCS.xy), 1.0);
+                float armWeight;
+                float3 pathTransmittance = UnderwaterFog(input.uv, depthAttenuation, sunVisibilityUnused,
+                                                         armWeight);
+                // Per-pixel arm fade: below-line rays are full-strength instantly (weight 1); only
+                // the through-surface murk eases in, so the gate can flip a frame early/late with
+                // no visible change (at murk weight 0 the multiplier is 1 = scene untouched).
+                float3 absorb = lerp(float3(1.0, 1.0, 1.0), pathTransmittance * depthAttenuation,
+                                     armWeight);
+                return half4(absorb + FogDither(input.positionCS.xy), 1.0);
             }
             ENDHLSL
         }
@@ -383,7 +521,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             {
                 float3 depthAttenuation;
                 float sunVisibility;
-                float3 pathTransmittance = UnderwaterFog(input.uv, depthAttenuation, sunVisibility);
+                float armWeight;
+                float3 pathTransmittance = UnderwaterFog(input.uv, depthAttenuation, sunVisibility,
+                                                         armWeight);
                 // Lit in-scatter target: the same WaterInscatterColor the surface uses, so the fog colour
                 // seen from below matches the water colour seen from above (continuous across the waterline).
                 // The view ray is surface->camera, reconstructed from the scene depth. WaterInscatterColor
@@ -399,6 +539,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 // bodies; this keeps a visible (never black) shadow column in both modes.
                 fogColor *= lerp(EXCLUSION_SHADOW_FLOOR, 1.0, sunVisibility);
                 float3 inscatter = fogColor * (1.0 - pathTransmittance);
+                // Per-pixel arm fade: additive term scales straight to 0, mirroring the absorb pass.
+                inscatter *= armWeight;
                 return half4(inscatter * depthAttenuation + FogDither(input.positionCS.xy), 1.0);
             }
             ENDHLSL
@@ -425,12 +567,21 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
 
             float _WaterlineWidthPx;  // meniscus band thickness, screen pixels
             float _WaterlineStrength; // meniscus opacity at the crossing
+            float _WaterlineWarp;     // lens-tension warp weight (0 = plain darkened line)
+            // The scene as fogged so far, copied by the pass (a raster pass cannot read its own
+            // target); the tension warp re-samples it at a shifted UV.
+            TEXTURE2D(_WaterlineSceneTex); SAMPLER(sampler_WaterlineSceneTex);
 
             // Guard for the metres-per-pixel derivative (degenerate at a perfectly surface-
             // parallel view), and the alpha below which the fragment discards instead of
             // paying the blend.
             #define WATERLINE_METERS_PER_PIXEL_MIN 1e-5
             #define WATERLINE_MIN_ALPHA            0.004
+            // Lens tension (KWS half-line): warp band width as a multiple of the line width, the
+            // maximum UV pull at full knob (screen fractions), and the coverage fade-in edge.
+            #define WATERLINE_WARP_BAND_SCALE      6.0
+            #define WATERLINE_WARP_MAX             0.06
+            #define WATERLINE_WARP_COVER_EDGE      0.15
 
             half4 FragWaterline(Varyings input) : SV_Target
             {
@@ -459,9 +610,34 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 float metersPerPixel = max(fwidth(gap), WATERLINE_METERS_PER_PIXEL_MIN);
                 float pixelsFromLine = abs(gap) / metersPerPixel;
                 float band = 1.0 - smoothstep(0.0, max(_WaterlineWidthPx, 1.0), pixelsFromLine);
-                float alpha = band * _WaterlineStrength;
-                clip(alpha - WATERLINE_MIN_ALPHA); // off-band pixels: no blend cost
-                return half4(0.0, 0.0, 0.0, alpha); // pure darkening, like the chunk wall meniscus
+                float lineAlpha = band * _WaterlineStrength;
+
+                // Lens tension (KWS half-line): in a wider band around the line, re-sample the
+                // scene pulled toward the AIR side, so the water appears to grip and climb the
+                // lens while crossing. The m*(1-m) curve is zero AT the line and at the band
+                // edge, peaking between - the image bulges beside the line, not on it. Uniform
+                // branch (_WaterlineWarp is a global), and all derivatives sit above it.
+                float gapPerUvY = ddy(gap);
+                if (_WaterlineWarp > 0.0)
+                {
+                    float warpBandPx = max(_WaterlineWidthPx, 1.0) * WATERLINE_WARP_BAND_SCALE;
+                    float m = 1.0 - saturate(pixelsFromLine / warpBandPx);
+                    float offset = _WaterlineWarp * WATERLINE_WARP_MAX * 4.0 * m * (1.0 - m);
+                    // ddy(gap)'s sign says which way screen-y runs relative to the surface, so
+                    // the pull points toward the air side on every platform orientation and
+                    // under camera roll. If the grip visibly pulls the WRONG way, flip upSign.
+                    float upSign = (gapPerUvY >= 0.0) ? 1.0 : -1.0;
+                    float2 warpedUV = saturate(input.uv + float2(0.0, upSign * offset));
+                    float3 scene = SAMPLE_TEXTURE2D_LOD(_WaterlineSceneTex,
+                                                        sampler_WaterlineSceneTex, warpedUV, 0).rgb;
+                    scene *= 1.0 - lineAlpha; // the meniscus darken rides the warped image
+                    float coverage = smoothstep(0.0, WATERLINE_WARP_COVER_EDGE, m);
+                    clip(coverage - WATERLINE_MIN_ALPHA);
+                    return half4(scene, coverage);
+                }
+
+                clip(lineAlpha - WATERLINE_MIN_ALPHA); // off-band pixels: no blend cost
+                return half4(0.0, 0.0, 0.0, lineAlpha); // pure darkening, like the chunk wall meniscus
             }
             ENDHLSL
         }

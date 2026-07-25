@@ -359,6 +359,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // inspector serializes and can change every one afterwards.
         const float DefaultFogDensity = 0.2f;
         const float DefaultDetailNormalStrength = 0.2f;
+        const float OceanGodRayDepthFade = 0.05f; // per metre; ocean-scale reach (pool default is 0.5)
         // Wind-wave scale limits: KEEP in sync with WindWaveSettings.waveScaleMeters' [Range].
         const float WaveScaleMetersMin = 1f;
         const float WaveScaleMetersMax = 500f;
@@ -390,10 +391,16 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             serialized.FindProperty(WaterVolumePropertyPaths.DetailNormalStrength).floatValue =
                 DefaultDetailNormalStrength;
             // Ocean bodies express "god rays" through the fullscreen ocean shafts (the legacy
-            // god-ray box the build kit rigs is pool-scaled); same shared default intensity.
+            // god-ray box the build kit rigs is pool-scaled); same shared default intensity. The
+            // depth fade is re-scaled too: the pool default (0.5/m) kills 99% of a beam by 10 m,
+            // so ocean shafts never plunged - 0.05/m puts the half-depth around 14 m.
             if (_kind == WaterKind.OpenWaterOcean && _godRays)
+            {
                 serialized.FindProperty(WaterVolumePropertyPaths.LargeGodRayDensity).floatValue =
                     DefaultGodRayDensity;
+                serialized.FindProperty(WaterVolumePropertyPaths.GodRayDepthFade).floatValue =
+                    OceanGodRayDepthFade;
+            }
             serialized.ApplyModifiedProperties(); // rides the Create Water undo group
         }
 

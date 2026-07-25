@@ -697,7 +697,7 @@ namespace AbstractOcclusion.WebGpuWater
             return Mathf.Clamp(target, setting.MinResolution, setting.MaxResolution);
         }
 
-        // ---- Scale-invariant ripples on cap-limited grids (KWS/Crest-informed) ----------------------
+        // ---- Scale-invariant ripples on cap-limited grids --------------------------------------------
         // How coarse the sim grid actually is versus the tier's authored texels-per-metre: 1 while the
         // grid holds tier density (every body below the resolution cap - their look is untouched), < 1
         // once the cap forces metres-per-texel to grow (bounded bodies wider than cap/texelsPerMeter,

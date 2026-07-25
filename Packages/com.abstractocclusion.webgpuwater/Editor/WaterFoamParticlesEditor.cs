@@ -220,7 +220,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             EditorGUILayout.PropertyField(_material,
                 new GUIContent("Particle Material", "Material on the FoamParticles shader (quad/spray look). Required."));
             EditorGUILayout.PropertyField(_renderMode,
-                new GUIContent("Render Mode", "Screen-Space Density = KWS connected-foam veil; Quads = per-particle billboards."));
+                new GUIContent("Render Mode", "Screen-Space Density = connected foam veil; Quads = per-particle billboards."));
 
             using (new EditorGUI.DisabledScope(_renderMode.enumValueIndex != DensityModeIndex))
                 EditorGUILayout.PropertyField(_densityMaterial,

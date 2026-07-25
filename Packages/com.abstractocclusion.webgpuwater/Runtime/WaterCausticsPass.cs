@@ -18,6 +18,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_VolumeCenter = Shader.PropertyToID("_VolumeCenter");
         static readonly int ID_VolumeExtent = Shader.PropertyToID("_VolumeExtent");
         static readonly int ID_VolumeRot = Shader.PropertyToID("_VolumeRot");
+        static readonly int ID_CausticSmooth = Shader.PropertyToID("_LargeGodRayCausticSmooth");
 
         // Green channel of the caustic RT starts at 1 (unshadowed) so floor fragments that sample
         // outside the drawn caustic footprint read "lit", not black, now that green drives the
@@ -66,12 +67,21 @@ namespace AbstractOcclusion.WebGpuWater
             // caustic RT green channel, so their underwater shadow lines up with the caustics.
             if (occluderShader != null)
                 _occluderMaterial = new Material(occluderShader) { hideFlags = HideFlags.HideAndDontSave };
+            // Ocean-clipmap bodies get a mip chain: the god-ray march samples the caustic at a
+            // depth-scaled LOD so deep beams read broad and slow (_LargeGodRayCausticDepthSoften).
+            // Mips are generated EXPLICITLY after each caustic draw (see the Render methods) - never
+            // auto - so a mip level can never hold stale/undefined data. Pools keep the flat RT
+            // (their samplers were tuned against it); a body whose archetype changes at runtime
+            // simply degrades to LOD 0 until its modules are rebuilt.
+            bool withMips = owner.IsOceanClipmap;
             _target = new RenderTexture(resolution, resolution, 0, RenderTextureFormat.ARGB32)
             {
                 filterMode = FilterMode.Bilinear,
                 wrapMode = TextureWrapMode.Clamp,
                 name = "CausticTex",
-                hideFlags = HideFlags.HideAndDontSave
+                hideFlags = HideFlags.HideAndDontSave,
+                useMipMap = withMips,
+                autoGenerateMips = false
             };
             _target.Create();
             _cb = new CommandBuffer { name = "WebGLWater.Caustics" };
@@ -94,6 +104,7 @@ namespace AbstractOcclusion.WebGpuWater
             _cb.ClearRenderTarget(true, true, CausticClear);
             _cb.DrawMesh(waterMesh, Matrix4x4.identity, _material, 0, 0);
             DrawOccluders(waterRestY, volumeCenter, volumeExtent, volumeRotation, lightDir);
+            if (_target.useMipMap) _cb.GenerateMips(_target); // keep every level valid (see ctor)
             Graphics.ExecuteCommandBuffer(_cb);
         }
 
@@ -152,11 +163,15 @@ namespace AbstractOcclusion.WebGpuWater
             if (simTexture != null) _largeBodyMaterial.SetTexture(ID_Water, simTexture);
             _largeBodyMaterial.SetVector(ID_SimCenter, windowCenter);
             _largeBodyMaterial.SetVector(ID_SimExtent, windowHalfExtent);
+            // God-ray caustic smoothing radius (Ocean God Rays block): set here like the window frame,
+            // because this pass renders before the owner publishes its per-body block.
+            _largeBodyMaterial.SetFloat(ID_CausticSmooth, _owner.LargeGodRayCausticSmooth);
 
             _cb.Clear();
             _cb.SetRenderTarget(_target);
             _cb.ClearRenderTarget(true, true, Color.clear);
             _cb.DrawMesh(windowMesh, Matrix4x4.identity, _largeBodyMaterial, 0, 0);
+            if (_target.useMipMap) _cb.GenerateMips(_target); // the god rays sample depth-scaled LODs
             Graphics.ExecuteCommandBuffer(_cb);
         }
 

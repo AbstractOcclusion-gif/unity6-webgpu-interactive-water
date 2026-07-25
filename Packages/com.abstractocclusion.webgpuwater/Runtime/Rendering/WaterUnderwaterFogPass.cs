@@ -11,9 +11,12 @@
 //
 // Runs before post so bloom/tonemapping treat the fogged scene as the final image.
 #if WEBGPUWATER_URP
+using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Experimental.Rendering;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.RenderGraphModule;
+using UnityEngine.Rendering.RenderGraphModule.Util;
 using UnityEngine.Rendering.Universal;
 
 namespace AbstractOcclusion.WebGpuWater
@@ -25,9 +28,19 @@ namespace AbstractOcclusion.WebGpuWater
         const int AbsorbShaderPass = 0;
         const int InscatterShaderPass = 1;
         const int WaterlineShaderPass = 2;
+        // WaterSurface.shader's "OceanSurfaceEyeDepth" pass, drawn per surface renderer below.
+        const int SurfaceDepthShaderPass = 1;
+
+        static readonly int ID_OceanSurfaceEyeDepth = Shader.PropertyToID("_OceanSurfaceEyeDepth");
+        static readonly int ID_OceanSurfaceDepthValid = Shader.PropertyToID("_OceanSurfaceDepthValid");
+        static readonly int ID_WaterlineSceneTex = Shader.PropertyToID("_WaterlineSceneTex");
 
         readonly Material _material;
         readonly ProfilingSampler _sampler = new ProfilingSampler("WaterUnderwaterFog");
+        readonly ProfilingSampler _prepassSampler = new ProfilingSampler("WaterUnderwaterFog.SurfaceDepth");
+        // Reused each frame so the prepass allocates no garbage.
+        readonly MaterialPropertyBlock _scratchBlock = new MaterialPropertyBlock();
+        static readonly List<Renderer> s_SurfaceRenderers = new List<Renderer>();
 
         internal WaterUnderwaterFogPass(Material material)
         {
@@ -37,6 +50,12 @@ namespace AbstractOcclusion.WebGpuWater
 
         sealed class PassData { public Material material; public int shaderPass; }
 
+        sealed class PrepassData
+        {
+            public List<Renderer> renderers;
+            public MaterialPropertyBlock block;
+        }
+
         public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
         {
             if (_material == null) return;
@@ -44,6 +63,25 @@ namespace AbstractOcclusion.WebGpuWater
             UniversalResourceData resources = frameData.Get<UniversalResourceData>();
             TextureHandle cameraColor = resources.activeColorTexture;
             if (!cameraColor.IsValid()) return;
+
+            // Rendered-surface waterline prepass (KWS trick): draw the primary ocean's DISPLACED
+            // surface into an eye-depth target the fog samples per pixel, so its waterline is the
+            // rendered surface itself - exact at any distance, replacing the bounded crossing
+            // march. The validity global is refreshed EVERY record (globals persist across frames,
+            // so a stale 1 after the ocean disappears would leave the fog reading a dead RT).
+            bool prepassRecorded = false;
+            WaterVolume primary = WaterVolume.Primary;
+            if (primary != null && primary.IsOceanClipmap)
+            {
+                s_SurfaceRenderers.Clear();
+                primary.CollectOceanSurfaceRenderers(s_SurfaceRenderers);
+                if (s_SurfaceRenderers.Count > 0)
+                {
+                    RecordSurfaceDepthPrepass(renderGraph, cameraColor);
+                    prepassRecorded = true;
+                }
+            }
+            Shader.SetGlobalFloat(ID_OceanSurfaceDepthValid, prepassRecorded ? 1f : 0f);
 
             // Order matters: absorb (scene *= transmittance) then inscatter (scene += fog),
             // then the waterline meniscus ON TOP of the fogged scene (it darkens the final
@@ -56,7 +94,89 @@ namespace AbstractOcclusion.WebGpuWater
                 RecordFogPass(renderGraph, resources, cameraColor, InscatterShaderPass, "WaterUnderwaterFog.Inscatter");
             }
             if (WaterVolume.WaterlineActive)
-                RecordFogPass(renderGraph, resources, cameraColor, WaterlineShaderPass, "WaterUnderwaterFog.Waterline");
+                RecordWaterlinePass(renderGraph, resources, cameraColor);
+        }
+
+        // The waterline meniscus draws over the fogged scene AND (for the KWS-style lens tension)
+        // re-samples it at a warped UV - a raster pass cannot read its own colour target, so the
+        // scene is copied to a transient first and handed to the material. The copy costs one
+        // camera-sized blit only during the few straddle frames the waterline is armed.
+        void RecordWaterlinePass(RenderGraph renderGraph, UniversalResourceData resources,
+                                 TextureHandle cameraColor)
+        {
+            TextureDesc copyDesc = renderGraph.GetTextureDesc(cameraColor);
+            copyDesc.name = "_WaterlineSceneTex";
+            copyDesc.clearBuffer = false;
+            TextureHandle sceneCopy = renderGraph.CreateTexture(copyDesc);
+            renderGraph.AddCopyPass(cameraColor, sceneCopy, passName: "WaterUnderwaterFog.WaterlineCopy");
+
+            using var builder = renderGraph.AddRasterRenderPass<WaterlinePassData>(
+                "WaterUnderwaterFog.Waterline", out WaterlinePassData data, _sampler);
+            data.material = _material;
+            data.sceneCopy = sceneCopy;
+            builder.SetRenderAttachment(cameraColor, 0, AccessFlags.ReadWrite);
+            builder.UseTexture(sceneCopy, AccessFlags.Read);
+            if (resources.cameraDepthTexture.IsValid())
+                builder.UseTexture(resources.cameraDepthTexture, AccessFlags.Read);
+            builder.UseAllGlobalTextures(true);
+            builder.SetRenderFunc((WaterlinePassData d, RasterGraphContext ctx) =>
+            {
+                d.material.SetTexture(ID_WaterlineSceneTex, d.sceneCopy);
+                CoreUtils.DrawFullScreen(ctx.cmd, d.material, null, WaterlineShaderPass);
+            });
+        }
+
+        sealed class WaterlinePassData
+        {
+            public Material material;
+            public TextureHandle sceneCopy;
+        }
+
+        // Draw every live ocean-surface renderer's mesh with its OWN matrix, material and property
+        // block through WaterSurface.shader's depth pass, so the prepass displacement matches the
+        // visible surface exactly (whatever uniforms reach the real draw reach this one).
+        void RecordSurfaceDepthPrepass(RenderGraph renderGraph, TextureHandle sizeSource)
+        {
+            // Camera-sized R32F colour (linear eye depth; clear 0 = "no surface") + its own depth
+            // buffer so the nearest sheet wins where above/under overlap on screen.
+            TextureDesc colorDesc = renderGraph.GetTextureDesc(sizeSource);
+            colorDesc.name = "_OceanSurfaceEyeDepth";
+            colorDesc.colorFormat = GraphicsFormat.R32_SFloat;
+            colorDesc.depthBufferBits = DepthBits.None;
+            colorDesc.msaaSamples = MSAASamples.None;
+            colorDesc.clearBuffer = true;
+            colorDesc.clearColor = Color.clear;
+            TextureHandle color = renderGraph.CreateTexture(colorDesc);
+
+            TextureDesc depthDesc = renderGraph.GetTextureDesc(sizeSource);
+            depthDesc.name = "OceanSurfaceDepthBuffer";
+            depthDesc.colorFormat = GraphicsFormat.None;
+            depthDesc.depthBufferBits = DepthBits.Depth32;
+            depthDesc.msaaSamples = MSAASamples.None;
+            depthDesc.clearBuffer = true;
+            TextureHandle depth = renderGraph.CreateTexture(depthDesc);
+
+            using var builder = renderGraph.AddRasterRenderPass<PrepassData>(_prepassSampler.name,
+                out PrepassData data, _prepassSampler);
+            data.renderers = s_SurfaceRenderers;
+            data.block = _scratchBlock;
+            builder.SetRenderAttachment(color, 0, AccessFlags.Write);
+            builder.SetRenderAttachmentDepth(depth, AccessFlags.Write);
+            builder.AllowPassCulling(false);                          // driven by our own list
+            builder.SetGlobalTextureAfterPass(color, ID_OceanSurfaceEyeDepth); // fog reads it later this frame
+            builder.SetRenderFunc((PrepassData d, RasterGraphContext ctx) =>
+            {
+                for (int i = 0; i < d.renderers.Count; i++)
+                {
+                    Renderer renderer = d.renderers[i];
+                    if (renderer == null || renderer.sharedMaterial == null) continue;
+                    MeshFilter filter = renderer.GetComponent<MeshFilter>();
+                    if (filter == null || filter.sharedMesh == null) continue;
+                    renderer.GetPropertyBlock(d.block); // the renderer's live per-body/per-level uniforms
+                    ctx.cmd.DrawMesh(filter.sharedMesh, renderer.localToWorldMatrix,
+                                     renderer.sharedMaterial, 0, SurfaceDepthShaderPass, d.block);
+                }
+            });
         }
 
         void RecordFogPass(RenderGraph renderGraph, UniversalResourceData resources,

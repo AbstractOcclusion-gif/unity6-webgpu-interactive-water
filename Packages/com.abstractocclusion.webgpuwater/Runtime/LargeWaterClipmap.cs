@@ -4,7 +4,7 @@
 // Open Water + Unbounded Ocean enabled (see WaterVolume.IsOceanClipmap). Bounded lakes and pools
 // never build one, so the shipped small-body build is unaffected.
 //
-// Technique (Losasso/Hoppe "Geometry Clipmaps", as used by Crest/KWS): the ocean is drawn as a set
+// Technique (Losasso/Hoppe "Geometry Clipmaps"): the ocean is drawn as a set
 // of NESTED SQUARE LOD levels. Each level is one shared UNIFORM square-annulus grid authored in
 // INTEGER CELL UNITS; the driver scales it by that level's cell size and places it at a follow point
 // SNAPPED to that level's own world lattice. Because a uniform grid snapped to its own cell always

@@ -27,6 +27,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // Ocean god rays (wizard look defaults).
         internal const string LargeGodRayDensity = "ocean.largeGodRayDensity";
 
+        // Depth attenuation block (wizard look defaults).
+        internal const string GodRayDepthFade = "depthAttenuation.godRayDepthFade";
+
         // Ocean block (large waves / swell / horizon), used by the feature-showcase builder
         // and the ocean inspector section.
         internal const string EdgeFeatherMeters = "ocean.edgeFeatherMeters";

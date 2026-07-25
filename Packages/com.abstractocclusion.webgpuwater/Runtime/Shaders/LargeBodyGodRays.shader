@@ -11,7 +11,8 @@
 //
 // Two passes: 0 = raymarch into a half-res target (reads scene depth + main-light shadows via URP
 // globals); 1 = additive composite of that target (global _LargeGodRayTex) over the camera colour.
-// Runs only when the camera is submerged (the shader early-outs on _CameraUnderwater). Requires the
+// Runs only when the camera is submerged (the shader fades in over the first centimetres below the
+// surface and early-outs above it - spatial, so wave-driven crossings never pop). Requires the
 // URP asset's Depth Texture ON and main-light shadows enabled. All tuning comes from published globals.
 Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
 {
@@ -52,7 +53,6 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
 
             // Published by the underwater fog path; reused here so the shafts share the exact submersion
             // state and surface height the fog uses (one source of truth, no separate god-ray copy).
-            float _CameraUnderwater;   // 1 when the camera is below the surface
             float _UnderwaterSurfaceY; // world Y of the water surface above the camera
 
             float4 _LargeGodRayColor;
@@ -60,6 +60,13 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             float  _LargeGodRaySteps;
             float  _LargeGodRayAnisotropy;
             float  _LargeGodRayCausticStrength; // near-field surface-caustic shimmer (0 = plain shadow shafts)
+            // Depth softening of the caustic shimmer (mip levels per metre below the surface): real
+            // caustic light decorrelates with depth, so deep samples should carry broad slow beams,
+            // not the razor-sharp surface focus. Mip averaging converges toward the RT's mean, so one
+            // depth-scaled LOD gives BOTH the blur and the contrast fade. 0 = legacy sharp-at-any-depth.
+            // Needs the caustic RT's mips (WaterCausticsPass generates them for ocean-clipmap bodies);
+            // without mips the LOD clamps to 0 and this degrades to the legacy look.
+            float  _LargeGodRayCausticDepthSoften;
 
             // The body's near-field caustic RT (window frame), published as a global. Sampled by light-
             // projection so the shafts flicker with the surface focusing, like the pool god rays.
@@ -101,22 +108,33 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             // Near-field caustic focus at a submerged sample: project it along the refracted sun to the
             // shared reference plane, map into the window frame, sample the caustic RT. Returns 0 beyond
             // the window (plain shafts there), matching how LargeBodyCaustics.shader wrote the RT.
-            float LargeBodyCausticAt(float3 p, float3 refractedSun, float refPlaneY)
+            // 'lod' is the depth-softening mip (see _LargeGodRayCausticDepthSoften).
+            float LargeBodyCausticAt(float3 p, float3 refractedSun, float refPlaneY, float lod)
             {
                 float2 projXZ = p.xz + refractedSun.xz * ((refPlaneY - p.y) / SafeRefractedLightY(refractedSun.y));
                 float2 windowNorm = (projXZ - _SimCenter.xz) / max(_SimExtent.xz, 1e-3);
                 float2 edge = 1.0 - abs(windowNorm);
                 if (edge.x <= 0.0 || edge.y <= 0.0) return 0.0;
                 float fade = saturate(min(edge.x, edge.y) / CAUSTIC_WINDOW_FADE);
-                float focus = SAMPLE_TEXTURE2D_LOD(_CausticTex, sampler_CausticTex, windowNorm * 0.5 + 0.5, 0).r;
+                float focus = SAMPLE_TEXTURE2D_LOD(_CausticTex, sampler_CausticTex, windowNorm * 0.5 + 0.5, lod).r;
                 return focus * fade;
             }
 
+            // The shafts' submersion fade: zero at the surface, full this many metres below. SPATIAL
+            // and current-frame (same pattern as the fog's murk ramp): the binary _CameraUnderwater
+            // flag carries the CPU gate's readback staleness and hysteresis, so gating the scatter
+            // on it popped the shafts a frame early/late whenever WAVES drove the crossing.
+            #define GODRAY_SUBMERGE_FADE_METERS 0.25
+
             half4 FragRaymarch(Varyings input) : SV_Target
             {
-                // Underwater only: these shafts are the view from BELOW the surface. Off above water and
-                // when the shafts are disabled. (The feature also gates on an active god-ray ocean.)
-                if (_LargeGodRayDensity <= 0.0 || _CameraUnderwater < 0.5) return half4(0.0, 0.0, 0.0, 1.0);
+                // Underwater only: these shafts are the view from BELOW the surface. Fade over the
+                // first centimetres of submersion instead of switching on the binary flag, so the
+                // scatter rises with the water taking the lens rather than popping. (The feature
+                // also gates on an active god-ray ocean.)
+                float submergeFade = saturate((_UnderwaterSurfaceY - _WorldSpaceCameraPos.y)
+                                              / GODRAY_SUBMERGE_FADE_METERS);
+                if (_LargeGodRayDensity <= 0.0 || submergeFade <= 0.0) return half4(0.0, 0.0, 0.0, 1.0);
 
                 float rawDepth = SampleSceneDepth(input.uv);
                 float3 sceneWorld = ComputeWorldSpacePosition(input.uv, rawDepth, UNITY_MATRIX_I_VP);
@@ -167,8 +185,10 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                     shadow *= ExclusionSunVisibility(p, _LightDir, _UnderwaterSurfaceY);
                     // downwelling: less sun reaches deeper samples (shared depth-darken knob).
                     float depthFade = DepthFadeScalar(p.y, _UnderwaterSurfaceY, _GodRayDepthFade);
-                    // surface-focused caustic brightens/flickers the shaft near the camera; neutral far out.
-                    float caustic = wantCaustic ? LargeBodyCausticAt(p, refractedSun, causticRefPlaneY) : 0.0;
+                    // surface-focused caustic brightens/flickers the shaft near the camera; neutral far
+                    // out, and softened/calmed with the SAMPLE's depth (broad slow beams down deep).
+                    float causticLod = max(0.0, _UnderwaterSurfaceY - p.y) * _LargeGodRayCausticDepthSoften;
+                    float caustic = wantCaustic ? LargeBodyCausticAt(p, refractedSun, causticRefPlaneY, causticLod) : 0.0;
                     // Dry-interior exclusion: samples inside an exclusion volume are air - skip their
                     // scatter; the view-fog transmittance still advances along the ray.
                     if (!InsideExclusion(p))
@@ -180,6 +200,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 accum /= steps;
 
                 float3 col = _LargeGodRayColor.rgb * _SunColor * (accum * _LargeGodRayDensity * phase);
+                col *= submergeFade; // submersion fade (see GODRAY_SUBMERGE_FADE_METERS above)
                 return half4(col, 1.0);
             }
             ENDHLSL

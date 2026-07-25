@@ -76,7 +76,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 DrawFields("underwaterSurfaceSettings.meniscus");
                 DrawFieldsIf(Prop("underwaterSurfaceSettings.meniscus").boolValue,
                     "underwaterSurfaceSettings.meniscusWidthPixels",
-                    "underwaterSurfaceSettings.meniscusStrength");
+                    "underwaterSurfaceSettings.meniscusStrength",
+                    "underwaterSurfaceSettings.meniscusWarp");
             });
         }
 

@@ -44,6 +44,15 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyCaustics"
             // analytic swell; it stays a soft splash/wake detail rather than the dominant (weird) focus.
             #define CAUSTIC_RIPPLE_WEIGHT   0.3
 
+            // God-ray caustic smoothing radius (metres), per body (WaterCausticsPass sets it from the
+            // Ocean God Rays block). Caustic focusing is a CURVATURE effect, so the full-spectrum
+            // normal is dominated by the SHORTEST wind wavelets - which also move fastest - giving
+            // harsh pinpoint shimmer that flickers too quickly. With a radius > 0 the focusing
+            // normal comes from finite differences of the wave HEIGHT over +/- this radius instead:
+            // everything shorter than ~twice the radius drops out, so the shafts focus through the
+            // slow swell only (the surface itself keeps its full detail). 0 = legacy full spectrum.
+            float _LargeGodRayCausticSmooth;
+
             struct appdata { float4 vertex : POSITION; };
             struct v2f
             {
@@ -77,7 +86,23 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyCaustics"
                 // Fold in the large-body swell so the caustic - and the volumetric beams that sample it -
                 // focus light through the ACTUAL visible wave shape (crisp, resolution-independent), like
                 // KWS. Same function + strength the surface uses, so the beams line up with the waves.
-                normal = ApplyLargeBodyWaveNormal(normal, worldXZ, _WaveNormalStrength);
+                // Smoothed mode (radius > 0): band-limited slope from height differences over the radius
+                // (see _LargeGodRayCausticSmooth above) - the sim normal convention is n.xz = -grad h,
+                // matching the ripple tilt this normal already carries.
+                if (_LargeGodRayCausticSmooth > 0.0)
+                {
+                    float r = _LargeGodRayCausticSmooth;
+                    float2 slope = float2(
+                        LargeBodyWaveHeight(worldXZ + float2(r, 0.0)) - LargeBodyWaveHeight(worldXZ - float2(r, 0.0)),
+                        LargeBodyWaveHeight(worldXZ + float2(0.0, r)) - LargeBodyWaveHeight(worldXZ - float2(0.0, r)))
+                        / (2.0 * r);
+                    normal.xz -= slope * _WaveNormalStrength;
+                    normal = normalize(normal);
+                }
+                else
+                {
+                    normal = ApplyLargeBodyWaveNormal(normal, worldXZ, _WaveNormalStrength);
+                }
 
                 float3 refractedLight = refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER); // undisturbed
                 float3 ray           = refract(-_LightDir, normal,               IOR_AIR / IOR_WATER); // through the surface

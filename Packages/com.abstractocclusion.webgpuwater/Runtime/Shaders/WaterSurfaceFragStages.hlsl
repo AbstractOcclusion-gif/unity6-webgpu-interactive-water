@@ -83,7 +83,7 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
     // WORLD-space wave slope here (after that division) so open water keeps real normals
     // and refraction holds at any size. No-op for pool/small bodies (_LargeBody = 0).
     // .w = GEOMETRY foam: breaking whiteness derived from the composite surface's own
-    // Jacobian pinch + slope (Crest/KWS style) - glued to the rendered waves by
+    // Jacobian pinch + slope - glued to the rendered waves by
     // construction, so foam can never detach from what the eye tracks.
     float surfGeomFoam = 0.0;
     if (_LargeBody > 0.5)
@@ -270,7 +270,7 @@ float3 ReflectionStage(v2f i, WaterGeomStage g, out float fresnel)
     float3 reflectedRay = reflect(incomingRay, normal);
     // Schlick Fresnel from the air/water IOR: ~2% mirror straight down (deep
     // clear water at your feet), full mirror at grazing (the horizon). The
-    // exponent is the OVERALL SHININESS dial (Crest exposes the same): 5 is
+    // exponent is the OVERALL SHININESS dial: 5 is
     // physical; lower lifts reflectivity on tilted wave faces so the whole
     // surface reads glossier while keeping the down/grazing contrast.
     // saturate: float error can push the dot above 1 -> negative pow base -> NaN.
@@ -695,7 +695,7 @@ float3 CompositeSurfaceColor(WaterGeomStage g, float fresnel, float3 reflectedCo
     float surfFoamAlpha = surfFoamLayer.alpha;
     // Foam is matte: the combined coverage knocks the specular reflection down before
     // compositing (this surface expresses gloss as the reflection term, so this IS the
-    // "foam roughens the surface" cue - Crest lerps smoothness down the same way).
+    // "foam roughens the surface" cue).
     float foamMatte = max(max(oceanFoam, pondFoamAlpha), surfFoamAlpha);
 
     float3 outColor = lerp(refractedColor, reflectedColor,

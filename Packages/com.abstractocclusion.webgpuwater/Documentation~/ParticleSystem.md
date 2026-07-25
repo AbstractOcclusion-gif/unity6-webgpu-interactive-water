@@ -211,7 +211,7 @@ frame's.
 
 Floating foam has two render modes; spray droplets are **always** textured billboards.
 
-- **Screen-Space Density** (default, KWS-style) — particles are splatted into a low-res
+- **Screen-Space Density** (default) — particles are splatted into a low-res
   density buffer, then one fullscreen pass turns density into connected, lit foam. This is
   what makes foam read as sheets and streaks rather than a cloud of discs.
 - **Quads** — every particle drawn as its own billboard. The automatic fallback on devices

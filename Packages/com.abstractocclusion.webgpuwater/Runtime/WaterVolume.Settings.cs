@@ -187,6 +187,14 @@ namespace AbstractOcclusion.WebGpuWater
                      "close to the camera, inside the sim window). 0 = plain shadow shafts. Needs the Large Body " +
                      "Caustics Shader assigned.")]
             [Min(0f)] public float largeGodRayCausticStrength = DefaultLargeGodRayCausticStrength;
+            [Tooltip("Shaft caustic smoothing radius (metres): the beams focus only through waves LONGER than " +
+                     "about twice this, so the shimmer rides the slow swell instead of fast wind ripple. The " +
+                     "rendered surface keeps its full detail. 0 = full spectrum (fast, harsh pinpoint flicker).")]
+            [Range(0f, 10f)] public float largeGodRayCausticSmooth = 2f;
+            [Tooltip("How quickly the shaft shimmer blurs and calms with the sample's depth below the surface " +
+                     "(softening per metre): deep beams read broad and slow instead of razor sharp, like real " +
+                     "light losing focus. 0 = sharp at any depth.")]
+            [Range(0f, 1f)] public float largeGodRayCausticDepthSoften = 0.25f;
 
             [Header("Ocean foam (whitecaps)")]
             [Tooltip("Wind speed (m/s) below which the FFT ocean grows NO whitecaps (KWS foams above ~4). Tie " +
@@ -408,6 +416,8 @@ namespace AbstractOcclusion.WebGpuWater
         internal float LargeGodRayAnisotropy => largeGodRayAnisotropy;
         internal float LargeGodRayExtinction => largeGodRayExtinction;
         internal float LargeGodRayCausticStrength => IsOceanClipmap ? largeGodRayCausticStrength : 0f;
+        internal float LargeGodRayCausticSmooth => ocean.largeGodRayCausticSmooth;
+        internal float LargeGodRayCausticDepthSoften => ocean.largeGodRayCausticDepthSoften;
 
         [Header("Water body (multi-instance)")]
         [Tooltip("Renderers driven by THIS body via a MaterialPropertyBlock (surface above/under, " +
@@ -636,6 +646,10 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(1f, 16f)] public float meniscusWidthPixels = 5f;
             [Tooltip("Meniscus opacity at the crossing (how hard the line darkens).")]
             [Range(0f, 1f)] public float meniscusStrength = 0.7f;
+            [Tooltip("Waterline lens tension: warps the image in a band around the " +
+                     "line so the water appears to grip and climb the lens while crossing the " +
+                     "surface. 0 = plain darkened line only.")]
+            [Range(0f, 1f)] public float meniscusWarp = 0.35f;
         }
 
         [SerializeField] UnderwaterSurfaceSettings underwaterSurfaceSettings = new UnderwaterSurfaceSettings();
@@ -654,6 +668,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal bool MeniscusEnabled => underwaterSurfaceSettings.meniscus;
         internal float MeniscusWidthPixels => underwaterSurfaceSettings.meniscusWidthPixels;
         internal float MeniscusStrength => underwaterSurfaceSettings.meniscusStrength;
+        internal float MeniscusWarp => underwaterSurfaceSettings.meniscusWarp;
 
         // Legacy capture (pre-Phase-2 scenes) -> copied once by MigrateReflectionsV7. Hidden; do not edit.
         [SerializeField, HideInInspector, FormerlySerializedAs("reflectionMode")] ReflectionMode _legacyReflectionMode = ReflectionMode.SSR;
@@ -1729,7 +1744,7 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0.001f, 0.08f)] public float rippleStrength = 0.025f;
             [Tooltip("Radius of a click/drag ripple (world units; volume-scale independent).")]
             [Range(0.005f, 0.2f)] public float rippleRadius = 0.05f;
-            [Tooltip("Horizontal choppiness of the interactive ripple + WAKE field (Crest-style pinch): " +
+            [Tooltip("Horizontal choppiness of the interactive ripple + WAKE field (horizontal pinch): " +
                      "sharpens ripple/wake crests horizontally so a boat wake reads crisp instead of soft " +
                      "and round. 0 = off (height-only, unchanged). Raise for a sharp V-wake; also sharpens " +
                      "ambient interactive ripples. On the ocean the wake rides the camera-following sim window.")]
