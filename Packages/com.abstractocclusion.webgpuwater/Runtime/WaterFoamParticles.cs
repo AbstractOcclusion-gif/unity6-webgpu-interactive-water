@@ -1,4 +1,4 @@
-// WebGL Water - GPU foam particles (Unity 6 / URP port)
+// WebGpuWater - GPU foam particles (Unity 6 / URP port)
 //
 // Per-body foam/spray particle system, fully GPU-resident (KWS-inspired): a compute
 // pass spawns particles where the body's foam sim is strong and drifts them with the
@@ -99,14 +99,17 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FrameSeed = Shader.PropertyToID("_FrameSeed");
         static readonly int ID_DeltaTime = Shader.PropertyToID("_DeltaTime");
         static readonly int ID_ExclusionCount = Shader.PropertyToID("_ExclusionCount");
-        static readonly int ID_ExclusionWorldToBox = Shader.PropertyToID("_ExclusionWorldToBox");
+        static readonly int ID_ExclusionWorldToLocal = Shader.PropertyToID("_ExclusionWorldToLocal");
+        static readonly int ID_ExclusionShape = Shader.PropertyToID("_ExclusionShape");
         static readonly int ID_ExclusionEdgeParams = Shader.PropertyToID("_ExclusionEdgeParams");
         // Full-size persistent buffers (a global array's size locks at its first set); the
         // selection logic itself lives in WaterExclusionVolume.WriteVolumeUniforms - one
-        // implementation. The kill/dissolve tests need the boxes AND the per-volume particle
-        // handling packed in the edge-params lane (affect flag + dissolve speed); the edge
-        // COLOR buffer stays null - particles never shade the carve boundary.
+        // implementation. The kill/dissolve tests need the volumes' frames AND SHAPES (a shape-less
+        // bind would cull particles against a box where the author placed a sphere) plus the
+        // per-volume particle handling packed in the edge-params lane (affect flag + dissolve
+        // speed); the edge COLOR buffer stays null - particles never shade the carve boundary.
         static readonly Matrix4x4[] _exclusionMatrices = new Matrix4x4[WaterExclusionVolume.MaxVolumes];
+        static readonly Vector4[] _exclusionShapes = new Vector4[WaterExclusionVolume.MaxVolumes];
         static readonly Vector4[] _exclusionEdgeParams = new Vector4[WaterExclusionVolume.MaxVolumes];
         static readonly int ID_SpawnThreshold = Shader.PropertyToID("_SpawnThreshold");
         static readonly int ID_SpawnRate = Shader.PropertyToID("_SpawnRate");
@@ -427,9 +430,19 @@ namespace AbstractOcclusion.WebGpuWater
         // window/schedule for this frame.
         void LateUpdate()
         {
-            // Disarm first: any early-out below must leave the after-fog pass with nothing
-            // to submit (stale property blocks from a previous frame are never re-drawn).
+            // Disarm BOTH deferred hooks first: any early-out below must leave the after-fog pass
+            // with nothing to submit AND the OnBeginCameraRendering density splat disarmed (stale
+            // property blocks from a previous frame are never re-drawn).
+            //
+            // _densityPending used to be cleared further down, AFTER five early-returns. Take any of
+            // them - the volume disabled, its sim textures released, ambient foam lapsing past the
+            // burst window - and the flag stayed set from the last good frame, so
+            // OnBeginCameraRendering (which guards the buffers and the camera, but NOT the volume)
+            // kept clearing and rasterising the density field every camera render, against a volume
+            // that had already stopped: a full-pool dispatch per frame reading a released
+            // SimStateTexture.
             _afterFogArmed = false;
+            _densityPending = false;
             if (!useParticles) return; // master gate: no simulation, no dispatch, no draw
             if (volume == null || !volume.isActiveAndEnabled) return;
             // Defensive: OnEnable can bail before allocating (compute/material assigned later in
@@ -452,7 +465,6 @@ namespace AbstractOcclusion.WebGpuWater
             // one is assigned, else the main camera. In views without one (or with the sim paused) the density field
             // would be stale/unanchored, so those frames fall back to reprojectable quads.
             Camera densityCamera = volume.targetCamera != null ? volume.targetCamera : Camera.main;
-            _densityPending = false;
             _densityCamera = densityCamera;
 
             if (volume.IsSimulating && Time.deltaTime > 0f)
@@ -518,12 +530,13 @@ namespace AbstractOcclusion.WebGpuWater
             // entirely. The edge-params lane rides along for the per-volume particle handling
             // (affect flag, dissolve speed) the spawn/update tests now read.
             int exclusionCount = WaterExclusionVolume.WriteVolumeUniforms(_exclusionMatrices,
-                null, _exclusionEdgeParams,
+                _exclusionShapes, null, _exclusionEdgeParams,
                 densityCamera != null ? densityCamera.transform.position : volume.VolumeCenter);
             cs.SetFloat(ID_ExclusionCount, exclusionCount);
             if (exclusionCount > 0)
             {
-                cs.SetMatrixArray(ID_ExclusionWorldToBox, _exclusionMatrices);
+                cs.SetMatrixArray(ID_ExclusionWorldToLocal, _exclusionMatrices);
+                cs.SetVectorArray(ID_ExclusionShape, _exclusionShapes);
                 cs.SetVectorArray(ID_ExclusionEdgeParams, _exclusionEdgeParams);
             }
 

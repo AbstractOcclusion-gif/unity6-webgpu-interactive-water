@@ -1,4 +1,4 @@
-// WebGL Water - Jerlov physical water-colour presets.
+// WebGpuWater - Jerlov physical water-colour presets.
 //
 // Each preset carries a per-channel absorption (the water's Fog Extinction at density 1) and the
 // single-scattering-albedo body colour (the deep-water / scatter colour). Selecting a Jerlov water

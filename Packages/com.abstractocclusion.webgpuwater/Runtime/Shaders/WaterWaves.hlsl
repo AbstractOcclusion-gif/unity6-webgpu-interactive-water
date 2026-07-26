@@ -1,4 +1,4 @@
-// WebGL Water - wind-driven spectral wave layer (Unity 6 / URP port)
+// WebGpuWater - wind-driven spectral wave layer (Unity 6 / URP port)
 //
 // A sum of directional sinusoids whose parameters (direction, wavenumber, angular
 // speed, amplitude, phase) are generated on the CPU by WaterWaveBank from a

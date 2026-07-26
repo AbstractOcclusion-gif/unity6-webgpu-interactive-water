@@ -24,7 +24,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
     internal static class WaterReceiverConverter
     {
         const string MenuConvert = MenuRoot + "Convert Selection To Water Receiver";
-        const string ReceiverShaderName = "AbstractOcclusion/WebGpuWater/WaterReceiver";
+        // From the shared registry, not retyped: this was the ONE shader name in the package still
+        // written out by hand, so a rename in WaterShaderNames would have missed it silently.
+        const string ReceiverShaderName = WaterShaderNames.WaterReceiver;
         // Converted materials are written here (create-once, reused on re-run) so scenes keep a real asset
         // reference instead of a leaked runtime instance.
         const string OutputFolder = "Assets/WebGpuWaterConverted";
@@ -106,17 +108,33 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             if (cache.TryGetValue(source, out Material existingInRun)) return existingInRun;
 
-            string path = $"{OutputFolder}/{source.name}_WaterReceiver.mat";
+            // Sanitise: a Material's name is free text and may contain path separators or other
+            // characters illegal in a file name. Unsanitised, a material called "Wood/Oak" produced
+            // the path "<OutputFolder>/Wood/Oak_WaterReceiver.mat" - a subfolder that does not exist,
+            // so CreateAsset failed silently mid-loop and left the renderer on a null material.
+            string safeName = SanitizeAssetName(source.name);
+            string path = $"{OutputFolder}/{safeName}_WaterReceiver.mat";
             Material material = AssetDatabase.LoadAssetAtPath<Material>(path);
             if (material == null)
             {
-                material = new Material(receiver) { name = source.name + "_WaterReceiver" };
+                material = new Material(receiver) { name = safeName + "_WaterReceiver" };
                 AssetDatabase.CreateAsset(material, path);
             }
             CopyLitInputs(source, material);
             EditorUtility.SetDirty(material);
             cache[source] = material;
             return material;
+        }
+
+        // Material names are arbitrary user text; asset paths are not. Replace every character the
+        // filesystem rejects (this includes '/' and '\', so a "grouped" material name can no longer
+        // silently target a non-existent subfolder) and fall back for an empty/whitespace name.
+        const string UnnamedMaterialFallback = "Material";
+        static string SanitizeAssetName(string rawName)
+        {
+            if (string.IsNullOrWhiteSpace(rawName)) return UnnamedMaterialFallback;
+            string cleaned = string.Join("_", rawName.Split(Path.GetInvalidFileNameChars())).Trim();
+            return string.IsNullOrEmpty(cleaned) ? UnnamedMaterialFallback : cleaned;
         }
 
         // Carry the standard lit inputs across by name (with built-in Standard fallbacks). Water-specific

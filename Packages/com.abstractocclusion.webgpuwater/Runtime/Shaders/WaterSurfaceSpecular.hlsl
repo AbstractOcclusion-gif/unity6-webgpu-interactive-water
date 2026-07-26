@@ -121,6 +121,10 @@ float _UnderDetailNormalStrength; // detail-normal tilt on the underside (0 = of
 // underwater fog pass will paint this frame. The underside stage reads it to skip its own
 // camera-depth downwelling dim, which that pass would otherwise apply a second time.
 float _UnderwaterFogArmed;
+// Its sibling PublishUnderwater global: 1 while the camera is submerged in the primary body.
+// The pond-foam skip/overlay pair keys on BOTH (armed + camera in air), so the queue-time
+// surface pass and the after-fog PondFoamOverlay pass can never both draw the same foam.
+float _CameraUnderwater;
 
 // Below-water Fresnel (unpolarized Schlick evaluated at the TRANSMITTED angle - the standard
 // dense-to-rare form): the same F0 as the above-water curve, so the surface is ~2% mirror

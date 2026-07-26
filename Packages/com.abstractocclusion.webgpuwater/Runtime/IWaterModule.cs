@@ -1,4 +1,4 @@
-// WebGL Water - the module seam (Unity 6 / URP port).
+// WebGpuWater - the module seam (Unity 6 / URP port).
 //
 // WaterVolume is being broken out of a god-class into a thin master that orchestrates optional,
 // self-contained modules. IWaterModule is the lifecycle contract those modules share. Phase 1

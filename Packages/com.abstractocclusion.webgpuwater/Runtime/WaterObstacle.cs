@@ -1,4 +1,4 @@
-// WebGL Water - obstacle footprint renderer (Unity 6 / URP port)
+// WebGpuWater - obstacle footprint renderer (Unity 6 / URP port)
 // Draws every WaterInteractable top-down into a ping-pong pair of RenderTextures
 // (R = submerged amount per column). The compute sim reads (prev - curr) to push
 // the surface, generalising the original analytic sphere displacement to any mesh.
@@ -66,7 +66,7 @@ namespace AbstractOcclusion.WebGpuWater
 
             _resolution = resolution;
             _mat = new Material(obstacleShader) { hideFlags = HideFlags.HideAndDontSave };
-            _cb = new CommandBuffer { name = "WebGLWater.Obstacle" };
+            _cb = new CommandBuffer { name = "WebGpuWater.Obstacle" };
             _mpb = new MaterialPropertyBlock();
             // prev/curr/raw: RFloat (RW-capable, so the ObstacleSmooth compute kernel writes curr).
             _prev = Create(_resolution, RenderTextureFormat.RFloat);

@@ -1,4 +1,4 @@
-// WebGL Water - editor-only obstacle-footprint inspector.
+// WebGpuWater - editor-only obstacle-footprint inspector.
 // Dumps the FootprintDelta pass's smoothed footprints (Prev, Curr) and their signed delta
 // (Prev - Curr, the value the sim actually forces the surface with) to PNG, so the footprint
 // can be SEEN instead of guessed at. This exists because the previous GUI.DrawTexture overlay
@@ -10,7 +10,13 @@
 // the earlier attempt fell into. Trust a conclusion only when both readback paths agree.
 //
 // Delete this whole file to remove the instrumentation - the runtime body does not depend on it.
-#if UNITY_EDITOR
+//
+// AUTHOR-ONLY GATE: this adds a context-menu item to EVERY WaterVolume, and firing it writes five
+// PNGs into a <ProjectRoot>/WaterDebug folder that sits OUTSIDE Assets/ and is invisible to the
+// AssetDatabase. That is our diagnostic, not something a customer should find on their component,
+// so it compiles only when WEBGPUWATER_DEV is defined (set it in the package's own development
+// project: Project Settings > Player > Other Settings > Scripting Define Symbols).
+#if UNITY_EDITOR && WEBGPUWATER_DEV
 using System.IO;
 using Unity.Collections;
 using UnityEngine;

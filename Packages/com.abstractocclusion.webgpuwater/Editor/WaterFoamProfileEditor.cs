@@ -214,10 +214,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             applied += SetProfileReference(EmitterForEdit(body), profile);
 
             if (applied == 0)
-                Debug.LogWarning($"[WebGL Water] '{body.name}' has no WaterFoamParticles or WaterSplashEmitter " +
+                Debug.LogWarning($"[WebGpuWater] '{body.name}' has no WaterFoamParticles or WaterSplashEmitter " +
                                  "to receive the profile.", body);
             else
-                Debug.Log($"[WebGL Water] Applied '{profile.name}' to '{body.name}' ({applied} component(s)).", body);
+                Debug.Log($"[WebGpuWater] Applied '{profile.name}' to '{body.name}' ({applied} component(s)).", body);
         }
 
         static int SetProfileReference(Object component, WaterFoamProfile profile)

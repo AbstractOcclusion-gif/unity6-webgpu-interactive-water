@@ -1,4 +1,4 @@
-// WebGL Water - marker for objects that interact with the water (Unity 6 / URP).
+// WebGpuWater - marker for objects that interact with the water (Unity 6 / URP).
 // Add this to any Renderer that should disturb the surface. It self-registers in a
 // static list, so detection is automatic: no manual wiring, no per-frame Find.
 //

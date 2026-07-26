@@ -1,4 +1,4 @@
-// WebGL Water - shared blue-themed editor UI helpers for the WaterVolume inspector.
+// WebGpuWater - shared blue-themed editor UI helpers for the WaterVolume inspector.
 // Mirrors the Luminex EditorUIUtility structure (header, footer, foldout sections,
 // toggle-gated sections) but carries the water palette: bright cyan accents on a
 // deep-blue bar. Editor-only; no runtime code. All literals live in Style below.

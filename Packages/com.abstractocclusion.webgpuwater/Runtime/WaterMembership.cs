@@ -1,4 +1,4 @@
-// WebGL Water - per-object water membership (Unity 6 / URP port)
+// WebGpuWater - per-object water membership (Unity 6 / URP port)
 // Lights a floating object with the lake it is actually inside. The receiver shader
 // reads the sim/caustic textures, the volume frame and the fog params as GLOBALS,
 // which the primary body publishes - so without this component every object shows the

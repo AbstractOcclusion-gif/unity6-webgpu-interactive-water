@@ -164,6 +164,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 915077c3dcbfd574299c2b79a0e61be4, type: 3}
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterExclusionVolume
+  shape: 0
+  carveMesh: {fileID: 0}
+  meshProxy: 0
   size: {x: 0.7, y: 2, z: 0.7}
   drawWaterWalls: 1
   wallScatterBoost: 1.2
@@ -171,6 +174,9 @@ MonoBehaviour:
   edgeColor: {r: 0, g: 0, b: 0, a: 1}
   edgeIntensity: 0.55
   edgeSpread: 0.12
+  affectParticles: 1
+  particleFadeBand: 0.06
+  particleDissolveSpeed: 1
 --- !u!114 &22235976
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -11072,6 +11078,7 @@ MonoBehaviour:
   chunkRefraction: 0.5
   chunkReflectivity: 0.6
   chunkMeniscus: 0.5
+  chunkFoamStrength: 1
   chunkGodRayStrength: 0
   chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
@@ -11262,6 +11269,7 @@ MonoBehaviour:
     depthDarkenStrength: 1
     causticDepthFade: 0.5
     screenSpaceCaustics: 0
+    screenCausticIntensity: 1
     godRayDepthFade: 0.5
     linkDepthToFog: 0
   _legacyDepthDarken: 0
@@ -11555,6 +11563,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 915077c3dcbfd574299c2b79a0e61be4, type: 3}
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterExclusionVolume
+  shape: 0
+  carveMesh: {fileID: 0}
+  meshProxy: 0
   size: {x: 1, y: 1, z: 1}
   drawWaterWalls: 1
   wallScatterBoost: 1.2
@@ -11562,6 +11573,9 @@ MonoBehaviour:
   edgeColor: {r: 0, g: 0, b: 0, a: 1}
   edgeIntensity: 0.55
   edgeSpread: 0.12
+  affectParticles: 1
+  particleFadeBand: 0.06
+  particleDissolveSpeed: 1
 --- !u!65 &1786542065
 BoxCollider:
   m_ObjectHideFlags: 0

@@ -5,6 +5,13 @@
 // the wizard, the inspector's body-type defaults and the ocean section. One registry means a
 // field rename is a one-line fix and every consumer breaks loudly together in review, not
 // silently apart at runtime.
+//
+// SCOPE - what belongs here: a path read from MORE THAN ONE place (a different file, or twice in
+// one file). Those are the ones that can drift, and drift silently: FindProperty returns null for
+// the stale copy and the inspector NREs on selection while the registry copy still works.
+// A path used exactly once stays inline at its single use site, where it is already
+// single-sourced and reads better next to the field it draws - mirroring a whole 190-field
+// inspector into consts here would add indirection without adding safety.
 namespace AbstractOcclusion.WebGpuWater.Editor
 {
     internal static class WaterVolumePropertyPaths
@@ -17,8 +24,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string BodyType = "bodyType";
         internal const string EnableLargeBodyWindow = "enableLargeBodyWindow";
 
-        // Water fog block (wizard look defaults).
+        // Water fog block (wizard look defaults + the Jerlov preset writer).
         internal const string FogDensity = "waterFogSettings.fogDensity";
+        internal const string WaterFog = "waterFogSettings.waterFog";
 
         // Detail-normal block (Textures section; wizard look defaults).
         internal const string DetailNormalTexture = "detailNormalSettings.texture";
@@ -59,5 +67,13 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string ClarityFromDepth = "bedDepthSettings.clarityFromDepth";
         internal const string ClarityShallowDepth = "bedDepthSettings.clarityShallowDepth";
         internal const string ClarityDeepDepth = "bedDepthSettings.clarityDeepDepth";
+
+        // Read from more than one partial (the Jerlov preset writer and the Appearance
+        // section write the same fog/scatter fields; the sun is drawn in two places).
+        internal const string FogColor = "waterFogSettings.fogColor";
+        internal const string FogExtinction = "waterFogSettings.fogExtinction";
+        internal const string ScatterColor = "volumeScatterSettings.scatterColor";
+        internal const string ScatterIntensity = "volumeScatterSettings.scatterIntensity";
+        internal const string Sun = "sun";
     }
 }

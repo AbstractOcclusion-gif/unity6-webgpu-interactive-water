@@ -1,4 +1,4 @@
-// WebGL Water - Shuriken splash particle rendering (crown + droplets)
+// WebGpuWater - Shuriken splash particle rendering (crown + droplets)
 //
 // Replaces Sprites/Default on the splash emitters so event splashes sit in the same
 // light as the water's foam: wrapped sun diffuse over an ambient floor (driven by the

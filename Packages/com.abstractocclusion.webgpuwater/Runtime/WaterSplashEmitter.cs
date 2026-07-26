@@ -1,4 +1,4 @@
-// WebGL Water - shared splash particle emitter (Unity 6 / URP port)
+// WebGpuWater - shared splash particle emitter (Unity 6 / URP port)
 // Owns (or references) a real Particle System so the splash is fully editable in
 // the Inspector: the builder creates one "Water Splash FX" root (this component)
 // with two children - "Droplet Spray (CPU Fallback)" (Shuriken droplets, only

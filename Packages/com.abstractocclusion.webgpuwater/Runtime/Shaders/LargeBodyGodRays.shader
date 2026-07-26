@@ -60,6 +60,9 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
 
             float4 _LargeGodRayColor;
             float  _LargeGodRayDensity;
+            // Hard ceiling on the march. Matches the top of GodRays.shader's Range(8,64) so the two
+            // god-ray paths cannot diverge in worst-case cost; see the clamp at the march below.
+            #define LARGE_GOD_RAY_MAX_STEPS 64
             float  _LargeGodRaySteps;
             float  _LargeGodRayAnisotropy;
             float  _LargeGodRayCausticStrength; // near-field surface-caustic shimmer (0 = plain shadow shafts)
@@ -194,7 +197,11 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                     if (toSurface > 0.0) marchDist = min(marchDist, toSurface);
                 }
 
-                int steps = max(1, (int)_LargeGodRaySteps);
+                // Clamped in the SHADER, not just by the publisher: this pass has no Properties
+                // block, so _LargeGodRaySteps is a plain global with no Range() to bound it (unlike
+                // GodRays.shader's Range(8,64)). An unbounded value here is an unbounded dynamic
+                // loop - a TDR / device-lost on WebGPU and mobile, not merely a slow frame.
+                int steps = clamp((int)_LargeGodRaySteps, 1, LARGE_GOD_RAY_MAX_STEPS);
                 float dt = marchDist / steps;
                 // ANIMATED jitter (Jimenez): shifting the noise pattern every frame turns the static
                 // dither into per-frame samples the temporal accumulation below averages - a few

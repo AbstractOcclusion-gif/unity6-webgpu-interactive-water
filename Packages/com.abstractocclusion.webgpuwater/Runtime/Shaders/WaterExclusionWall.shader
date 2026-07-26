@@ -1,14 +1,16 @@
 // WebGpuWater - exclusion-volume water walls (the carve boundary, drawn).
-// A unit cube rendered per exclusion volume with the volume's box-to-world matrix
-// (Graphics.DrawMesh from WaterExclusionVolume), shaded as STANDING WATER: the same lit
+// The volume's own unit MESH (cube or sphere, matching its authored Shape) rendered per
+// exclusion volume with the volume's shape-to-world matrix (Graphics.DrawMesh from
+// WaterExclusionVolume), shaded as STANDING WATER: the same lit
 // in-scatter colour the underwater fog uses, depth-darkened, with a per-volume scatter
 // boost so the wall reads slightly denser than open fog. This is what fills the carve's
-// boundary for volumes WITHOUT covering geometry - a bare dry box otherwise exposes the
+// boundary for volumes WITHOUT covering geometry - a bare dry volume otherwise exposes the
 // unlit void (through the surface hole from above, and at the carve edges underwater).
+// The mesh IS the boundary, so every term below can assume the fragment sits exactly ON it.
 //
 // Cull Off ON PURPOSE: exterior faces paint the near boundary at fog colour (an air
 // pocket seen from open water blends back into the fog instead of punching a dark hole,
-// and a submerged box seen from ABOVE shows a fog-coloured lid where the surface sheet
+// and a submerged volume seen from ABOVE shows a fog-coloured lid where the surface sheet
 // is discarded); interior faces are the aquarium walls seen from inside the dry space.
 // Volumes covered by real geometry (boat hulls, rooms with windows) should draw with
 // drawWaterWalls OFF - the wall would paint over their openings.
@@ -46,6 +48,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
             #include "WaterFog.hlsl"       // WaterInscatterColor + DownwellingAttenuation + fog globals
             #include "WaterVolume.hlsl"    // _VolumeCenter: the primary body's rest plane (waterline clip)
             #include "WaterExclusion.hlsl" // carve helpers + shared shadow-column terms (fog reconstruction)
+            #include "WaterExclusionMeshSpan.hlsl" // MESH volumes: the prepass dry span (URP-core only)
             #include "WaterShore.hlsl"     // ShoreShoalDepth: the fog pass's depth-clarity input
             #include "WaterWaterline.hlsl" // SurfaceHeightAtXZ: the displaced waterline the wall clips at
 
@@ -67,6 +70,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
             // depth + opaque colour both hold the REAL scene through the carve). Same codebase-wide
             // sampler2D style as WaterSurfaceScreen.hlsl.
             sampler2D _CameraOpaqueTexture;
+            // This volume's PRIMITIVE_SHAPE_* selector (MaterialPropertyBlock). A plain float,
+            // not a keyword: the wall material is shared by every volume, so a keyword would
+            // make the last volume drawn decide the shape for all of them.
+            float _WallShape;
             // Per-volume wall density (MaterialPropertyBlock): >1 reads denser than open fog,
             // the "different scatter values" of the carve boundary.
             float _WallScatterBoost;
@@ -100,7 +107,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
                 // dry boxes it crosses. The fragment sits ON its own box, so an outward ray loses
                 // ~nothing and a ray through the volume loses exactly the dry interior.
                 float wetSpanLen = WaterPathLength(sceneWorld, wallWS, level);
-                float pathLen = max(wetSpanLen - ExclusionRayLength(wallWS, segDir, wetSpanLen), 0.0);
+                float dryLen = ExclusionRayLength(wallWS, segDir, wetSpanLen);
+                if (_ExclusionMeshCount > 0.5)
+                    dryLen += ExclusionMeshRayLength(screenUV, wallWS, segDir, wetSpanLen);
+                float pathLen = max(wetSpanLen - dryLen, 0.0);
 
                 // Deepest WET point of the span (the downwelling reference), pulled out of any dry
                 // volume containing it - the same correction, for the same reason, as the fog pass.
@@ -169,10 +179,21 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
                 float3 sceneWorld = ComputeWorldSpacePosition(screenUV, SampleSceneDepth(screenUV),
                                                               UNITY_MATRIX_I_VP);
 
-                // Facet normal from screen derivatives (the mesh carries positions only; the
-                // faces are flat, so the derivative normal is exact), flipped toward the camera
-                // for the Cull Off double-sided draw.
-                float3 normalWS = normalize(cross(ddy(IN.positionWS), ddx(IN.positionWS)));
+                // Unit-local coords of this fragment: the draw matrix IS the volume's
+                // shape-to-world, so its inverse lands us in exactly the space the carve math
+                // uses. Shared by the surface normal and the boundary occlusion below.
+                float3 shapeLocal = mul(GetWorldToObjectMatrix(), float4(IN.positionWS, 1.0)).xyz;
+
+                // Surface normal from the PRIMITIVE, not from screen derivatives: the fragment
+                // lies on the analytic surface, so this is exact for both shapes - and on a
+                // sphere the derivative normal would face the tessellated FACET instead of the
+                // true surface, faceting the rim the edge occlusion is drawn against. A MESH has
+                // no analytic surface, so there the facet IS the answer and the derivatives are
+                // right. Flipped toward the camera for the Cull Off double-sided draw.
+                float3 normalWS = (_WallShape >= EXCLUSION_SHAPE_MESH)
+                                ? SafeFacetNormal(IN.positionWS, true, viewDirWS)
+                                : normalize(mul(PrimitiveSurfaceNormal(_WallShape, shapeLocal),
+                                                (float3x3)GetWorldToObjectMatrix()));
                 if (dot(normalWS, viewDirWS) < 0.0) normalWS = -normalWS;
                 // Sun side vs shade side: wrapped lambert on the DIRECT term only, so the box
                 // reads 3D while the ambient scatter keeps the shade side alive.
@@ -195,16 +216,25 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
                 // multiplies the OPTICAL DEPTH, so a boosted wall reads as denser water.
                 float3 rayDirWS = -viewDirWS; // camera -> fragment, continuing behind it
                 float sceneDist = max(dot(sceneWorld - IN.positionWS, rayDirWS), 0.0);
+                // Analytic volumes contribute their closed-form chord; MESH volumes contribute the
+                // prepass span at this pixel (the analytic loop skips them by design). An entering
+                // face therefore still carries the full dry chord and an exiting face ~0, whichever
+                // tier the volume belongs to - so the veil stays the exact stand-in for the water
+                // the carve removed.
                 float carvedSpan = ExclusionRayLength(IN.positionWS, rayDirWS, sceneDist);
+                if (_ExclusionMeshCount > 0.5)
+                    carvedSpan += ExclusionMeshRayLength(screenUV, IN.positionWS, rayDirWS, sceneDist);
                 float3 opacity = 1.0 - exp(-_WaterExtinction.rgb *
                                            (_WaterFogDensity * carvedSpan * _WallScatterBoost));
                 color *= opacity;
 
-                // Edge/corner occlusion: unit-box coords come free from the draw matrix inverse;
-                // the shared drop-the-min occlusion, tinted by this volume's edge look.
-                float3 boxLocal = mul(GetWorldToObjectMatrix(), float4(IN.positionWS, 1.0)).xyz;
+                // Boundary occlusion: the shared per-shape outline term (a box's edges and
+                // corners, a sphere's silhouette rim), tinted by this volume's edge look - the
+                // SAME function the fog's pane shading calls, so the outline reads identically
+                // whether the wall draws it or the fog reconstructs it.
                 float3 edgeTint = ExclusionEdgeTint(
-                    ExclusionEdgeOcclusion(boxLocal, _WallEdgeSpread), _WallEdgeColor);
+                    ExclusionBoundaryOcclusion(_WallShape, shapeLocal, normalWS, viewDirWS,
+                                               _WallEdgeSpread), _WallEdgeColor);
                 color *= edgeTint;
 
                 color *= DownwellingAttenuation(IN.positionWS.y, _VolumeCenter.y);

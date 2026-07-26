@@ -1,4 +1,4 @@
-// WebGL Water - WaterVolume inspector: surface look + light-transport sections (reflections,
+// WebGpuWater - WaterVolume inspector: surface look + light-transport sections (reflections,
 // Beer-Lambert water fog, depth attenuation, real-bed depth, turbulence foam). Toggle-gated blocks
 // grey their body when the feature is off. Draws serialized properties by exact path.
 #if UNITY_EDITOR
@@ -14,10 +14,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             _showReflections = WaterEditorUI.Section("Reflections", _showReflections, () =>
             {
                 DrawFields(
-                    "reflectionSettings.useScreenSpaceReflection",
-                    "reflectionSettings.usePlanarReflection",
+                    WaterVolumePropertyPaths.ScreenSpaceReflection,
+                    WaterVolumePropertyPaths.PlanarReflection,
                     "reflectionSettings.reflectUrpProbe",
-                    "reflectionSettings.realRefraction");
+                    WaterVolumePropertyPaths.RealRefraction);
                 DrawFields("refractShadows");
                 if (!Prop("refractShadows").boolValue)
                     EditorGUILayout.HelpBox(
@@ -84,28 +84,28 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         void DrawWaterFogSection()
         {
             _showWaterFog = WaterEditorUI.SectionWithToggle(
-                "Water Fog (Beer-Lambert)", _showWaterFog, Prop("waterFogSettings.waterFog"), () =>
+                "Water Fog (Beer-Lambert)", _showWaterFog, Prop(WaterVolumePropertyPaths.WaterFog), () =>
                 DrawFields(
-                    "waterFogSettings.fogColor",
-                    "waterFogSettings.fogExtinction",
-                    "waterFogSettings.fogDensity",
+                    WaterVolumePropertyPaths.FogColor,
+                    WaterVolumePropertyPaths.FogExtinction,
+                    WaterVolumePropertyPaths.FogDensity,
                     "waterFogSettings.waterOpacity"));
         }
 
         void DrawVolumeScatterSection()
         {
             _showScatter = WaterEditorUI.SectionWithToggle(
-                "Volume Scattering", _showScatter, Prop("volumeScatterSettings.volumeScatter"), () =>
+                "Volume Scattering", _showScatter, Prop(WaterVolumePropertyPaths.VolumeScatter), () =>
             {
                 DrawFields(
-                    "volumeScatterSettings.scatterColor",
-                    "volumeScatterSettings.scatterIntensity",
+                    WaterVolumePropertyPaths.ScatterColor,
+                    WaterVolumePropertyPaths.ScatterIntensity,
                     "volumeScatterSettings.scatterAnisotropy",
                     "volumeScatterSettings.scatterAmbientTerm",
                     "volumeScatterSettings.scatterSunTerm");
                 _showCrestGlow = WaterEditorUI.SubSection("Wave-crest subsurface glow (ocean)", _showCrestGlow, () =>
                     DrawFields(
-                        "volumeScatterSettings.crestScatter",
+                        WaterVolumePropertyPaths.CrestScatter,
                         "volumeScatterSettings.sssIntensity",
                         "volumeScatterSettings.sssSunFalloff",
                         "volumeScatterSettings.sssPinchMin",
@@ -125,25 +125,25 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "depthAttenuation.causticDepthFade",
                     "depthAttenuation.screenSpaceCaustics",
                     "depthAttenuation.screenCausticIntensity",
-                    "depthAttenuation.godRayDepthFade",
+                    WaterVolumePropertyPaths.GodRayDepthFade,
                     "depthAttenuation.linkDepthToFog"));
         }
 
         void DrawBedDepthSection()
         {
             _showBedDepth = WaterEditorUI.SectionWithToggle(
-                "Bed Depth (real terrain depth)", _showBedDepth, Prop("bedDepthSettings.useBedDepth"), () =>
+                "Bed Depth (real terrain depth)", _showBedDepth, Prop(WaterVolumePropertyPaths.UseBedDepth), () =>
             {
                 DrawFields(
-                    "bedDepthSettings.bedTerrain",
+                    WaterVolumePropertyPaths.BedTerrain,
                     "bedDepthSettings.bedResolution",
                     "bedDepthSettings.deepWaterColor",
                     "bedDepthSettings.bedFadeDepth",
                     "bedDepthSettings.bedTintStrength",
                     "bedDepthSettings.shoreShoalDepth");
                 WaterEditorUI.SubHeading("Depth clarity (auto transparency)");
-                DrawFields("bedDepthSettings.clarityFromDepth");
-                DrawFieldsIf(Prop("bedDepthSettings.clarityFromDepth").boolValue,
+                DrawFields(WaterVolumePropertyPaths.ClarityFromDepth);
+                DrawFieldsIf(Prop(WaterVolumePropertyPaths.ClarityFromDepth).boolValue,
                     "bedDepthSettings.clarityShallowDepth",
                     "bedDepthSettings.clarityDeepDepth",
                     "bedDepthSettings.clarityShallow",
@@ -151,12 +151,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "bedDepthSettings.clarityStrength");
                 WaterEditorUI.SubHeading("Surf breaker fronts");
                 DrawFields(
-                    "bedDepthSettings.surfEnabled",
-                    "bedDepthSettings.surfAmplitude");
+                    WaterVolumePropertyPaths.SurfEnabled,
+                    WaterVolumePropertyPaths.SurfAmplitude);
                 // Runtime silently floors the surf amplitude at the swell height; surface the
                 // effective value here whenever that floor is actually raising it.
                 if (target is WaterVolume floorVolume &&
-                    floorVolume.SwellHeight > Prop("bedDepthSettings.surfAmplitude").floatValue)
+                    floorVolume.SwellHeight > Prop(WaterVolumePropertyPaths.SurfAmplitude).floatValue)
                     EditorGUILayout.LabelField(" ",
                         $"Effective: {floorVolume.SurfAmplitudeEffective:0.##} m (floored at the swell height)",
                         EditorStyles.miniLabel);
@@ -231,7 +231,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             {
                 WaterEditorUI.SubHeading("Generation & decay");
                 DrawFields(
-                    "foamSettings.foamGenRate",
+                    WaterVolumePropertyPaths.FoamGenRate,
                     "foamSettings.foamGenThreshold",
                     "foamSettings.foamMinWaveHeight",
                     "foamSettings.foamDecay",

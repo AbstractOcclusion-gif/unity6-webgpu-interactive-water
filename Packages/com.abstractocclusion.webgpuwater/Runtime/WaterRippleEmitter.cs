@@ -1,4 +1,4 @@
-// WebGL Water - ripple spawner (Unity 6 / URP port)
+// WebGpuWater - ripple spawner (Unity 6 / URP port)
 // Spawns ripples into whichever water body contains the emit point. Call Emit() on demand
 // (footstep animation events, projectile impacts, a splash) or enable "emit on move" for a
 // continuous wake as the object travels (boats, a swimmer). Built on WaterVolume's world-space

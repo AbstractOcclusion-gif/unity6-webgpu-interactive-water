@@ -1,4 +1,4 @@
-// WebGL Water - GPU heightfield simulation driver (Unity 6 / URP port)
+// WebGpuWater - GPU heightfield simulation driver (Unity 6 / URP port)
 // Owns two RGBAFloat ping-pong RenderTextures and dispatches the compute kernels.
 // Port of water.js by Evan Wallace (MIT).
 using UnityEngine;

@@ -1,4 +1,4 @@
-// WebGL Water - WaterVolume inspector: setup + wiring sections (placement, look, body, scene
+// WebGpuWater - WaterVolume inspector: setup + wiring sections (placement, look, body, scene
 // wiring, performance, camera, splash). Draws serialized properties by exact path. Editor-only.
 #if UNITY_EDITOR
 using UnityEditor;
@@ -30,8 +30,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 // Crest-style crossing scrolling detail normals: off (flat) until a tiling
                 // water-normal texture is assigned; the sliders shape the layer once it is.
                 WaterEditorUI.SubHeading("Detail normals (micro ripples)");
-                DrawFields("detailNormalSettings.texture");
-                DrawFieldsIf(Prop("detailNormalSettings.texture").objectReferenceValue != null,
+                DrawFields(WaterVolumePropertyPaths.DetailNormalTexture);
+                DrawFieldsIf(Prop(WaterVolumePropertyPaths.DetailNormalTexture).objectReferenceValue != null,
                     "detailNormalSettings.strength",
                     "detailNormalSettings.tileMeters",
                     "detailNormalSettings.scrollSpeed");
@@ -76,7 +76,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 DrawFields(
                     "simCompute", "oceanFftCompute", "causticsShader",
                     "largeBodyCausticsShader", "obstacleShader", "occluderShader", "waterMesh",
-                    "targetCamera", "sun");
+                    "targetCamera", WaterVolumePropertyPaths.Sun);
             });
         }
 

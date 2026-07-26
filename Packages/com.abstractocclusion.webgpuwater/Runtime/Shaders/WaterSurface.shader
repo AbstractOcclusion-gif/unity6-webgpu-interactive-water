@@ -1,4 +1,4 @@
-// WebGL Water - water surface (Unity 6 / URP port)
+// WebGpuWater - water surface (Unity 6 / URP port)
 // Hybrid reflection (analytic sky/pool -> planar -> SSR) and refraction (analytic
 // pool, or real screen-space refraction of the live scene). All extras are
 // keyword-gated and default off, so the base look matches the original.
@@ -118,7 +118,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             #include "WaterFog.hlsl"
             #include "WaterWaves.hlsl"
             #include "WaterVolume.hlsl" // brings WaterShared (via WaterCommon): POOL_RIM_HEIGHT etc.
-            #include "WaterExclusion.hlsl" // dry-interior exclusion volumes (global OBBs)
+            #include "WaterExclusion.hlsl" // dry-interior exclusion volumes (analytic box/sphere)
+            #include "WaterExclusionMesh.hlsl" // MESH volumes: the depth-prepass carve test
             #include "WaterLargeWaves.hlsl" // open-water world-space wave normal (large-body path)
             #include "WaterFoamCommon.hlsl" // shared foam lighting constants/helpers (FOAM_LIGHT_WRAP etc.)
             // ---- Pass-local code split into includes (SHADER-SPLIT-2, verbatim moves).
@@ -132,28 +133,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             #include "WaterSurfaceFoamSampling.hlsl"
             #include "WaterSurfaceDetailNormal.hlsl"
 
-            #define SSS_AMPLITUDE_EPSILON   1e-3   // guards the crest/amplitude ratio when the swell is flat
-            // Shallow-water clarity (surf run-out): under this column depth the shore band
-            // blends toward the refracted ground, so centimetres-deep water reads clear
-            // instead of flat opaque blue between the last bore and the beach.
-            #define SHALLOW_CLARITY_DEPTH 0.6   // metres; blend fully faded out at this depth
-            #define SHALLOW_CLARITY_BLEND 0.5   // max blend toward the refracted colour at depth 0
-            // Wet-sand glaze weights (swash zone): the thin film is centimetres of water ON
-            // the sand, so it pulls HARD toward the refracted ground (never blue ocean on the
-            // beach), and the drying glaze behind it mixes darkened ground + a sky sheen.
-            #define WET_FILM_MIN_TRANSPARENCY 0.6    // film pull toward the ground at the waterline
-            #define WET_FILM_DEPTH_GAIN       0.3    // extra pull as the film thins up-beach
-            #define WET_GLAZE_EDGE            0.25   // smoothstep width of the drying wet edge
-            #define WET_GLAZE_REFRACT         0.7    // refracted-ground weight in the wet look
-            #define WET_GLAZE_REFLECT         0.12   // reflected-sky weight in the wet look
-            #define WET_GLAZE_STRENGTH        0.85   // max glaze opacity over the base shading
-
-            // Peaked-look refine: short steps along the ripple normal sharpen wave crests.
-            // The step COUNT is tier-driven (_PeakedRefineSteps via the body's property
-            // block): each step is a dependent texture fetch per pixel, the single biggest
-            // fragment cost on mobile. The cap bounds the loop for the compiler.
-            #define PEAKED_REFINE_MAX_STEPS 8
-            #define PEAKED_REFINE_STEP  0.005
+            // Stage tuning constants (SSS_AMPLITUDE_EPSILON, SHALLOW_*, WET_*, PEAKED_REFINE_*)
+            // moved into WaterSurfaceFragStages.hlsl: the after-fog PondFoamOverlay pass (Pass 2)
+            // includes those stages too and must compile the same values.
 
             // ---- Vertex stage (SHADER-SPLIT-4, verbatim move): the pass-local uniforms,
             // SampleRipple, the v2f contract and vert() live in WaterSurfaceVertStage.hlsl,
@@ -166,8 +148,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // last include directly above frag().
             #include "WaterSurfaceFragStages.hlsl"
 
-            // Chunk sphere footprint clip (published per body by WaterVolume.Chunk.cs); 0 = ordinary body.
-            float _ChunkSphereClip;
+            // _ChunkSphereClip / _ChunkUseMesh are declared in WaterSurfaceFragStages.hlsl (the
+            // foam overlay-skip gate reads them too); the textures + margins stay Pass-0 locals.
             // Slight overdraw past the unit sphere (squared-radius units, ~1% radius) so the disc rim
             // and the shell wall share a COVERED seam: an exact clip left 1-px holes where the
             // rasterized rim undershot the analytic sphere the shell resolves. The shell renders
@@ -177,7 +159,6 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // Chunk MESH footprint: clip the disc to the mesh's cross-section at the water line using the
             // depth prepass (WaterChunkDepthFeature). Read by texel .Load - no sampler. This is a UnityCG
             // shader, so plain Texture2D + single-arg LinearEyeDepth (not the URP-core macros the wall uses).
-            float _ChunkUseMesh;
             Texture2D _ChunkFogFrontDepth;
             Texture2D _ChunkFogBackDepth;
             // Span-relative overdraw past the mesh's [front,back] so the disc rim meets the wall with a
@@ -193,6 +174,20 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 // same contract ShorelineStage's clip() already relies on), and with zero
                 // volumes the uniform count skips the loop entirely.
                 if (InsideExclusion(i.worldPos)) discard;
+
+                // MESH exclusion volumes carve by their real silhouette instead of by an analytic
+                // shape, so they are not in the loop above: this fragment is inside one when its own
+                // eye depth lies between the prepass front and back faces at this pixel. One texel
+                // fetch each, no sampler. i.pos is SV_POSITION - xy is the pixel, z the raw depth -
+                // and this pass is UnityCG, hence the single-argument LinearEyeDepth.
+                if (_ExclusionMeshCount > 0.5)
+                {
+                    float2 meshRawSpan = ExclusionMeshRawSpan(int2(i.pos.xy));
+                    if (ExclusionMeshCoversDepth(LinearEyeDepth(meshRawSpan.x),
+                                                 LinearEyeDepth(meshRawSpan.y),
+                                                 LinearEyeDepth(i.pos.z), _ProjectionParams.z))
+                        discard;
+                }
 
                 // Chunk sphere footprint: clip the flat surface disc to the body's SPHERE so the circle
                 // tracks the sphere's cross-section as waves move the water level. A fixed-radius disc is
@@ -296,6 +291,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             #include "WaterWaves.hlsl"
             #include "WaterVolume.hlsl"
             #include "WaterExclusion.hlsl"
+            #include "WaterExclusionMesh.hlsl"
             #include "WaterLargeWaves.hlsl"
             #include "WaterFoamCommon.hlsl"
             // Same helper chain as Pass 0 (include guards make this cheap): vert reads the foam
@@ -311,10 +307,94 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             float4 fragDepth(v2f i) : SV_Target
             {
                 // Dry-interior exclusion: no surface there, so no waterline either (matches the
-                // visible pass's discard).
+                // visible pass's discard, mesh tier included - the two must agree, or this RT would
+                // report a surface the visible pass threw away).
                 if (InsideExclusion(i.worldPos)) discard;
+                if (_ExclusionMeshCount > 0.5)
+                {
+                    float2 meshRawSpan = ExclusionMeshRawSpan(int2(i.pos.xy));
+                    if (ExclusionMeshCoversDepth(LinearEyeDepth(meshRawSpan.x),
+                                                 LinearEyeDepth(meshRawSpan.y),
+                                                 LinearEyeDepth(i.pos.z), _ProjectionParams.z))
+                        discard;
+                }
                 // Linear EYE depth of the displaced surface; the RT clears to 0 = "no surface".
                 return float4(LinearEyeDepth(i.pos.z), 0.0, 0.0, 1.0);
+            }
+            ENDCG
+        }
+
+        // ---- Pass 2: pond/sim foam overlay (drawn AFTER the fullscreen underwater fog). ----
+        // On frames where the fog pass owns the volume (armed + camera in air), Pass 0 SKIPS
+        // its pond-foam blend (PondFoamLayer's overlay-skip gate): the fog would paint the
+        // water column's fog over it, washing fading foam toward the fog colour, and any
+        // fog-side cancel punched clear holes through dense fog instead. This pass re-draws
+        // that exact foam AFTER the fog: same displaced vertices (shared VertStage), same
+        // PondFoamLayer look (shared FragStages; WATER_FOAM_OVERLAY_PASS keeps the skip gate
+        // out of THIS pass), alpha-blended over the fogged scene - thin foam genuinely fades
+        // INTO the fog, dense foam sits crisply on top. Drawn EXPLICITLY by
+        // WaterParticlesAfterFogPass with each above-surface renderer's own mesh, matrix,
+        // material and live property block (the eye-depth prepass recipe) - never by the
+        // camera. ZTest LEqual: Pass 0 wrote the surface's own depth and the shared vertex
+        // stage reproduces it exactly, so the overlay lands on the visible surface and stays
+        // occluded by anything in front. Chunk discs are excluded by the C# collector (their
+        // footprint clips are Pass-0 locals this pass does not replicate).
+        Pass
+        {
+            Name "PondFoamOverlay"
+            Cull Back
+            ZWrite Off
+            ZTest LEqual
+            Blend SrcAlpha OneMinusSrcAlpha
+
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment fragFoamOverlay
+            #pragma target 4.0
+            // This IS the after-fog redraw: keep PondFoamLayer's overlay-skip gate out.
+            #define WATER_FOAM_OVERLAY_PASS 1
+            #include "UnityCG.cginc"
+            #include "WaterCommon.hlsl"
+            #include "WaterFog.hlsl"
+            #include "WaterWaves.hlsl"
+            #include "WaterVolume.hlsl"
+            #include "WaterExclusion.hlsl"
+            #include "WaterExclusionMesh.hlsl"
+            #include "WaterLargeWaves.hlsl"
+            #include "WaterFoamCommon.hlsl"
+            #include "WaterSurfaceScreen.hlsl"
+            #include "WaterSurfaceShadow.hlsl"
+            #include "WaterSurfaceSpecular.hlsl"
+            #include "WaterSurfacePoolTrace.hlsl"
+            #include "WaterSurfaceFoamSampling.hlsl"
+            #include "WaterSurfaceDetailNormal.hlsl"
+            #include "WaterSurfaceVertStage.hlsl"
+            #include "WaterSurfaceFragStages.hlsl"
+
+            // Below this alpha the blend would be invisible: clip instead of paying it.
+            #define FOAM_OVERLAY_MIN_ALPHA 0.004
+
+            fixed4 fragFoamOverlay(v2f i) : SV_Target
+            {
+                // Same carve rules as the visible pass: no surface there, no foam either.
+                if (InsideExclusion(i.worldPos)) discard;
+                if (_ExclusionMeshCount > 0.5)
+                {
+                    float2 meshRawSpan = ExclusionMeshRawSpan(int2(i.pos.xy));
+                    if (ExclusionMeshCoversDepth(LinearEyeDepth(meshRawSpan.x),
+                                                 LinearEyeDepth(meshRawSpan.y),
+                                                 LinearEyeDepth(i.pos.z), _ProjectionParams.z))
+                        discard;
+                }
+                // Submerged camera: the fog is IN FRONT of the foam, so Pass 0 kept its
+                // queue-time foam - drawing here too would lay it twice. Uniform branch,
+                // the exact complement of Pass 0's skip gate (same published globals).
+                if (_CameraUnderwater > 0.5) discard;
+
+                WaterGeomStage geom = EvaluateSurfaceGeometry(i);
+                FoamLayer foam = PondFoamLayer(i, geom);
+                clip(foam.alpha - FOAM_OVERLAY_MIN_ALPHA);
+                return fixed4(foam.look, foam.alpha);
             }
             ENDCG
         }

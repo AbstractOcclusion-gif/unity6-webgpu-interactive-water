@@ -29,6 +29,20 @@ namespace AbstractOcclusion.WebGpuWater
             }
         }
 
+        /// <summary>Every LIVE renderer drawing this body's ABOVE-water surface (base sheet,
+        /// near-field window patch, clipmap above levels) - the sheets whose pond foam the
+        /// after-fog PondFoamOverlay pass re-draws. Under twins are deliberately absent: the
+        /// underside draws its foam at queue time (the fog is in front of it there), so
+        /// overlaying it would lay foam twice.</summary>
+        internal void CollectAboveSurfaceRenderers(List<Renderer> into)
+        {
+            AddLiveRenderer(into, surfaceAbove);
+            AddLiveRenderer(into, _patchRenderer);
+            if (_clipmapLevels == null) return;
+            for (int i = 0; i < _clipmapLevels.Length; i++)
+                AddLiveRenderer(into, _clipmapLevels[i].above);
+        }
+
         static void AddLiveRenderer(List<Renderer> into, Renderer renderer)
         {
             if (renderer != null && renderer.enabled && renderer.gameObject.activeInHierarchy)

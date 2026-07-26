@@ -1,4 +1,4 @@
-// WebGL Water - wind-driven spectral wave bank (Unity 6 / URP port)
+// WebGpuWater - wind-driven spectral wave bank (Unity 6 / URP port)
 //
 // Builds a set of directional sinusoidal components from a JONSWAP-shaped spectrum
 // driven entirely by wind. The components are (a) uploaded to the shaders as global

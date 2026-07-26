@@ -1,4 +1,4 @@
-// WebGL Water - WaterVolume inspector: Jerlov physical water-colour preset.
+// WebGpuWater - WaterVolume inspector: Jerlov physical water-colour preset.
 // A water-type dropdown + "Apply" button that writes the validated per-channel absorption into
 // Fog Extinction (at density 1) and the single-scattering-albedo body colour into the Scatter / Fog
 // colour. Mirrors the body-type "Apply defaults" pattern: explicit, button-driven, and fully
@@ -30,13 +30,13 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             JerlovPreset preset = JerlovWaterTypes.Get(type);
 
-            Prop("waterFogSettings.fogExtinction").colorValue = preset.Extinction;
-            Prop("waterFogSettings.fogDensity").floatValue = JerlovWaterTypes.PhysicalDensity;
-            Prop("waterFogSettings.fogColor").colorValue = preset.BodyColor;
-            Prop("waterFogSettings.waterFog").boolValue = true;
+            Prop(WaterVolumePropertyPaths.FogExtinction).colorValue = preset.Extinction;
+            Prop(WaterVolumePropertyPaths.FogDensity).floatValue = JerlovWaterTypes.PhysicalDensity;
+            Prop(WaterVolumePropertyPaths.FogColor).colorValue = preset.BodyColor;
+            Prop(WaterVolumePropertyPaths.WaterFog).boolValue = true;
 
-            Prop("volumeScatterSettings.scatterColor").colorValue = preset.BodyColor;
-            Prop("volumeScatterSettings.scatterIntensity").floatValue = JerlovScatterIntensity;
+            Prop(WaterVolumePropertyPaths.ScatterColor).colorValue = preset.BodyColor;
+            Prop(WaterVolumePropertyPaths.ScatterIntensity).floatValue = JerlovScatterIntensity;
         }
     }
 }

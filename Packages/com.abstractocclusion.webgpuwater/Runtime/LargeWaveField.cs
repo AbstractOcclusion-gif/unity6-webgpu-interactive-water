@@ -614,5 +614,30 @@ namespace AbstractOcclusion.WebGpuWater
             return EvaluateBands(source.x, source.y, time, amplitudeScale, windHeadingRadians,
                                  swellWavelength, swellHeight, ctx).HeightVelocity;
         }
+
+        /// <summary>
+        /// Height+slope AND vertical velocity at a QUERY world (x, z) from ONE chop inversion. Exactly
+        /// the pair EvaluateAtQuery and VerticalVelocityAtQuery return, computed together.
+        /// </summary>
+        /// <remarks>
+        /// A caller wanting both used to call those two with byte-identical arguments, and EACH ran
+        /// InvertToSource - four EvaluateBands passes - before its own final pass: 10 passes per point
+        /// where 5 suffice. EvaluateBands is 16 Gerstner components plus the surf-front cosh chain, and
+        /// buoyancy asks for HeightNormalVelocity at every probe of every floater, so the waste scaled
+        /// with the scene (the shipped stress spawner's 8x8 grid x 8 probes burned ~2,500 redundant
+        /// passes per FixedUpdate). BandAccum already carried HeightVelocity beside Height/Slope, so
+        /// both answers fall out of the single pass that was always being done.
+        /// </remarks>
+        internal static void EvaluateAtQuery(float worldX, float worldZ, float time, float amplitudeScale,
+            float windHeadingRadians, float swellWavelength, float swellHeight, float choppiness,
+            in ShoreWaveContext ctx, out Vector3 heightSlope, out float verticalVelocity)
+        {
+            Vector2 source = InvertToSource(worldX, worldZ, time, amplitudeScale, windHeadingRadians,
+                                            swellWavelength, swellHeight, choppiness, ctx);
+            BandAccum a = EvaluateBands(source.x, source.y, time, amplitudeScale, windHeadingRadians,
+                                        swellWavelength, swellHeight, ctx);
+            heightSlope = new Vector3(a.Height, a.SlopeX, a.SlopeZ);
+            verticalVelocity = a.HeightVelocity;
+        }
     }
 }

@@ -1,4 +1,4 @@
-// WebGL Water - quality tiers (Unity 6 / URP port)
+// WebGpuWater - quality tiers (Unity 6 / URP port)
 // Scales the GPU-cost knobs (sim grid resolution, caustic resolution, god-ray steps)
 // so the same water fits both a PC and the tighter WebGPU/mobile budget. Assign one
 // asset to every WaterVolume; each body reads it at startup. With no asset a body uses

@@ -1,4 +1,4 @@
-// WebGL Water - enter/exit-water events (Unity 6 / URP port)
+// WebGpuWater - enter/exit-water events (Unity 6 / URP port)
 // Watches a single point (this object, plus an optional local offset) and fires submerge /
 // emerge events as it crosses the water surface of whichever body contains it. Wire the
 // events in the Inspector (audio, VFX, swimming, oxygen) or subscribe from code, and poll

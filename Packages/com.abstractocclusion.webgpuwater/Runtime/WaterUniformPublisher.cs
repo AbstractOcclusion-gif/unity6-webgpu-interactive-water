@@ -11,7 +11,7 @@ namespace AbstractOcclusion.WebGpuWater
     internal sealed class WaterUniformPublisher
     {
         // shader property / global ids, cached once
-        static readonly int ID_Water = Shader.PropertyToID("_WaterTex");
+        static readonly int ID_Water = WaterShaderProps.WaterTex;
         static readonly int ID_WaterTexel = Shader.PropertyToID("_WaterTexel");
         static readonly int ID_Caustic = Shader.PropertyToID("_CausticTex");
         // "Skybox/Cubemap" material texture slot - cached like every other ID: the lookup runs on
@@ -20,12 +20,12 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_CausticOccluderActive = Shader.PropertyToID("_CausticOccluderActive");
         static readonly int ID_Tiles = Shader.PropertyToID("_Tiles");
         static readonly int ID_Sky = Shader.PropertyToID("_Sky");
-        static readonly int ID_Light = Shader.PropertyToID("_LightDir");
+        static readonly int ID_Light = WaterShaderProps.LightDir;
         static readonly int ID_SunColor = Shader.PropertyToID("_SunColor");
         static readonly int ID_FogColor = Shader.PropertyToID("_WaterFogColor");
         static readonly int ID_FogExt = Shader.PropertyToID("_WaterExtinction");
-        static readonly int ID_FogDensity = Shader.PropertyToID("_WaterFogDensity");
-        static readonly int ID_FogEnabled = Shader.PropertyToID("_WaterFogEnabled");
+        static readonly int ID_FogDensity = WaterShaderProps.WaterFogDensity;
+        static readonly int ID_FogEnabled = WaterShaderProps.WaterFogEnabled;
         static readonly int ID_WaterOpacity = Shader.PropertyToID("_WaterOpacity");
         static readonly int ID_ScatterEnabled = Shader.PropertyToID("_ScatterEnabled");
         static readonly int ID_ScatterColor = Shader.PropertyToID("_ScatterColor");
@@ -77,13 +77,13 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_WaveTime = Shader.PropertyToID("_WaveTime");
         static readonly int ID_WaveMeters = Shader.PropertyToID("_WaveMetersPerUnit");
         static readonly int ID_WaveNormal = Shader.PropertyToID("_WaveNormalStrength");
-        static readonly int ID_VolumeCenter = Shader.PropertyToID("_VolumeCenter");
-        static readonly int ID_VolumeExtent = Shader.PropertyToID("_VolumeExtent");
-        static readonly int ID_VolumeRot = Shader.PropertyToID("_VolumeRot");
+        static readonly int ID_VolumeCenter = WaterShaderProps.VolumeCenter;
+        static readonly int ID_VolumeExtent = WaterShaderProps.VolumeExtent;
+        static readonly int ID_VolumeRot = WaterShaderProps.VolumeRot;
         static readonly int ID_GodRaySteps = Shader.PropertyToID("_GodRaySteps");
         static readonly int ID_SimWindowed = Shader.PropertyToID("_SimWindowed");
-        static readonly int ID_SimCenter = Shader.PropertyToID("_SimCenter");
-        static readonly int ID_SimExtent = Shader.PropertyToID("_SimExtent");
+        static readonly int ID_SimCenter = WaterShaderProps.SimCenter;
+        static readonly int ID_SimExtent = WaterShaderProps.SimExtent;
         static readonly int ID_SimEdgeFade = Shader.PropertyToID("_SimEdgeFadeTexels");
         static readonly int ID_LargeBody = Shader.PropertyToID("_LargeBody");
         static readonly int ID_OceanFftActive = Shader.PropertyToID("_OceanFftActive");
@@ -156,7 +156,9 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SSRThickness = Shader.PropertyToID("_SSRThickness");
         static readonly int ID_RefractionDistortion = Shader.PropertyToID("_RefractionDistortion");
         static readonly int ID_ExclusionCount = Shader.PropertyToID("_ExclusionCount");
-        static readonly int ID_ExclusionWorldToBox = Shader.PropertyToID("_ExclusionWorldToBox");
+        static readonly int ID_ExclusionWorldToLocal = Shader.PropertyToID("_ExclusionWorldToLocal");
+        static readonly int ID_ExclusionShape = Shader.PropertyToID("_ExclusionShape");
+        static readonly int ID_ExclusionMeshCount = Shader.PropertyToID("_ExclusionMeshCount");
         static readonly int ID_ExclusionEdgeColor = Shader.PropertyToID("_ExclusionEdgeColor");
         static readonly int ID_ExclusionEdgeParams = Shader.PropertyToID("_ExclusionEdgeParams");
 
@@ -165,6 +167,7 @@ namespace AbstractOcclusion.WebGpuWater
         // _ExclusionCount clamps the shader loop. Static (the volumes are global state,
         // shared by every body's publisher) and reused every frame - no allocation.
         static readonly Matrix4x4[] _exclusionMatrices = new Matrix4x4[WaterExclusionVolume.MaxVolumes];
+        static readonly Vector4[] _exclusionShapes = new Vector4[WaterExclusionVolume.MaxVolumes];
         static readonly Vector4[] _exclusionEdgeColors = new Vector4[WaterExclusionVolume.MaxVolumes];
         static readonly Vector4[] _exclusionEdgeParams = new Vector4[WaterExclusionVolume.MaxVolumes];
 
@@ -209,13 +212,20 @@ namespace AbstractOcclusion.WebGpuWater
                 ? _body.targetCamera.transform.position
                 : _body.VolumeCenter;
             int count = WaterExclusionVolume.WriteVolumeUniforms(
-                _exclusionMatrices, _exclusionEdgeColors, _exclusionEdgeParams, reference);
+                _exclusionMatrices, _exclusionShapes, _exclusionEdgeColors, _exclusionEdgeParams,
+                reference);
             Shader.SetGlobalFloat(ID_ExclusionCount, count);
+            // Mesh-shape volumes carve from the depth prepass, not from the analytic loop: this is
+            // the gate that keeps every consumer's prepass read out of a scene that has no mesh
+            // volume. Published unconditionally (unlike the arrays) because dropping to zero has to
+            // REACH the shaders - a stale 1 would leave them reading last frame's depth targets.
+            Shader.SetGlobalFloat(ID_ExclusionMeshCount, WaterExclusionVolume.MeshVolumeCount);
             // With count 0 the shader loop never reads the arrays, so skipping the sets is
             // safe and keeps the zero-volume frame free of the array uploads.
             if (count > 0)
             {
-                Shader.SetGlobalMatrixArray(ID_ExclusionWorldToBox, _exclusionMatrices);
+                Shader.SetGlobalMatrixArray(ID_ExclusionWorldToLocal, _exclusionMatrices);
+                Shader.SetGlobalVectorArray(ID_ExclusionShape, _exclusionShapes);
                 Shader.SetGlobalVectorArray(ID_ExclusionEdgeColor, _exclusionEdgeColors);
                 Shader.SetGlobalVectorArray(ID_ExclusionEdgeParams, _exclusionEdgeParams);
             }

@@ -1,4 +1,4 @@
-// WebGL Water - WaterVolume inspector: motion sections (simulation, interactive ripples,
+// WebGpuWater - WaterVolume inspector: motion sections (simulation, interactive ripples,
 // ambient wind waves, floating-object interaction). Draws serialized properties by exact path.
 #if UNITY_EDITOR
 using UnityEditor;
@@ -44,11 +44,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             _showWindWaves = WaterEditorUI.SectionWithToggle(
                 "Wind Waves (spectral)", _showWindWaves, Prop("windWaveSettings.windWaves"), () =>
                 DrawFields(
-                    "windWaveSettings.windSpeed",
+                    WaterVolumePropertyPaths.WindSpeed,
                     "windWaveSettings.windFromDegrees",
-                    "windWaveSettings.waveScaleMeters",
+                    WaterVolumePropertyPaths.WaveScaleMeters,
                     "windWaveSettings.waveCount",
-                    "windWaveSettings.waveAmplitudeScale",
+                    WaterVolumePropertyPaths.WaveAmplitudeScale,
                     "windWaveSettings.waveDirectionSpread",
                     "windWaveSettings.waveNormalStrength"));
         }

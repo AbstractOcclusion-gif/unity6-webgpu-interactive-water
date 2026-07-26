@@ -1,4 +1,4 @@
-// WebGL Water - object splash trigger (Unity 6 / URP port)
+// WebGpuWater - object splash trigger (Unity 6 / URP port)
 // Detects when this object punches through the water surface and fires a droplet
 // burst (via the shared WaterSplashEmitter) plus a sharp ripple into the sim, which
 // also feeds the turbulence-driven foam. Particle look/motion lives on the emitter

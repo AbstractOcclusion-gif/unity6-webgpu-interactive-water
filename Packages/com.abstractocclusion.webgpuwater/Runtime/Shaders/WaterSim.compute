@@ -1,4 +1,4 @@
-// WebGL Water - GPU heightfield simulation (Unity 6 / URP port)
+// WebGpuWater - GPU heightfield simulation (Unity 6 / URP port)
 // Original: Evan Wallace, http://madebyevan.com/webgl-water/ (MIT)
 //
 // Texture channels (per texel): (height, velocity, normal.x, normal.z)

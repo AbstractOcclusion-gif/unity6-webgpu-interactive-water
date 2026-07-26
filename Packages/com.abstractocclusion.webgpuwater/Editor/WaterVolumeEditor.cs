@@ -1,4 +1,4 @@
-// WebGL Water - scene-view editor for WaterVolume (Unity 6 / URP port)
+// WebGpuWater - scene-view editor for WaterVolume (Unity 6 / URP port)
 // Draws the oriented water volume as a wire box (floor -> surface) and gives draggable
 // scene handles for its extent and rotation, so a body can be sized and oriented in the
 // scene view without typing numbers into the inspector. Editor-only; no runtime code.

@@ -1,4 +1,4 @@
-// WebGL Water - reusable orbit camera (Unity 6 / URP port)
+// WebGpuWater - reusable orbit camera (Unity 6 / URP port)
 // Orbits a pivot, scroll to zoom. WaterVolume calls Rotate() when the user
 // drags the background; zoom is handled here every frame.
 using UnityEngine;

@@ -1,4 +1,4 @@
-// WebGL Water - volume placement frame (Unity 6 / URP port)
+// WebGpuWater - volume placement frame (Unity 6 / URP port)
 //
 // Maps the normalised pool box (x,z in [-1,1], surface y=0, floor y=-1) into world
 // space with a full transform so the volume can be moved, ROTATED (incl. tilt) and

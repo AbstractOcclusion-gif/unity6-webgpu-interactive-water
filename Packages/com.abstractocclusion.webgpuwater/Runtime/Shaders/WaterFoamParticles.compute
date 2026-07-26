@@ -1,4 +1,4 @@
-// WebGL Water - GPU foam particles (KWS-inspired)
+// WebGpuWater - GPU foam particles (KWS-inspired)
 //
 // Particles spawn on the GPU where the sim's foam/turbulence is strong, drift with
 // the surface flow, and are drawn by FoamParticles.shader straight from the buffer

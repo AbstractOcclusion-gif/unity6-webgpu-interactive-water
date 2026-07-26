@@ -1,7 +1,7 @@
-// WebGpuWater - dry-region exclusion volume (analytic OBB, Phase 1).
-// Marks an oriented box (transform pose + Size, scaled by lossyScale) in which the
-// water surface must NOT render: a boat's hull interior, a submarine room, a house
-// below sea level. Registers into a static list exactly like WaterInteractable;
+// WebGpuWater - dry-region exclusion volume (analytic primitive: box or sphere/ellipsoid).
+// Marks a region (transform pose + Size, scaled by lossyScale) in which the water surface
+// must NOT render: a boat's hull interior, a submarine room, a house below sea level, a
+// diving bell. Registers into a static list exactly like WaterInteractable;
 // WaterUniformPublisher publishes the active volumes as global uniforms each frame
 // and WaterSurface.shader discards fragments inside any of them (WaterExclusion.hlsl).
 // Purely visual + camera-state: buoyancy, physics and the ripple sim are untouched -
@@ -14,13 +14,40 @@ namespace AbstractOcclusion.WebGpuWater
     [ExecuteAlways] // edit-mode preview: the water walls draw while authoring, like the water itself
     public class WaterExclusionVolume : MonoBehaviour
     {
+        /// <summary>The shape a volume carves with. Box and Sphere are ANALYTIC and their ordinals
+        /// ARE the shader's PRIMITIVE_SHAPE_* selector values (WaterPrimitiveShape.hlsl) - the
+        /// publisher sends the ordinal straight through as a float, so the two must never drift
+        /// apart. Mesh is not a primitive at all: it carves from a depth prepass of its real
+        /// silhouette (WaterExclusionMesh.hlsl) and falls back to <see cref="meshProxy"/> for the
+        /// queries a camera-space prepass cannot answer.</summary>
+        public enum Shape
+        {
+            Box = 0,
+            Sphere = 1,
+            Mesh = 2,
+        }
+
+        // GPU pair: PRIMITIVE_SHAPE_SPHERE in Runtime/Shaders/WaterPrimitiveShape.hlsl. Named as
+        // a const (rather than left implicit in the enum) so WaterWaveConstantsValidator can guard
+        // the ordinal against the shader's selector the same way it guards MaxVolumes.
+        const int SphereShapeId = 1;
+
+        // GPU pair: EXCLUSION_SHAPE_MESH in Runtime/Shaders/WaterExclusion.hlsl - the selector the
+        // wall carries for a mesh volume. Same reason as SphereShapeId: validator-guarded.
+        const int MeshShapeId = 2;
+
         // GPU pair: EXCLUSION_MAX_VOLUMES in Runtime/Shaders/WaterExclusion.hlsl.
         // WaterWaveConstantsValidator guards the pair, so a drift is a console error.
         internal const int MaxVolumes = 4;
 
-        // Floor on a box edge so a zero Size (or a zero parent scale) can never produce a
-        // singular world->box matrix; well under any visually meaningful volume.
+        // Floor on an edge so a zero Size (or a zero parent scale) can never produce a
+        // singular world->local matrix; well under any visually meaningful volume.
         const float MinEdgeLength = 1e-4f;
+
+        // Half-extent of the shader's unit local space: EXCLUSION_LOCAL_HALF_EXTENT in
+        // WaterExclusion.hlsl. The CPU point test below must use the SAME convention as the
+        // shader's, or a click could ripple water the GPU has carved away.
+        const float LocalHalfExtent = 0.5f;
 
         static readonly List<WaterExclusionVolume> _active = new List<WaterExclusionVolume>();
 
@@ -40,9 +67,29 @@ namespace AbstractOcclusion.WebGpuWater
         // hide the truncation. Never a silent cap.
         static bool _warnedOverLimit;
 
-        [Tooltip("Edge lengths of the dry box in local units (like BoxCollider Size); the " +
-                 "transform's position, rotation and scale place it in the world. The water " +
-                 "surface is never rendered inside this box.")]
+        [Tooltip("Shape the dry region is carved with. Box is an oriented box; Sphere is that " +
+                 "box's INSCRIBED ball, so a non-uniform Size (or parent scale) makes it an " +
+                 "ellipsoid; Mesh carves an arbitrary closed mesh. Box and Sphere are fully " +
+                 "analytic - walls, fog carve, sun shadow column and particle culling all follow " +
+                 "them exactly. Mesh needs the WaterExclusionDepth render feature on your URP " +
+                 "renderer, and falls back to Mesh Proxy for the sun shadow column, particle " +
+                 "culling and the CPU point test.")]
+        public Shape shape = Shape.Box;
+
+        [Tooltip("Closed mesh a Mesh-shape volume carves. Authored in the volume's LOCAL space " +
+                 "spanning -0.5..0.5 (like the unit cube a Box carves), then placed and scaled by " +
+                 "the transform and Size. Convex meshes are exact; a concave mesh's internal " +
+                 "cavity biases the exit face.")]
+        public Mesh carveMesh;
+
+        [Tooltip("Analytic stand-in for a Mesh volume in the queries a camera-space prepass cannot " +
+                 "answer: the sun shadow column, particle culling, and the CPU point test used by " +
+                 "input routing. Pick whichever of Box or Sphere better matches the mesh's bulk.")]
+        public Shape meshProxy = Shape.Box;
+
+        [Tooltip("Extents of the dry region in local units (like BoxCollider Size): edge lengths " +
+                 "for a Box, DIAMETERS for a Sphere. The transform's position, rotation and scale " +
+                 "place it in the world. The water surface is never rendered inside it.")]
         public Vector3 size = Vector3.one;
 
         [Tooltip("Draw the carve boundary as WALLS OF WATER (the fog's lit in-scatter colour, " +
@@ -67,12 +114,15 @@ namespace AbstractOcclusion.WebGpuWater
                  "classic look); a deep water tint keeps the edges coloured instead of grey.")]
         [ColorUsage(false)] public Color edgeColor = Color.black;
 
-        [Tooltip("Strength of the edge/corner occlusion on the carve boundary: 0 = no visible " +
-                 "edges, 1 = corners fully saturated toward Edge Color.")]
+        [Tooltip("Strength of the boundary occlusion on the carve: 0 = no visible outline, " +
+                 "1 = the outline fully saturated toward Edge Color. A Box shades its edges and " +
+                 "corners; a Sphere has none, so it shades its silhouette RIM instead - both are " +
+                 "the shape's visible outline.")]
         [Range(0f, 1f)] public float edgeIntensity = DefaultEdgeIntensity;
 
-        [Tooltip("How far the edge shading reaches in from the box edges (spread), as a fraction " +
-                 "of the box half-extent.")]
+        [Tooltip("How far the boundary shading reaches in from the outline (spread), as a fraction " +
+                 "of the half-extent. One value covers both shapes: a Box measures it across its " +
+                 "faces, a Sphere across its silhouette.")]
         [Range(0.01f, 0.5f)] public float edgeSpread = DefaultEdgeSpread;
 
         // The pre-knob hard-coded look: lerp(0.45, 1, edge) over a 0.12 half-extent band =
@@ -88,8 +138,8 @@ namespace AbstractOcclusion.WebGpuWater
         public bool affectParticles = true;
 
         [Tooltip("Softness of the particle cut at the volume boundary, as a fraction of the " +
-                 "box half-extent: sprites dissolve over this shell just inside the faces " +
-                 "instead of clipping on a razor edge. 0 = hard clip exactly on the face.")]
+                 "half-extent: sprites dissolve over this shell just inside the surface " +
+                 "instead of clipping on a razor edge. 0 = hard clip exactly on the surface.")]
         [Range(0f, 0.5f)] public float particleFadeBand = DefaultParticleFadeBand;
 
         [Tooltip("How fast simulated foam/spray already inside dies when this volume sweeps " +
@@ -99,6 +149,80 @@ namespace AbstractOcclusion.WebGpuWater
 
         // Thin enough that the dissolve reads as a soft edge, not a hollow shell.
         const float DefaultParticleFadeBand = 0.06f;
+
+        /// <summary>The analytic shape the shader's closed-form kernels see for this volume: the
+        /// authored shape, or - for a Mesh volume, which those kernels cannot evaluate - its
+        /// proxy. A Mesh Proxy left on Mesh would recurse into nothing, so it degrades to Box.</summary>
+        Shape AnalyticShape
+        {
+            get
+            {
+                if (shape != Shape.Mesh) return shape;
+                return meshProxy == Shape.Sphere ? Shape.Sphere : Shape.Box;
+            }
+        }
+
+        /// <summary>GPU encoding of the shape: x = the PRIMITIVE_SHAPE_* selector the analytic
+        /// kernels use (a mesh volume sends its PROXY here), y = 1 for a Mesh volume so the
+        /// camera-ray consumers know to carve from the depth prepass instead, zw reserved for
+        /// future per-shape parameters (a capsule's radius, a wedge's angle).</summary>
+        internal Vector4 ShapeUniform =>
+            new Vector4((float)AnalyticShape, shape == Shape.Mesh ? 1f : 0f, 0f, 0f);
+
+        /// <summary>The closed mesh a Mesh-shape volume carves, or null for any other shape (and
+        /// for a Mesh volume with no mesh assigned - which is warned about, never silent).</summary>
+        internal Mesh CarveMesh => shape == Shape.Mesh ? carveMesh : null;
+
+        /// <summary>True when any enabled volume carves from a mesh - the render feature's
+        /// self-gate, so a scene without one never pays for the prepass.</summary>
+        internal static bool AnyMeshVolumeActive()
+        {
+            for (int i = 0; i < _active.Count; i++)
+                if (_active[i].CarveMesh != null) return true;
+            return false;
+        }
+
+        /// <summary>Fill <paramref name="destination"/> with the enabled volumes that carve from a
+        /// mesh. Clears first; a volume with its mesh unassigned is skipped (and warned about).</summary>
+        internal static void CollectMeshVolumes(List<WaterExclusionVolume> destination)
+        {
+            destination.Clear();
+            for (int i = 0; i < _active.Count; i++)
+            {
+                WaterExclusionVolume volume = _active[i];
+                if (volume.CarveMesh != null) destination.Add(volume);
+                else if (volume.shape == Shape.Mesh) volume.WarnMissingMeshOnce();
+            }
+        }
+
+        /// <summary>How many enabled volumes carve from a mesh, for the publisher's
+        /// _ExclusionMeshCount gate (0 = the consumers skip the prepass reads entirely).</summary>
+        internal static int MeshVolumeCount
+        {
+            get
+            {
+                int count = 0;
+                for (int i = 0; i < _active.Count; i++)
+                    if (_active[i].CarveMesh != null) count++;
+                return count;
+            }
+        }
+
+        // A Mesh volume with no mesh carves nothing at all, which on screen is indistinguishable
+        // from the volume being disabled - so say so, once per volume, instead of leaving the
+        // author to guess. Editor-only: a shipped build cannot fix the assignment anyway.
+        bool _warnedMissingMesh;
+
+        void WarnMissingMeshOnce()
+        {
+#if UNITY_EDITOR
+            if (_warnedMissingMesh) return;
+            _warnedMissingMesh = true;
+            Debug.LogWarning($"WaterExclusionVolume '{name}': Shape is Mesh but no Carve Mesh is " +
+                             "assigned, so this volume carves nothing. Assign a closed mesh, or " +
+                             "switch Shape to Box or Sphere.", this);
+#endif
+        }
 
         /// <summary>GPU encoding of the edge look: rgb = tint target, a = intensity.</summary>
         internal Vector4 EdgeColorUniform =>
@@ -120,12 +244,14 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         // ---- water walls (the drawn carve boundary) --------------------------------------
-        // One shared unit-cube mesh + material for every volume (per-volume state rides the
-        // MaterialPropertyBlock); DrawMesh enqueues into the normal render passes, so the walls
-        // write depth (fog and god rays occlude against them like any opaque geometry).
-        static Mesh _wallMesh;
+        // One shared mesh PER SHAPE + one shared material for every volume (per-volume state
+        // rides the MaterialPropertyBlock); DrawMesh enqueues into the normal render passes, so
+        // the walls write depth (fog and god rays occlude against them like any opaque geometry).
+        static Mesh _wallCubeMesh;
+        static Mesh _wallSphereMesh;
         static Material _wallMaterial;
         MaterialPropertyBlock _wallProps;
+        static readonly int ID_WallShape = Shader.PropertyToID("_WallShape");
         static readonly int ID_WallScatterBoost = Shader.PropertyToID("_WallScatterBoost");
         static readonly int ID_WallEdgeColor = Shader.PropertyToID("_WallEdgeColor");   // rgb tint, a = intensity
         static readonly int ID_WallEdgeSpread = Shader.PropertyToID("_WallEdgeSpread");
@@ -140,14 +266,33 @@ namespace AbstractOcclusion.WebGpuWater
             if (WaterVolume.Primary == null) return;
             Material material = ResolveWallMaterial();
             if (material == null) return;
+            Mesh wallMesh = ResolveWallMesh();
+            if (wallMesh == null) return; // a Mesh volume with nothing assigned; warned elsewhere
 
-            if (_wallMesh == null) _wallMesh = WaterMeshBuilder.BuildUnitCube();
             _wallProps ??= new MaterialPropertyBlock();
+            _wallProps.SetFloat(ID_WallShape, (float)shape);
             _wallProps.SetFloat(ID_WallScatterBoost, wallScatterBoost);
             _wallProps.SetVector(ID_WallEdgeColor, EdgeColorUniform);
             _wallProps.SetFloat(ID_WallEdgeSpread, edgeSpread);
-            Graphics.DrawMesh(_wallMesh, BoxToWorldMatrix(), material, gameObject.layer,
+            Graphics.DrawMesh(wallMesh, ShapeToWorldMatrix(), material, gameObject.layer,
                               null, 0, _wallProps);
+        }
+
+        // The wall mesh IS the carve boundary, so it must be the authored shape itself: the
+        // shader shades the fragment where it sits, and every term downstream (waterline clip,
+        // veil span, downwelling, reconstruction) assumes that point lies ON the boundary.
+        Mesh ResolveWallMesh()
+        {
+            // A mesh volume's boundary IS its mesh - drawing the proxy would paint a box where the
+            // depth prepass carved a silhouette.
+            if (shape == Shape.Mesh) return carveMesh;
+            if (shape == Shape.Sphere)
+                return _wallSphereMesh != null
+                     ? _wallSphereMesh
+                     : _wallSphereMesh = WaterMeshBuilder.BuildUnitSphere();
+            return _wallCubeMesh != null
+                 ? _wallCubeMesh
+                 : _wallCubeMesh = WaterMeshBuilder.BuildUnitCube();
         }
 
         // Prefer the serialized slot (a build must assign it - Shader.Find only reaches shaders
@@ -163,10 +308,12 @@ namespace AbstractOcclusion.WebGpuWater
             return _wallMaterial;
         }
 
-        /// <summary>Unit-box -> world matrix: centre + rotation + size in one transform. Built
+        /// <summary>Unit-local -> world matrix: centre + rotation + size in one transform. Built
         /// from position/rotation/lossyScale (the BoxCollider approximation: shear from
-        /// non-uniformly scaled rotated parents is ignored). Also the water-wall draw matrix.</summary>
-        internal Matrix4x4 BoxToWorldMatrix()
+        /// non-uniformly scaled rotated parents is ignored). Also the water-wall draw matrix.
+        /// The unit local space spans +-LocalHalfExtent, so Size reads as edge lengths for a box
+        /// and as diameters for a sphere.</summary>
+        internal Matrix4x4 ShapeToWorldMatrix()
         {
             Vector3 edge = Vector3.Scale(size, transform.lossyScale);
             edge = new Vector3(Mathf.Max(Mathf.Abs(edge.x), MinEdgeLength),
@@ -175,9 +322,9 @@ namespace AbstractOcclusion.WebGpuWater
             return Matrix4x4.TRS(transform.position, transform.rotation, edge);
         }
 
-        /// <summary>World -> unit-box matrix for this volume: the shader's inside test is
-        /// abs(local) &lt;= 0.5 per axis.</summary>
-        internal Matrix4x4 WorldToBoxMatrix() => BoxToWorldMatrix().inverse;
+        /// <summary>World -> unit-local matrix for this volume: the shader's inside test is
+        /// the primitive kernel at LocalHalfExtent (WaterPrimitiveShape.hlsl).</summary>
+        internal Matrix4x4 WorldToShapeMatrix() => ShapeToWorldMatrix().inverse;
 
         /// <summary>True when <paramref name="worldPoint"/> lies inside any active volume - the
         /// CPU twin of the shader's InsideExclusion (WaterExclusion.hlsl). Input routing uses it
@@ -187,26 +334,37 @@ namespace AbstractOcclusion.WebGpuWater
         internal static bool ContainsPoint(Vector3 worldPoint)
         {
             for (int i = 0; i < _active.Count; i++)
-            {
-                Vector3 local = _active[i].WorldToBoxMatrix().MultiplyPoint3x4(worldPoint);
-                if (Mathf.Abs(local.x) <= 0.5f && Mathf.Abs(local.y) <= 0.5f &&
-                    Mathf.Abs(local.z) <= 0.5f)
-                    return true;
-            }
+                if (_active[i].ContainsPointLocal(worldPoint)) return true;
             return false;
         }
 
+        // The per-shape half of ContainsPoint, mirroring the shader's PrimitiveContains one for one.
+        // A mesh volume answers through its PROXY here: the exact silhouette lives in a camera-space
+        // depth prepass, and a click ray is not the camera ray the prepass was rendered from.
+        bool ContainsPointLocal(Vector3 worldPoint)
+        {
+            Vector3 local = WorldToShapeMatrix().MultiplyPoint3x4(worldPoint);
+            if (AnalyticShape == Shape.Sphere)
+                return local.sqrMagnitude <= LocalHalfExtent * LocalHalfExtent;
+            return Mathf.Abs(local.x) <= LocalHalfExtent
+                && Mathf.Abs(local.y) <= LocalHalfExtent
+                && Mathf.Abs(local.z) <= LocalHalfExtent;
+        }
+
         /// <summary>Fill the uniform buffers (each length MaxVolumes exactly) with up to
-        /// MaxVolumes active volumes and return the count used. <paramref name="matrices"/> is
-        /// required; <paramref name="edgeColors"/>/<paramref name="edgeParams"/> (the per-volume
-        /// edge-look uniforms) may be null for consumers that only need the boxes (foam compute).
-        /// Over the limit, the volumes NEAREST <paramref name="referencePoint"/> (the target
-        /// camera) win and the drop is logged once - never a silent cap. Allocation-free:
+        /// MaxVolumes active volumes and return the count used. <paramref name="matrices"/> and
+        /// <paramref name="shapes"/> are required - a shape-less publish would silently carve
+        /// every volume as a box. <paramref name="edgeColors"/>/<paramref name="edgeParams"/>
+        /// (the per-volume edge-look uniforms) may be null for consumers that only need the
+        /// geometry. Over the limit, the volumes NEAREST <paramref name="referencePoint"/> (the
+        /// target camera) win and the drop is logged once - never a silent cap. Allocation-free:
         /// nearest-selection runs in place over the small active list.</summary>
-        internal static int WriteVolumeUniforms(Matrix4x4[] matrices, Vector4[] edgeColors,
-                                                Vector4[] edgeParams, Vector3 referencePoint)
+        internal static int WriteVolumeUniforms(Matrix4x4[] matrices, Vector4[] shapes,
+                                                Vector4[] edgeColors, Vector4[] edgeParams,
+                                                Vector3 referencePoint)
         {
             ValidateBufferLength(matrices, nameof(matrices));
+            ValidateBufferLength(shapes, nameof(shapes));
             if (edgeColors != null) ValidateBufferLength(edgeColors, nameof(edgeColors));
             if (edgeParams != null) ValidateBufferLength(edgeParams, nameof(edgeParams));
 
@@ -215,12 +373,12 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 _warnedOverLimit = false;
                 for (int i = 0; i < activeCount; i++)
-                    WriteSlot(matrices, edgeColors, edgeParams, i, _active[i]);
+                    WriteSlot(matrices, shapes, edgeColors, edgeParams, i, _active[i]);
                 return activeCount;
             }
 
             WarnOverLimitOnce(activeCount);
-            SelectNearest(matrices, edgeColors, edgeParams, referencePoint);
+            SelectNearest(matrices, shapes, edgeColors, edgeParams, referencePoint);
             return MaxVolumes;
         }
 
@@ -232,20 +390,21 @@ namespace AbstractOcclusion.WebGpuWater
                     "entries (Unity locks a global array's size at its first set).", name);
         }
 
-        // One volume -> one uniform slot: matrix always, edge look only for consumers that
+        // One volume -> one uniform slot: geometry always, edge look only for consumers that
         // bound the optional buffers. Keeps every writer path (in-limit + nearest) identical.
-        static void WriteSlot(Matrix4x4[] matrices, Vector4[] edgeColors, Vector4[] edgeParams,
-                              int slot, WaterExclusionVolume volume)
+        static void WriteSlot(Matrix4x4[] matrices, Vector4[] shapes, Vector4[] edgeColors,
+                              Vector4[] edgeParams, int slot, WaterExclusionVolume volume)
         {
-            matrices[slot] = volume.WorldToBoxMatrix();
+            matrices[slot] = volume.WorldToShapeMatrix();
+            shapes[slot] = volume.ShapeUniform;
             if (edgeColors != null) edgeColors[slot] = volume.EdgeColorUniform;
             if (edgeParams != null) edgeParams[slot] = volume.EdgeParamsUniform;
         }
 
         // Selection-sort the MaxVolumes nearest volumes into the buffers without allocating:
         // the active list is tiny (a handful of rooms), so O(count * MaxVolumes) is nothing.
-        static void SelectNearest(Matrix4x4[] matrices, Vector4[] edgeColors, Vector4[] edgeParams,
-                                  Vector3 referencePoint)
+        static void SelectNearest(Matrix4x4[] matrices, Vector4[] shapes, Vector4[] edgeColors,
+                                  Vector4[] edgeParams, Vector3 referencePoint)
         {
             for (int slot = 0; slot < MaxVolumes; slot++)
             {
@@ -260,7 +419,7 @@ namespace AbstractOcclusion.WebGpuWater
                     best = i;
                 }
                 _selected[slot] = best;
-                WriteSlot(matrices, edgeColors, edgeParams, slot, _active[best]);
+                WriteSlot(matrices, shapes, edgeColors, edgeParams, slot, _active[best]);
             }
         }
 
@@ -287,7 +446,7 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
 #if UNITY_EDITOR
-        // Editor-only wire box so the dry region is visible while authoring.
+        // Editor-only wire shape so the dry region is visible while authoring.
         static readonly Color GizmoColor = new Color(0f, 0.85f, 0.9f, 0.9f); // package cyan
 
         void OnDrawGizmos()
@@ -295,7 +454,14 @@ namespace AbstractOcclusion.WebGpuWater
             Gizmos.color = GizmoColor;
             Gizmos.matrix = Matrix4x4.TRS(transform.position, transform.rotation,
                                           Vector3.Scale(size, transform.lossyScale));
-            Gizmos.DrawWireCube(Vector3.zero, Vector3.one);
+            // All three are drawn in the SAME unit local space, so the sphere shows as the box's
+            // inscribed ball and the mesh sits where it will actually carve.
+            if (shape == Shape.Mesh && carveMesh != null)
+                Gizmos.DrawWireMesh(carveMesh);
+            else if (AnalyticShape == Shape.Sphere)
+                Gizmos.DrawWireSphere(Vector3.zero, LocalHalfExtent);
+            else
+                Gizmos.DrawWireCube(Vector3.zero, Vector3.one);
             Gizmos.matrix = Matrix4x4.identity;
         }
 #endif

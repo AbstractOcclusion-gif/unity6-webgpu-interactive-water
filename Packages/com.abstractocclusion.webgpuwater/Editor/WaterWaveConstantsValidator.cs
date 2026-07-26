@@ -9,15 +9,24 @@
 // reads the source files on editor load and reports any drifted constant loudly,
 // replacing the old "remember to edit both files" discipline. It is a read-only
 // watcher: it changes no runtime behaviour and no files.
+//
+// AUTHOR-ONLY: this catches OUR editing mistake, and the only person who can act on it is whoever
+// edits the package source. It therefore runs solely when the package is EMBEDDED (living in the
+// project's Packages/ folder, i.e. the development project) - see IsEmbeddedPackage. A customer
+// consuming the package from a registry, a tarball or an Asset Store import never pays the
+// multi-file read + ~40 regex passes per domain reload, and can never be shown a console error
+// about an internal invariant they cannot fix.
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 using UnityEditor;
+using UnityEditor.PackageManager;
 using UnityEngine;
+using PackageInfo = UnityEditor.PackageManager.PackageInfo;
 
-namespace AbstractOcclusion.WebGpuWater.EditorTools
+namespace AbstractOcclusion.WebGpuWater.Editor
 {
     [InitializeOnLoad]
     internal static class WaterWaveConstantsValidator
@@ -33,6 +42,7 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
         const string SplashEmitterAssetName = "WaterSplashEmitter";
         const string ExclusionHlslAssetName = "WaterExclusion";
         const string ExclusionVolumeAssetName = "WaterExclusionVolume";
+        const string PrimitiveShapeHlslAssetName = "WaterPrimitiveShape";
 
         // Relative tolerance for a matching value. The constants are authored to a few
         // decimal places; anything closer than this is the same number written two ways.
@@ -170,15 +180,49 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
         static readonly (string Hlsl, string CSharp)[] ExclusionConstantPairs =
         {
             ("EXCLUSION_MAX_VOLUMES", "MaxVolumes"),
+            ("EXCLUSION_SHAPE_MESH", "MeshShapeId"),
+        };
+
+        // The shape selector is authored twice as well: PRIMITIVE_SHAPE_SPHERE picks the sphere
+        // kernels in the shader (WaterPrimitiveShape.hlsl) and WaterExclusionVolume.Shape.Sphere's
+        // ORDINAL is what the publisher sends as that selector. A drift would silently carve every
+        // sphere volume as a box - visible, but with no error to point at it.
+        static readonly (string Hlsl, string CSharp)[] PrimitiveShapeConstantPairs =
+        {
+            ("PRIMITIVE_SHAPE_SPHERE", "SphereShapeId"),
         };
 
         // Captures the numeric literal, tolerating scientific notation and a trailing C# 'f'.
         const string NumberPattern = @"(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)";
 
+        // Package-relative folder every validated source lives under. Scoping the asset search to it
+        // is what stops a consumer's own LargeWaveField.cs / WaterExclusionVolume.cs (same filename,
+        // different file) from being parsed instead of ours and reported as drift.
+        const string PackageSourceFolder = "/Runtime";
+
         static WaterWaveConstantsValidator()
         {
+            if (!IsEmbeddedPackage()) return; // author-only; see the file header
             // Defer past the import/compile pass so the asset database is queryable.
             EditorApplication.delayCall += Validate;
+        }
+
+        // True only in the package's own development project. FindForAssembly returns null when the
+        // package was imported into Assets/ (the Asset Store path), and a non-Embedded source for a
+        // registry/tarball install - neither of which is us.
+        static bool IsEmbeddedPackage()
+        {
+            PackageInfo package = PackageInfo.FindForAssembly(
+                typeof(WaterWaveConstantsValidator).Assembly);
+            return package != null && package.source == PackageSource.Embedded;
+        }
+
+        // Project-relative search root for FindAssets, e.g. "Packages/com.abstract.../Runtime".
+        static string SearchFolder()
+        {
+            PackageInfo package = PackageInfo.FindForAssembly(
+                typeof(WaterWaveConstantsValidator).Assembly);
+            return package == null ? null : package.assetPath + PackageSourceFolder;
         }
 
         // Runs automatically on script reload (see the static ctor above).
@@ -191,7 +235,8 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
                 !TryReadPackageAsset(FoamComputeAssetName, ComputeExtension, out string foamComputeSource, out readError) ||
                 !TryReadPackageAsset(SplashEmitterAssetName, CSharpExtension, out string splashEmitterSource, out readError) ||
                 !TryReadPackageAsset(ExclusionHlslAssetName, HlslExtension, out string exclusionHlslSource, out readError) ||
-                !TryReadPackageAsset(ExclusionVolumeAssetName, CSharpExtension, out string exclusionVolumeSource, out readError))
+                !TryReadPackageAsset(ExclusionVolumeAssetName, CSharpExtension, out string exclusionVolumeSource, out readError) ||
+                !TryReadPackageAsset(PrimitiveShapeHlslAssetName, HlslExtension, out string primitiveShapeSource, out readError))
             {
                 Debug.LogWarning(LogPrefix + "validation skipped - " + readError);
                 return;
@@ -208,9 +253,13 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
                             SplashEmitterAssetName, splashEmitterSource, SplashBurstConstantPairs);
             CollectProblems(problems, ExclusionHlslAssetName, HlslExtension, exclusionHlslSource,
                             ExclusionVolumeAssetName, exclusionVolumeSource, ExclusionConstantPairs);
+            CollectProblems(problems, PrimitiveShapeHlslAssetName, HlslExtension, primitiveShapeSource,
+                            ExclusionVolumeAssetName, exclusionVolumeSource, PrimitiveShapeConstantPairs);
             if (problems.Count == 0) return;
 
-            Debug.LogError(BuildReport(problems));
+            // Warning, not error: drift is a real authoring bug but never blocks the editor, and a
+            // red error trains you to ignore the console. This only ever fires in the dev project.
+            Debug.LogWarning(BuildReport(problems));
         }
 
         static void CollectProblems(List<string> problems, string hlslAssetName, string hlslExtension,
@@ -267,13 +316,22 @@ namespace AbstractOcclusion.WebGpuWater.EditorTools
         }
 
         // AssetDatabase paths are project-relative (e.g. "Packages/<id>/Runtime/...") which
-        // File.ReadAllText resolves for an embedded package. Matching on the exact filename
-        // avoids picking up a similarly named asset from a fuzzy search.
+        // File.ReadAllText resolves for an embedded package. The search is SCOPED to this package's
+        // Runtime folder and then matched on the exact filename: an unscoped FindAssets would happily
+        // return a consumer's own file of the same name and report phantom drift against it.
         static bool TryReadPackageAsset(string assetName, string extension, out string source, out string error)
         {
             source = null;
             error = null;
-            foreach (string guid in AssetDatabase.FindAssets(assetName))
+
+            string searchFolder = SearchFolder();
+            if (searchFolder == null)
+            {
+                error = "could not resolve the package location";
+                return false;
+            }
+
+            foreach (string guid in AssetDatabase.FindAssets(assetName, new[] { searchFolder }))
             {
                 string path = AssetDatabase.GUIDToAssetPath(guid);
                 if (!IsExactAsset(path, assetName, extension)) continue;

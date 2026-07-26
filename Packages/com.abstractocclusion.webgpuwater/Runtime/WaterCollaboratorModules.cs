@@ -1,4 +1,4 @@
-// WebGL Water - Phase 1 lifecycle modules (Unity 6 / URP port).
+// WebGpuWater - Phase 1 lifecycle modules (Unity 6 / URP port).
 //
 // These are thin adapters that formalise the collaborators WaterVolume already owned and constructed
 // by hand in TryInitialize. Each module owns its instance and maps the former inline construction /

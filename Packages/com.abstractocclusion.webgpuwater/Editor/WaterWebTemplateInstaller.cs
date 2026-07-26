@@ -35,7 +35,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 typeof(WaterWebTemplateInstaller).Assembly);
             if (package == null)
             {
-                Debug.LogError("WebGL Water: could not resolve the package location; " +
+                Debug.LogError("WebGpuWater: could not resolve the package location; " +
                                "web template not installed.");
                 return;
             }
@@ -43,7 +43,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             string source = Path.Combine(package.resolvedPath, PackageTemplateFolder);
             if (!Directory.Exists(source))
             {
-                Debug.LogError($"WebGL Water: template source missing at '{source}'; " +
+                Debug.LogError($"WebGpuWater: template source missing at '{source}'; " +
                                "reinstall the package.");
                 return;
             }
@@ -52,7 +52,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             CopyDirectory(source, destination);
             AssetDatabase.Refresh();
             PlayerSettings.WebGL.template = TemplateSetting;
-            Debug.Log($"WebGL Water: installed the {TemplateName} web template to " +
+            Debug.Log($"WebGpuWater: installed the {TemplateName} web template to " +
                       $"'{destination}' and selected it in Player Settings. WebGPU builds " +
                       "now show a browser-support message instead of crashing where " +
                       "WebGPU is unavailable.");

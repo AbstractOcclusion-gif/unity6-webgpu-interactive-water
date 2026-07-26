@@ -1,4 +1,4 @@
-// WebGL Water - underwater god rays (Unity 6 / URP port)
+// WebGpuWater - underwater god rays (Unity 6 / URP port)
 // A self-contained additive VOLUME: a box mesh spanning the pool interior
 // (x,z in [-1,1], y in [-1,0]). The fragment ray-marches the view ray through the
 // volume and accumulates the projected caustic intensity at each step, so bright

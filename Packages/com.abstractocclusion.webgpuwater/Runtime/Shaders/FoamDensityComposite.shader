@@ -1,4 +1,4 @@
-// WebGL Water - screen-space density-foam composite (KWS-inspired flagship).
+// WebGpuWater - screen-space density-foam composite (KWS-inspired flagship).
 //
 // The floating foam particles are NOT drawn as quads: WaterFoamParticles.compute splats
 // them into a low-res screen-space density buffer (InterlockedAdd) plus a min-depth

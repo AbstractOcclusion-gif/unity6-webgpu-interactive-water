@@ -11,6 +11,37 @@
 #ifndef WATER_SURFACE_FRAG_STAGES_INCLUDED
 #define WATER_SURFACE_FRAG_STAGES_INCLUDED
 
+// ---- Stage tuning constants + chunk-footprint flags (moved from Pass 0 verbatim): the
+// after-fog PondFoamOverlay pass includes these stages too, so the values live with the
+// code that reads them. The chunk textures/margins stay Pass-0 locals - only the two
+// flags are read here, by PondFoamLayer's overlay-skip gate. ----
+#define SSS_AMPLITUDE_EPSILON   1e-3   // guards the crest/amplitude ratio when the swell is flat
+// Shallow-water clarity (surf run-out): under this column depth the shore band
+// blends toward the refracted ground, so centimetres-deep water reads clear
+// instead of flat opaque blue between the last bore and the beach.
+#define SHALLOW_CLARITY_DEPTH 0.6   // metres; blend fully faded out at this depth
+#define SHALLOW_CLARITY_BLEND 0.5   // max blend toward the refracted colour at depth 0
+// Wet-sand glaze weights (swash zone): the thin film is centimetres of water ON
+// the sand, so it pulls HARD toward the refracted ground (never blue ocean on the
+// beach), and the drying glaze behind it mixes darkened ground + a sky sheen.
+#define WET_FILM_MIN_TRANSPARENCY 0.6    // film pull toward the ground at the waterline
+#define WET_FILM_DEPTH_GAIN       0.3    // extra pull as the film thins up-beach
+#define WET_GLAZE_EDGE            0.25   // smoothstep width of the drying wet edge
+#define WET_GLAZE_REFRACT         0.7    // refracted-ground weight in the wet look
+#define WET_GLAZE_REFLECT         0.12   // reflected-sky weight in the wet look
+#define WET_GLAZE_STRENGTH        0.85   // max glaze opacity over the base shading
+// Peaked-look refine: short steps along the ripple normal sharpen wave crests.
+// The step COUNT is tier-driven (_PeakedRefineSteps via the body's property
+// block): each step is a dependent texture fetch per pixel, the single biggest
+// fragment cost on mobile. The cap bounds the loop for the compiler.
+#define PEAKED_REFINE_MAX_STEPS 8
+#define PEAKED_REFINE_STEP  0.005
+// Chunk footprint flags (published per body by WaterVolume.Chunk.cs; 0 = ordinary body).
+// Declared here - not in Pass 0 - so PondFoamLayer's overlay-skip gate can read them in
+// every pass that includes these stages.
+float _ChunkSphereClip;
+float _ChunkUseMesh;
+
 // ================== frag stages (SHADER-SPLIT-3) ==================
 // frag() is decomposed into single-responsibility stages that read in render
 // order. Stage bodies are VERBATIM moves of the old frag blocks: each stage
@@ -213,10 +244,8 @@ float4 UnderwaterStage(v2f i, WaterGeomStage g, float waterClarity)
     {
         float2 fcoord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
                                              : (WorldToSim(i.worldPos).xz * 0.5 + 0.5);
-        float advected = SampleFoamMaskWindowed(fcoord);
-        float edge = min(1.0 - abs(i.position.x), 1.0 - abs(i.position.z));
-        float border = (_SimWindowed < 0.5) ? (1.0 - smoothstep(0.0, _FoamBorderWidth, edge)) : 0.0;
-        float mask = saturate((advected + border) * _FoamStrength);
+        // No contact foam on this side (see above), so nothing extra to add.
+        float mask = SimFoamCoverage(i.position.xz, fcoord, 0.0);
 
         // Same world-space pattern UV as the above-water side. Computed (with its
         // screen derivatives) BEFORE the mask branch: WGSL requires derivatives in
@@ -522,7 +551,27 @@ FoamLayer PondFoamLayer(v2f i, WaterGeomStage g)
     float3 pondFoamLook = float3(0.0, 0.0, 0.0);
 
     // ---- Interactive/pond foam look: advected buffer + shoreline border + contact ----
-    if (_FoamEnabled > 0.5)
+    //
+    // Fog-armed frames with the camera in AIR: skip - the fullscreen underwater fog
+    // (BeforeRenderingPostProcessing, after every transparent) paints the water column's
+    // fog OVER this pass's output, which washed fading foam toward the fog colour; and
+    // cancelling the fog by mask coverage punched clear holes through dense fog instead
+    // (the mask is low-frequency, the drawn foam is mask x pattern texture). The foam is
+    // re-drawn AFTER the fog by WaterSurface's PondFoamOverlay pass, which defines
+    // WATER_FOAM_OVERLAY_PASS and calls THIS function - one look, two draw points, so
+    // the two can never drift; the skip and the overlay key on the SAME published
+    // globals, so exactly one of them shows the foam each frame.
+    // Exceptions that keep the queue-time draw: a submerged camera (the fog is IN FRONT
+    // of the foam there) and chunk bodies (their disc footprint clips are Pass-0 state
+    // the overlay pass does not replicate; the C# collector excludes them the same way).
+    // Every gate term is a uniform, so control flow stays WGSL-uniform.
+#ifdef WATER_FOAM_OVERLAY_PASS
+    const bool foamDeferredToOverlay = false; // this IS the overlay pass: always evaluate
+#else
+    bool foamDeferredToOverlay = _UnderwaterFogArmed > 0.5 && _CameraUnderwater < 0.5
+                                 && _ChunkSphereClip < 0.5 && _ChunkUseMesh < 0.5;
+#endif
+    if (_FoamEnabled > 0.5 && !foamDeferredToOverlay)
     {
         // Windowed bodies read the foam buffer in the window frame too - at the
         // SOURCE xz (undisplaced), like the whitecap path. Sampling at the displaced
@@ -533,14 +582,12 @@ FoamLayer PondFoamLayer(v2f i, WaterGeomStage g)
         float3 foamSourcePos = float3(i.largeWaveSourceXZ.x, i.worldPos.y, i.largeWaveSourceXZ.y);
         float2 fcoord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
                                              : (WorldToSim(foamSourcePos).xz * 0.5 + 0.5);
-        float advected = SampleFoamMaskWindowed(fcoord);
-
-        // shoreline foam against the pool walls (whole-body only; a window has no walls)
-        float edge = min(1.0 - abs(i.position.x), 1.0 - abs(i.position.z));
-        float border = (_SimWindowed < 0.5) ? (1.0 - smoothstep(0.0, _FoamBorderWidth, edge)) : 0.0;
-
-        // contact foam where geometry pierces the waterline. BOUNDED bodies only (same
-        // gate as the border above): on a windowed ocean/large body the screen-depth
+        // The advected buffer read and the shoreline wall border are SimFoamCoverage's job
+        // (below); only the contact term is specific to this side.
+        //
+        // contact foam where geometry pierces the waterline. BOUNDED bodies only (the same
+        // _SimWindowed gate SimFoamCoverage applies to its wall border): on a windowed
+        // ocean/large body the screen-depth
         // contact test is unreliable (it fought the shore/SWE work) and there are no walls,
         // so it is skipped entirely. Needs the depth texture; the behind-guard only adds
         // foam where the scene is genuinely just BEHIND the surface (fixes "all water
@@ -555,7 +602,7 @@ FoamLayer PondFoamLayer(v2f i, WaterGeomStage g)
             contact = behind > 0.0 ? (1.0 - saturate(behind / max(_FoamContactDepth, 1e-4))) : 0.0;
         }
 
-        float mask = saturate((advected + border + contact) * _FoamStrength);
+        float mask = SimFoamCoverage(i.position.xz, fcoord, contact);
 
         // WORLD-space pattern UV (like the ocean whitecap): scale set by the
         // body's Foam Pattern Size, independent of extent, anchored under a

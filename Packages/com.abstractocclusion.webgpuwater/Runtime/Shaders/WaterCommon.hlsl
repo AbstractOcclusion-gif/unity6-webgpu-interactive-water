@@ -1,4 +1,4 @@
-// WebGL Water - shared ray-tracing helpers (Unity 6 / URP port)
+// WebGpuWater - shared ray-tracing helpers (Unity 6 / URP port)
 // Faithful translation of helperFunctions from Evan Wallace's renderer.js (MIT).
 #ifndef WEBGL_WATER_COMMON_INCLUDED
 #define WEBGL_WATER_COMMON_INCLUDED

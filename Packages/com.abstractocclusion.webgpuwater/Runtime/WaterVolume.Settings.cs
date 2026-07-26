@@ -806,9 +806,18 @@ namespace AbstractOcclusion.WebGpuWater
             _savedRenderScale = 0f;
             _savedOpaqueTexture = false;
 #endif
+            // The static gates the URP features read live in the Underwater partial. They are only
+            // cleared opportunistically by the LAST body out of OnDisable, which never runs if play
+            // mode ends with bodies still alive - so left set, the fullscreen fog + meniscus features
+            // (which sit on the renderer asset and are polled in EVERY scene) enter the next session
+            // already armed. Same "reset every piece of scene-lifetime static state" contract as above.
+            UnderwaterFogActive = false;
+            WaterlineActive = false;
+            CameraSubmerged = false;
             WaterSimScheduler.ResetStaticState();
             WaterInteractable.ResetStaticState();
             WaterExclusionVolume.ResetStaticState();
+            WaterBuoyancy.ResetStaticState();
         }
 
         [Header("Simulation")]

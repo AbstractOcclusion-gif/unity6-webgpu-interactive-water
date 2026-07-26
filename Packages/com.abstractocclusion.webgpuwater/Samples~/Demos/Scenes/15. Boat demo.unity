@@ -5783,6 +5783,63 @@ MonoBehaviour:
   localOffset: {x: 0, y: 4.5, z: -11}
   lookHeight: 1
   followSharpness: 4
+--- !u!1 &1085506803
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1085506804}
+  - component: {fileID: 1085506805}
+  m_Layer: 0
+  m_Name: GameObject
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1085506804
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1085506803}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: -0.7071068, z: 0, w: 0.7071068}
+  m_LocalPosition: {x: 0, y: 0.9, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 334840202}
+  m_LocalEulerAnglesHint: {x: 0, y: -90, z: 0}
+--- !u!114 &1085506805
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1085506803}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 915077c3dcbfd574299c2b79a0e61be4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterExclusionVolume
+  shape: 2
+  carveMesh: {fileID: -7752356369187301989, guid: 3ef06c926d4222f469fd82e238c1fc5c, type: 3}
+  meshProxy: 2
+  size: {x: 0.5, y: 6, z: 1}
+  drawWaterWalls: 1
+  wallScatterBoost: 1.2
+  wallShader: {fileID: 0}
+  edgeColor: {r: 0, g: 0, b: 0, a: 1}
+  edgeIntensity: 0.55
+  edgeSpread: 0.12
+  affectParticles: 1
+  particleFadeBand: 0.06
+  particleDissolveSpeed: 1
 --- !u!1 &1370892792
 GameObject:
   m_ObjectHideFlags: 0
@@ -11391,20 +11448,32 @@ PrefabInstance:
       value: Boat
       objectReference: {fileID: 0}
     - target: {fileID: 4081809557851641320, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4081809557851641320, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
       propertyPath: m_LocalPosition.y
       value: 0.9
       objectReference: {fileID: 0}
+    - target: {fileID: 4081809557851641320, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 5445292582749062255, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
       propertyPath: size.x
-      value: 0.7
+      value: 0.65
       objectReference: {fileID: 0}
     - target: {fileID: 5445292582749062255, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
       propertyPath: size.y
-      value: 3
+      value: 2.5
       objectReference: {fileID: 0}
     - target: {fileID: 5445292582749062255, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
       propertyPath: size.z
       value: 0.7
+      objectReference: {fileID: 0}
+    - target: {fileID: 5445292582749062255, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
+      propertyPath: m_Enabled
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 5445292582749062255, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
       propertyPath: drawWaterWalls
@@ -11428,7 +11497,10 @@ PrefabInstance:
       objectReference: {fileID: 2100000, guid: 387bed99f8bec814a8983b62a2bc9e13, type: 2}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
-    m_AddedGameObjects: []
+    m_AddedGameObjects:
+    - targetCorrespondingSourceObject: {fileID: 3153054209135187227, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1085506804}
     m_AddedComponents:
     - targetCorrespondingSourceObject: {fileID: 3456765701327585525, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
       insertIndex: -1

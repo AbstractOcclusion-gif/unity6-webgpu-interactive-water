@@ -1,4 +1,4 @@
-// WebGL Water - the single authoring entry point.
+// WebGpuWater - the single authoring entry point.
 //
 // Menu: Window > AbstractOcclusion > WebGpuWater > Water Wizard
 //
@@ -21,7 +21,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const string MenuPath = MenuRoot + "Water Wizard";
         const string WindowTitle = "Water Wizard";
 
-        const string RootObjectName = "WebGL Water";
+        const string RootObjectName = ProductName;
         const string WaterBodyName = "Water Body";
 
         static readonly Vector3 DefaultExtent = new Vector3(2f, 1f, 2f);
@@ -285,16 +285,16 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             if (!ExtentIsValid())
             {
-                Debug.LogError($"[WebGL Water] Water not created: every size component must be at least {MinExtentComponent}.");
+                Debug.LogError($"[WebGpuWater] Water not created: every size component must be at least {MinExtentComponent}.");
                 return;
             }
 
-            // Idempotency guard: repeated clicks used to silently stack identical "WebGL Water"
-            // roots (duplicate primaries defeat the render-scale/globals logic). Creating a second
-            // root stays possible, but only deliberately.
+            // Idempotency guard: repeated clicks used to silently stack identical roots (duplicate
+            // primaries defeat the render-scale/globals logic). Creating a second root stays
+            // possible, but only deliberately.
             var existingRoot = GameObject.Find(RootObjectName);
             if (existingRoot != null &&
-                !EditorUtility.DisplayDialog("WebGL Water",
+                !EditorUtility.DisplayDialog(ProductName,
                     $"The scene already has a '{RootObjectName}' root. Create another water setup anyway?",
                     "Create Another", "Cancel"))
             {
@@ -342,7 +342,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(root.scene);
             AssetDatabase.SaveAssets();
             Undo.CollapseUndoOperations(undoGroup);
-            Debug.Log($"[WebGL Water] Water built ({RootObjectName}, {_kind}, openWater={openWater}). Press Play.");
+            Debug.Log($"[WebGpuWater] Water built ({RootObjectName}, {_kind}, openWater={openWater}). Press Play.");
         }
 
         void ApplyBaseType(WaterVolume body)
@@ -515,7 +515,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 {
                     Undo.SetCurrentGroupName("Configure Water Objects");
                     WireObjects();
-                    Debug.Log($"[WebGL Water] Configured listed objects as {_objectMode}.");
+                    Debug.Log($"[WebGpuWater] Configured listed objects as {_objectMode}.");
                 }
             }
 
@@ -547,7 +547,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 MakeFloatable(prop); // same wiring + preset path as the retrofit slots
                 Selection.activeObject = prop;
                 Undo.CollapseUndoOperations(undoGroup);
-                Debug.Log("[WebGL Water] Buoyant object created - it drops in and floats on whatever " +
+                Debug.Log("[WebGpuWater] Buoyant object created - it drops in and floats on whatever " +
                           "water body hosts it (no wiring needed).");
             }
         }
@@ -587,7 +587,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 if (_boatChaseCamera) FocusSceneOnBoat(boat);
                 Selection.activeObject = boat;
                 Undo.CollapseUndoOperations(undoGroup);
-                Debug.Log("[WebGL Water] Boat created. Press Play - drive with W/S (throttle) and A/D (steer).");
+                Debug.Log("[WebGpuWater] Boat created. Press Play - drive with W/S (throttle) and A/D (steer).");
             }
         }
 
@@ -733,6 +733,27 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             if (GUILayout.Button(new GUIContent("Add Water Body (secondary)",
                 "Add a second, independent water body next to the primary one.")))
                 WaterSceneBuilder.AddSecondaryBody();
+
+            DrawChunkShaderRegistration();
+        }
+
+        // Chunks and exclusion volumes resolve their wall/depth shaders by NAME at runtime, so they
+        // only survive a player build if they are in Always Included Shaders. That list is the user's
+        // project setting and each entry costs build size, so the package asks instead of editing it
+        // silently - surfaced here (and only while something is actually missing) so the user learns
+        // about it at authoring time rather than from an invisible chunk in a shipped build.
+        void DrawChunkShaderRegistration()
+        {
+            if (!WaterChunkShaderRegistration.AnyShaderMissing()) return;
+
+            EditorGUILayout.Space();
+            EditorGUILayout.HelpBox("Water chunks and exclusion volumes resolve their shaders by name " +
+                "at runtime, so they render in the editor but vanish in a player build unless those " +
+                "shaders are registered. Only needed if you use those features.", MessageType.Warning);
+            if (GUILayout.Button(new GUIContent("Register Chunk Shaders For Builds",
+                "Adds the chunk + exclusion wall/depth shaders to Project Settings > Graphics > " +
+                "Always Included Shaders.")))
+                WaterChunkShaderRegistration.RegisterAll();
         }
 
         // ---- splash & crown section ------------------------------------------
@@ -803,7 +824,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             body.provideSplashEmitter = true; // retrofit turns the gate on so the body actually splashes
             Selection.activeObject = emitter.gameObject;
             Undo.CollapseUndoOperations(undoGroup);
-            Debug.Log($"[WebGL Water] Splashes enabled on '{body.name}' (shared emitter '{emitter.name}').");
+            Debug.Log($"[WebGpuWater] Splashes enabled on '{body.name}' (shared emitter '{emitter.name}').");
         }
 
         void AddSplashToSelectedObjects()
@@ -823,7 +844,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 count++;
             }
             Undo.CollapseUndoOperations(undoGroup);
-            Debug.Log($"[WebGL Water] Added a splash trigger to {count} object(s).");
+            Debug.Log($"[WebGpuWater] Added a splash trigger to {count} object(s).");
         }
     }
 }

@@ -84,11 +84,14 @@ namespace AbstractOcclusion.WebGpuWater
 
             float worldHeight = PoolToWorld(new Vector3(poolX, poolHeight, poolZ)).y;
             Vector3 worldFlow = VolumeRotation * new Vector3(poolFlow.x, 0f, poolFlow.y);
+            // Carried out of the swell sample below so SurfaceVelocity does not re-derive it: the two
+            // used to run the same 4-iteration chop inversion on the same point in the same call.
+            float largeWaveVerticalRate = 0f;
             if (openWater)
             {
                 // Open water carries the wind-wave layer AND the big world-space swell (the pool wavebank is
                 // suppressed for these bodies); layer the swell on top exactly as the single-point path does.
-                Vector3 wave = SampleLargeWaveField(worldPoint.x, worldPoint.z);
+                Vector3 wave = SampleLargeWaveField(worldPoint.x, worldPoint.z, out largeWaveVerticalRate);
                 worldHeight += wave.x;
                 worldFlow += new Vector3(-wave.y, 0f, -wave.z) * waveNormalStrength;
             }
@@ -98,7 +101,8 @@ namespace AbstractOcclusion.WebGpuWater
             if ((fields & WaterQueryFields.Normal) != 0)
                 sample.Normal = SurfaceNormalFromFlow(worldFlow);
             if ((fields & WaterQueryFields.Velocity) != 0)
-                sample.Velocity = SurfaceVelocity(worldPoint, poolX, poolZ, worldFlow, minWavelength);
+                sample.Velocity = SurfaceVelocity(worldPoint, poolX, poolZ, worldFlow, minWavelength,
+                                                  largeWaveVerticalRate);
 
             return true;
         }
@@ -116,7 +120,12 @@ namespace AbstractOcclusion.WebGpuWater
         // World surface velocity = analytic vertical wave velocity (exact d(Height)/dt from the closed-form
         // wave mirrors, no cross-frame state) plus the horizontal wave-drift push buoyancy already uses.
         // Interactive ripple / FFT dynamics are not yet folded into the velocity (they add in a later phase).
-        Vector3 SurfaceVelocity(Vector3 worldPoint, float poolX, float poolZ, Vector3 worldFlow, float minWavelength)
+        // largeWaveVerticalRate is the open-water swell's d(height)/dt, ALREADY edge-weighted, handed
+        // down from the swell sample the caller just took. It used to be recomputed here from the
+        // world point, which meant a second full chop inversion of the very same point in the very
+        // same call; 0 on bodies without open water, exactly as the old branch produced.
+        Vector3 SurfaceVelocity(Vector3 worldPoint, float poolX, float poolZ, Vector3 worldFlow,
+                                float minWavelength, float largeWaveVerticalRate)
         {
             // Match the sampler's ocean-vs-pool coordinate choice for the wind-wave layer.
             float metersPerUnit = WaveMetersPerUnit;
@@ -127,13 +136,7 @@ namespace AbstractOcclusion.WebGpuWater
             // Pool vertical rate -> world Y rate along the same transform the height uses (PoolToWorld scales
             // by extent.y and rotates), so Velocity.y is exactly d(Height)/dt for the wind-wave layer.
             float worldRate = (VolumeRotation * new Vector3(0f, poolRate * VolumeExtentSafe.y, 0f)).y;
-            if (openWater)
-                // Edge guard: the feathered border's surface barely moves, so its vertical rate
-                // scales down with the same weight the height sample uses.
-                worldRate += LargeWaveField.VerticalVelocityAtQuery(worldPoint.x, worldPoint.z, WaveTime,
-                    LargeWaveAmplitudeEffective, LargeWaveHeadingRad, SwellWavelength, SwellHeight,
-                    LargeWaveChoppiness, ShoreWaveCtx)
-                    * LargeWaveEdgeWeight(worldPoint.x, worldPoint.z);
+            worldRate += largeWaveVerticalRate;
 
             Vector3 velocity = worldFlow;
             velocity.y += worldRate;

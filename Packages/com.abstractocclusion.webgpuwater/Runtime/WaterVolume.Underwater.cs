@@ -22,6 +22,12 @@ namespace AbstractOcclusion.WebGpuWater
         /// Independent of the submerge flag: the line arms BEFORE the eye goes under.</summary>
         internal static bool WaterlineActive { get; private set; }
 
+        /// <summary>True while the camera is submerged in the primary body (the CPU mirror of
+        /// the _CameraUnderwater global). The after-fog pond-foam overlay reads it: submerged
+        /// frames keep the queue-time foam draw (the fog is in front of the foam), so the
+        /// overlay never enqueues work it would only discard.</summary>
+        internal static bool CameraSubmerged { get; private set; }
+
         // Screen-space caustic projection runs PER BODY: any active body with a caustic RT and its
         // Screen-Space Caustics opt-in on gets its own fullscreen projection (drawn with THAT body's
         // _CausticTex + volume frame), so a SECONDARY chunk's foreign floors receive the CHUNK's caustics
@@ -46,6 +52,31 @@ namespace AbstractOcclusion.WebGpuWater
             into.Clear();
             for (int i = 0; i < Bodies.Count; i++)
                 if (QualifiesForCausticProjection(Bodies[i])) into.Add(Bodies[i]);
+        }
+
+        // Pond-foam overlay (the after-fog surface-foam redraw): a body qualifies when its sim
+        // foam is on. Chunk bodies are excluded - their disc footprint clips (sphere/mesh) are
+        // Pass-0 state the overlay pass does not replicate, so their foam keeps the queue-time
+        // path (PondFoamLayer's overlay-skip gate makes the same exception on the GPU).
+        static bool QualifiesForFoamOverlay(WaterVolume body)
+            => body != null && body.isActiveAndEnabled && body.Foam && !body.IsChunk;
+
+        /// <summary>True when at least one body needs the after-fog pond-foam overlay (the
+        /// feature's cheap CPU gate before it enqueues the after-fog pass).</summary>
+        internal static bool AnyFoamOverlayBody()
+        {
+            for (int i = 0; i < Bodies.Count; i++)
+                if (QualifiesForFoamOverlay(Bodies[i])) return true;
+            return false;
+        }
+
+        /// <summary>Fill <paramref name="into"/> with every ABOVE-water surface renderer whose
+        /// pond foam the after-fog overlay should re-draw this frame.</summary>
+        internal static void CollectFoamOverlayRenderers(List<Renderer> into)
+        {
+            into.Clear();
+            for (int i = 0; i < Bodies.Count; i++)
+                if (QualifiesForFoamOverlay(Bodies[i])) Bodies[i].CollectAboveSurfaceRenderers(into);
         }
 
         // Refresh the underwater fog gate at the START of the target camera's render. WHY here and not
@@ -112,6 +143,7 @@ namespace AbstractOcclusion.WebGpuWater
         void UpdateUnderwaterState()
         {
             bool submerged = ComputeCameraSubmerged(out float surfaceY, out bool nearPlaneStraddles);
+            CameraSubmerged = submerged; // CPU mirror for the after-fog foam overlay's gate
             // Ocean fog is infinite, so it only matters when the camera is submerged. A bounded pond is a
             // finite fog volume clipped to its box, so it should render from ANY angle (circle it and see
             // the murk inside) whenever Water Fog is on. The quality tier's Off mode wins over everything:

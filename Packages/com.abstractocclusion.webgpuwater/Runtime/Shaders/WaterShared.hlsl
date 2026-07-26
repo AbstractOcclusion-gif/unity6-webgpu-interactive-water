@@ -1,4 +1,4 @@
-// WebGL Water - shared constants & pure helpers (Unity 6 / URP port)
+// WebGpuWater - shared constants & pure helpers (Unity 6 / URP port)
 // Backend-agnostic: ONLY #defines, static consts and pure math here (no sampler or
 // global declarations), so both the legacy-CG shaders and the URP HLSL shaders can
 // include it without clashing. Faithful to Evan Wallace's renderer.js (MIT).

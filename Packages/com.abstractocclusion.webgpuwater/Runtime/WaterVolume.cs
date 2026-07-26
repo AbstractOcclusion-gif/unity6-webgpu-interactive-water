@@ -1,4 +1,4 @@
-// WebGL Water - one water body: identity, lifecycle and public facade (Unity 6 / URP port).
+// WebGpuWater - one water body: identity, lifecycle and public facade (Unity 6 / URP port).
 // Port of main.js / renderer.js by Evan Wallace (MIT).
 //
 // WaterVolume is the single scene component; each responsibility lives in a collaborator
@@ -398,6 +398,7 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 UnderwaterFogActive = false;
                 WaterlineActive = false; // same static-gate pattern: the meniscus pass reads it too
+                CameraSubmerged = false; // same pattern: the after-fog foam overlay reads it
                 Publisher.PublishUnderwater(0f, 0f, 0f, 0f, 0f);
             }
             DisposeModules();      // disposes the six eager collaborator modules (sim, obstacle, caustics,
@@ -407,6 +408,7 @@ namespace AbstractOcclusion.WebGpuWater
             _shoreDepth?.Dispose(); // Layer A field; re-arms its own lazy bake gate too
             DestroySimWindowPatch(); // before restoring the surface material it borrows
             DestroyOceanClipmap();   // ditto - it borrows the same surface material
+            DestroyChunkShell();     // per-body fog shell; shared material/mesh outlive it by design
             _planarMirror?.Dispose(); // frees this body's planar mirror camera + RT
             _planarMirror = null;
             RestoreSurfaceMaterial(surfaceAbove, ref _surfaceAboveInstance, ref _surfaceAboveOriginal);
@@ -446,6 +448,13 @@ namespace AbstractOcclusion.WebGpuWater
         void DisposeModules()
         {
             if (_modules == null) return;
+            // Drain in-flight readbacks FIRST. Modules dispose in registry order, so the simulation
+            // and the ocean FFT release + destroy their RTs before the surface sampler disposes - and
+            // both of those RTs are readback SOURCES. AsyncReadbackChannel has no cancel path, so a
+            // request whose source is destroyed underneath it errors on every disable / scene change.
+            // Unity absorbs the result through the request's hasError branch (so this was console
+            // noise, not bad data), but it is exactly the kind of error a user reports as a bug.
+            AsyncGPUReadback.WaitAllRequests();
             for (int i = 0; i < _modules.Length; i++) _modules[i].Dispose();
         }
 
@@ -673,14 +682,18 @@ namespace AbstractOcclusion.WebGpuWater
             _maxFoamParticles = tier.MaxFoamParticles;
             _underwaterFogMode = tier.UnderwaterFog;
 
-            // One line per enable so a build's console shows exactly which knobs landed -
-            // tier mismatches (stale build cache, wrong asset, missing serialized fields)
-            // are otherwise near-impossible to diagnose on a device.
+            // One line per enable so a DEVELOPMENT build's console shows exactly which knobs landed -
+            // tier mismatches (stale build cache, wrong asset, missing serialized fields) are
+            // otherwise near-impossible to diagnose on a device. Editor + development builds only:
+            // under [ExecuteAlways] this also fires on every domain reload, and a shipped package has
+            // no business writing to a customer's release-build console.
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             Debug.Log($"WaterVolume '{name}': quality tier applied - sim {_simRes}, caustics {EffectiveCausticResolution}, " +
                       $"mesh {(_meshDetail > 0 ? _meshDetail.ToString() : "authored")}, renderScale {_renderScale:0.##}, " +
                       $"realRefraction {_realRefractionAllowed}, godRays {_godRaysAllowed} ({_godRaySteps} steps), " +
                       $"waves {_maxWaveCount}, refine {_peakedRefineSteps}, foamCap {_maxFoamParticles}, " +
                       $"underwaterFog {_underwaterFogMode}", this);
+#endif
         }
 
         // Scale the interactive-sim grid to the body's footprint at the chosen ripple quality so
@@ -994,19 +1007,41 @@ namespace AbstractOcclusion.WebGpuWater
         // analytic CPU mirror before the first readback lands or on non-FFT bodies - matching the shader's
         // own gated fallback in WaterLargeWaves.hlsl.
         Vector3 SampleLargeWaveField(float worldX, float worldZ)
+            => SampleLargeWaveField(worldX, worldZ, out _);
+
+        /// <summary>Height/slope AND the swell's vertical rate at a world xz, from ONE evaluation.</summary>
+        /// <remarks>
+        /// The velocity out-param exists so a caller that needs both does not pay the chop inversion
+        /// twice: the query path used to take the height here and then call
+        /// LargeWaveField.VerticalVelocityAtQuery with identical arguments, which re-ran the whole
+        /// 4-iteration inversion. Callers that only want the height use the single-argument overload
+        /// above and discard it - on the analytic branch that costs nothing extra (same evaluation),
+        /// and on the FFT branch the rate is computed from the analytic mirror exactly as before.
+        /// </remarks>
+        Vector3 SampleLargeWaveField(float worldX, float worldZ, out float verticalRate)
         {
             // Edge guard on height AND slope, mirroring the shader's composition points: near the
             // footprint border the rendered surface feathers flat, so buoyancy must too.
             float edge = LargeWaveEdgeWeight(worldX, worldZ);
+            ShoreWaveContext ctx = ShoreWaveCtx; // built from ~22 fields incl. two trig calls - hoist it
             // The FFT readback bakes the RAW cascades; the shader's FFT branch additionally shoals
             // them by depth, fades them under the surf fronts and adds the fronts on top - so the
             // readback sample gets the same treatment (mirror of LargeBodyWaveHeight's FFT path).
             if (OceanFftActive && _oceanFft.TrySampleField(worldX, worldZ, out Vector3 fft))
+            {
+                // The readback carries no time derivative, so the rate stays on the analytic mirror -
+                // unchanged from before, just no longer recomputed by the caller.
+                verticalRate = LargeWaveField.VerticalVelocityAtQuery(worldX, worldZ, _waveTime,
+                    LargeWaveAmplitudeEffective, LargeWaveHeadingRad, SwellWavelength, SwellHeight,
+                    LargeWaveChoppiness, ctx) * edge;
                 return LargeWaveField.ApplyShoreToFftSample(fft, worldX, worldZ, _waveTime,
-                    SwellWavelength, ShoreWaveCtx) * edge;
-            return LargeWaveField.EvaluateAtQuery(worldX, worldZ, _waveTime, LargeWaveAmplitudeEffective,
-                LargeWaveHeadingRad, SwellWavelength, SwellHeight, LargeWaveChoppiness, ShoreWaveCtx)
-                * edge;
+                    SwellWavelength, ctx) * edge;
+            }
+            LargeWaveField.EvaluateAtQuery(worldX, worldZ, _waveTime, LargeWaveAmplitudeEffective,
+                LargeWaveHeadingRad, SwellWavelength, SwellHeight, LargeWaveChoppiness, ctx,
+                out Vector3 heightSlope, out float rate);
+            verticalRate = rate * edge;
+            return heightSlope * edge;
         }
 
         // Static-reflection tuning (fixed for v1; promote to per-body settings if scene tuning is needed).

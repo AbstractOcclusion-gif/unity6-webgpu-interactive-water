@@ -373,9 +373,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
                     // gradient -> NaN, so fall back to the view direction. Harmless: the inside view
                     // is the cameraInWater veil, which zeroes the reflection sheen and skips the
                     // refraction bend - the only two consumers of this normal.
-                    surfaceN = meshHasEntryFace
-                             ? normalize(cross(ddy(frontWS), ddx(frontWS)))
-                             : viewDirWS;
+                    // SafeFacetNormal also rejects a DEGENERATE cross (edge-on triangle, parallel
+                    // derivatives) which normalize() would otherwise turn into a NaN.
+                    surfaceN = SafeFacetNormal(frontWS, meshHasEntryFace, viewDirWS);
                 }
                 else
                 {

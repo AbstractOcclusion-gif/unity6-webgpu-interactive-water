@@ -1,4 +1,4 @@
-// WebGL Water - caustics pass (Unity 6 / URP port)
+// WebGpuWater - caustics pass (Unity 6 / URP port)
 // Renders the water grid mesh into the caustic RenderTexture. The vertex shader
 // projects each water vertex along the refracted light onto the pool floor and
 // outputs clip-space position directly (no view/projection matrix). The fragment

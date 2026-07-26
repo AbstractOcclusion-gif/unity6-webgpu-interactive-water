@@ -1,4 +1,4 @@
-// WebGL Water - WaterVolume inspector: large-water + ocean sections (camera-following sim window,
+// WebGpuWater - WaterVolume inspector: large-water + ocean sections (camera-following sim window,
 // open water, horizon clipmap, ocean god rays, whitecap foam). Greyed by body type: the sim window
 // and open water apply to Lake + Ocean; the clipmap/god-ray/whitecap blocks are Ocean-only. Draws
 // serialized properties by exact path. Editor-only.
@@ -13,7 +13,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         void DrawWindowSection()
         {
             _showWindow = WaterEditorUI.SectionWithToggle(
-                "Large-Water Sim Window", _showWindow, Prop("enableLargeBodyWindow"), () =>
+                "Large-Water Sim Window", _showWindow, Prop(WaterVolumePropertyPaths.EnableLargeBodyWindow), () =>
                 DrawFields(
                     "largeBodyThreshold",
                     "simWindowMeters",
@@ -31,10 +31,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 {
                     EditorGUILayout.HelpBox(SwellHelp, MessageType.None);
                     DrawFields(
-                        "ocean.largeWaveAmplitude",
-                        "ocean.largeWaveChoppiness",
-                        "ocean.swellHeight",
-                        "ocean.swellWavelength",
+                        WaterVolumePropertyPaths.LargeWaveAmplitude,
+                        WaterVolumePropertyPaths.LargeWaveChoppiness,
+                        WaterVolumePropertyPaths.SwellHeight,
+                        WaterVolumePropertyPaths.SwellWavelength,
                         WaterVolumePropertyPaths.UnboundedOcean,
                         WaterVolumePropertyPaths.EdgeFeatherMeters);
                 },
@@ -52,7 +52,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "ocean.oceanDetailFalloff",
                     "ocean.horizonFadeDistance",
                     "ocean.horizonHazeColor",
-                    "ocean.horizonHazeDensity");
+                    WaterVolumePropertyPaths.HorizonHazeDensity);
             }, contentEnabled: IsOcean);
         }
 
@@ -61,7 +61,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             _showOceanGodRays = WaterEditorUI.Section("Ocean · God Rays", _showOceanGodRays, () =>
                 DrawFields(
                     "ocean.largeGodRayColor",
-                    "ocean.largeGodRayDensity",
+                    WaterVolumePropertyPaths.LargeGodRayDensity,
                     "ocean.largeGodRaySteps",
                     "ocean.largeGodRayAnisotropy",
                     "ocean.largeGodRayExtinction",

@@ -3,7 +3,7 @@
     "version": "1.0.0",
     "displayName": "AbstractOcclusion.WebGpuWater",
     "description": "GPU water for URP: interactive ripple simulation, buoyancy and two-way coupling, surface + edge foam, GPU foam particles, caustics, god rays, and hybrid planar/SSR/sky reflections. Includes the one-window Water Wizard authoring tool (Window > AbstractOcclusion > WebGpuWater > Water Wizard).",
-    "unity": "2022.2",
+    "unity": "6000.0",
     "license": "SEE LICENSE IN LICENSE.md",
     "dependencies": {},
     "samples": [

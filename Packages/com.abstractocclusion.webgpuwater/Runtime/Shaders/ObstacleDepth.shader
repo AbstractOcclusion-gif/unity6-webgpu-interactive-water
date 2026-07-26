@@ -1,4 +1,4 @@
-// WebGL Water - obstacle footprint pass (Unity 6 / URP port)
+// WebGpuWater - obstacle footprint pass (Unity 6 / URP port)
 // Drawn top-down by WaterObstacle via a CommandBuffer with an orthographic VP that
 // maps the pool's x,z in [-1,1] onto the render target. Each object writes, per
 // column, how far its surface sits BELOW the local waterline (set per-object from C#).

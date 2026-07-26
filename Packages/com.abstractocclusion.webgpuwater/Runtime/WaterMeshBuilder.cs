@@ -94,6 +94,63 @@ namespace AbstractOcclusion.WebGpuWater
             return mesh;
         }
 
+        // Unit sphere of radius 0.5: the SPHERE exclusion volume's water-wall mesh, drawn with the
+        // volume's shape-to-world matrix (which turns it into an ellipsoid under a non-uniform
+        // size). It is the CUBE's inscribed ball, exactly like the shader's primitive pair, so the
+        // drawn boundary and the carved boundary are the same surface. Positions only - the wall
+        // shader derives its normal analytically from the fragment's own object-space position
+        // (a per-vertex normal would face the FACET, not the sphere) and renders Cull Off.
+        // A UV sphere rather than an icosphere: the pole seam costs nothing here (no UVs, no
+        // normals, no lighting seam) and the ring/segment counts stay readable knobs.
+        internal static Mesh BuildUnitSphere()
+        {
+            const float Radius = 0.5f;
+            // Enough that the SILHOUETTE reads round at close range - the rim is what the edge
+            // occlusion shades, so a coarse outline would be visible exactly where it matters.
+            const int RingCount = 24;    // latitude divisions, pole to pole
+            const int SegmentCount = 32; // longitude divisions around the equator
+
+            int vertexCount = (RingCount + 1) * (SegmentCount + 1);
+            var verts = new Vector3[vertexCount];
+            for (int ring = 0; ring <= RingCount; ring++)
+            {
+                float polar = Mathf.PI * ring / RingCount;
+                float sinPolar = Mathf.Sin(polar);
+                float cosPolar = Mathf.Cos(polar);
+                for (int segment = 0; segment <= SegmentCount; segment++)
+                {
+                    float azimuth = 2f * Mathf.PI * segment / SegmentCount;
+                    verts[ring * (SegmentCount + 1) + segment] = new Vector3(
+                        Radius * sinPolar * Mathf.Cos(azimuth),
+                        Radius * cosPolar,
+                        Radius * sinPolar * Mathf.Sin(azimuth));
+                }
+            }
+
+            var tris = new int[RingCount * SegmentCount * 6];
+            int index = 0;
+            for (int ring = 0; ring < RingCount; ring++)
+            {
+                for (int segment = 0; segment < SegmentCount; segment++)
+                {
+                    int current = ring * (SegmentCount + 1) + segment;
+                    int below = current + SegmentCount + 1;
+                    tris[index++] = current;
+                    tris[index++] = below;
+                    tris[index++] = current + 1;
+                    tris[index++] = current + 1;
+                    tris[index++] = below;
+                    tris[index++] = below + 1;
+                }
+            }
+
+            var mesh = new Mesh { name = "WaterExclusionWallSphere" };
+            mesh.vertices = verts;
+            mesh.triangles = tris;
+            mesh.bounds = new Bounds(Vector3.zero, Vector3.one);
+            return mesh;
+        }
+
         // Unit cube spanning [-0.5, 0.5] per axis: the exclusion volume's water-wall mesh, drawn
         // with the volume's box-to-world matrix. Positions only (8 verts / 12 tris) - the wall
         // shader shades from world position and renders Cull Off, so normals/uvs/winding senses

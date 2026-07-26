@@ -1,4 +1,4 @@
-// WebGL Water - WaterVolume custom inspector (orchestration).
+// WebGpuWater - WaterVolume custom inspector (orchestration).
 // Draws the cyan header, every feature section in a readable top-down order, and the footer.
 // The scene-view gizmos/handles live in WaterVolumeEditor.cs; the per-section drawing lives in
 // the WaterVolumeEditor.Setup/Dynamics/Ocean/Appearance partials. Editor-only.
@@ -107,7 +107,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             WaterEditorUI.DrawHeader(InspectorTitle, BodySubtitle());
 
             // Body type selector + one-click defaults for the chosen archetype (advisory).
-            WaterEditorUI.BodyTypeSelector(Prop("bodyType"));
+            WaterEditorUI.BodyTypeSelector(Prop(WaterVolumePropertyPaths.BodyType));
             if (GUILayout.Button("Apply " + CurrentType + " defaults"))
                 ApplyBodyTypeDefaults(CurrentType);
 
@@ -183,7 +183,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         SerializedProperty Prop(string path) => serializedObject.FindProperty(path);
 
         // True when a directional light is wired into the body's sun slot (which then auto-drives lightDir).
-        bool HasSun => Prop("sun").objectReferenceValue != null;
+        bool HasSun => Prop(WaterVolumePropertyPaths.Sun).objectReferenceValue != null;
 
         // Draws every named property field of a nested block, honouring its [Range]/[Min]/[Tooltip]
         // attributes automatically (PropertyField reads them), so this editor holds no range literals.
@@ -197,7 +197,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // The bodyType enum drives which sections are relevant; sections grey their body when a
         // feature doesn't apply to the chosen archetype. Advisory only - it never changes runtime
         // behaviour by itself (the functional flags still gate the actual paths).
-        WaterVolume.WaterBodyType CurrentType => (WaterVolume.WaterBodyType)Prop("bodyType").enumValueIndex;
+        WaterVolume.WaterBodyType CurrentType =>
+            (WaterVolume.WaterBodyType)Prop(WaterVolumePropertyPaths.BodyType).enumValueIndex;
         bool IsOcean => CurrentType == WaterVolume.WaterBodyType.Ocean;
         bool LakeOrOcean => CurrentType != WaterVolume.WaterBodyType.Pond;
         bool Bounded => CurrentType != WaterVolume.WaterBodyType.Ocean; // pond + lake have real walls / finite volume

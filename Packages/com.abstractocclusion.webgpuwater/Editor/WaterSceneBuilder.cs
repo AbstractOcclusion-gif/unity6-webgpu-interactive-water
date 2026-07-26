@@ -1,4 +1,4 @@
-// WebGL Water - editor utilities backing the Water Wizard window.
+// WebGpuWater - editor utilities backing the Water Wizard window.
 //
 // Menu entries were removed in favour of a single wizard (see WaterWizardWindow); these
 // methods are the retrofit/one-off operations the wizard exposes as buttons. Scene CREATION
@@ -49,12 +49,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             if (prefab == null)
             {
-                Debug.LogError($"[WebGL Water] Failed to save the WaterVolume prefab at {WaterVolumePrefabPath}.");
+                Debug.LogError($"[WebGpuWater] Failed to save the WaterVolume prefab at {WaterVolumePrefabPath}.");
                 return;
             }
 
             Selection.activeObject = prefab;
-            Debug.Log($"[WebGL Water] WaterVolume prefab created at {WaterVolumePrefabPath}. " +
+            Debug.Log($"[WebGpuWater] WaterVolume prefab created at {WaterVolumePrefabPath}. " +
                       "Drop it into a scene with a camera - it resolves the camera and sun automatically.");
         }
 
@@ -67,12 +67,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var volume = selected != null ? selected.GetComponentInChildren<WaterVolume>() : null;
             if (volume == null)
             {
-                Debug.LogError("[WebGL Water] Select a GameObject with a WaterVolume first.");
+                Debug.LogError("[WebGpuWater] Select a GameObject with a WaterVolume first.");
                 return;
             }
             if (volume.GetComponent<WaterFoamParticles>() != null)
             {
-                Debug.LogWarning("[WebGL Water] That body already has foam particles.");
+                Debug.LogWarning("[WebGpuWater] That body already has foam particles.");
                 return;
             }
             EnsureGenFolder();
@@ -89,7 +89,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             }
 
             Selection.activeObject = volume.gameObject;
-            Debug.Log($"[WebGL Water] Foam particles added to '{volume.name}' and Foam enabled.");
+            Debug.Log($"[WebGpuWater] Foam particles added to '{volume.name}' and Foam enabled.");
         }
 
         // Upgrade the shared splash materials (Generated/SplashDroplet.mat + SplashCrown.mat)
@@ -98,7 +98,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal static void UpgradeSplashMaterialsMenu()
         {
             UpgradeSplashMaterials();
-            Debug.Log("[WebGL Water] Splash materials now use " + ShaderSplashParticles + ".");
+            Debug.Log("[WebGpuWater] Splash materials now use " + ShaderSplashParticles + ".");
         }
 
         // Assign the animated foam flipbook + relief normal map to every water surface
@@ -109,7 +109,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var volumes = Object.FindObjectsByType<WaterVolume>(FindObjectsSortMode.None);
             if (volumes.Length == 0)
             {
-                Debug.LogError("[WebGL Water] No WaterVolume in the open scene.");
+                Debug.LogError("[WebGpuWater] No WaterVolume in the open scene.");
                 return;
             }
 
@@ -120,7 +120,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 touched += AssignFoamTextures(volume.surfaceUnder);
             }
             AssetDatabase.SaveAssets();
-            Debug.Log($"[WebGL Water] Foam flipbook + normal map assigned to {touched} water material(s).");
+            Debug.Log($"[WebGpuWater] Foam flipbook + normal map assigned to {touched} water material(s).");
         }
 
         static int AssignFoamTextures(Renderer surface)
@@ -152,7 +152,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var all = Object.FindObjectsByType<WaterVolume>(FindObjectsSortMode.None);
             if (all == null || all.Length == 0)
             {
-                Debug.LogError("[WebGL Water] Build the scene first (no WaterVolume found).");
+                Debug.LogError("[WebGpuWater] Build the scene first (no WaterVolume found).");
                 return;
             }
             WaterVolume primary = System.Array.Find(all, c => c.IsPrimary) ?? all[0];
@@ -185,7 +185,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             EditorUtility.SetDirty(body);
             UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(bodyRoot.scene);
             Undo.CollapseUndoOperations(undoGroup);
-            Debug.Log("[WebGL Water] Secondary water body added. Move its 'Frame' child to reposition; " +
+            Debug.Log("[WebGpuWater] Secondary water body added. Move its 'Frame' child to reposition; " +
                       "edit that WaterVolume's Volume Extent for a different size/shape.");
         }
 

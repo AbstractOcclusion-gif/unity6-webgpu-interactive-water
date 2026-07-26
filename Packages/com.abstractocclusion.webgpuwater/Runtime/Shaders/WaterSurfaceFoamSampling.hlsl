@@ -9,6 +9,11 @@
 #ifndef WATER_SURFACE_FOAM_SAMPLING_INCLUDED
 #define WATER_SURFACE_FOAM_SAMPLING_INCLUDED
 
+// The sim-foam mask read and THE coverage formula (_FoamMask/_FoamStrength/_FoamBorderWidth,
+// SampleFoamMaskBilinear, FoamWindowFade, SampleFoamMaskWindowed, SimFoamCoverage) moved here
+// so the fullscreen underwater fog shares them instead of keeping a second, drifted copy.
+#include "WaterFoamMask.hlsl"
+
 // ---- Surf foam enhancement uniforms (FOAM-1/2/3, ALL RENDER-ONLY). Published as
 // globals by WaterShoreDepthField beside the _Surf* set; unpublished = every feature
 // off and the pass byte-identical. The scalar repartition weights live in
@@ -97,9 +102,8 @@ float _ShoreSwashDepositGain;  // FOAM-5: >0 = persistent swash deposits live in
 #define OCEAN_FOAM_NORMAL_DELTA (4.0 / 1024.0)
 #define OCEAN_FOAM_NORMAL_GAIN  2.5
 
-// Foam: _FoamMask (sim buffer) + globals from the controller; _FoamTex
-// is an optional per-material pattern (defaults white = flat foam).
-sampler2D _FoamMask;
+// Foam: the _FoamMask sim buffer is declared in WaterFoamMask.hlsl (shared with the fog pass);
+// _FoamTex is an optional per-material pattern (defaults white = flat foam).
 sampler2D _FoamTex;
 // Dedicated ocean wave-foam (whitecap) slots: a single seamless TILING texture (not a flipbook
 // atlas) + its raw-RGB relief normal, sampled only by the FFT-ocean whitecap path. Defaults
@@ -124,7 +128,7 @@ float  _FoamNormalStrength;
 // swimming with the camera window).
 float  _FoamTileSize;
 float4 _FoamColor;
-float _FoamEnabled, _FoamStrength, _FoamBorderWidth, _FoamContactDepth;
+float _FoamContactDepth; // _FoamEnabled/_FoamStrength/_FoamBorderWidth: WaterFoamMask.hlsl
 // Mask level over which the foam layer fades in from nothing (edge
 // feathering). 0 disables: foam clips hard at the mask epsilon.
 float _FoamFeather;
@@ -132,50 +136,6 @@ float _FoamFeather;
 // 1 = fully pattern-cut like the lace).
 float _FoamCoreCut;
 
-// Manual bilinear sample of the float foam mask - same fix as SampleWaterBilinear:
-// WebGPU cannot hardware-filter float32, so a plain tex2D point-samples there and
-// the foam edges go blocky in builds only. The foam RT matches the sim resolution,
-// so _WaterTexel applies. tex2Dlod keeps it valid in any control flow.
-float SampleFoamMaskBilinear(float2 uv)
-{
-    float2 texel = _WaterTexel.xy;
-    float2 st = uv * _WaterTexel.zw - 0.5;
-    float2 f = frac(st);
-    float2 baseUV = (floor(st) + 0.5) * texel;
-    float c00 = tex2Dlod(_FoamMask, float4(baseUV, 0, 0)).r;
-    float c10 = tex2Dlod(_FoamMask, float4(baseUV + float2(texel.x, 0.0), 0, 0)).r;
-    float c01 = tex2Dlod(_FoamMask, float4(baseUV + float2(0.0, texel.y), 0, 0)).r;
-    float c11 = tex2Dlod(_FoamMask, float4(baseUV + texel, 0, 0)).r;
-    return lerp(lerp(c00, c10, f.x), lerp(c01, c11, f.x), f.y);
-}
-
-// Window-edge fade for foam-mask reads (mirrors SampleRipple's out-of-window guard).
-// The foam RT clamps, so an unguarded windowed read past the border repeats the edge
-// texels - any foam at the window edge smears into horizon-length bands (visible as
-// vertical/horizontal streaks at distance). The sim deliberately does NOT fade its
-// own edges (WaterSim.compute: "Edge softening is a render-side concern"), so the
-// render-side read owns the border: 0 at/beyond the window edge, ramping in over the
-// same _SimEdgeFadeTexels band the ripple fade uses. Whole-body bodies
-// (_SimWindowed = 0) return 1, keeping the bounded-pool path byte-identical.
-float FoamWindowFade(float2 uv)
-{
-    if (_SimWindowed < 0.5) return 1.0;
-    if (any(uv < 0.0) || any(uv > 1.0)) return 0.0;
-    float band = max(_SimEdgeFadeTexels, 0.0) * _WaterTexel.x; // texels -> UV
-    float2 edgeDist = min(uv, 1.0 - uv);
-    return saturate(min(edgeDist.x, edgeDist.y) / max(band, 1e-5));
-}
-
-// Foam-mask read for every pool/window foam coord: the bilinear sample scaled by the
-// window fade. The early return skips the four mask taps everywhere beyond the
-// window. tex2Dlod-based, so (like SampleFoamMaskBilinear) it stays valid in any
-// control flow.
-float SampleFoamMaskWindowed(float2 uv)
-{
-    float fade = FoamWindowFade(uv);
-    if (fade <= 0.0) return 0.0;
-    return SampleFoamMaskBilinear(uv) * fade;
-}
 
 // Flipbook frame pair + crossfade weight for the current time. Both the foam
 // pattern and its normal map use this, so their frames can never drift apart.

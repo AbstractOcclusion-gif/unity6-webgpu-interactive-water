@@ -64,6 +64,12 @@ namespace AbstractOcclusion.WebGpuWater
 
         public override void Create()
         {
+        // Release BEFORE (re)creating. URP calls Create() on OnEnable, on OnValidate and on every
+        // domain reload, but Dispose() only when the feature asset is destroyed - so allocating here
+        // without releasing first leaked one engine Material (and, where the pass owns RTHandles, the
+        // pass's history targets) per inspector tweak. Create and Dispose now share ONE teardown, so
+        // they cannot drift.
+            ReleaseResources();
             if (causticProjectionShader == null) { _pass = null; return; } // unassigned: feature is inert
             _material = CoreUtils.CreateEngineMaterial(causticProjectionShader);
             ApplyMaterialParameters();
@@ -82,6 +88,8 @@ namespace AbstractOcclusion.WebGpuWater
 
         public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
         {
+            // Never for material/prefab thumbnails - see WaterPassCameraGate.
+            if (WaterPassCameraGate.SkipCamera(renderingData.cameraData.cameraType)) return;
             if (_pass == null) return;                          // shader unassigned / not created
             if (!WaterVolume.AnyCausticProjectionBody()) return; // no body has the opt-in on + a caustic RT
             ApplyMaterialParameters();
@@ -89,7 +97,9 @@ namespace AbstractOcclusion.WebGpuWater
             renderer.EnqueuePass(_pass);
         }
 
-        protected override void Dispose(bool disposing)
+        protected override void Dispose(bool disposing) => ReleaseResources();
+
+        void ReleaseResources()
         {
             CoreUtils.Destroy(_material);
             _material = null;

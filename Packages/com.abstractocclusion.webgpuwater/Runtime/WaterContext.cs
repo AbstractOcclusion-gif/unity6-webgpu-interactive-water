@@ -1,4 +1,4 @@
-// WebGL Water - the shared per-frame seam handed to the water modules (Unity 6 / URP port).
+// WebGpuWater - the shared per-frame seam handed to the water modules (Unity 6 / URP port).
 namespace AbstractOcclusion.WebGpuWater
 {
     /// <summary>

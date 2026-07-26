@@ -6,24 +6,26 @@ reflections. Everything is authored from one window — the **Water Wizard**. A 
 URP port and expansion of Evan Wallace's
 [WebGL Water](https://madebyevan.com/webgl-water/) (MIT).
 
-**Version 1.0.0** | Unity 2022.2+ | URP 12+ | Desktop · WebGPU/WebGL · Mobile
+**Version 1.0.0** | Unity 6 (6000.0+) | URP 17+ | Desktop · WebGPU/WebGL · Mobile
 
 ## Scope
 
-Built for **small and mid-size** water bodies — pools, ponds, small-to-mid lakes. Past roughly
-**~20 m** of extent the interactive ripple grid gets coarse and the analytic wind waves stop
-looking realistic at that scale. **Large lakes and oceans are out of scope for this version** and
-are planned as a separate, dedicated system (spectral/FFT waves with their own wave foam, fog and
-Unity-terrain handling). Very large, fully opaque water also needs a different shading model than
-the transparent pool path.
+Built primarily for **small and mid-size** water bodies — pools, ponds, small-to-mid lakes — where
+the interactive ripple simulation and analytic wind waves do the heavy lifting.
+
+**Large lakes and oceans are supported via a separate open-water path** (spectral/FFT waves with
+their own whitecap foam, clipmap surface, underwater fog and god rays). Pick **Open Water / Ocean**
+in the Water Wizard to use it. That path is newer than the pool path and is still being hardened —
+treat the very large, fully opaque cases as a preview rather than a finished product.
 
 **Unity Terrain support is experimental** — the bed-depth bake approximates a shoreline gradient
 from a Terrain heightmap; full terrain integration is not there yet. Treat it as a preview.
 
 ## Requirements
 
-- **Unity 2022.2 or newer** (Unity 6 fully supported).
-- **URP 12+** for rendering. The base runtime assembly compiles without URP installed;
+- **Unity 6 (6000.0 or newer).** The runtime uses Unity 6 APIs (`Rigidbody.linearVelocity`)
+  and the URP 17 RenderGraph render-pass API, so earlier Unity versions will not compile.
+- **URP 17+** for rendering. The base runtime assembly compiles without URP installed;
   URP-only code activates automatically via the `WEBGPUWATER_URP` define.
 - On your **active URP asset**, enable **Depth Texture**, **Opaque Texture** (SSR and
   refraction), and **Transparent Receive Shadows** (god-ray shafts).

@@ -1,4 +1,4 @@
-// WebGL Water - lit receiver for interactable objects (Unity 6 / URP port)
+// WebGpuWater - lit receiver for interactable objects (Unity 6 / URP port)
 // A proper URP surface: real main-light lighting, casts + receives shadows, and
 // receives the projected caustics where it sits below the water surface. Driven by
 // the same directional light as everything else (its direction also reaches the

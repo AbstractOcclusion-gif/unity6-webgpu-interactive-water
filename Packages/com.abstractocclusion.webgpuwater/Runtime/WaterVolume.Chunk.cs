@@ -110,8 +110,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_ChunkReflectivity = Shader.PropertyToID("_ChunkReflectivity");
         static readonly int ID_ChunkSphereClip = Shader.PropertyToID("_ChunkSphereClip");
         static readonly int ID_ChunkFogClamp = Shader.PropertyToID("_ChunkFogClamp");
-        static readonly int ID_ChunkWaterFogEnabled = Shader.PropertyToID("_WaterFogEnabled");
-        static readonly int ID_ChunkWaterFogDensity = Shader.PropertyToID("_WaterFogDensity");
+        static readonly int ID_ChunkWaterFogEnabled = WaterShaderProps.WaterFogEnabled;
+        static readonly int ID_ChunkWaterFogDensity = WaterShaderProps.WaterFogDensity;
         static readonly int ID_ChunkCameraUnderwater = Shader.PropertyToID("_ChunkCameraUnderwater");
         static readonly int ID_ChunkMeniscus = Shader.PropertyToID("_ChunkMeniscus");
         static readonly int ID_ChunkUseMesh = Shader.PropertyToID("_ChunkUseMesh");
@@ -127,7 +127,16 @@ namespace AbstractOcclusion.WebGpuWater
             Material material = ResolveChunkShellMaterial();
             if (material == null) return;
 
-            _chunkShellMesh ??= WaterMeshBuilder.BuildChunkShellBox();
+            // `== null`, NOT `??=`. This is a UnityEngine.Object: Unity overloads == so a DESTROYED
+            // object compares equal to null, but `??=` tests the raw C# reference and so sees a
+            // destroyed mesh as "already assigned" and skips the rebuild.
+            //
+            // That is exactly what made a chunk vanish in the EDITOR after stopping play. Exiting play
+            // mode destroys the runtime-created mesh, but the STATIC reference to it survives (no
+            // domain reload on exit) - so back in edit mode the shell was rebuilt with a destroyed
+            // mesh and rendered nothing. ResolveChunkShellMaterial above already gets this right for
+            // the material, which is why the material recovered and the mesh did not.
+            if (_chunkShellMesh == null) _chunkShellMesh = WaterMeshBuilder.BuildChunkShellBox();
             var shellObject = new GameObject("Chunk Shell") { hideFlags = HideFlags.HideAndDontSave };
             shellObject.transform.SetParent(transform, false); // identity: the frame places it in-shader
             shellObject.layer = gameObject.layer;
@@ -136,6 +145,24 @@ namespace AbstractOcclusion.WebGpuWater
             _chunkShellRenderer.sharedMaterial = material;
             _chunkShellRenderer.shadowCastingMode = ShadowCastingMode.Off;
             _chunkShellRenderer.receiveShadows = false;
+        }
+
+        // Tear the per-body shell down on disable. TWO reasons, both bugs before this existed:
+        //
+        //  1. _chunkShellRenderer was never nulled anywhere, and EnsureChunkShell short-circuits on
+        //     it. Under Fast Enter Play Mode with Reload Scene off, ResetChunkStaticState destroys
+        //     the SHARED material/mesh between sessions while the instance field survives - so the
+        //     shell kept rendering with a destroyed material and never rebuilt.
+        //  2. The shell GameObject/MeshFilter are HideAndDontSave, so in edit mode nothing collected
+        //     them: disabling a chunk body left its fog shell drawing with frozen uniforms.
+        //
+        // The shared material and mesh are deliberately NOT destroyed here - other chunk bodies may
+        // still be using them; ResetChunkStaticState owns their lifetime.
+        void DestroyChunkShell()
+        {
+            if (_chunkShellRenderer == null) return;
+            DestroyRuntimeObject(_chunkShellRenderer.gameObject);
+            _chunkShellRenderer = null;
         }
 
         static Material ResolveChunkShellMaterial()

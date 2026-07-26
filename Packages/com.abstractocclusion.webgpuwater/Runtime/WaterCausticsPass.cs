@@ -11,13 +11,13 @@ namespace AbstractOcclusion.WebGpuWater
 {
     internal sealed class WaterCausticsPass
     {
-        static readonly int ID_Water = Shader.PropertyToID("_WaterTex");
-        static readonly int ID_SimCenter = Shader.PropertyToID("_SimCenter");
-        static readonly int ID_SimExtent = Shader.PropertyToID("_SimExtent");
-        static readonly int ID_LightDir = Shader.PropertyToID("_LightDir");
-        static readonly int ID_VolumeCenter = Shader.PropertyToID("_VolumeCenter");
-        static readonly int ID_VolumeExtent = Shader.PropertyToID("_VolumeExtent");
-        static readonly int ID_VolumeRot = Shader.PropertyToID("_VolumeRot");
+        static readonly int ID_Water = WaterShaderProps.WaterTex;
+        static readonly int ID_SimCenter = WaterShaderProps.SimCenter;
+        static readonly int ID_SimExtent = WaterShaderProps.SimExtent;
+        static readonly int ID_LightDir = WaterShaderProps.LightDir;
+        static readonly int ID_VolumeCenter = WaterShaderProps.VolumeCenter;
+        static readonly int ID_VolumeExtent = WaterShaderProps.VolumeExtent;
+        static readonly int ID_VolumeRot = WaterShaderProps.VolumeRot;
         static readonly int ID_CausticSmooth = Shader.PropertyToID("_LargeGodRayCausticSmooth");
         static readonly int ID_CausticTime = Shader.PropertyToID("_LargeCausticTime");
         static readonly int ID_CausticRippleScale = Shader.PropertyToID("_LargeCausticRippleScale");
@@ -87,7 +87,7 @@ namespace AbstractOcclusion.WebGpuWater
                 autoGenerateMips = false
             };
             _target.Create();
-            _cb = new CommandBuffer { name = "WebGLWater.Caustics" };
+            _cb = new CommandBuffer { name = "WebGpuWater.Caustics" };
         }
 
         // Project the body's own sim state into its caustic RT (vertex shader outputs

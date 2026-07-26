@@ -1,4 +1,4 @@
-// WebGL Water - shared build kit (Unity 6 / URP port)
+// WebGpuWater - shared build kit (Unity 6 / URP port)
 // Editor-only generators shared by the Water Wizard and the scene builder:
 // meshes, procedural sky/tiles, materials, camera/sun/splash rigging, and a
 // fully-wired water body. Kept in one place so both builders compose the same
@@ -37,10 +37,17 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
     internal static class WaterBuildKit
     {
+        // User-facing product name and log prefix. ONE definition each: these were inlined per call
+        // site in four different spellings ("[WebGpuWater]", "WebGpuWater:", "[WebGpuWater]",
+        // "WaterVolume:"), which is how the pre-rebrand name survived into dialog titles and the
+        // generated-asset folder long after the namespaces were renamed.
+        internal const string ProductName = "WebGPU Water";
+        internal const string LogPrefix = "[WebGpuWater] ";
+
         // Consumer-side, writable roots: generated meshes/materials/textures and the sample prefab
         // are created into the OPEN project's Assets, never into this read-only package.
-        internal const string Root = "Assets/WebGLWater";
-        internal const string Gen = "Assets/WebGLWater/Generated";
+        internal const string Root = "Assets/WebGpuWater";
+        internal const string Gen = "Assets/WebGpuWater/Generated";
 
         // Immutable package assets loaded by path (compute shaders). Lives inside the package, so it
         // must be addressed via the Packages/ mount, not Assets/.
@@ -318,7 +325,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             if (AssetDatabase.LoadAssetAtPath<ComputeShader>(FoamParticleComputePath) == null ||
                 Shader.Find(ShaderFoamParticles) == null)
             {
-                Debug.LogWarning("WebGL Water: foam particle compute/shader missing; skipping particle setup.");
+                Debug.LogWarning("WebGpuWater: foam particle compute/shader missing; skipping particle setup.");
                 return null;
             }
 
@@ -340,7 +347,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var shader = Shader.Find(ShaderFoamParticles);
             if (compute == null || shader == null)
             {
-                Debug.LogWarning("WebGL Water: foam particle compute/shader missing; foam assets not wired.");
+                Debug.LogWarning("WebGpuWater: foam particle compute/shader missing; foam assets not wired.");
                 return;
             }
 
@@ -447,7 +454,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             {
                 if (customMesh == null)
                 {
-                    Debug.LogError("[WebGL Water] Assign a mesh to create a custom-mesh floater.");
+                    Debug.LogError("[WebGpuWater] Assign a mesh to create a custom-mesh floater.");
                     return null;
                 }
                 go = NewUndoableGameObject(BuoyantObjectName);
@@ -548,7 +555,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 {
                     // A model with no renderers can't size the collider; fall back to the
                     // primitive hull's box so the boat still floats and drives predictably.
-                    Debug.LogWarning("[WebGL Water] Hull model has no renderers; using the default hull-sized collider.");
+                    Debug.LogWarning("[WebGpuWater] Hull model has no renderers; using the default hull-sized collider.");
                     worldBounds = new Bounds(boat.transform.position, BoatHullScale);
                 }
                 var box = boat.AddComponent<BoxCollider>();
@@ -754,7 +761,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             var texture = AssetDatabase.LoadAssetAtPath<Texture>(DefaultTexturesRoot + "/" + fileName);
             if (texture == null)
-                Debug.LogWarning($"[WebGL Water] Default texture '{fileName}' not found under {DefaultTexturesRoot}; the corresponding slot stays empty.");
+                Debug.LogWarning($"[WebGpuWater] Default texture '{fileName}' not found under {DefaultTexturesRoot}; the corresponding slot stays empty.");
             return texture;
         }
 
@@ -916,7 +923,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var shader = Shader.Find(ShaderSplashParticles);
             if (shader == null)
             {
-                Debug.LogWarning($"WebGL Water: shader '{ShaderSplashParticles}' missing; splash material not created.");
+                Debug.LogWarning($"WebGpuWater: shader '{ShaderSplashParticles}' missing; splash material not created.");
                 return null;
             }
 
@@ -1175,7 +1182,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 string packagedSheet = PackagedSheetPath(packageRelativePath);
                 if (packagedSheet == null || !File.Exists(packagedSheet))
                 {
-                    Debug.LogWarning($"WebGL Water: crown sheet not found in the package " +
+                    Debug.LogWarning($"WebGpuWater: crown sheet not found in the package " +
                                      $"('{packageRelativePath}'); the splash crown will miss this sheet.");
                     return null;
                 }
@@ -1214,13 +1221,18 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             if (shaders.Water == null || shaders.Caustics == null || shaders.Compute == null)
             {
-                EditorUtility.DisplayDialog("WebGL Water",
-                    "Could not find the shaders / compute shader. Make sure the WebGLWater/Shaders folder imported without errors, then try again.",
+                // Point at where the shaders ACTUALLY live. The old text named a "WebGLWater/Shaders"
+                // folder that has not existed since the move into the package, so the one error a
+                // broken import produces sent the user hunting for a directory that cannot exist.
+                EditorUtility.DisplayDialog(ProductName,
+                    "Could not find the water shaders / compute shader. Make sure " +
+                    $"'{PackageShadersRoot}' imported without errors (check the Console for shader " +
+                    "compile errors), then try again.",
                     "OK");
                 return false;
             }
 
-            if (shaders.Obstacle == null) Debug.LogWarning($"[WebGL Water] Shader '{ShaderObstacle}' not found; object->water displacement will be disabled.");
+            if (shaders.Obstacle == null) Debug.LogWarning($"[WebGpuWater] Shader '{ShaderObstacle}' not found; object->water displacement will be disabled.");
             return true;
         }
 
@@ -1312,7 +1324,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             }
             catch (System.IO.IOException ioException)
             {
-                Debug.LogError($"[WebGL Water] Could not write '{path}': {ioException.Message}");
+                Debug.LogError($"[WebGpuWater] Could not write '{path}': {ioException.Message}");
                 return null;
             }
             AssetDatabase.ImportAsset(path);
@@ -1323,7 +1335,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             }
             else
             {
-                Debug.LogError($"[WebGL Water] '{path}' imported without a TextureImporter; texture settings not applied.");
+                Debug.LogError($"[WebGpuWater] '{path}' imported without a TextureImporter; texture settings not applied.");
             }
             return AssetDatabase.LoadAssetAtPath<Texture2D>(path);
         }

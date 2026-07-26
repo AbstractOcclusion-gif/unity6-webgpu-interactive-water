@@ -1,4 +1,4 @@
-// WebGL Water - shared underwater fog (Beer-Lambert absorption)
+// WebGpuWater - shared underwater fog (Beer-Lambert absorption)
 // Included by the water surface AND the lit receivers (objects, pool) so fog is
 // consistent however you look at the water. Parameters are GLOBAL, published once
 // per frame by WaterController, so there is a single place to tune them.

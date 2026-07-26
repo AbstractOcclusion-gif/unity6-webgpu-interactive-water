@@ -1,4 +1,4 @@
-// WebGL Water - GPU foam particle rendering (KWS-inspired)
+// WebGpuWater - GPU foam particle rendering (KWS-inspired)
 //
 // Draws the particle pool written by WaterFoamParticles.compute as procedural quads:
 // the vertex shader pulls a FoamParticle from a StructuredBuffer by SV_VertexID

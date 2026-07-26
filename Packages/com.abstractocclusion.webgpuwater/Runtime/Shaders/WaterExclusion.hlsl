@@ -1,36 +1,64 @@
-// WebGpuWater - water exclusion volumes (dry interiors), Phase 1: analytic OBBs.
+// WebGpuWater - water exclusion volumes (dry interiors): analytic primitives.
 // Declares the global exclusion uniforms plus the ONE point test every water consumer
 // shares (reuse-never-rewrite: consumers include this file, nobody hand-copies the loop).
 // Kept OUT of WaterShared.hlsl on purpose: that header's contract is pure math with no
 // global declarations, and these ARE globals.
 //
 // Published by WaterUniformPublisher.PublishSharedGlobals (global, not per body: a dry
-// room is dry in whichever body intersects it). _ExclusionWorldToBox maps world space
-// into each volume's UNIT box, so one matrix carries centre + rotation + size and the
-// inside test is abs(local) <= 0.5 per axis.
+// room is dry in whichever body intersects it). _ExclusionWorldToLocal maps world space
+// into each volume's UNIT LOCAL space, so one matrix carries centre + rotation + size and
+// the shape test reduces to the origin-centred primitive kernels in WaterPrimitiveShape.hlsl
+// (box: abs(local) <= 0.5 per axis; sphere: |local| <= 0.5, an ELLIPSOID in world space
+// whenever the matrix scales non-uniformly).
 //
 #ifndef WEBGL_WATER_EXCLUSION_INCLUDED
 #define WEBGL_WATER_EXCLUSION_INCLUDED
 
-#include "WaterShared.hlsl" // IntersectCube + RAY_SLAB_EPSILON for ExclusionRayLength
+#include "WaterPrimitiveShape.hlsl" // the shared box/sphere kernels (+ WaterShared: IntersectCube)
+// NOT included here: WaterExclusionMesh.hlsl. This header is pulled in by the foam COMPUTE too, and
+// the mesh tier declares depth textures a compute kernel would carry for nothing. The three
+// screen-space consumers include it (or its URP-core companion WaterExclusionMeshSpan.hlsl)
+// themselves; everything in THIS file needs only the mesh FLAG, which rides in the shape uniform.
 
 // C# pair: WaterExclusionVolume.MaxVolumes (WaterWaveConstantsValidator guards the pair).
 #define EXCLUSION_MAX_VOLUMES 4
 
-// Half-extent of the unit box the world->box matrices map into.
-#define EXCLUSION_BOX_HALF_EXTENT 0.5
+// Half-extent of the unit local space the world->local matrices map into: the box's half-edge
+// and the inscribed sphere's radius (see WaterPrimitiveShape.hlsl).
+#define EXCLUSION_LOCAL_HALF_EXTENT 0.5
 
-// The unit box as min/max corners, for the slab test in ExclusionRayLength.
-#define EXCLUSION_BOX_MIN float3(-EXCLUSION_BOX_HALF_EXTENT, -EXCLUSION_BOX_HALF_EXTENT, -EXCLUSION_BOX_HALF_EXTENT)
-#define EXCLUSION_BOX_MAX float3( EXCLUSION_BOX_HALF_EXTENT,  EXCLUSION_BOX_HALF_EXTENT,  EXCLUSION_BOX_HALF_EXTENT)
+// Selector value a MESH volume carries. The analytic uniform arrays never see it - a mesh volume
+// sends its PROXY there and raises the mesh flag instead - but the WALL is drawn per volume and
+// does carry the true shape, because it has to shade a real mesh facet rather than an analytic
+// surface. C# pair: WaterExclusionVolume.MeshShapeId.
+#define EXCLUSION_SHAPE_MESH 2.0
 
 float    _ExclusionCount; // active volumes (float so it binds like _WaveCount); 0 disables
-float4x4 _ExclusionWorldToBox[EXCLUSION_MAX_VOLUMES];
+float4x4 _ExclusionWorldToLocal[EXCLUSION_MAX_VOLUMES];
+// Per-volume SHAPE in the SAME slot order: x = PRIMITIVE_SHAPE_* selector (box / sphere),
+// y = 1 for a MESH volume, zw reserved for future shape parameters (a capsule's radius, a
+// wedge's angle). A volume that never sets it reads 0 = box, which is the shape every
+// pre-shape scene authored.
+//
+// A MESH volume sends its analytic PROXY in x and raises the flag in y, which splits this
+// header cleanly in two. The kernels that answer along the CAMERA RAY - InsideExclusion,
+// ExclusionRayLength, the two endpoint pushes, the boundary pane - SKIP mesh volumes, because
+// the depth prepass answers those exactly and a proxy would carve a box where the author put a
+// silhouette; the screen-space consumers add the mesh path themselves (WaterExclusionMesh.hlsl).
+// Every OTHER kernel - interior depth, the particle trio, both sun-visibility traces - keeps
+// mesh volumes on their proxy, because those trace directions the prepass never rendered.
+float4   _ExclusionShape[EXCLUSION_MAX_VOLUMES];
+
+// True when slot i carves from a mesh rather than from its analytic shape (see above).
+bool ExclusionIsMesh(int i)
+{
+    return _ExclusionShape[i].y >= 0.5;
+}
 // Per-volume carve-boundary edge look + particle handling (WaterExclusionVolume fields,
 // published alongside the matrices in the SAME slot order): color rgb = tint the edges
 // shade toward (black = pure occlusion), color a = intensity [0..1]; params.x = edge
-// spread (band reach in unit-box coords), params.y = affect-particles flag (0 lets
-// particles through), params.z = particle fade band (unit-box interior depth of the
+// spread (band reach in unit-local coords), params.y = affect-particles flag (0 lets
+// particles through), params.z = particle fade band (unit-local interior depth of the
 // dissolve shell; 0 = hard clip), params.w = particle dissolve-speed multiplier.
 float4   _ExclusionEdgeColor[EXCLUSION_MAX_VOLUMES];
 float4   _ExclusionEdgeParams[EXCLUSION_MAX_VOLUMES];
@@ -46,19 +74,20 @@ bool InsideExclusion(float3 worldPos)
     [loop]
     for (int i = 0; i < count; i++)
     {
-        float3 boxLocal = mul(_ExclusionWorldToBox[i], float4(worldPos, 1.0)).xyz;
-        if (all(abs(boxLocal) <= EXCLUSION_BOX_HALF_EXTENT)) return true;
+        if (ExclusionIsMesh(i)) continue; // camera-ray query: the prepass answers it exactly
+        float3 local = mul(_ExclusionWorldToLocal[i], float4(worldPos, 1.0)).xyz;
+        if (PrimitiveContains(_ExclusionShape[i].x, local, EXCLUSION_LOCAL_HALF_EXTENT))
+            return true;
     }
     return false;
 }
 
 // Deepest NORMALISED interior depth of a point across the active volumes: 0 = outside
-// every box (or exactly on a face), rising toward EXCLUSION_BOX_HALF_EXTENT at a box
-// centre. Per box it is the smallest per-axis inset from the faces, in unit-box coords,
-// so a thin shell near the boundary stays thin whatever the authored box size. Lets a
-// consumer FADE by intrusion depth instead of the binary InsideExclusion - the foam
-// particles use it so a dry volume sweeping into sprites (a moving boat hull) dissolves
-// them instead of one-frame popping them.
+// every volume (or exactly on a surface), rising toward EXCLUSION_LOCAL_HALF_EXTENT at a
+// volume's centre, in unit-local coords - so a thin shell near the boundary stays thin
+// whatever the authored size. Lets a consumer FADE by intrusion depth instead of the binary
+// InsideExclusion - the foam particles use it so a dry volume sweeping into sprites (a
+// moving boat hull) dissolves them instead of one-frame popping them.
 float ExclusionInteriorDepth(float3 worldPos)
 {
     int count = (int)_ExclusionCount;
@@ -66,10 +95,10 @@ float ExclusionInteriorDepth(float3 worldPos)
     [loop]
     for (int i = 0; i < count; i++)
     {
-        float3 boxLocal = mul(_ExclusionWorldToBox[i], float4(worldPos, 1.0)).xyz;
-        float3 inset = EXCLUSION_BOX_HALF_EXTENT - abs(boxLocal);
-        float boxDepth = min(inset.x, min(inset.y, inset.z)); // < 0 when outside this box
-        depth = max(depth, boxDepth);
+        float3 local = mul(_ExclusionWorldToLocal[i], float4(worldPos, 1.0)).xyz;
+        // < 0 when outside this volume, so max() below simply ignores it.
+        depth = max(depth, PrimitiveInteriorDepth(_ExclusionShape[i].x, local,
+                                                  EXCLUSION_LOCAL_HALF_EXTENT));
     }
     return depth;
 }
@@ -80,7 +109,7 @@ float ExclusionInteriorDepth(float3 worldPos)
 // _ExclusionCount > 0.5 (the zero-cost off state, as everywhere else in this header).
 
 // Floor under the fade band so a 0 (hard clip) never divides by zero: sharper than any
-// visible band, so "0" still reads as a razor edge on the face.
+// visible band, so "0" still reads as a razor edge on the surface.
 #define EXCLUSION_PARTICLE_BAND_MIN 1e-4
 
 // True when worldPos is inside a PARTICLE-AFFECTING volume - the spawn-rejection test
@@ -92,15 +121,16 @@ bool InsideParticleExclusion(float3 worldPos)
     for (int i = 0; i < count; i++)
     {
         if (_ExclusionEdgeParams[i].y < 0.5) continue;
-        float3 boxLocal = mul(_ExclusionWorldToBox[i], float4(worldPos, 1.0)).xyz;
-        if (all(abs(boxLocal) <= EXCLUSION_BOX_HALF_EXTENT)) return true;
+        float3 local = mul(_ExclusionWorldToLocal[i], float4(worldPos, 1.0)).xyz;
+        if (PrimitiveContains(_ExclusionShape[i].x, local, EXCLUSION_LOCAL_HALF_EXTENT))
+            return true;
     }
     return false;
 }
 
 // Alpha multiplier for a particle FRAGMENT at worldPos: 1 outside every particle-affecting
-// volume (and exactly ON a face), dissolving to 0 across each volume's fade band just
-// inside its faces. min() across volumes, so overlapping boxes take the strongest cut.
+// volume (and exactly ON a surface), dissolving to 0 across each volume's fade band just
+// inside it. min() across volumes, so overlapping shapes take the strongest cut.
 // This is the render-side guarantee the sim's age-boost dissolve cannot give: it clips
 // the parts of a big billboard (the Shuriken crown) that PROTRUDE into a dry interior,
 // and it hides sim particles the moment they are swept over, however long their life.
@@ -112,9 +142,9 @@ float ExclusionParticleAttenuation(float3 worldPos)
     for (int i = 0; i < count; i++)
     {
         if (_ExclusionEdgeParams[i].y < 0.5) continue;
-        float3 boxLocal = mul(_ExclusionWorldToBox[i], float4(worldPos, 1.0)).xyz;
-        float3 inset = EXCLUSION_BOX_HALF_EXTENT - abs(boxLocal);
-        float depth = min(inset.x, min(inset.y, inset.z)); // < 0 outside this box
+        float3 local = mul(_ExclusionWorldToLocal[i], float4(worldPos, 1.0)).xyz;
+        float depth = PrimitiveInteriorDepth(_ExclusionShape[i].x, local,
+                                             EXCLUSION_LOCAL_HALF_EXTENT); // < 0 outside
         float band = max(_ExclusionEdgeParams[i].z, EXCLUSION_PARTICLE_BAND_MIN);
         atten = min(atten, saturate(1.0 - depth / band));
     }
@@ -122,7 +152,7 @@ float ExclusionParticleAttenuation(float3 worldPos)
 }
 
 // Deepest interior depth of worldPos across the particle-affecting volumes plus that
-// volume's dissolve-speed multiplier: x = depth (0 = outside them all, unit-box coords,
+// volume's dissolve-speed multiplier: x = depth (0 = outside them all, unit-local coords,
 // the ExclusionInteriorDepth convention), y = params.w of the deepest volume (1 when
 // outside). The compute Update kernel scales its age-boost dissolve by y.
 float2 ExclusionParticleInteriorDepth(float3 worldPos)
@@ -133,21 +163,21 @@ float2 ExclusionParticleInteriorDepth(float3 worldPos)
     for (int i = 0; i < count; i++)
     {
         if (_ExclusionEdgeParams[i].y < 0.5) continue;
-        float3 boxLocal = mul(_ExclusionWorldToBox[i], float4(worldPos, 1.0)).xyz;
-        float3 inset = EXCLUSION_BOX_HALF_EXTENT - abs(boxLocal);
-        float boxDepth = min(inset.x, min(inset.y, inset.z));
-        if (boxDepth > result.x) result = float2(boxDepth, _ExclusionEdgeParams[i].w);
+        float3 local = mul(_ExclusionWorldToLocal[i], float4(worldPos, 1.0)).xyz;
+        float depth = PrimitiveInteriorDepth(_ExclusionShape[i].x, local,
+                                             EXCLUSION_LOCAL_HALF_EXTENT);
+        if (depth > result.x) result = float2(depth, _ExclusionEdgeParams[i].w);
     }
     return result;
 }
 
 // Total length of the ray segment [origin, origin + dir * maxDist] that lies inside
-// exclusion volumes - the DRY span the fog/god-ray integrals subtract. Per box: transform
-// the ray into unit-box space and slab-test there (IntersectCube). The direction is
-// transformed WITHOUT normalisation, so the ray parameter t stays in WORLD units and the
+// exclusion volumes - the DRY span the fog/god-ray integrals subtract. Per volume:
+// transform the ray into unit-local space and intersect the primitive there. The direction
+// is transformed WITHOUT normalisation, so the ray parameter t stays in WORLD units and the
 // clamped interval length is directly a world-metre length.
 // Overlapping volumes double-count their shared span: author dry rooms disjoint (N <= 4
-// boxes; per-ray interval merging is not worth its cost in a fullscreen pass).
+// volumes; per-ray interval merging is not worth its cost in a fullscreen pass).
 float ExclusionRayLength(float3 origin, float3 dir, float maxDist)
 {
     int count = (int)_ExclusionCount;
@@ -155,9 +185,11 @@ float ExclusionRayLength(float3 origin, float3 dir, float maxDist)
     [loop]
     for (int i = 0; i < count; i++)
     {
-        float3 boxOrigin = mul(_ExclusionWorldToBox[i], float4(origin, 1.0)).xyz;
-        float3 boxDir    = mul((float3x3)_ExclusionWorldToBox[i], dir);
-        float2 t = IntersectCube(boxOrigin, boxDir, EXCLUSION_BOX_MIN, EXCLUSION_BOX_MAX);
+        if (ExclusionIsMesh(i)) continue; // camera-ray query: the prepass answers it exactly
+        float3 localOrigin = mul(_ExclusionWorldToLocal[i], float4(origin, 1.0)).xyz;
+        float3 localDir    = mul((float3x3)_ExclusionWorldToLocal[i], dir);
+        float2 t = PrimitiveIntersect(_ExclusionShape[i].x, localOrigin, localDir,
+                                      EXCLUSION_LOCAL_HALF_EXTENT);
         inside += max(min(t.y, maxDist) - max(t.x, 0.0), 0.0);
     }
     return inside;
@@ -176,16 +208,18 @@ float ExclusionPullToEntry(float3 origin, float3 dir, float tAt)
     [loop]
     for (int i = 0; i < count; i++)
     {
-        float3 boxOrigin = mul(_ExclusionWorldToBox[i], float4(origin, 1.0)).xyz;
-        float3 boxDir    = mul((float3x3)_ExclusionWorldToBox[i], dir);
-        float2 s = IntersectCube(boxOrigin, boxDir, EXCLUSION_BOX_MIN, EXCLUSION_BOX_MAX);
+        if (ExclusionIsMesh(i)) continue; // camera-ray query: the prepass answers it exactly
+        float3 localOrigin = mul(_ExclusionWorldToLocal[i], float4(origin, 1.0)).xyz;
+        float3 localDir    = mul((float3x3)_ExclusionWorldToLocal[i], dir);
+        float2 s = PrimitiveIntersect(_ExclusionShape[i].x, localOrigin, localDir,
+                                      EXCLUSION_LOCAL_HALF_EXTENT);
         if (s.x < t && t < s.y) t = max(s.x, 0.0);
     }
     return t;
 }
 
-// Interval-overlap slack for the blocking tests below: a sample sitting exactly ON a box
-// face (span endpoints, pushed sun-vis samples) must not read a zero-length graze as a block.
+// Interval-overlap slack for the blocking tests below: a sample sitting exactly ON a volume
+// surface (span endpoints, pushed sun-vis samples) must not read a zero-length graze as a block.
 #define EXCLUSION_SHADOW_EPSILON 1e-3
 // Minimum sun elevation (dirToSun.y) for the refracted underwater leg: at or below the
 // horizon no light enters the water, so the trace falls back to the plain air-direction ray.
@@ -194,7 +228,7 @@ float ExclusionPullToEntry(float3 origin, float3 dir, float tAt)
 #define EXCLUSION_RAY_UNBOUNDED 1e30
 
 // 1 when the sun is visible from p past every exclusion volume, 0 when a volume stands
-// between p and the sun. Treats the dry boxes as opaque to the DIRECT sun term only (the
+// between p and the sun. Treats the dry volumes as opaque to the DIRECT sun term only (the
 // ambient term is untouched), so a dry room carves a soft shadow column into the
 // surrounding water's in-scatter and god rays - the Crest "carved in fog" presence -
 // analytically, with no shadow map and no caster mesh. dirToSun points TOWARD the sun
@@ -202,10 +236,10 @@ float ExclusionPullToEntry(float3 origin, float3 dir, float tAt)
 //
 // REFRACTION-AWARE: sunlight under water travels along the REFRACTED sun direction (steep,
 // <= ~49 deg off vertical), exactly as the caustic projection models it. Tracing the raw air
-// direction gave a surface-piercing box a near-horizontal shadow curtain at sunset that
+// direction gave a surface-piercing volume a near-horizontal shadow curtain at sunset that
 // blacked out all deep water down-sun (god rays "stopped 1m deep"). A submerged sample
 // therefore traces TWO legs: up along the refracted direction to the surface, then along
-// the air sun direction - each tested against every box (the air leg catches the volume's
+// the air sun direction - each tested against every volume (the air leg catches the volume's
 // above-water part shading the entry point).
 float ExclusionSunVisibility(float3 p, float3 dirToSun, float waterLevel)
 {
@@ -229,18 +263,21 @@ float ExclusionSunVisibility(float3 p, float3 dirToSun, float waterLevel)
     [loop]
     for (int i = 0; i < count; i++)
     {
+        float shape = _ExclusionShape[i].x;
+
         // Leg 1: sample -> surface along the (refracted) travel direction, clipped at tSurf.
-        float3 boxOrigin = mul(_ExclusionWorldToBox[i], float4(p, 1.0)).xyz;
-        float3 boxDir    = mul((float3x3)_ExclusionWorldToBox[i], upLeg);
-        float2 t = IntersectCube(boxOrigin, boxDir, EXCLUSION_BOX_MIN, EXCLUSION_BOX_MAX);
+        float3 localOrigin = mul(_ExclusionWorldToLocal[i], float4(p, 1.0)).xyz;
+        float3 localDir    = mul((float3x3)_ExclusionWorldToLocal[i], upLeg);
+        float2 t = PrimitiveIntersect(shape, localOrigin, localDir, EXCLUSION_LOCAL_HALF_EXTENT);
         if (min(t.y, tSurf) - max(t.x, 0.0) > EXCLUSION_SHADOW_EPSILON) return 0.0;
 
-        // Leg 2: surface point -> sun along the air direction (above-water box parts).
+        // Leg 2: surface point -> sun along the air direction (above-water volume parts).
         if (refractedLeg)
         {
-            float3 airOrigin = mul(_ExclusionWorldToBox[i], float4(surfacePoint, 1.0)).xyz;
-            float3 airDir    = mul((float3x3)_ExclusionWorldToBox[i], dirToSun);
-            float2 tAir = IntersectCube(airOrigin, airDir, EXCLUSION_BOX_MIN, EXCLUSION_BOX_MAX);
+            float3 airOrigin = mul(_ExclusionWorldToLocal[i], float4(surfacePoint, 1.0)).xyz;
+            float3 airDir    = mul((float3x3)_ExclusionWorldToLocal[i], dirToSun);
+            float2 tAir = PrimitiveIntersect(shape, airOrigin, airDir,
+                                             EXCLUSION_LOCAL_HALF_EXTENT);
             if (tAir.y - max(tAir.x, 0.0) > EXCLUSION_SHADOW_EPSILON) return 0.0;
         }
     }
@@ -257,9 +294,11 @@ float ExclusionPushToExit(float3 origin, float3 dir, float tAt, float tMax)
     [loop]
     for (int i = 0; i < count; i++)
     {
-        float3 boxOrigin = mul(_ExclusionWorldToBox[i], float4(origin, 1.0)).xyz;
-        float3 boxDir    = mul((float3x3)_ExclusionWorldToBox[i], dir);
-        float2 s = IntersectCube(boxOrigin, boxDir, EXCLUSION_BOX_MIN, EXCLUSION_BOX_MAX);
+        if (ExclusionIsMesh(i)) continue; // camera-ray query: the prepass answers it exactly
+        float3 localOrigin = mul(_ExclusionWorldToLocal[i], float4(origin, 1.0)).xyz;
+        float3 localDir    = mul((float3x3)_ExclusionWorldToLocal[i], dir);
+        float2 s = PrimitiveIntersect(_ExclusionShape[i].x, localOrigin, localDir,
+                                      EXCLUSION_LOCAL_HALF_EXTENT);
         if (s.x < t && t < s.y) t = min(s.y, tMax);
     }
     return t;
@@ -280,34 +319,54 @@ float ExclusionPushToExit(float3 origin, float3 dir, float tAt, float tMax)
 // volume geometry, because anything drawn before the underwater pass is buried under its
 // additive in-scatter. Same constraint here: the fullscreen fog runs AFTER the transparent
 // walls, so the boundary shading lives in the fog (and the wall's own reconstruction path),
-// computed analytically from the same box math the carve uses.
+// computed analytically from the same primitive math the carve uses.
 // Wrapped N.L for the pane's sun/shade facet split, and how dark a full-shade facet gets.
 // (The edge intensity/spread/colour are PER-VOLUME data - see the uniform arrays above.)
 #define EXCLUSION_PANE_SUN_WRAP     0.5
 #define EXCLUSION_PANE_FACET_DARKEN 0.25
 
-// Edge/corner occlusion AMOUNT [0..1] for a point ON a box face, from its unit-box coords:
-// per axis, closeness to the +-0.5 boundary; the face's OWN axis is always at the boundary
-// (dropped as the largest), so the two tangential axes drive edges and corners. 'spread' is
-// the band reach in unit-box coords. 0 on the face interior, 1 in a full corner.
-float ExclusionEdgeOcclusion(float3 boxLocal, float spread)
+// Rim band width as a multiple of the authored edge spread. A BOX measures its band across
+// the two tangential unit-local axes; a SPHERE has no edges at all, so its band is measured
+// across |dot(normal, view)| instead - 0 exactly on the silhouette, 1 head-on. Those two
+// measures are not in the same units, and this factor is what makes ONE authored Edge Spread
+// read as a comparable visual width on both, so switching Box -> Sphere never forces a retune.
+#define EXCLUSION_RIM_SPREAD_SCALE 2.0
+
+// Boundary occlusion AMOUNT [0..1] at a point ON a volume's surface, from its unit-local
+// coords. BOX: per axis, closeness to the +-halfExtent boundary; the surface's OWN axis is
+// always at the boundary (dropped as the largest), so the two tangential axes drive edges and
+// corners - 0 on a face interior, 1 in a full corner. SPHERE: the silhouette RIM, because a
+// sphere's only visible outline is where its surface turns away from the viewer - 0 head-on,
+// 1 on the silhouette. Both are 0 on the open surface and 1 on the carve's visible OUTLINE,
+// which is exactly what the per-volume tint/intensity knobs are authored against.
+// 'spread' is the band reach in unit-local coords. viewDirWS may point either way along the
+// view line: only its alignment with the normal matters.
+float ExclusionBoundaryOcclusion(float shape, float3 local, float3 normalWS, float3 viewDirWS,
+                                 float spread)
 {
-    float3 edge = smoothstep(0.5, 0.5 - spread, abs(boxLocal));
+    if (PrimitiveIsSphere(shape))
+    {
+        float facing = abs(dot(normalWS, viewDirWS)); // 0 on the silhouette, 1 head-on
+        return smoothstep(spread * EXCLUSION_RIM_SPREAD_SCALE, 0.0, facing);
+    }
+    float3 edge = smoothstep(EXCLUSION_LOCAL_HALF_EXTENT,
+                             EXCLUSION_LOCAL_HALF_EXTENT - spread, abs(local));
     float largest = max(edge.x, max(edge.y, edge.z));
     float smallest = min(edge.x, min(edge.y, edge.z));
     float middle = edge.x + edge.y + edge.z - largest - smallest;
     return 1.0 - largest * middle;
 }
 
-// Per-channel edge tint: 1 on the face interior, shading toward edgeColor.rgb at a full
-// corner scaled by the intensity in edgeColor.a. Black = the classic pure occlusion.
+// Per-channel edge tint: 1 on the open surface, shading toward edgeColor.rgb at a full
+// corner (or on the sphere's rim) scaled by the intensity in edgeColor.a. Black = the
+// classic pure occlusion.
 float3 ExclusionEdgeTint(float occlusion, float4 edgeColor)
 {
     return lerp(float3(1.0, 1.0, 1.0), edgeColor.rgb, saturate(occlusion * edgeColor.a));
 }
 
 // Sun-side vs shade-side darkening for a pane with world normal flipped toward the viewer:
-// gives the box its 3D read without adding any scatter (multiplicative only).
+// gives the volume its 3D read without adding any scatter (multiplicative only).
 float ExclusionFacetFactor(float3 normalWS, float3 dirToSun)
 {
     float wrap = saturate((dot(normalWS, dirToSun) + EXCLUSION_PANE_SUN_WRAP)
@@ -315,11 +374,22 @@ float ExclusionFacetFactor(float3 normalWS, float3 dirToSun)
     return lerp(1.0 - EXCLUSION_PANE_FACET_DARKEN, 1.0, wrap);
 }
 
-// Shading of the nearest carve boundary the ray pierces within [0, spanLen]: edge occlusion
-// (per-volume colour/intensity/spread) + sun facet of the box face being looked through. A
-// camera inside a box shades by its EXIT face (the aquarium pane), an outside view by the
-// ENTRY face (the carve silhouette - at the rim the entry point sits on an edge, so the zone
-// outline falls out for free). Returns 1 when no box is pierced. Callers fold this into the
+// World-space outward normal at a LOCAL-space surface point of volume i. Normals transform by
+// the INVERSE-TRANSPOSE of the local->world matrix, which is exactly the transpose of the
+// world->local matrix we hold - and mul(vector, matrix) IS that transposed product. (For a box
+// this reproduces the older "the row of the axis sitting at the boundary is the face normal"
+// derivation identically, because the local normal is then a signed unit axis.)
+float3 ExclusionSurfaceNormalWorld(int i, float shape, float3 surfaceLocal)
+{
+    float3 localNormal = PrimitiveSurfaceNormal(shape, surfaceLocal);
+    return normalize(mul(localNormal, (float3x3)_ExclusionWorldToLocal[i]));
+}
+
+// Shading of the nearest carve boundary the ray pierces within [0, spanLen]: boundary occlusion
+// (per-volume colour/intensity/spread) + sun facet of the surface being looked through. A
+// camera inside a volume shades by its EXIT surface (the aquarium pane), an outside view by the
+// ENTRY surface (the carve silhouette - at the rim the entry point sits on an edge, so the zone
+// outline falls out for free). Returns 1 when no volume is pierced. Callers fold this into the
 // term both fog passes share.
 float3 ExclusionBoundaryPaneShade(float3 origin, float3 segDir, float spanLen, float3 dirToSun)
 {
@@ -329,24 +399,23 @@ float3 ExclusionBoundaryPaneShade(float3 origin, float3 segDir, float spanLen, f
     [loop]
     for (int i = 0; i < count; i++)
     {
-        float3 boxOrigin = mul(_ExclusionWorldToBox[i], float4(origin, 1.0)).xyz;
-        float3 boxDir    = mul((float3x3)_ExclusionWorldToBox[i], segDir);
-        float2 t = IntersectCube(boxOrigin, boxDir, EXCLUSION_BOX_MIN, EXCLUSION_BOX_MAX);
+        // Camera-ray query: a mesh volume's own boundary is drawn by its wall, which shades the
+        // fragment it lands on with this same occlusion + facet pair.
+        if (ExclusionIsMesh(i)) continue;
+        float shape = _ExclusionShape[i].x;
+        float3 localOrigin = mul(_ExclusionWorldToLocal[i], float4(origin, 1.0)).xyz;
+        float3 localDir    = mul((float3x3)_ExclusionWorldToLocal[i], segDir);
+        float2 t = PrimitiveIntersect(shape, localOrigin, localDir, EXCLUSION_LOCAL_HALF_EXTENT);
         if (t.y <= max(t.x, 0.0)) continue;                   // no pierce ahead of the origin
-        float tFace = (t.x > 0.0) ? t.x : t.y;                // entry face; inside -> exit face
+        float tFace = (t.x > 0.0) ? t.x : t.y;                // entry surface; inside -> exit
         if (tFace >= nearest || tFace > spanLen) continue;    // farther than best, or past span
         nearest = tFace;
-        float3 faceLocal = boxOrigin + boxDir * tFace;
-        // Face normal in world space: the world->box matrix rows are the gradients of the
-        // box-local axes, so the row of the axis sitting at the +-0.5 boundary IS the face
-        // plane normal; flip it toward the viewer (matches the wall's double-sided flip).
-        float3 a = abs(faceLocal);
-        float3 row = (a.x >= a.y && a.x >= a.z) ? _ExclusionWorldToBox[i][0].xyz
-                   : (a.y >= a.z)               ? _ExclusionWorldToBox[i][1].xyz
-                                                : _ExclusionWorldToBox[i][2].xyz;
-        float3 normalWS = normalize(row);
+        float3 faceLocal = localOrigin + localDir * tFace;
+        float3 normalWS = ExclusionSurfaceNormalWorld(i, shape, faceLocal);
+        // Flip toward the viewer (matches the wall's double-sided flip).
         if (dot(normalWS, segDir) > 0.0) normalWS = -normalWS;
-        float occlusion = ExclusionEdgeOcclusion(faceLocal, _ExclusionEdgeParams[i].x);
+        float occlusion = ExclusionBoundaryOcclusion(shape, faceLocal, normalWS, segDir,
+                                                     _ExclusionEdgeParams[i].x);
         shade = ExclusionEdgeTint(occlusion, _ExclusionEdgeColor[i])
               * ExclusionFacetFactor(normalWS, dirToSun);
     }
@@ -356,28 +425,29 @@ float3 ExclusionBoundaryPaneShade(float3 origin, float3 segDir, float spanLen, f
 // ---- Analytic span sun visibility (the shadow column, band-free) ---------------------
 // The previous 3-fixed-sample average quantised the shadow column to {0, 1/3, 2/3, 1} and
 // painted polygon-edged contour BANDS on down-sun views from inside a carve. Closed form
-// instead: a box's shadow volume along a fixed light direction is a CONVEX prism (the box
-// swept down-light), so its intersection with a straight view ray is ONE t-interval.
-// Visibility = 1 - shadowedWetLength / wetLength - continuous by construction, so no step
-// can ever show. The WHOLE box sweeps along the refracted underwater direction (a
-// semi-immersed box's emergent part therefore also shadows along it - a slight horizontal
-// shift against the exact two-leg trace, still the same steep column).
+// instead: a CONVEX volume's shadow along a fixed light direction is that volume SWEPT
+// down-light, which stays convex, so its intersection with a straight view ray is ONE
+// t-interval. Visibility = 1 - shadowedWetLength / wetLength - continuous by construction, so
+// no step can ever show. Each shape gets the closed form of its own swept solid: a box sweeps
+// into a PRISM, a sphere into a CAPSULE. The WHOLE volume sweeps along the refracted underwater
+// direction (a semi-immersed volume's emergent part therefore also shadows along it - a slight
+// horizontal shift against the exact two-leg trace, still the same steep column).
 
-// Degeneracy guards for the prism math: an axis the sweep barely moves along, and a
-// constraint whose slope in t vanishes. Box-space values, hence tighter than the
+// Degeneracy guards for the sweep math: an axis the sweep barely moves along, and a
+// constraint whose slope in t vanishes. Local-space values, hence tighter than the
 // world-space EXCLUSION_SHADOW_EPSILON.
 #define EXCLUSION_PRISM_AXIS_EPSILON  1e-5
 #define EXCLUSION_PRISM_SLOPE_EPSILON 1e-6
 
-// Finite shadow reach, in box light-axis THICKNESSES (the world metres the sweep needs to
-// cross the box, ~1/|boxUp|): full shadow out to NEAR box-thicknesses down-light of the
-// box, refilled to nothing by FAR. The unbounded prism painted a near-black dot with a
+// Finite shadow reach, in volume light-axis THICKNESSES (the world metres the sweep needs to
+// cross the volume, ~1/|localUp|): full shadow out to NEAR thicknesses down-light of the
+// volume, refilled to nothing by FAR. The unbounded sweep painted a near-black dot with a
 // small halo at the exact anti-(refracted-)sun direction - the vanishing point of an
 // INFINITE shadow column: the one view ray parallel to the sweep axis stayed inside the
-// prism for its whole wet span, so sunVisibility hit 0 however long the span. Physically
-// the column refills with ambient in-scatter within a few box-thicknesses anyway. The
-// near/far pair is averaged into a linear ramp (two extra interval clips per box), so the
-// closed form - and its band-free guarantee - stays intact.
+// swept solid for its whole wet span, so sunVisibility hit 0 however long the span. Physically
+// the column refills with ambient in-scatter within a few thicknesses anyway. The near/far
+// pair is averaged into a linear ramp (two extra interval clips per volume), so the closed
+// form - and its band-free guarantee - stays intact.
 #define EXCLUSION_SHADOW_REACH_NEAR 2.0
 #define EXCLUSION_SHADOW_REACH_FAR  6.0
 
@@ -402,35 +472,36 @@ void ExclusionConstrainInterval(float c0, float c1, inout float tMin, inout floa
 // comparison is one linear constraint clipping the t-interval by a half-line.
 float ExclusionBoxShadowedLength(int i, float3 origin, float3 segDir, float spanLen, float3 upLeg)
 {
-    float3 boxOrigin = mul(_ExclusionWorldToBox[i], float4(origin, 1.0)).xyz;
-    float3 boxDir    = mul((float3x3)_ExclusionWorldToBox[i], segDir);
-    float3 boxUp     = mul((float3x3)_ExclusionWorldToBox[i], upLeg);
+    float3 localOrigin = mul(_ExclusionWorldToLocal[i], float4(origin, 1.0)).xyz;
+    float3 localDir    = mul((float3x3)_ExclusionWorldToLocal[i], segDir);
+    float3 localUp     = mul((float3x3)_ExclusionWorldToLocal[i], upLeg);
 
     float tMin = 0.0;
     float tMax = spanLen;
     float loIntercept[3]; // lo_j(t) = loIntercept + slope * t (feasible s lower bound)
     float hiIntercept[3]; // hi_j(t) = hiIntercept + slope * t (feasible s upper bound)
-    float slope[3];       // shared: both bounds move with -boxDir_j / boxUp_j
+    float slope[3];       // shared: both bounds move with -localDir_j / localUp_j
     bool  axisSweeps[3];
     [unroll]
     for (int j = 0; j < 3; j++)
     {
-        if (abs(boxUp[j]) <= EXCLUSION_PRISM_AXIS_EPSILON)
+        if (abs(localUp[j]) <= EXCLUSION_PRISM_AXIS_EPSILON)
         {
             // The sweep cannot move this axis: the ray point itself must be in the slab.
             axisSweeps[j] = false;
-            ExclusionConstrainInterval(boxOrigin[j] - EXCLUSION_BOX_HALF_EXTENT, boxDir[j],
+            ExclusionConstrainInterval(localOrigin[j] - EXCLUSION_LOCAL_HALF_EXTENT, localDir[j],
                                        tMin, tMax);
-            ExclusionConstrainInterval(-boxOrigin[j] - EXCLUSION_BOX_HALF_EXTENT, -boxDir[j],
+            ExclusionConstrainInterval(-localOrigin[j] - EXCLUSION_LOCAL_HALF_EXTENT, -localDir[j],
                                        tMin, tMax);
             continue;
         }
         axisSweeps[j] = true;
-        float invUp = 1.0 / boxUp[j];
-        float nearFace = (boxUp[j] > 0.0) ? -EXCLUSION_BOX_HALF_EXTENT : EXCLUSION_BOX_HALF_EXTENT;
-        loIntercept[j] = (nearFace - boxOrigin[j]) * invUp;
-        hiIntercept[j] = (-nearFace - boxOrigin[j]) * invUp;
-        slope[j] = -boxDir[j] * invUp;
+        float invUp = 1.0 / localUp[j];
+        float nearFace = (localUp[j] > 0.0) ? -EXCLUSION_LOCAL_HALF_EXTENT
+                                            :  EXCLUSION_LOCAL_HALF_EXTENT;
+        loIntercept[j] = (nearFace - localOrigin[j]) * invUp;
+        hiIntercept[j] = (-nearFace - localOrigin[j]) * invUp;
+        slope[j] = -localDir[j] * invUp;
     }
     [unroll]
     for (int j2 = 0; j2 < 3; j2++)
@@ -455,11 +526,12 @@ float ExclusionBoxShadowedLength(int i, float3 origin, float3 segDir, float span
     // linear constraint per sweeping axis: lo_j(t) - R <= 0. Clip a COPY of the prism
     // interval at the NEAR and FAR reach and average the two lengths - a linear falloff
     // of the shadow between them, still closed-form. sThickness converts reach from
-    // box-thicknesses to metres (the sweep crosses the unit box in ~1/|boxUp| metres).
+    // thicknesses to metres (the sweep crosses the unit shape in ~1/|localUp| metres).
     // The ray's own dry chord through the box lies inside the prism (s -> 0) but is
     // carved air, not shadowed water: its overlap leaves each clipped interval.
-    float sThickness = 1.0 / max(length(boxUp), EXCLUSION_PRISM_AXIS_EPSILON);
-    float2 chord = IntersectCube(boxOrigin, boxDir, EXCLUSION_BOX_MIN, EXCLUSION_BOX_MAX);
+    float sThickness = 1.0 / max(length(localUp), EXCLUSION_PRISM_AXIS_EPSILON);
+    float2 chord = PrimitiveIntersect(PRIMITIVE_SHAPE_BOX, localOrigin, localDir,
+                                      EXCLUSION_LOCAL_HALF_EXTENT);
     float shadowed = 0.0;
     [unroll]
     for (int c = 0; c < 2; c++)
@@ -474,6 +546,84 @@ float ExclusionBoxShadowedLength(int i, float3 origin, float3 segDir, float span
             if (!axisSweeps[j3]) continue;
             ExclusionConstrainInterval(loIntercept[j3] - reach, slope[j3], tMinC, tMaxC);
         }
+        float len = max(tMaxC - tMinC, 0.0);
+        float chordOverlap = max(min(chord.y, tMaxC) - max(chord.x, tMinC), 0.0);
+        shadowed += 0.5 * max(len - chordOverlap, 0.0);
+    }
+    return shadowed;
+}
+
+// Interval of the LOCAL-space ray [origin, +dir*t] against the CAPSULE swept by the local
+// sphere of radius `radius` from the local origin along `axis` (a zero-length axis degrades to
+// the sphere itself). The capsule is CONVEX, so the union of its three pieces - the two end
+// spheres and the barrel (the axis cylinder clipped to the slab between the cap centres) - is
+// ONE contiguous interval: the min of the pieces' entries and the max of their exits. Working
+// in LOCAL space is what keeps this exact for an ELLIPSOID volume too: there the swept solid is
+// a sheared capsule, but its local pre-image is a true one.
+float2 ExclusionCapsuleInterval(float3 origin, float3 dir, float3 axis, float radius)
+{
+    float tEnter =  EXCLUSION_RAY_UNBOUNDED;
+    float tExit  = -EXCLUSION_RAY_UNBOUNDED;
+
+    // Cap A: the volume itself. Cap B: the sphere at the far end of the sweep.
+    float2 capA = IntersectLocalSphere(origin, dir, radius);
+    if (capA.y > capA.x) { tEnter = min(tEnter, capA.x); tExit = max(tExit, capA.y); }
+    float2 capB = IntersectLocalSphere(origin - axis, dir, radius);
+    if (capB.y > capB.x) { tEnter = min(tEnter, capB.x); tExit = max(tExit, capB.y); }
+
+    float axisLengthSquared = dot(axis, axis);
+    if (axisLengthSquared > EXCLUSION_PRISM_AXIS_EPSILON)
+    {
+        // Barrel: the same quadratic as a sphere's, run on the components PERPENDICULAR to the
+        // axis (an infinite cylinder), then clipped to the slab between the two cap centres.
+        float invAxisLengthSquared = 1.0 / axisLengthSquared;
+        float originAlong = dot(origin, axis) * invAxisLengthSquared;
+        float dirAlong    = dot(dir,    axis) * invAxisLengthSquared;
+        float3 perpOrigin = origin - axis * originAlong;
+        float3 perpDir    = dir    - axis * dirAlong;
+        float2 barrel = IntersectLocalSphere(perpOrigin, perpDir, radius);
+        if (barrel.y > barrel.x)
+        {
+            float slabMin = barrel.x;
+            float slabMax = barrel.y;
+            ExclusionConstrainInterval(-originAlong, -dirAlong, slabMin, slabMax);     // >= cap A
+            ExclusionConstrainInterval(originAlong - 1.0, dirAlong, slabMin, slabMax); // <= cap B
+            if (slabMax > slabMin) { tEnter = min(tEnter, slabMin); tExit = max(tExit, slabMax); }
+        }
+    }
+
+    if (tExit <= tEnter) return PRIMITIVE_MISS_INTERVAL;
+    return float2(tEnter, tExit);
+}
+
+// Sphere twin of ExclusionBoxShadowedLength: a sphere swept down-light is a CAPSULE, so the
+// same recipe applies - clip the ray interval at the NEAR and FAR reach, average the two for
+// the linear falloff, and subtract the ray's own dry chord through the sphere (carved air is
+// not shadowed water). Closed form throughout, so it inherits the box path's band-free
+// guarantee. The sweep runs from the volume AWAY from the sun: a point is shadowed when moving
+// toward the sun from it enters the volume.
+float ExclusionSphereShadowedLength(int i, float3 origin, float3 segDir, float spanLen,
+                                    float3 upLeg)
+{
+    float3 localOrigin = mul(_ExclusionWorldToLocal[i], float4(origin, 1.0)).xyz;
+    float3 localDir    = mul((float3x3)_ExclusionWorldToLocal[i], segDir);
+    float3 localUp     = mul((float3x3)_ExclusionWorldToLocal[i], upLeg);
+
+    // World metres the sweep needs to cross the volume - the same thickness conversion the
+    // box path makes, because reach is authored in volume thicknesses for both shapes.
+    float sThickness = 1.0 / max(length(localUp), EXCLUSION_PRISM_AXIS_EPSILON);
+    float2 chord = IntersectLocalSphere(localOrigin, localDir, EXCLUSION_LOCAL_HALF_EXTENT);
+
+    float shadowed = 0.0;
+    [unroll]
+    for (int c = 0; c < 2; c++)
+    {
+        float reach = ((c == 0) ? EXCLUSION_SHADOW_REACH_NEAR : EXCLUSION_SHADOW_REACH_FAR)
+                    * sThickness;
+        float2 span = ExclusionCapsuleInterval(localOrigin, localDir, -localUp * reach,
+                                               EXCLUSION_LOCAL_HALF_EXTENT);
+        float tMinC = max(span.x, 0.0);
+        float tMaxC = min(span.y, spanLen);
         float len = max(tMaxC - tMinC, 0.0);
         float chordOverlap = max(min(chord.y, tMaxC) - max(chord.x, tMinC), 0.0);
         shadowed += 0.5 * max(len - chordOverlap, 0.0);
@@ -498,7 +648,14 @@ float ExclusionSpanSunVisibility(float3 wetStart, float3 segDir, float spanLen, 
     float shadowed = 0.0;
     [loop]
     for (int i = 0; i < count; i++)
-        shadowed += ExclusionBoxShadowedLength(i, wetStart, segDir, spanLen, upLeg);
+    {
+        // The shape is a uniform, so this branch stays uniform across the wave: each volume
+        // pays for ITS swept solid only, never for both.
+        if (PrimitiveIsSphere(_ExclusionShape[i].x))
+            shadowed += ExclusionSphereShadowedLength(i, wetStart, segDir, spanLen, upLeg);
+        else
+            shadowed += ExclusionBoxShadowedLength(i, wetStart, segDir, spanLen, upLeg);
+    }
     return 1.0 - saturate(shadowed / max(wetLen, EXCLUSION_SHADOW_EPSILON));
 }
 

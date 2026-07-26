@@ -30,5 +30,11 @@ namespace AbstractOcclusion.WebGpuWater
 
         /// <summary>Drop an owner's buffer (call when the owner is destroyed) so long-lived scenes don't retain it.</summary>
         public void Release(int ownerId) => _resultsByOwner.Remove(ownerId);
+
+        /// <summary>Drop every owner's buffer. Called from WaterVolume's play-mode static reset: with
+        /// Fast Enter Play Mode (domain reload off) a static registrar survives between sessions, so
+        /// without this the map keeps buffers keyed by the previous session's instance ids - ids that
+        /// are never reissued and whose owners will never call Release.</summary>
+        internal void Clear() => _resultsByOwner.Clear();
     }
 }

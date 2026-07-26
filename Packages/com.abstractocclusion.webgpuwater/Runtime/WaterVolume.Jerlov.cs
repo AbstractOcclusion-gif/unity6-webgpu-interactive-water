@@ -1,4 +1,4 @@
-// WebGL Water - WaterVolume: stored Jerlov water-type selection.
+// WebGpuWater - WaterVolume: stored Jerlov water-type selection.
 // The physical colour coefficients live in JerlovWaterTypes; this only remembers which type the
 // body was set to, so the inspector's "Apply water colour" button has a source and later phases can
 // re-derive from it. Applying the type writes the existing Fog Extinction / Scatter fields (editor).

@@ -1,4 +1,4 @@
-// WebGL Water - buoyancy (Unity 6 / URP port)
+// WebGpuWater - buoyancy (Unity 6 / URP port)
 // The "water -> object" half of the two-way coupling. Instead of one force at the
 // centre of mass (which can only bob, never tilt), this samples the water surface at a
 // lattice of points spread through the body and applies a partial buoyant force AT EACH
@@ -88,6 +88,12 @@ namespace AbstractOcclusion.WebGpuWater
         // The results buffer is rented from a shared owner-keyed cache so floaters and (later) hulls share
         // one reuse mechanism; _results caches this frame's rented buffer for the solver and the gizmos.
         static readonly WaterHeightQuery SharedQuery = new WaterHeightQuery();
+
+        /// <summary>Drop every rented results buffer. Part of WaterVolume.ResetStaticState's sweep:
+        /// this registrar is static, so under Fast Enter Play Mode it would otherwise carry the
+        /// previous session's per-instance buffers into the next one.</summary>
+        internal static void ResetStaticState() => SharedQuery.Clear();
+
         Vector3[] _worldPoints;
         WaterSample[] _results;
 
