@@ -29,8 +29,13 @@ namespace AbstractOcclusion.WebGpuWater
 {
     internal sealed class LargeBodyAtmospherePass : ScriptableRenderPass
     {
-        // Before post so the additive shafts feed bloom/tonemapping like real in-scattered light.
-        internal const RenderPassEvent InjectionPoint = RenderPassEvent.BeforeRenderingPostProcessing;
+        // Before post so the additive shafts feed bloom/tonemapping like real in-scattered light -
+        // but one slot AFTER the underwater fog (which sits at BeforeRenderingPostProcessing + 0):
+        // the raymarch already applies the per-step Beer-Lambert fog extinction itself, so letting
+        // the fog's absorb pass multiply the composited shafts a second time double-charged every
+        // metre of fog and crushed the shafts as soon as fog density rose above zero. The +1 makes
+        // the ordering a code guarantee instead of a renderer-asset feature-order accident.
+        internal const RenderPassEvent InjectionPoint = RenderPassEvent.BeforeRenderingPostProcessing + 1;
 
         const int RaymarchShaderPass = 0;
         const int CompositeShaderPass = 3; // passes 1+2 are the (currently unused) blur pair

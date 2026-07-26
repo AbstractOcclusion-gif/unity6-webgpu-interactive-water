@@ -5501,7 +5501,7 @@ GameObject:
   m_Component:
   - component: {fileID: 773898433}
   m_Layer: 0
-  m_Name: WebGL Water
+  m_Name: WebGPU Water
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -10622,19 +10622,19 @@ MonoBehaviour:
   sun: {fileID: 177695280}
   tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
   sky: {fileID: 8900000, guid: 85bd64faed533b54a88c144de0f680b6, type: 3}
-  foamPatternTexture: {fileID: 2800000, guid: 36879cca61e843178dae153ccadd00e8, type: 3}
-  foamPatternGrid: {x: 1, y: 1}
+  foamPatternTexture: {fileID: 2800000, guid: 74ed02889dbed0e4096685ebafa011b6, type: 3}
+  foamPatternGrid: {x: 4, y: 4}
   foamPatternFps: 10
   foamReliefStrength: 1
-  oceanWhitecapTexture: {fileID: 2800000, guid: 4c464eb5767892e4ba061b40d0bd260a, type: 3}
+  oceanWhitecapTexture: {fileID: 2800000, guid: 1ee279c16b027ad48a8eb248749ff66c, type: 3}
   oceanWhitecapGrid: {x: 1, y: 1}
-  oceanWhitecapFps: 10
+  oceanWhitecapFps: 0
   rippleQuality: 2
   bodyType: 2
   volumeExtent: {x: 500, y: 100, z: 500}
   enableLargeBodyWindow: 1
   largeBodyThreshold: 300
-  simWindowMeters: 25
+  simWindowMeters: 100
   clampWindowToShore: 0
   simWindowFocus: {fileID: 334840202}
   simWindowOffset: {x: 0, y: 0}
@@ -10755,7 +10755,7 @@ MonoBehaviour:
   causticResolution: 256
   objectInteractionSettings:
     objectInteraction: 0
-    obstacleStrength: 0.1
+    obstacleStrength: 0.5
     obstacleDeadband: 0.0006
     obstacleSmoothing: 0.65
     obstacleFlipY: 1
@@ -10908,7 +10908,7 @@ MonoBehaviour:
     windFromDegrees: 0
     waveScaleMeters: 500
     waveCount: 12
-    waveAmplitudeScale: 12
+    waveAmplitudeScale: 2
     waveDirectionSpread: 1
     waveNormalStrength: 1
   _legacyWindWaves: 1
@@ -10921,27 +10921,27 @@ MonoBehaviour:
   _legacyWaveNormalStrength: 1
   foamSettings:
     foam: 1
-    foamGenRate: 1.04
-    foamDecay: 0.9883
-    foamDecayResidual: 0.993
-    foamDecayRate: 0.33
-    foamSpread: 0.15
-    foamGenThreshold: 0.048
-    foamMinWaveHeight: 0.0074
-    foamAdvect: 2.74
+    foamGenRate: 1.7
+    foamDecay: 0.904
+    foamDecayResidual: 0.9104
+    foamDecayRate: 0.11
+    foamSpread: 0.944
+    foamGenThreshold: 0.026
+    foamMinWaveHeight: 0.085
+    foamAdvect: 2.21
     foamFromSpeed: 8.1
-    foamFromCurvature: 34.8
-    foamDeposit: 0.822
+    foamFromCurvature: 13.2
+    foamDeposit: 0.427
     foamBreakStrength: 0
     foamBreakRange: 1.5
-    foamCrestBias: 0.42
-    foamWakeStrength: 1.705
+    foamCrestBias: 0.088
+    foamWakeStrength: 1.51
     foamWakeRadiusScale: 0.83
     foamColor: {r: 1, g: 1, b: 1, a: 1}
-    foamPatternSize: 3
-    foamStrength: 1.181
-    foamFeather: 0.457
-    foamCoreCut: 0.301
+    foamPatternSize: 5
+    foamStrength: 0.9
+    foamFeather: 0.108
+    foamCoreCut: 0.06
     foamBorderWidth: 0
     foamContactDepth: 0.06
   _legacyFoam: 0
@@ -10962,7 +10962,7 @@ MonoBehaviour:
     waveSpeed: 0.6
     damping: 0.99
     stepsPerFrame: 1
-    rippleStrength: 0.01
+    rippleStrength: 0.0457
     rippleRadius: 0.03
     rippleChoppiness: 0.03
     seedRipplesOnStart: 1
@@ -11012,8 +11012,8 @@ MonoBehaviour:
   sprayMaterial: {fileID: 0}
   sprayLifeRange: {x: 0.5, y: 1.2}
   spraySizeRange: {x: 0.02, y: 0.05}
-  sprayFlipbookGrid: {x: 1, y: 1}
-  sprayFlipbookFps: 0
+  sprayFlipbookGrid: {x: 2, y: 2}
+  sprayFlipbookFps: 10
   depositLifeRange: {x: 0.5, y: 1}
   depositSizeRange: {x: 0.02, y: 0.05}
   gravity: 4
@@ -11098,8 +11098,28 @@ PrefabInstance:
     m_TransformParent: {fileID: 0}
     m_Modifications:
     - target: {fileID: 227632151689024889, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
+      propertyPath: minImpactSpeed
+      value: 0.3
+      objectReference: {fileID: 0}
+    - target: {fileID: 227632151689024889, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
       propertyPath: horizontalPlowWeight
       value: 0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 227632151689024889, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
+      propertyPath: probes.Array.data[0].amountBoost
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 227632151689024889, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
+      propertyPath: probes.Array.data[1].amountBoost
+      value: 2
+      objectReference: {fileID: 0}
+    - target: {fileID: 227632151689024889, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
+      propertyPath: probes.Array.data[3].amountBoost
+      value: 3
+      objectReference: {fileID: 0}
+    - target: {fileID: 227632151689024889, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
+      propertyPath: probes.Array.data[6].amountBoost
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 227632151689024889, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
       propertyPath: probes.Array.data[0].localOffset.y
@@ -11232,6 +11252,26 @@ PrefabInstance:
     - target: {fileID: 4004186478888447971, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
       propertyPath: m_Name
       value: Boat
+      objectReference: {fileID: 0}
+    - target: {fileID: 5445292582749062255, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
+      propertyPath: size.x
+      value: 0.7
+      objectReference: {fileID: 0}
+    - target: {fileID: 5445292582749062255, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
+      propertyPath: size.y
+      value: 3
+      objectReference: {fileID: 0}
+    - target: {fileID: 5445292582749062255, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
+      propertyPath: size.z
+      value: 0.7
+      objectReference: {fileID: 0}
+    - target: {fileID: 5445292582749062255, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
+      propertyPath: drawWaterWalls
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5517351355668026436, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
+      propertyPath: strength
+      value: 0.3
       objectReference: {fileID: 0}
     - target: {fileID: 5858407804267531264, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'

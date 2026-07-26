@@ -49,8 +49,8 @@ MonoBehaviour:
     outwardSpread: 0.43
     dropletSize: 0.1
     lifetime: {x: 1, y: 1.5}
-    crownMinStrength: 0.763
-    crownBaseSize: 0.5
-    crownLifetime: 0.8
+    crownMinStrength: 0
+    crownBaseSize: 0.3
+    crownLifetime: 0.2
     crownTint: {r: 1, g: 1, b: 1, a: 1}
     crownOpacity: 0.531

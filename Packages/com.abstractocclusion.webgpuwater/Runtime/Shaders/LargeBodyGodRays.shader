@@ -216,6 +216,10 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
 
                 float3 accum = float3(0.0, 0.0, 0.0);
                 float3 viewFog = float3(1.0, 1.0, 1.0); // transmittance from the camera to the current sample
+                // Sum of the per-sample transmittance weights (rgb mean, so the relative red-first
+                // extinction along a ray survives the normalisation below). With fog off every
+                // weight is 1 and this equals the step count - byte-identical to the old average.
+                float viewFogWeightSum = 0.0;
                 [loop]
                 for (int s = 0; s < steps; s++)
                 {
@@ -243,11 +247,20 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                     // scatter; the view-fog transmittance still advances along the ray.
                     if (!InsideExclusion(p))
                         accum += shadow * depthFade * viewFog * (1.0 + caustic * _LargeGodRayCausticStrength);
+                    viewFogWeightSum += (viewFog.r + viewFog.g + viewFog.b) / 3.0;
                     viewFog *= viewFogStep;
                 }
-                // Average over the samples so shaft brightness is independent of march length (a horizon
-                // ray marches far, a floor ray marches metres); density then reads ~O(1).
-                accum /= steps;
+                // SELF-NORMALIZING average: divide by the summed transmittance weights, not the raw
+                // step count. The old /steps made shaft brightness scale with the MEAN transmittance
+                // over the whole march - with any fog density, most of a 100m march contributes
+                // ~nothing yet still counts in the divisor, so the shafts collapsed toward invisible
+                // ("we almost lose god rays when fog density > 0"). Weight-normalised, brightness
+                // stays O(1) at any density; dense fog instead shifts the STRUCTURE toward the
+                // near-camera dapple (the KWS look - their rays die by 200m but the near field stays
+                // lively). Fog off: every weight is 1, the divisor equals the step count, and this
+                // is byte-identical to the old average. The rgb-mean weight keeps the relative
+                // red-first spectral loss along the ray; the floor guards a fully-extinct march.
+                accum /= max(viewFogWeightSum, 1e-4);
 
                 float3 col = _LargeGodRayColor.rgb * _SunColor * (accum * _LargeGodRayDensity * phase);
                 col *= submergeFade; // submersion fade (see GODRAY_SUBMERGE_FADE_METERS above)
