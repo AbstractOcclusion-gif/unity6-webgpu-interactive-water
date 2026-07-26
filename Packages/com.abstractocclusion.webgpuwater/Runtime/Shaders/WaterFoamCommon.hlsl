@@ -83,10 +83,20 @@ float FoamErosionLace(float spriteAlpha, float envelope)
 // .compute) so a particle's screen-space weight always matches what its quad would show.
 #define FOAM_PARTICLE_FADE_IN_SECONDS 0.25
 #define FOAM_PARTICLE_FADE_OUT_START  0.55
+// Fade-in never exceeds this fraction of the particle's life: with the fixed 0.25s
+// alone, a 0.5s deposit spent HALF its life fading in and - with fade-out starting at
+// 55% - never reached full brightness ("faded, appear with a delay"). Long-lived
+// ambient foam still gets the full 0.25s ramp.
+#define FOAM_PARTICLE_FADE_IN_LIFE_FRACTION 0.15
+// Divide guard for a degenerate (near-zero) life; such slots are dead anyway.
+#define FOAM_PARTICLE_FADE_IN_MIN_SECONDS 1e-4
 
 float FoamParticleEnvelope(float age, float life)
 {
-    float fadeIn = saturate(age / FOAM_PARTICLE_FADE_IN_SECONDS);
+    float fadeInSeconds = max(min(FOAM_PARTICLE_FADE_IN_SECONDS,
+                                  life * FOAM_PARTICLE_FADE_IN_LIFE_FRACTION),
+                              FOAM_PARTICLE_FADE_IN_MIN_SECONDS);
+    float fadeIn = saturate(age / fadeInSeconds);
     float fadeOut = 1.0 - smoothstep(life * FOAM_PARTICLE_FADE_OUT_START, life, age);
     return fadeIn * fadeOut;
 }

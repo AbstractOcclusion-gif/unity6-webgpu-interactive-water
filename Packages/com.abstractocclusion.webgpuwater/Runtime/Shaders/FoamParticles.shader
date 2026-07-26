@@ -7,7 +7,10 @@
 //
 // Surface foam lies IN the water plane (tilted by the local ripple normal, glued to
 // the ripple + wind-wave height like the surface mesh), so it never criss-crosses
-// the waterline. Spray is a camera-facing billboard stretched along its velocity.
+// the waterline. On open water each quad CORNER rides the composed swell (wind-wave
+// layer + chop-inverted FFT/analytic field), so quads bend with the wave instead of
+// being depth-sliced by it. Spray is a camera-facing billboard stretched along its
+// velocity.
 Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
 {
     Properties
@@ -38,6 +41,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             #include "WaterCommon.hlsl" // _WaterTex + SampleWaterBilinear, _LightDir
             #include "WaterWaves.hlsl"  // WaveHeight (ambient wind-wave layer)
             #include "WaterVolume.hlsl" // pool/window <-> world frame
+            #include "WaterExclusion.hlsl" // dry-interior volumes: InsideExclusion for the vertex filter
             #include "WaterLargeWaves.hlsl" // FFT ocean surface: LargeBodyWaveHeight, OceanFftNormalTilt, _OceanFftActive
             #include "WaterFoamCommon.hlsl" // shared foam lighting + erosion (FOAM_LIGHT_WRAP, EROSION_SOFTNESS...)
             #include "WaterParticleCommon.hlsl" // billboard corner expansion + flipbook atlas cell
@@ -61,6 +65,35 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
 
             // Lift surface-foam quads slightly off the water so they never z-fight it.
             #define SURFACE_LIFT         0.004
+
+            // Floating foam (KIND_SURFACE) never stretches past this. A landed droplet keeps a
+            // fraction of its splash speed (SPRAY_LANDING_KEEP, compute side) and the crest roll
+            // adds more, so the uncapped 1 + speed * _VelocityStretch smeared resting deposits up
+            // to 5x along a direction unrelated to the drift. Airborne spray keeps the full
+            // STRETCH_MAX - motion stretch is an in-flight look.
+            #define SURFACE_STRETCH_MAX  1.5
+            // Fixed-point steps inverting the Gerstner chop for the open-water glue: the rendered
+            // surface ABOVE a world xz is the wave field evaluated at a chop-DISPLACED source
+            // point, so sampling the field at the raw xz mis-places foam exactly on steep crests.
+            // CPU buoyancy inverts with LBW_INVERSION_ITERATIONS (4, physics-grade); one step
+            // removes the first-order error and every extra step costs a full wave-field
+            // evaluation per vertex, so the visual glue stops at 1.
+            #define FOAM_CHOP_INVERSION_STEPS 1
+            // Wind-wave world-metre divide guard - same value WaterSurfaceVertStage's
+            // WindWaveSampleXZ uses, so the two samplers can never disagree at the floor.
+            #define WIND_WAVE_METERS_MIN 1e-3
+
+            // Open-water camera-ward depth bias for surface-foam quads (the sim-window patch's
+            // _PatchDepthBias idiom, view-space metres): the rendered water is a triangle mesh
+            // whose linear chords lie ABOVE the analytic curve in every concave-up region
+            // (troughs), and the distant clipmap undersamples the wind-wave layer - so a quad
+            // glued to the analytic surface loses the depth test to the very water it sits on
+            // (foam swallowed by drifting wavelets, fresh deposits hidden until the wave phase
+            // frees them). The bias grows with distance to track the mesh's coarsening chord
+            // error, capped so a genuinely occluding crest between camera and foam still wins.
+            #define FOAM_DEPTH_BIAS_BASE   0.02
+            #define FOAM_DEPTH_BIAS_SLOPE  0.002
+            #define FOAM_DEPTH_BIAS_MAX    0.5
 
             static const float KIND_SPRAY = 1.0;
             // Corner expansion + flipbook cell come from WaterParticleCommon.hlsl (shared
@@ -95,6 +128,34 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             float2 _ParticleFlipbookGrid; // atlas (cols, rows); (1,1) = plain texture, no flipbook
             float _ParticleFlipbookFps;   // 0 = static per-seed variant; >0 animates the atlas over age
             sampler2D _CameraDepthTexture;
+            // 1 = ocean clipmap: the small wind-wave layer samples in WORLD metres; 0 = pool xz
+            // (bounded bodies). Same per-body value WaterSurfaceVertStage reads - published through
+            // WriteBodyProps into this draw's MaterialPropertyBlock; declared pass-locally there,
+            // so it must be re-declared here.
+            float _OceanWorldWaves;
+
+            // Rendered open-water surface at a SOURCE xz (the undisplaced field point), matching
+            // WaterSurfaceVertStage term for term: swell/FFT height (shore shoaling, ambient fade
+            // and the surf fronts all live inside LargeBodyWaveHeightDispShore) + the small
+            // wind-wave layer, with the Gerstner chop displacing xz exactly like the surface mesh.
+            // Interactive ripples stay outside this glue - the trade the open-water path always
+            // made. Returns the DISPLACED world position the surface actually renders.
+            float3 LargeBodySurfaceAt(float2 sourceXZ, ShoreData shore, SurfWaveSample surf)
+            {
+                float height;
+                float2 disp;
+                LargeBodyWaveHeightDispShore(sourceXZ, shore, surf, height, disp);
+                // Wind-wave layer: oceans sample in world metres, bounded bodies in pool xz (the
+                // surface's WindWaveSampleXZ contract). Its pool-unit amplitude scales by the
+                // volume's vertical extent, exactly as PoolToWorld scales the surface vertex.
+                float2 windXZ = (_OceanWorldWaves > 0.5)
+                    ? sourceXZ / max(_WaveMetersPerUnit, WIND_WAVE_METERS_MIN)
+                    : WorldToPool(float3(sourceXZ.x, 0.0, sourceXZ.y)).xz;
+                float surfaceY = _VolumeCenter.y + height
+                               + WaveHeight(windXZ) * VolumeExtentSafe().y;
+                float2 displacedXZ = sourceXZ + disp;
+                return float3(displacedXZ.x, surfaceY, displacedXZ.y);
+            }
 
             struct v2f
             {
@@ -127,21 +188,48 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 float2 corner = ParticleQuadCorner(vid);
 
                 // ---- glue the particle to the animated surface ----
+                // Open water hoists ONE shore + surf sample (the surface vertex's own idiom) and
+                // reuses it for every field evaluation this vertex makes: the shore varies over
+                // metres, the quad spans centimetres. Inert defaults keep the pond path untouched.
+                ShoreData glueShore = ShoreDataInert();
+                SurfWaveSample glueSurf = SurfWaveSampleInert();
+                float2 glueSrcXZ = particle.worldPos.xz; // chop-inverted SOURCE point (open water)
                 float3 surfaceWorld;
                 float3 surfaceNormal;
                 if (_LargeBody > 0.5)
                 {
-                    // Open water (FFT or analytic): ride the FULL large-body surface -
-                    // LargeBodyWaveHeight internally carries the swell/FFT, the near-shore shoal
-                    // attenuation, the ambient fade under the surf fronts AND the fronts
-                    // themselves, so foam sits ON the shoaling/breaking waves. Gating this on
-                    // _OceanFftActive only (the original) dropped every analytic ocean to the
-                    // pond path: particles ignored the shoal and the shore waves entirely.
-                    // (Interactive ripples aren't in this glue - the same trade the FFT path
-                    // always made.) The pond path (else) is byte-for-byte unchanged.
+                    // Open water (FFT or analytic): ride the FULL rendered surface. The previous
+                    // glue sampled LargeBodyWaveHeight at the particle's raw xz and stopped there,
+                    // which missed THREE terms the surface vertex renders: (1) the small wind-wave
+                    // layer (the pond path always had it - its cm-scale waves depth-sliced the
+                    // cm-scale deposits into "bands cut by water"), (2) the Gerstner chop (the
+                    // surface above a world xz is the field at a DISPLACED source point - worst
+                    // exactly on steep crests, where foam concentrates), and (3) wave curvature
+                    // (handled per-corner at the quad expansion below). Interactive ripples remain
+                    // outside this glue - the trade the open-water path always made. The pond path
+                    // (else) is byte-for-byte unchanged.
                     float2 wxz = particle.worldPos.xz;
-                    surfaceWorld = float3(wxz.x, _VolumeCenter.y + LargeBodyWaveHeight(wxz), wxz.y);
-                    float2 tilt = OceanFftNormalTilt(wxz); // 0 tilt when FFT is off (flat lean)
+                    glueShore = ShoreSample(wxz);
+                    glueSurf = EvaluateSurfWaves(wxz, glueShore.depth, glueShore.sdfDist,
+                                                 glueShore.toShore, glueShore.slopeTan,
+                                                 glueShore.influence, _SurfBeatTime);
+                    float invHeight;
+                    float2 invDisp;
+                    [unroll]
+                    for (int it = 0; it < FOAM_CHOP_INVERSION_STEPS; it++)
+                    {
+                        LargeBodyWaveHeightDispShore(glueSrcXZ, glueShore, glueSurf,
+                                                     invHeight, invDisp);
+                        glueSrcXZ = wxz - invDisp;
+                    }
+                    surfaceWorld = LargeBodySurfaceAt(glueSrcXZ, glueShore, glueSurf);
+                    // Normal lean composed like the surface's own (ApplyLargeBodyWaveNormal...):
+                    // FFT tilt (shore-shoaled) faded under the surf fronts, plus the fronts' own
+                    // slope, edge-feathered - evaluated at the SOURCE xz, the same point the
+                    // surface fragment reads. Still 0 tilt when FFT is off in open analytic water.
+                    float2 tilt = (OceanFftNormalTiltShore(glueSrcXZ, glueShore)
+                                       * SurfAmbientWeight(glueSurf.mask)
+                                   - glueSurf.slopeXZ) * LbwEdgeWeight(glueSrcXZ);
                     surfaceNormal = normalize(float3(tilt.x, 1.0, tilt.y));
                 }
                 else
@@ -158,6 +246,15 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 float3 center = surfaceWorld
                               + surfaceNormal * SURFACE_LIFT
                               + float3(0, 1, 0) * max(0.0, particle.worldPos.y); // spray height offset
+
+                // Conditional dry-volume filter (render side): a sprite whose CURRENT point sits
+                // inside an exclusion volume is dropped outright this frame. The compute's
+                // depth-ramped fade still recycles the particle over a few frames, but the
+                // visual removal must not wait on it - drifting foam entering a hull's carve
+                // showed sprites floating in the dry interior. `center` is the glued surface
+                // point for foam and the true airborne point for spray, so droplets arcing
+                // OVER a hull keep drawing. Zero volumes: the loop never runs (free).
+                if (_ExclusionCount > 0.5 && InsideExclusion(center)) return Dead();
 
                 // ---- quad axes ----
                 float3 axisX, axisY;
@@ -210,15 +307,36 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                         if (dot(planar, planar) >= DEGENERATE_DIR_EPSILON)
                         {
                             axisX = normalize(planar);
-                            stretch = 1.0 + min(STRETCH_MAX, speed * _VelocityStretch);
+                            // Capped well below the spray range: resting foam that still carries
+                            // its landing/crest-roll speed must not smear (SURFACE_STRETCH_MAX).
+                            stretch = min(1.0 + speed * _VelocityStretch, SURFACE_STRETCH_MAX);
                         }
                     }
                     axisY = cross(surfaceNormal, axisX);
                 }
 
-                float3 worldVertex = center
-                                   + axisX * (corner.x * particle.size * stretch)
-                                   + axisY * (corner.y * particle.size);
+                float3 worldVertex;
+                if (!isSpray && _LargeBody > 0.5)
+                {
+                    // ---- per-corner glue (open water): one flat tilted plane cannot follow
+                    // metre-scale wave curvature, and whatever dipped below the ZWrite-On surface
+                    // was depth-sliced to a band. Each vertex instead rides the surface at its OWN
+                    // corner: the offset is laid out in SOURCE space and the field re-evaluated
+                    // there, so the quad bends (and chop-pinches) exactly like the water mesh under
+                    // it. The two triangles' shared corners get identical positions by
+                    // construction, so the quad stays watertight.
+                    float3 cornerOffset = axisX * (corner.x * particle.size * stretch)
+                                        + axisY * (corner.y * particle.size);
+                    float2 cornerSrcXZ = glueSrcXZ + cornerOffset.xz;
+                    worldVertex = LargeBodySurfaceAt(cornerSrcXZ, glueShore, glueSurf)
+                                + surfaceNormal * SURFACE_LIFT;
+                }
+                else
+                {
+                    worldVertex = center
+                                + axisX * (corner.x * particle.size * stretch)
+                                + axisY * (corner.y * particle.size);
+                }
 
                 // ---- life envelope ----
                 float envelope = FoamParticleEnvelope(particle.age, particle.life) * particle.strength;
@@ -231,12 +349,22 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 // ---- lighting, matched to the surface foam ----
                 float wrapped = FoamWrappedDiffuse(surfaceNormal, _LightDir);
 
+                // ---- projection: open-water surface foam is pulled a few centimetres toward
+                // the camera IN VIEW SPACE (see FOAM_DEPTH_BIAS_*) so the surface mesh's chord
+                // error can't swallow the glued quads. The soft-fade eye depth stays UNBIASED -
+                // it measures true distance against the opaque scene, not the z-test.
+                float4 viewPos = mul(UNITY_MATRIX_V, float4(worldVertex, 1.0));
+                float eyeDepth = -viewPos.z;
+                if (!isSpray && _LargeBody > 0.5)
+                    viewPos.z += min(FOAM_DEPTH_BIAS_BASE + eyeDepth * FOAM_DEPTH_BIAS_SLOPE,
+                                     FOAM_DEPTH_BIAS_MAX); // view forward is -Z: +Z = nearer
+
                 v2f o;
-                o.pos = mul(UNITY_MATRIX_VP, float4(worldVertex, 1.0));
+                o.pos = mul(UNITY_MATRIX_P, viewPos);
                 o.uv = uv;
                 o.screenPos = ComputeScreenPos(o.pos);
                 o.litColor = FoamLitColor(_Tint.rgb, _SunColor, wrapped);
-                o.fade = float2(envelope, -mul(UNITY_MATRIX_V, float4(worldVertex, 1.0)).z);
+                o.fade = float2(envelope, eyeDepth);
                 return o;
             }
 

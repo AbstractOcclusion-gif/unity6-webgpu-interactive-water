@@ -108,11 +108,26 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string SplashDropletMaterialPath = Gen + "/SplashDroplet.mat";
         internal const string SplashCrownMaterialPath = Gen + "/SplashCrown.mat";
         internal const string SplashCrownSheetPath = Gen + "/SplashFlipbook_8x8.png";
-        // The crown flipbook ships inside the package's Samples~ folder, which Unity never imports.
-        // This is its path RELATIVE to the resolved package root; the wizard copies it out to
-        // SplashCrownSheetPath on first build (see LoadOrProvisionCrownSheet) so the crown is textured
-        // even in projects that never imported the demo samples.
-        const string CrownSheetPackageRelativePath = "Samples~/Demos/Common/SplashFlipbook_8x8.png";
+        internal const string SplashCrownLightSheetAPath = Gen + "/SplashFlipbookLightA_8x8.png";
+        internal const string SplashCrownLightSheetBPath = Gen + "/SplashFlipbookLightB_8x8.png";
+        // The crown flipbook (and its six-way light sheets) ship inside the package's Samples~
+        // folder, which Unity never imports. These are their paths RELATIVE to the resolved
+        // package root; the wizard copies them out to the Gen paths above on first build (see
+        // LoadOrProvisionPackagedSheet) so the crown is textured even in projects that never
+        // imported the demo samples.
+        const string CrownSheetPackageRelativePath =
+            "Samples~/Demos/Common/Assets/Textures/SplashFlipbook_8x8.png";
+        const string CrownLightSheetAPackageRelativePath =
+            "Samples~/Demos/Common/Assets/Textures/SplashFlipbookLightA_8x8.png";
+        const string CrownLightSheetBPackageRelativePath =
+            "Samples~/Demos/Common/Assets/Textures/SplashFlipbookLightB_8x8.png";
+        // Crown material upgrades applied when the six-way light sheets are provisioned:
+        // directional flipbook lighting on, plus a default backlit-transmission glow.
+        const string SixWayProperty = "_SixWay";
+        const string LightSheetAProperty = "_LightSheetA";
+        const string LightSheetBProperty = "_LightSheetB";
+        const string TransmissionStrengthProperty = "_TransmissionStrength";
+        const float DefaultCrownTransmission = 1.0f;
         // KWS-style packed droplet (R mass / G shine / B dissolve noise / A thickness). The
         // legacy Gen/Droplet.png (RGB white, shape in A) is left on disk untouched for old
         // materials still on the legacy shader path.
@@ -847,9 +862,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var crownPSR = crownGO.GetComponent<ParticleSystemRenderer>();
             crownPSR.renderMode = ParticleSystemRenderMode.VerticalBillboard;
             crownPSR.pivot = new Vector3(0f, 0.5f, 0f);
-            crownPSR.sharedMaterial = LoadOrCreateSplashMaterial(
-                SplashCrownMaterialPath,
-                LoadOrProvisionCrownSheet());
+            crownPSR.sharedMaterial = CreateOrUpgradeCrownMaterial();
             splashEmitter.crownParticles = crownPS;
             return splashEmitter;
         }
@@ -860,9 +873,39 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             EnsureGenFolder();
             LoadOrCreateSplashMaterial(SplashDropletMaterialPath, LoadOrBuildDroplet(DropletTexturePath));
-            LoadOrCreateSplashMaterial(SplashCrownMaterialPath,
-                LoadOrProvisionCrownSheet());
+            CreateOrUpgradeCrownMaterial();
             AssetDatabase.SaveAssets();
+        }
+
+        // The crown material: packed flipbook + the six-way light sheets and backlit
+        // transmission (both baked by gen_splash_flipbook.py alongside the main sheet).
+        // Doubles as the one-click upgrade for crown materials created before six-way
+        // lighting existed. Missing light sheets (older package payloads) degrade
+        // gracefully: the material stays on the scalar foam lighting.
+        static Material CreateOrUpgradeCrownMaterial()
+        {
+            var material = LoadOrCreateSplashMaterial(SplashCrownMaterialPath,
+                LoadOrProvisionPackagedSheet(SplashCrownSheetPath, CrownSheetPackageRelativePath));
+            if (material == null) return null;
+
+            var lightSheetA = LoadOrProvisionPackagedSheet(
+                SplashCrownLightSheetAPath, CrownLightSheetAPackageRelativePath);
+            var lightSheetB = LoadOrProvisionPackagedSheet(
+                SplashCrownLightSheetBPath, CrownLightSheetBPackageRelativePath);
+            bool sixWayReady = lightSheetA != null && lightSheetB != null
+                && material.HasProperty(SixWayProperty);
+            if (!sixWayReady) return material;
+
+            material.SetTexture(LightSheetAProperty, lightSheetA);
+            material.SetTexture(LightSheetBProperty, lightSheetB);
+            material.SetFloat(SixWayProperty, 1f);
+            if (material.HasProperty(TransmissionStrengthProperty) &&
+                Mathf.Approximately(material.GetFloat(TransmissionStrengthProperty), 0f))
+            {
+                material.SetFloat(TransmissionStrengthProperty, DefaultCrownTransmission);
+            }
+            EditorUtility.SetDirty(material);
+            return material;
         }
 
         // A splash material on the lit shader (create-once). Also the one-click upgrade
@@ -1119,39 +1162,40 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             return AssetDatabase.LoadAssetAtPath<Texture2D>(path);
         }
 
-        // The crown sheet is an authored 8x8 art asset (not procedurally buildable like the droplet),
-        // and it lives only in the package's Samples~ folder, which Unity does not import. So a project
-        // that never imported the demos has nothing for LoadFlipbook to load and the crown renders
-        // untextured. Provision it once by copying the packaged source into Generated, then load it with
-        // the crown's import settings (packed DATA sheet -> linear, clamped, no mips).
-        static Texture2D LoadOrProvisionCrownSheet()
+        // The crown sheets are authored 8x8 art assets (not procedurally buildable like the
+        // droplet), and they live only in the package's Samples~ folder, which Unity does not
+        // import. So a project that never imported the demos has nothing for LoadFlipbook to
+        // load and the crown renders untextured. Provision each once by copying the packaged
+        // source into Generated, then load it with the crown's import settings (packed DATA
+        // sheet -> linear, clamped, no mips).
+        static Texture2D LoadOrProvisionPackagedSheet(string genPath, string packageRelativePath)
         {
-            if (!File.Exists(SplashCrownSheetPath))
+            if (!File.Exists(genPath))
             {
-                string packagedSheet = PackagedCrownSheetPath();
+                string packagedSheet = PackagedSheetPath(packageRelativePath);
                 if (packagedSheet == null || !File.Exists(packagedSheet))
                 {
-                    Debug.LogWarning($"WebGL Water: crown flipbook not found in the package " +
-                                     $"('{CrownSheetPackageRelativePath}'); the splash crown will be untextured.");
+                    Debug.LogWarning($"WebGL Water: crown sheet not found in the package " +
+                                     $"('{packageRelativePath}'); the splash crown will miss this sheet.");
                     return null;
                 }
 
-                Directory.CreateDirectory(Path.GetDirectoryName(SplashCrownSheetPath));
-                File.Copy(packagedSheet, SplashCrownSheetPath, overwrite: false);
-                AssetDatabase.ImportAsset(SplashCrownSheetPath);
+                Directory.CreateDirectory(Path.GetDirectoryName(genPath));
+                File.Copy(packagedSheet, genPath, overwrite: false);
+                AssetDatabase.ImportAsset(genPath);
             }
 
-            return LoadFlipbook(SplashCrownSheetPath, TextureWrapMode.Clamp, mipmaps: false, linear: true);
+            return LoadFlipbook(genPath, TextureWrapMode.Clamp, mipmaps: false, linear: true);
         }
 
-        // Physical path of the crown sheet inside the package's Samples~ folder. resolvedPath differs
-        // between embedded and registry/tarball installs, so it is resolved via the package system
-        // rather than assumed to sit under the project's Packages folder.
-        static string PackagedCrownSheetPath()
+        // Physical path of a packaged sheet inside the package's Samples~ folder. resolvedPath
+        // differs between embedded and registry/tarball installs, so it is resolved via the
+        // package system rather than assumed to sit under the project's Packages folder.
+        static string PackagedSheetPath(string packageRelativePath)
         {
             UnityEditor.PackageManager.PackageInfo package =
                 UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(WaterBuildKit).Assembly);
-            return package == null ? null : Path.Combine(package.resolvedPath, CrownSheetPackageRelativePath);
+            return package == null ? null : Path.Combine(package.resolvedPath, packageRelativePath);
         }
 
         // ---------------------------------------------------------------- helpers
