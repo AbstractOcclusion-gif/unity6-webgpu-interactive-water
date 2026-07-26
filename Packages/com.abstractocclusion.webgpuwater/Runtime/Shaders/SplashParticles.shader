@@ -61,6 +61,15 @@ Shader "AbstractOcclusion/WebGpuWater/SplashParticles"
             // Foam lighting + erosion dissolve, matched to WaterSurface/FoamParticles so
             // every foam-like element in the scene shades consistently.
             #include "WaterFoamCommon.hlsl"
+            // Dry-interior exclusion volumes (globals from WaterUniformPublisher): the crown
+            // and CPU-fallback droplets were the ONE foam element with no exclusion awareness,
+            // so a splash at a hull edge painted straight through the dry box. Per-fragment
+            // dissolve here, since a crown billboard can straddle the boundary.
+            #include "WaterExclusion.hlsl"
+            // After-fog reroute frames: the emitter's systems draw AFTER the fullscreen fog
+            // (forceRenderingOff + DrawAfterFog), so the sprite prices its own camera->splash
+            // wet path here. Identity mul/add on fog-off frames - queue-time look untouched.
+            #include "WaterParticleFog.hlsl"
 
             // Packed-path look constants (KWS splash): shine is CUBED for tight sparkle then
             // boosted; the soft-fade band stretches with the packed thickness so thin splash
@@ -103,6 +112,9 @@ Shader "AbstractOcclusion/WebGpuWater/SplashParticles"
                 float4 screenPos : TEXCOORD1;
                 float2 fade      : TEXCOORD2; // x = lit sun factor, y = fragment eye depth
                 float4 sixway    : TEXCOORD3; // xyz = light dir in billboard space, w = backlit
+                float3 worldPos  : TEXCOORD4; // for the per-fragment exclusion dissolve
+                float3 fogMul    : TEXCOORD5; // camera->splash fog transmittance (1 when fog is off)
+                float3 fogAdd    : TEXCOORD6; // camera->splash fog in-scatter (0 when fog is off)
             };
 
             // Sun direction expressed in the VerticalBillboard frame the lightmaps were
@@ -147,6 +159,8 @@ Shader "AbstractOcclusion/WebGpuWater/SplashParticles"
                 float backlit = pow(saturate(dot(viewDir, lightDir)),
                                     SPLASH_TRANSMISSION_SHARPNESS);
                 o.sixway = float4(BillboardSpaceLightDir(worldPos, lightDir), backlit);
+                o.worldPos = worldPos;
+                ParticleUnderwaterFog(worldPos, lightDir, _SunColor, o.fogMul, o.fogAdd);
                 return o;
             }
 
@@ -206,6 +220,18 @@ Shader "AbstractOcclusion/WebGpuWater/SplashParticles"
                     alpha *= envelope * _ParticleOpacity;
                     alpha *= saturate(behind / _SoftFadeDistance);
                 }
+
+                // Dry-interior exclusion: dissolve the fragments that protrude into a dry
+                // volume (per-volume fade band; volumes can opt their particles out). Applied
+                // to BOTH texture paths, after their alpha shaping, so the cut ignores the
+                // packing mode. Shuriken knows nothing of the volumes, so unlike the GPU
+                // particles there is no sim-side kill to lean on - this IS the cull.
+                if (_ExclusionCount > 0.5)
+                    alpha *= ExclusionParticleAttenuation(i.worldPos);
+
+                // Per-splash underwater fog (identity on fog-off frames), after all the lit
+                // terms - shine and transmission fog out with the rest of the sprite.
+                lit = lit * i.fogMul + i.fogAdd;
 
                 return fixed4(lit, alpha);
             }

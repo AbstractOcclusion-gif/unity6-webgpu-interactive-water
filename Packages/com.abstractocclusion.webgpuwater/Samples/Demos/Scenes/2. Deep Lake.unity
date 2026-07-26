@@ -1706,6 +1706,7 @@ MonoBehaviour:
   chunkRefraction: 0.5
   chunkReflectivity: 0.6
   chunkMeniscus: 0.5
+  chunkFoamStrength: 1
   chunkGodRayStrength: 0
   chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
@@ -1724,7 +1725,7 @@ MonoBehaviour:
   tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
   sky: {fileID: 8900000, guid: 90846655472c1354b8fb1a3cb2a47920, type: 2}
   foamPatternTexture: {fileID: 2800000, guid: 74ed02889dbed0e4096685ebafa011b6, type: 3}
-  foamPatternGrid: {x: 1, y: 1}
+  foamPatternGrid: {x: 4, y: 4}
   foamPatternFps: 10
   foamReliefStrength: 1
   oceanWhitecapTexture: {fileID: 2800000, guid: 1ee279c16b027ad48a8eb248749ff66c, type: 3}
@@ -1840,8 +1841,8 @@ MonoBehaviour:
     physicalFresnel: 1
     tirEdgeSoftness: 0.08
     fresnelFloor: 0
-    reflectionStrength: 1
-    mirrorWaterBlend: 0.5
+    reflectionStrength: 0.308
+    mirrorWaterBlend: 0.805
     foamSilhouetteDarken: 0.6
     foamSunGlow: 0.4
     detailNormalStrength: 0
@@ -1889,7 +1890,7 @@ MonoBehaviour:
     sssPinchMin: 0.1
     sssPinchMax: 0.6
     sssPinchFalloff: 1.5
-  refractShadows: 1
+  refractShadows: 0
   depthAttenuation:
     depthDarken: 1
     depthExtinction: {r: 0.5245282, g: 0.26543105, b: 0.20486288, a: 1}

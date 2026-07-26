@@ -80,12 +80,34 @@ namespace AbstractOcclusion.WebGpuWater
         const float DefaultEdgeIntensity = 0.55f;
         const float DefaultEdgeSpread = 0.12f;
 
+        // ---- particle handling (foam/spray sprites, splash crown + droplets) -------------
+
+        [Tooltip("Cull foam, spray and splash particles inside this volume. Turn OFF for a " +
+                 "volume that only carves the surface - a room with open windows can let " +
+                 "spray blow through its dry interior.")]
+        public bool affectParticles = true;
+
+        [Tooltip("Softness of the particle cut at the volume boundary, as a fraction of the " +
+                 "box half-extent: sprites dissolve over this shell just inside the faces " +
+                 "instead of clipping on a razor edge. 0 = hard clip exactly on the face.")]
+        [Range(0f, 0.5f)] public float particleFadeBand = DefaultParticleFadeBand;
+
+        [Tooltip("How fast simulated foam/spray already inside dies when this volume sweeps " +
+                 "over it (a moving hull plowing through its own bow plume). 1 = the stock " +
+                 "dissolve; higher snuffs a swept plume quicker, lower lets it linger.")]
+        [Range(0.25f, 4f)] public float particleDissolveSpeed = 1f;
+
+        // Thin enough that the dissolve reads as a soft edge, not a hollow shell.
+        const float DefaultParticleFadeBand = 0.06f;
+
         /// <summary>GPU encoding of the edge look: rgb = tint target, a = intensity.</summary>
         internal Vector4 EdgeColorUniform =>
             new Vector4(edgeColor.r, edgeColor.g, edgeColor.b, edgeIntensity);
 
-        /// <summary>GPU encoding of the edge shape: x = spread (yzw reserved).</summary>
-        internal Vector4 EdgeParamsUniform => new Vector4(edgeSpread, 0f, 0f, 0f);
+        /// <summary>GPU encoding of the edge shape + particle handling: x = edge spread,
+        /// y = affect-particles flag, z = particle fade band, w = dissolve speed.</summary>
+        internal Vector4 EdgeParamsUniform => new Vector4(
+            edgeSpread, affectParticles ? 1f : 0f, particleFadeBand, particleDissolveSpeed);
 
         void OnEnable()
         {
@@ -157,22 +179,18 @@ namespace AbstractOcclusion.WebGpuWater
         /// abs(local) &lt;= 0.5 per axis.</summary>
         internal Matrix4x4 WorldToBoxMatrix() => BoxToWorldMatrix().inverse;
 
-        // MUST equal EXCLUSION_BOX_HALF_EXTENT (WaterExclusion.hlsl): the unit-box half-extent
-        // the world->box matrices map into, shared by the shader inside test and the CPU mirror.
-        const float BoxHalfExtent = 0.5f;
-
-        /// <summary>True when the world point lies inside ANY active exclusion volume - the CPU
-        /// mirror of the shader's InsideExclusion (same WorldToBoxMatrix frame, same half-extent).
-        /// Used by CPU-side gates that must agree with the render carve, e.g. the input router
-        /// refusing to ripple/splash a click that lands inside a dry room.</summary>
+        /// <summary>True when <paramref name="worldPoint"/> lies inside any active volume - the
+        /// CPU twin of the shader's InsideExclusion (WaterExclusion.hlsl). Input routing uses it
+        /// so clicks and drags never ripple or splash the carved-dry surface. The active list is
+        /// tiny (a handful of rooms), so the per-call matrix inversions are nothing next to the
+        /// raycast that precedes every call.</summary>
         internal static bool ContainsPoint(Vector3 worldPoint)
         {
             for (int i = 0; i < _active.Count; i++)
             {
                 Vector3 local = _active[i].WorldToBoxMatrix().MultiplyPoint3x4(worldPoint);
-                if (Mathf.Abs(local.x) <= BoxHalfExtent
-                    && Mathf.Abs(local.y) <= BoxHalfExtent
-                    && Mathf.Abs(local.z) <= BoxHalfExtent)
+                if (Mathf.Abs(local.x) <= 0.5f && Mathf.Abs(local.y) <= 0.5f &&
+                    Mathf.Abs(local.z) <= 0.5f)
                     return true;
             }
             return false;

@@ -124,6 +124,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "depthAttenuation.depthDarkenStrength",
                     "depthAttenuation.causticDepthFade",
                     "depthAttenuation.screenSpaceCaustics",
+                    "depthAttenuation.screenCausticIntensity",
                     "depthAttenuation.godRayDepthFade",
                     "depthAttenuation.linkDepthToFog"));
         }

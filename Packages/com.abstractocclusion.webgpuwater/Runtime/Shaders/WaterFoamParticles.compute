@@ -80,16 +80,6 @@ static const float EXCLUSION_FADE_SHELL = 0.2;      // unit-box depth over which
 static const float EXCLUSION_FADE_AGE_BOOST_MIN = 4.0;   // at a face graze
 static const float EXCLUSION_FADE_AGE_BOOST_MAX = 30.0;  // deep inside
 
-// Collision response against exclusion volumes - the analytic stand-ins for hulls and dry
-// rooms. Particles now REACT to the boxes instead of only dissolving inside them: floating
-// foam slides along the walls (piles against a hull; a moving hull plows the field ahead
-// of itself), ballistic spray ricochets off with a damped restitution. The fade above
-// stays as the backstop for anything the push-out can't resolve (vertical-face escapes,
-// spawn races, very fast sweeps).
-static const float EXCLUSION_COLLIDE_SKIN = 0.02;       // metres kept clear of the face
-static const float EXCLUSION_BOUNCE_RESTITUTION = 0.35; // spray: normal speed kept on impact
-static const float EXCLUSION_BOUNCE_DAMP = 0.85;        // spray: total energy kept on impact
-
 // Slot claim (ClaimPoolSlot): ring-cursor probes per spawn before giving up. The old raw
 // "cursor & mask" claim OVERWROTE whatever lived at the cursor, so under spawn pressure
 // (a moving boat's wake saturating the budget) the ring wrapped in a handful of frames and
@@ -462,46 +452,6 @@ float SurfaceWorldY(float3 worldPos, float2 simNorm)
     return surfaceY;
 }
 
-// Nearest-face escape of a world point that sits inside an exclusion box: outputs the
-// world-space unit normal of the closest face and the world-metre penetration behind it.
-// The i-th ROW of the world->box matrix is the gradient of that box axis in world space,
-// so its direction is the face normal and its length converts unit-box insets to world
-// metres - the same closed-form frame InsideExclusion/ExclusionInteriorDepth read.
-// Overlapping boxes: the smallest escape across all volumes wins; a push that lands
-// inside a second box is resolved next frame (N <= 4, and the fade backstops it).
-// False (outs zeroed to an up normal) when the point is outside every volume.
-bool ExclusionPushOut(float3 worldPos, out float3 faceNormal, out float penetrationMeters)
-{
-    faceNormal = float3(0.0, 1.0, 0.0);
-    penetrationMeters = 0.0;
-    bool inside = false;
-    float best = 1e9;
-    int count = (int)_ExclusionCount;
-    [loop]
-    for (int i = 0; i < count; i++)
-    {
-        float4x4 toBox = _ExclusionWorldToBox[i];
-        float3 local = mul(toBox, float4(worldPos, 1.0)).xyz;
-        float3 inset = EXCLUSION_BOX_HALF_EXTENT - abs(local);
-        if (any(inset < 0.0)) continue; // outside this box
-        inside = true;
-        [unroll]
-        for (int axis = 0; axis < 3; axis++)
-        {
-            float3 row = toBox[axis].xyz;
-            float rowLen = max(length(row), 1e-6);
-            float escape = inset[axis] / rowLen; // world metres to this axis' nearer face
-            if (escape < best)
-            {
-                best = escape;
-                faceNormal = row * ((local[axis] >= 0.0 ? 1.0 : -1.0) / rowLen);
-            }
-        }
-    }
-    penetrationMeters = inside ? best : 0.0;
-    return inside;
-}
-
 // ---------------------------------------------------------------- kernels
 // 64 threads x 4 groups = 256: clears the spray tile budget; thread 0 also resets the
 // per-frame spawn counter. MUST be dispatched with TILE_GRID*TILE_GRID/64 groups.
@@ -566,7 +516,7 @@ void Spawn(uint3 id : SV_DispatchThreadID)
     // right away, so spawning there is at best a one-frame flash. Post-roll (spawning
     // texels only) and gated on the volume count, so volume-free scenes pay nothing.
     // texelWorld.y is the surface-plane height - close enough against people-sized boxes.
-    if (_ExclusionCount > 0.5 && InsideExclusion(texelWorld)) return;
+    if (_ExclusionCount > 0.5 && InsideParticleExclusion(texelWorld)) return;
 
     // Per-frame budget: count first, back out if over. A few threads may race past
     // the limit; the budget is a soft cap, so that is acceptable.
@@ -667,7 +617,7 @@ void SpawnBurst(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID)
     // one frame before Update culled it - per-burst strobing at the bow. Tested at the
     // TRUE world height (burst.center.y is the surface), before any budget is consumed.
     if (_ExclusionCount > 0.5
-        && InsideExclusion(float3(spawnXZ.x, burst.center.y + BURST_SPAWN_HEIGHT, spawnXZ.y)))
+        && InsideParticleExclusion(float3(spawnXZ.x, burst.center.y + BURST_SPAWN_HEIGHT, spawnXZ.y)))
         return;
 
     // Per-frame burst budget (count first, back out if over - the same soft-cap idiom as
@@ -732,6 +682,36 @@ void Update(uint3 id : SV_DispatchThreadID)
 
     if (particle.age >= particle.life) { particle.life = 0.0; Particles[slot] = particle; return; }
 
+    // Dry-interior exclusion: foam riding (or spray arcing through) a dry room / boat hull
+    // must go - the surface it would sit on is discarded there. But the old hard kill
+    // (life = 0) popped sprites out in ONE frame, and a moving hull plows its box through
+    // the bow spray it just threw, so the whole plume strobed. Instead the particle AGES
+    // faster the deeper it intrudes (the window-edge fade idiom): a swept-over droplet
+    // dissolves over a few tenths of a second, anything deep inside a dry room still
+    // vanishes near-instantly. Gated on the volume count: volume-free scenes pay nothing.
+    if (_ExclusionCount > 0.5)
+    {
+        // Stored y is a height offset ABOVE the local water surface; lift to true world Y.
+        float3 exclusionProbe = particle.worldPos;
+        exclusionProbe.y += SurfaceWorldY(particle.worldPos, simNorm);
+        // x = interior depth among PARTICLE-AFFECTING volumes (per-volume opt-out honoured),
+        // y = that volume's dissolve-speed multiplier (particleDissolveSpeed on the script).
+        float2 interior = ExclusionParticleInteriorDepth(exclusionProbe);
+        if (interior.x > 0.0)
+        {
+            float intrusion = saturate(interior.x / EXCLUSION_FADE_SHELL);
+            particle.age += _DeltaTime * interior.y
+                          * lerp(EXCLUSION_FADE_AGE_BOOST_MIN,
+                                 EXCLUSION_FADE_AGE_BOOST_MAX, intrusion);
+            if (particle.age >= particle.life)
+            {
+                particle.life = 0.0;
+                Particles[slot] = particle;
+                return;
+            }
+        }
+    }
+
     if (particle.kind == KIND_SPRAY)
     {
         particle.velocity.y -= _Gravity * _DeltaTime;
@@ -781,73 +761,6 @@ void Update(uint3 id : SV_DispatchThreadID)
         particle.worldPos.y = 0.0;
     }
 
-    // ---- dry-interior exclusion (fade + collision), ONE probe at the post-integration
-    // position. Foam riding (or spray arcing through) a dry room / boat hull must go -
-    // the surface it would sit on is discarded there. A hard kill (life = 0) popped
-    // sprites out in ONE frame and strobed a moving hull's own bow spray, so a particle
-    // instead AGES faster the deeper it intrudes (the window-edge fade idiom) - and now
-    // also gets a COLLISION response, so most particles never intrude at all: floating
-    // foam slides along the box walls, spray ricochets off them. Gated on the volume
-    // count: volume-free scenes pay nothing.
-    if (_ExclusionCount > 0.5)
-    {
-        // Stored y is a height offset ABOVE the local water surface; lift to true world Y.
-        float3 exclusionProbe = particle.worldPos;
-        exclusionProbe.y += SurfaceWorldY(particle.worldPos, WorldToSimNorm(particle.worldPos));
-        float3 faceNormal;
-        float penetration;
-        if (ExclusionPushOut(exclusionProbe, faceNormal, penetration))
-        {
-            // Fade backstop (unchanged idiom): covers what the push-out can't resolve.
-            float intrusion = saturate(ExclusionInteriorDepth(exclusionProbe)
-                                       / EXCLUSION_FADE_SHELL);
-            particle.age += _DeltaTime * lerp(EXCLUSION_FADE_AGE_BOOST_MIN,
-                                              EXCLUSION_FADE_AGE_BOOST_MAX, intrusion);
-            if (particle.age >= particle.life)
-            {
-                particle.life = 0.0;
-                Particles[slot] = particle;
-                return;
-            }
-
-            if (particle.kind == KIND_SPRAY)
-            {
-                // Ballistic droplet: push to the face and reflect the inward velocity with
-                // a damped restitution - hull-bound spray ricochets instead of passing
-                // through. worldPos.y is a surface-relative offset; adding the world-space
-                // push to it is exact as long as the surface height is locally flat over
-                // the few centimetres moved.
-                particle.worldPos += faceNormal * (penetration + EXCLUSION_COLLIDE_SKIN);
-                float inwardSpeed = dot(particle.velocity, faceNormal);
-                if (inwardSpeed < 0.0)
-                    particle.velocity = (particle.velocity
-                                         - faceNormal * (inwardSpeed
-                                                         * (1.0 + EXCLUSION_BOUNCE_RESTITUTION)))
-                                        * EXCLUSION_BOUNCE_DAMP;
-            }
-            else
-            {
-                // Floating foam: slide - push out horizontally and drop the inward velocity
-                // component, so foam piles against a hull and a moving hull plows the field
-                // ahead of itself instead of swallowing it. A (near-)vertical face normal
-                // has no horizontal escape - the fade above handles that case.
-                float2 pushDir = faceNormal.xz;
-                float pushLenSq = dot(pushDir, pushDir);
-                if (pushLenSq >= DEGENERATE_DIR_EPSILON)
-                {
-                    float pushLen = sqrt(pushLenSq);
-                    pushDir /= pushLen;
-                    // penetration is measured along the full 3D normal; the xz-only exit
-                    // through the same face is longer by 1/pushLen.
-                    particle.worldPos.xz += pushDir * (penetration / pushLen
-                                                       + EXCLUSION_COLLIDE_SKIN);
-                    float inwardSpeed = min(0.0, dot(particle.velocity.xz, pushDir));
-                    particle.velocity.xz -= pushDir * inwardSpeed;
-                }
-            }
-        }
-    }
-
     Particles[slot] = particle;
 }
 
@@ -879,11 +792,6 @@ void RasterizeDensity(uint3 id : SV_DispatchThreadID)
     float2 simNorm = WorldToSimNorm(particle.worldPos);
     float3 world = particle.worldPos;
     world.y = SurfaceWorldY(world, simNorm);
-
-    // Conditional dry-volume filter (mirrors the quad render's vertex filter): a particle
-    // whose surface point sits inside an exclusion volume contributes no density this
-    // frame - the Update fade recycles it, but the veil must not paint into the carve.
-    if (_ExclusionCount > 0.5 && InsideExclusion(world)) return;
 
     float2 uv; float eyeDepth;
     if (!ProjectToScreen(world, uv, eyeDepth)) return;

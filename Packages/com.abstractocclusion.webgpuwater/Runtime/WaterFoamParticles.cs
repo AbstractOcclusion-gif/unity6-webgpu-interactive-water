@@ -100,10 +100,14 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_DeltaTime = Shader.PropertyToID("_DeltaTime");
         static readonly int ID_ExclusionCount = Shader.PropertyToID("_ExclusionCount");
         static readonly int ID_ExclusionWorldToBox = Shader.PropertyToID("_ExclusionWorldToBox");
-        // Full-size persistent buffer (a matrix array's size locks at its first set); the
+        static readonly int ID_ExclusionEdgeParams = Shader.PropertyToID("_ExclusionEdgeParams");
+        // Full-size persistent buffers (a global array's size locks at its first set); the
         // selection logic itself lives in WaterExclusionVolume.WriteVolumeUniforms - one
-        // implementation (the edge-look buffers are null: the kill test only needs the boxes).
+        // implementation. The kill/dissolve tests need the boxes AND the per-volume particle
+        // handling packed in the edge-params lane (affect flag + dissolve speed); the edge
+        // COLOR buffer stays null - particles never shade the carve boundary.
         static readonly Matrix4x4[] _exclusionMatrices = new Matrix4x4[WaterExclusionVolume.MaxVolumes];
+        static readonly Vector4[] _exclusionEdgeParams = new Vector4[WaterExclusionVolume.MaxVolumes];
         static readonly int ID_SpawnThreshold = Shader.PropertyToID("_SpawnThreshold");
         static readonly int ID_SpawnRate = Shader.PropertyToID("_SpawnRate");
         static readonly int ID_MaxSpawnPerFrame = Shader.PropertyToID("_MaxSpawnPerFrame");
@@ -296,6 +300,21 @@ namespace AbstractOcclusion.WebGpuWater
         bool DensityModeActive => renderMode == FoamRenderMode.ScreenSpaceDensity
                                   && _densitySupported && densityMaterial != null;
 
+        // ---- after-fog particle reroute (the particle/fog SORTING fix) -------------------
+        // On frames where the fullscreen underwater fog runs, the queue-time draws are
+        // skipped and WaterUnderwaterFogFeature's after-fog pass calls RenderAfterFog
+        // instead - otherwise the fog (which integrates to OPAQUE depth) paints the whole
+        // water column's fog over every sprite. The sprite shaders price their own
+        // camera->particle fog on those frames (WaterParticleFog.hlsl). Mirrors
+        // WaterSplashEmitter's reroute of the Shuriken systems.
+
+        /// <summary>Live components, drawn by the fog feature's after-fog particle pass.</summary>
+        internal static readonly System.Collections.Generic.List<WaterFoamParticles> Live =
+            new System.Collections.Generic.List<WaterFoamParticles>();
+
+        bool _afterFogArmed;  // this frame's queue-time draws were skipped for the fog pass
+        bool _rerouteDensity; // the skipped foam draw was the density composite, not quads
+
         void OnEnable()
         {
             // Parent lookup: the particle systems are often children of the body object.
@@ -370,10 +389,16 @@ namespace AbstractOcclusion.WebGpuWater
             // The density splat runs right before its camera renders (final matrices - see
             // the _densityPending comment). SRP-only callback; this package is URP-only.
             RenderPipelineManager.beginCameraRendering += OnBeginCameraRendering;
+
+            // Registered LAST: every bail-out above leaves the component off the after-fog
+            // pass's list, so the pass never draws a half-initialised pool.
+            if (!Live.Contains(this)) Live.Add(this);
         }
 
         void OnDisable()
         {
+            Live.Remove(this);
+            _afterFogArmed = false;
             RenderPipelineManager.beginCameraRendering -= OnBeginCameraRendering;
             _densityPending = false;
             _particles?.Dispose(); _particles = null;
@@ -402,6 +427,9 @@ namespace AbstractOcclusion.WebGpuWater
         // window/schedule for this frame.
         void LateUpdate()
         {
+            // Disarm first: any early-out below must leave the after-fog pass with nothing
+            // to submit (stale property blocks from a previous frame are never re-drawn).
+            _afterFogArmed = false;
             if (!useParticles) return; // master gate: no simulation, no dispatch, no draw
             if (volume == null || !volume.isActiveAndEnabled) return;
             // Defensive: OnEnable can bail before allocating (compute/material assigned later in
@@ -486,12 +514,18 @@ namespace AbstractOcclusion.WebGpuWater
 
             // Dry-interior exclusion volumes, bound EXPLICITLY like every other compute uniform
             // (this codebase never relies on Shader.SetGlobal* reaching compute kernels). The
-            // Update kernel kills particles inside a volume; count 0 skips the test entirely.
+            // Update kernel dissolves particles inside a volume; count 0 skips the test
+            // entirely. The edge-params lane rides along for the per-volume particle handling
+            // (affect flag, dissolve speed) the spawn/update tests now read.
             int exclusionCount = WaterExclusionVolume.WriteVolumeUniforms(_exclusionMatrices,
-                null, null,
+                null, _exclusionEdgeParams,
                 densityCamera != null ? densityCamera.transform.position : volume.VolumeCenter);
             cs.SetFloat(ID_ExclusionCount, exclusionCount);
-            if (exclusionCount > 0) cs.SetMatrixArray(ID_ExclusionWorldToBox, _exclusionMatrices);
+            if (exclusionCount > 0)
+            {
+                cs.SetMatrixArray(ID_ExclusionWorldToBox, _exclusionMatrices);
+                cs.SetVectorArray(ID_ExclusionEdgeParams, _exclusionEdgeParams);
+            }
 
             // Camera-driven spawn quality (stochastic distance LOD + spray tile budget) and the
             // density projection. Without a camera both are disabled and spawning is unchanged.
@@ -696,6 +730,12 @@ namespace AbstractOcclusion.WebGpuWater
         {
             int vertexCount = _capacityPow2 * VerticesPerParticle;
 
+            // After-fog reroute: on fog frames the property blocks are still filled HERE (one
+            // authoring place), but the queue-time submissions are skipped - RenderAfterFog
+            // re-submits the same blocks from the fog feature's pass (see the reroute comment
+            // block above OnEnable). Fog-off frames are byte-identical through this path.
+            bool reroute = WaterVolume.UnderwaterFogActive;
+
             // Floating foam pass: its own material, look and flipbook. Skipped in density mode,
             // where the screen-space veil draws the foam instead (_DrawKind = foam-only). The body's
             // uniforms (sim texture, volume frame, waves, sun) drive the vertex shader; the particle
@@ -708,14 +748,17 @@ namespace AbstractOcclusion.WebGpuWater
                 if (profile != null) profile.WriteLook(_mpb); // shared look over the foam material
                 _mpb.SetFloat(ID_DrawKind, DrawKindFoam);
 
-                var foamRp = new RenderParams(particleMaterial)
+                if (!reroute)
                 {
-                    worldBounds = volume.SimWorldBounds,
-                    matProps = _mpb
-                };
-                Graphics.RenderPrimitives(foamRp, MeshTopology.Triangles, vertexCount);
+                    var foamRp = new RenderParams(particleMaterial)
+                    {
+                        worldBounds = volume.SimWorldBounds,
+                        matProps = _mpb
+                    };
+                    Graphics.RenderPrimitives(foamRp, MeshTopology.Triangles, vertexCount);
+                }
             }
-            else
+            else if (!reroute)
             {
                 DrawDensityComposite();
             }
@@ -732,18 +775,74 @@ namespace AbstractOcclusion.WebGpuWater
             if (profile != null) profile.WriteSprayLook(_sprayMpb);
             _sprayMpb.SetFloat(ID_DrawKind, DrawKindSpray);
 
-            var sprayRp = new RenderParams(sprayDrawMaterial)
+            if (!reroute)
             {
-                worldBounds = volume.SimWorldBounds,
-                matProps = _sprayMpb
-            };
-            Graphics.RenderPrimitives(sprayRp, MeshTopology.Triangles, vertexCount);
+                var sprayRp = new RenderParams(sprayDrawMaterial)
+                {
+                    worldBounds = volume.SimWorldBounds,
+                    matProps = _sprayMpb
+                };
+                Graphics.RenderPrimitives(sprayRp, MeshTopology.Triangles, vertexCount);
+            }
+
+            // Arm the after-fog pass with THIS frame's decision (LateUpdate disarmed it, so a
+            // frame that never reaches Draw leaves nothing to re-submit).
+            _afterFogArmed = reroute;
+            _rerouteDensity = reroute && _densityPending;
+        }
+
+        /// <summary>Submit this frame's skipped particle draws AFTER the fullscreen underwater
+        /// fog (called by WaterUnderwaterFogFeature's after-fog pass with the rendering camera).
+        /// Only armed on frames where Draw() filled the property blocks but withheld its
+        /// queue-time submissions; re-submits those exact blocks, so the two paths can never
+        /// disagree about the look.</summary>
+        internal void RenderAfterFog(RasterCommandBuffer cmd, Camera camera)
+        {
+            if (!_afterFogArmed || !isActiveAndEnabled) return;
+            if (_particles == null || volume == null || particleMaterial == null) return;
+
+            int vertexCount = _capacityPow2 * VerticesPerParticle;
+            if (!_rerouteDensity)
+            {
+                cmd.DrawProcedural(Matrix4x4.identity, particleMaterial, 0,
+                                   MeshTopology.Triangles, vertexCount, 1, _mpb);
+            }
+            else if (camera == _densityCamera && densityMaterial != null)
+            {
+                // The composite is camera-locked like the queue-time path (RenderParams.camera):
+                // its density field was splatted with ONE camera's matrices.
+                WriteDensityCompositeProps();
+                cmd.DrawProcedural(Matrix4x4.identity, densityMaterial, 0,
+                                   MeshTopology.Triangles, CompositeVertexCount, 1, _densityMpb);
+            }
+
+            Material sprayDrawMaterial = sprayMaterial != null ? sprayMaterial : particleMaterial;
+            cmd.DrawProcedural(Matrix4x4.identity, sprayDrawMaterial, 0,
+                               MeshTopology.Triangles, vertexCount, 1, _sprayMpb);
         }
 
         // Fullscreen triangle that shades the splatted density as connected foam. The bounds
         // keep it culled with the body; queue Transparent+5 draws it over the water surface
         // but under the spray/splash billboards.
         void DrawDensityComposite()
+        {
+            WriteDensityCompositeProps();
+            var rp = new RenderParams(densityMaterial)
+            {
+                worldBounds = volume.SimWorldBounds,
+                matProps = _densityMpb,
+                // The density field was projected with ONE camera's matrices; drawing the
+                // composite into any other camera (scene view, secondary cams) shows a foam
+                // layer that translates with the main camera. Gate it to its own camera -
+                // other views keep the spray billboards, which are world-anchored.
+                camera = _densityCamera
+            };
+            Graphics.RenderPrimitives(rp, MeshTopology.Triangles, CompositeVertexCount);
+        }
+
+        // Property fill only, shared by the queue-time submit above and the after-fog
+        // re-submit (RenderAfterFog) - split so the two paths can never drift.
+        void WriteDensityCompositeProps()
         {
             _densityMpb.SetBuffer(ID_FoamDensityShader, _density);
             _densityMpb.SetBuffer(ID_FoamDensityDepthShader, _densityDepth);
@@ -760,18 +859,6 @@ namespace AbstractOcclusion.WebGpuWater
             _densityMpb.SetVector(ID_DensityCamForward, densityCamTransform.forward);
             // Veil values from the master profile ride over the material (assets stay clean).
             if (profile != null) profile.WriteVeil(_densityMpb);
-
-            var rp = new RenderParams(densityMaterial)
-            {
-                worldBounds = volume.SimWorldBounds,
-                matProps = _densityMpb,
-                // The density field was projected with ONE camera's matrices; drawing the
-                // composite into any other camera (scene view, secondary cams) shows a foam
-                // layer that translates with the main camera. Gate it to its own camera -
-                // other views keep the spray billboards, which are world-anchored.
-                camera = _densityCamera
-            };
-            Graphics.RenderPrimitives(rp, MeshTopology.Triangles, CompositeVertexCount);
         }
     }
 }

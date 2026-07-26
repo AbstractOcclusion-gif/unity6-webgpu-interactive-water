@@ -26,9 +26,12 @@
 
 float    _ExclusionCount; // active volumes (float so it binds like _WaveCount); 0 disables
 float4x4 _ExclusionWorldToBox[EXCLUSION_MAX_VOLUMES];
-// Per-volume carve-boundary edge look (WaterExclusionVolume fields, published alongside the
-// matrices in the SAME slot order): rgb = tint the edges shade toward (black = pure
-// occlusion), a = intensity [0..1]; params.x = spread (band reach in unit-box coords).
+// Per-volume carve-boundary edge look + particle handling (WaterExclusionVolume fields,
+// published alongside the matrices in the SAME slot order): color rgb = tint the edges
+// shade toward (black = pure occlusion), color a = intensity [0..1]; params.x = edge
+// spread (band reach in unit-box coords), params.y = affect-particles flag (0 lets
+// particles through), params.z = particle fade band (unit-box interior depth of the
+// dissolve shell; 0 = hard clip), params.w = particle dissolve-speed multiplier.
 float4   _ExclusionEdgeColor[EXCLUSION_MAX_VOLUMES];
 float4   _ExclusionEdgeParams[EXCLUSION_MAX_VOLUMES];
 
@@ -69,6 +72,73 @@ float ExclusionInteriorDepth(float3 worldPos)
         depth = max(depth, boxDepth);
     }
     return depth;
+}
+
+// ---- Particle culling (foam/spray sprites, splash crown + droplets) ------------------
+// The particle consumers respect the per-volume handling in _ExclusionEdgeParams: a
+// volume with params.y = 0 does not touch particles at all. Callers gate every use on
+// _ExclusionCount > 0.5 (the zero-cost off state, as everywhere else in this header).
+
+// Floor under the fade band so a 0 (hard clip) never divides by zero: sharper than any
+// visible band, so "0" still reads as a razor edge on the face.
+#define EXCLUSION_PARTICLE_BAND_MIN 1e-4
+
+// True when worldPos is inside a PARTICLE-AFFECTING volume - the spawn-rejection test
+// (InsideExclusion would also veto spawns under volumes that opted their particles out).
+bool InsideParticleExclusion(float3 worldPos)
+{
+    int count = (int)_ExclusionCount;
+    [loop]
+    for (int i = 0; i < count; i++)
+    {
+        if (_ExclusionEdgeParams[i].y < 0.5) continue;
+        float3 boxLocal = mul(_ExclusionWorldToBox[i], float4(worldPos, 1.0)).xyz;
+        if (all(abs(boxLocal) <= EXCLUSION_BOX_HALF_EXTENT)) return true;
+    }
+    return false;
+}
+
+// Alpha multiplier for a particle FRAGMENT at worldPos: 1 outside every particle-affecting
+// volume (and exactly ON a face), dissolving to 0 across each volume's fade band just
+// inside its faces. min() across volumes, so overlapping boxes take the strongest cut.
+// This is the render-side guarantee the sim's age-boost dissolve cannot give: it clips
+// the parts of a big billboard (the Shuriken crown) that PROTRUDE into a dry interior,
+// and it hides sim particles the moment they are swept over, however long their life.
+float ExclusionParticleAttenuation(float3 worldPos)
+{
+    int count = (int)_ExclusionCount;
+    float atten = 1.0;
+    [loop]
+    for (int i = 0; i < count; i++)
+    {
+        if (_ExclusionEdgeParams[i].y < 0.5) continue;
+        float3 boxLocal = mul(_ExclusionWorldToBox[i], float4(worldPos, 1.0)).xyz;
+        float3 inset = EXCLUSION_BOX_HALF_EXTENT - abs(boxLocal);
+        float depth = min(inset.x, min(inset.y, inset.z)); // < 0 outside this box
+        float band = max(_ExclusionEdgeParams[i].z, EXCLUSION_PARTICLE_BAND_MIN);
+        atten = min(atten, saturate(1.0 - depth / band));
+    }
+    return atten;
+}
+
+// Deepest interior depth of worldPos across the particle-affecting volumes plus that
+// volume's dissolve-speed multiplier: x = depth (0 = outside them all, unit-box coords,
+// the ExclusionInteriorDepth convention), y = params.w of the deepest volume (1 when
+// outside). The compute Update kernel scales its age-boost dissolve by y.
+float2 ExclusionParticleInteriorDepth(float3 worldPos)
+{
+    int count = (int)_ExclusionCount;
+    float2 result = float2(0.0, 1.0);
+    [loop]
+    for (int i = 0; i < count; i++)
+    {
+        if (_ExclusionEdgeParams[i].y < 0.5) continue;
+        float3 boxLocal = mul(_ExclusionWorldToBox[i], float4(worldPos, 1.0)).xyz;
+        float3 inset = EXCLUSION_BOX_HALF_EXTENT - abs(boxLocal);
+        float boxDepth = min(inset.x, min(inset.y, inset.z));
+        if (boxDepth > result.x) result = float2(boxDepth, _ExclusionEdgeParams[i].w);
+    }
+    return result;
 }
 
 // Total length of the ray segment [origin, origin + dir * maxDist] that lies inside

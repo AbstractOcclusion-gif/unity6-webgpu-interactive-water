@@ -13,6 +13,7 @@
 // pass under them. The drift is driven on the CPU from WaterVolume's height
 // readback, so it tracks the same surface the shader renders.
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace AbstractOcclusion.WebGpuWater
 {
@@ -129,10 +130,72 @@ namespace AbstractOcclusion.WebGpuWater
             }
         }
 
+        // ---- after-fog reroute (particle/fog sorting fix) --------------------------------
+        // The fullscreen underwater fog runs AFTER all transparents and integrates to opaque
+        // depth, so at queue time it painted the water column's fog OVER these Shuriken sprites
+        // (crown ring + CPU-fallback droplets). While the fog is armed, their renderers are
+        // muted (forceRenderingOff) and WaterUnderwaterFogFeature's particle pass DrawRenderers
+        // them AFTER the fog instead; SplashParticles.shader prices its own camera->particle
+        // fog (WaterParticleFog.hlsl). Mirrors WaterFoamParticles' reroute of the GPU quads.
+
+        /// <summary>Live emitters, drawn by the fog feature's after-fog particle pass.</summary>
+        internal static readonly System.Collections.Generic.List<WaterSplashEmitter> Live =
+            new System.Collections.Generic.List<WaterSplashEmitter>();
+
+        ParticleSystemRenderer _dropletRenderer; // lazy cache: the fallback droplets' renderer
+        ParticleSystemRenderer _crownRenderer;   // lazy cache: the crown ring's renderer
+
+        void OnEnable()
+        {
+            if (!Live.Contains(this)) Live.Add(this);
+        }
+
+        void OnDisable()
+        {
+            Live.Remove(this);
+            SetAfterFogReroute(false); // never leave a muted renderer behind
+        }
+
+        // Cheap enough to run every frame (two null checks + two bool writes); re-resolves the
+        // renderers lazily so systems assigned after enable are still picked up.
+        void SetAfterFogReroute(bool reroute)
+        {
+            if (particles != null)
+            {
+                if (_dropletRenderer == null)
+                    _dropletRenderer = particles.GetComponent<ParticleSystemRenderer>();
+                if (_dropletRenderer != null) _dropletRenderer.forceRenderingOff = reroute;
+            }
+            if (crownParticles != null)
+            {
+                if (_crownRenderer == null)
+                    _crownRenderer = crownParticles.GetComponent<ParticleSystemRenderer>();
+                if (_crownRenderer != null) _crownRenderer.forceRenderingOff = reroute;
+            }
+        }
+
+        /// <summary>Issues the muted Shuriken draws into the after-fog pass. forceRenderingOff
+        /// only stops the automatic queue submission - manual DrawRenderer still works, which is
+        /// exactly the split this reroute needs.</summary>
+        internal void DrawAfterFog(RasterCommandBuffer cmd)
+        {
+            if (!isActiveAndEnabled) return;
+            if (_dropletRenderer != null && particles != null && particles.particleCount > 0
+                && _dropletRenderer.sharedMaterial != null)
+                cmd.DrawRenderer(_dropletRenderer, _dropletRenderer.sharedMaterial, 0, 0);
+            if (_crownRenderer != null && crownParticles != null && crownParticles.particleCount > 0
+                && _crownRenderer.sharedMaterial != null)
+                cmd.DrawRenderer(_crownRenderer, _crownRenderer.sharedMaterial, 0, 0);
+        }
+
         // Pop -> stick -> drift. Runs after the controllers have stepped their sims so the
         // surface query reflects this frame's waves.
         void LateUpdate()
         {
+            // After-fog reroute gate, refreshed BEFORE the early-outs below: the crown can be
+            // alive while the droplet system holds zero particles, and the mute must track the
+            // fog state every frame either way (see the reroute comment block above).
+            SetAfterFogReroute(WaterVolume.UnderwaterFogActive);
             if (particles == null) return;
             // Idle diet: with the GPU spray path active this system usually holds ZERO droplets
             // (only the crown lives here), yet the round-trip below still copied the whole

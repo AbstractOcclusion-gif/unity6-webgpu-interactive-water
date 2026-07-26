@@ -1015,6 +1015,11 @@ namespace AbstractOcclusion.WebGpuWater
                      "receiver/pool shaders. Needs the WaterCausticProjection render feature on the camera's " +
                      "URP renderer. Off = only surfaces that sample the caustic map show caustics.")]
             public bool screenSpaceCaustics = false;
+            [Tooltip("THIS body's intensity for the screen-space caustics above: multiplies the render " +
+                     "feature's global Caustic Strength for this body's projection only. 1 = the feature's " +
+                     "strength as-is, 0 = invisible. (The feature asset on the URP renderer also carries " +
+                     "the global Caustic Strength + Tint shared by all bodies.)")]
+            [Range(0f, 2f)] public float screenCausticIntensity = 1f;
             [Tooltip("How fast god-ray shafts fade with depth, per world unit of depth.")]
             [Range(0f, 8f)] public float godRayDepthFade = 0.5f;
             [Tooltip("Mirror the fog extinction into the depth extinction each frame, so one dial " +
@@ -1028,6 +1033,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal float depthDarkenStrength => depthAttenuation.depthDarkenStrength;
         internal float causticDepthFade => depthAttenuation.causticDepthFade;
         internal bool screenSpaceCaustics => depthAttenuation.screenSpaceCaustics;
+        internal float screenCausticIntensity => depthAttenuation.screenCausticIntensity;
         internal float godRayDepthFade => depthAttenuation.godRayDepthFade;
         internal bool linkDepthToFog => depthAttenuation.linkDepthToFog;
 

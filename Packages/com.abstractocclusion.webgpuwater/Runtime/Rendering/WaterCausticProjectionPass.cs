@@ -41,6 +41,7 @@ namespace AbstractOcclusion.WebGpuWater
         // Reused each frame so the per-body loop allocates no garbage (mirrors WaterChunkDepthPass).
         readonly MaterialPropertyBlock _block = new MaterialPropertyBlock();
         static readonly List<WaterVolume> s_Bodies = new List<WaterVolume>();
+        static readonly int ID_ScreenCausticIntensity = Shader.PropertyToID("_ScreenCausticIntensity");
 
         // Set by the feature each frame before enqueue: whether to run the refracted-shadow multiply pass.
         internal bool renderRefractedShadow = true;
@@ -110,6 +111,9 @@ namespace AbstractOcclusion.WebGpuWater
                     // _CausticDepthFade + occluder flag), so the fullscreen projection reprojects through this
                     // body's caustics - exactly how WaterMembership relights a floater with its own lake.
                     body.WriteBodyProps(d.block);
+                    // Per-body intensity: scales the feature's global Caustic Strength for THIS
+                    // body's projection (the slider next to the Screen-Space Caustics opt-in).
+                    d.block.SetFloat(ID_ScreenCausticIntensity, body.screenCausticIntensity);
                     CoreUtils.DrawFullScreen(ctx.cmd, d.material, d.block, d.shaderPass);
                 }
             });

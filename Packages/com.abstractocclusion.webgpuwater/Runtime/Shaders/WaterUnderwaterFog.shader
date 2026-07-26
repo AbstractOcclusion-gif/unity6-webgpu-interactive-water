@@ -34,6 +34,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         float _UnderwaterSurfaceY;
         float _UnderwaterUnbounded; // 1 = ocean half-space, 0 = clip to this body's box (pond)
         float _UnderwaterFogSimple; // 1 = tier Simple mode: flat waterline, skip the crossing march
+        // Turbulence-foam exemption (see the block in UnderwaterFog): the sim foam floats ON TOP
+        // of the very column this fog paints from above, so it must show through the veil.
+        // Declarations match WaterSurfaceFoamSampling.hlsl (per-body globals via the primary
+        // bridge); _SimWindowed comes from WaterVolume.hlsl above. _CameraUnderwater is the
+        // PublishUnderwater global the exclusion wall reads too.
+        sampler2D _FoamMask;
+        float _FoamEnabled;
+        float _FoamStrength;
+        float _CameraUnderwater;
         // Ocean-surface eye-depth prepass (KWS-style rendered waterline): the DISPLACED surface's
         // linear eye depth per pixel (0 = no surface rasterised there), written by WaterSurface's
         // "OceanSurfaceEyeDepth" pass via WaterUnderwaterFogPass. When valid, the fog's crossing
@@ -484,7 +493,27 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // the feature is off (returns 1) or off the shore field (deep sentinel -> deep-clarity end).
             float clarity = WaterDepthClarity(ShoreShoalDepth(sceneWorld.xz));
             float density = _WaterFogDensity * lerp(CLARITY_FOG_DENSITY_MAX, 1.0, clarity);
-            return exp(-_WaterExtinction.rgb * (density * pathLen));
+            float3 transmittance = exp(-_WaterExtinction.rgb * (density * pathLen));
+
+            // Turbulence-foam exemption: seen from ABOVE (camera in air, the wet span starts at
+            // the waterline), the sim foam floats ON TOP of the very column integrated here -
+            // painting the column's fog over it washed the foam toward the fog colour exactly as
+            // it faded ("faded foam picks the fog colour"). Where foam covers the surface, pull
+            // the transmittance AND the depth darkening toward identity by its coverage; both
+            // hardware passes derive from these two values, so absorb and in-scatter back off
+            // together and the surface's own crisp lit foam shows through. Whole-body bounded
+            // sims only (a windowed RT's frame is not pool-normalized), and never underwater -
+            // there the fog is IN FRONT of the foam and must stay.
+            if (_FoamEnabled > 0.5 && _CameraUnderwater < 0.5
+                && _UnderwaterUnbounded < 0.5 && _SimWindowed < 0.5 && pathLen > 0.0)
+            {
+                float2 foamUV = WorldToPool(wetStart).xz * 0.5 + 0.5;
+                float coverage = saturate(tex2Dlod(_FoamMask, float4(foamUV, 0.0, 0.0)).r
+                                          * _FoamStrength);
+                transmittance = lerp(transmittance, float3(1.0, 1.0, 1.0), coverage);
+                depthAttenuation = lerp(depthAttenuation, float3(1.0, 1.0, 1.0), coverage);
+            }
+            return transmittance;
         }
 
         // Interleaved-gradient dither (~+-0.5/255) added to the fog output to break the residual 8-bit

@@ -30,6 +30,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterCausticProjection"
         // published _CausticDepthFade global so it stays consistent with the surfaces automatically.
         _CausticStrength ("Caustic Strength", Range(0,8)) = 4
         _CausticTint ("Caustic Tint", Color) = (1,1,1,1)
+        // Per-BODY multiplier on Caustic Strength, set per draw by WaterCausticProjectionPass from
+        // the body's Screen Caustic Intensity slider (each projecting body can tune its own brightness).
+        _ScreenCausticIntensity ("Per-Body Intensity", Range(0,2)) = 1
         // Darkening applied by the refracted object shadow (0 = none, 1 = fully black under an occluder).
         // Matches AnalyticPool's Object Shadow Strength default.
         _RefractedShadowStrength ("Refracted Shadow Strength", Range(0,1)) = 0.6
@@ -70,6 +73,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterCausticProjection"
             float _CausticStrength;
             float4 _CausticTint;
             float _RefractedShadowStrength;
+            float _ScreenCausticIntensity; // per-body multiplier (set per draw via the pass's MPB)
         CBUFFER_END
 
         // Manual bilinear height sample (COPY of WaterReceiver's local helper): WebGPU cannot hardware-filter
@@ -133,7 +137,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterCausticProjection"
             float causticFade = DepthFadeScalar(worldPos.y, surfaceY, _CausticDepthFade);
             float lit = OccluderLitFromGreen(poolPos.y, causticSample.g);
             float3 caustic = _CausticTint.rgb
-                           * (causticSample.r * _CausticStrength * causticFade * lit * underwaterMask);
+                           * (causticSample.r * _CausticStrength * _ScreenCausticIntensity
+                              * causticFade * lit * underwaterMask);
             return half4(caustic, 0.0); // additive (Blend One One); alpha unused
         }
 
