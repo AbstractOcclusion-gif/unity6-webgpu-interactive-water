@@ -65,6 +65,10 @@ namespace AbstractOcclusion.WebGpuWater
             for (int i = 0; i < bodies.Count; i++)
             {
                 if (!bodies[i].TryRaycastSurface(ray, out Vector3 hit)) continue;
+                // Dry-interior exclusion: the surface plane still raycasts inside a carve, but
+                // there is no water there to ripple or splash - a click in a dry room must not
+                // trigger surface particles. Falls through to Orbit, like clicking empty space.
+                if (WaterExclusionVolume.ContainsPoint(hit)) continue;
                 float sqr = (hit - ray.origin).sqrMagnitude;
                 if (sqr < bestSqr) { bestSqr = sqr; best = bodies[i]; worldHit = hit; }
             }
@@ -153,6 +157,10 @@ namespace AbstractOcclusion.WebGpuWater
                 {
                     if (_dragBody == null) break;
                     if (!_dragBody.TryRaycastSurface(PixelRay(m), out Vector3 hit)) break;
+                    // Dry-interior exclusion: a drag sweeping across a carve must not inject
+                    // ripples/splashes inside it - skip these samples, keep the drag alive so
+                    // injection resumes the moment the cursor leaves the dry footprint.
+                    if (WaterExclusionVolume.ContainsPoint(hit)) break;
 
                     // Throttle injection by world distance travelled so holding the cursor
                     // still doesn't pump energy into the same texels every frame.

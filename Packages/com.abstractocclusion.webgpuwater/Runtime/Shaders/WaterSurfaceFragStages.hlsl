@@ -436,44 +436,57 @@ FoamLayer OceanWhitecapLayer(v2f i, WaterGeomStage g, float2 foamWorldDdx,
     // the coverage is a black-point threshold that dissolves the pattern in (Crest's
     // WhiteFoamTexture). Whitecaps are matte, so the resulting alpha knocks the specular
     // reflection down before compositing (this surface expresses gloss as the reflection
-    // term). Ocean-only; the analytic/pool path leaves this at 0. ----
+    // term). Coverage source: FFT cascade accumulator on oceans, instantaneous geometry
+    // foam on analytic bodies with the _LbwGeomFoamFloor opt-in (ocean-surface chunks);
+    // pools leave this at 0. ----
     float oceanFoam = 0.0;                       // textured coverage: drives matte + blend
     float3 oceanFoamPattern = float3(1.0, 1.0, 1.0);
     float2 oceanFoamSampleXZ = i.largeWaveSourceXZ; // parallax-lifted pattern-sample point
+    float coverage = 0.0;
     if (_OceanFftActive > 0.5)
     {
         // The surf band is the surf system's territory: the FFT foam ACCUMULATOR
         // is depth-blind (its small cascades still whitecap at 2 m of water), so
         // accumulated ocean whitecaps fade out where the fronts/whitewash own the
         // shallows. Inert off surf bodies (the gate is 0 there).
-        float coverage = OceanFftFoam(i.largeWaveSourceXZ)
-                       * (1.0 - LbwGeometryFoamGate(shoreFrag));
-        if (coverage > FOAM_MASK_EPSILON)
-        {
-            // Parallax: sample the PATTERN where a layer floating just above the surface
-            // meets the view ray (coverage stays at the true surface point - foam is still
-            // WHERE the sim says, it just reads as sitting on top of the water).
-            float3 viewToCam = -incomingRay;
-            oceanFoamSampleXZ = i.largeWaveSourceXZ + viewToCam.xz
-                * (OCEAN_FOAM_PARALLAX_HEIGHT / max(viewToCam.y, OCEAN_FOAM_PARALLAX_MIN_VIEW_Y));
+        coverage = OceanFftFoam(i.largeWaveSourceXZ)
+                 * (1.0 - LbwGeometryFoamGate(shoreFrag));
+    }
+    else if (_LbwGeomFoamFloor > 0.0)
+    {
+        // ANALYTIC whitecaps (ocean-surface chunks - see _LbwGeomFoamFloor): no accumulator
+        // exists on the analytic path, so the coverage is the INSTANTANEOUS geometry foam
+        // (Gerstner Jacobian pinch + slope steepness, already computed by the normal stage) -
+        // crests whiten as they pinch and fade as they relax. It then rides the exact same
+        // pattern/dissolve/lit pipeline as the FFT whitecaps below.
+        coverage = g.surfGeomFoam;
+    }
+    if (coverage > FOAM_MASK_EPSILON)
+    {
+        // Parallax: sample the PATTERN where a layer floating just above the surface
+        // meets the view ray (coverage stays at the true surface point - foam is still
+        // WHERE the sim says, it just reads as sitting on top of the water).
+        float3 viewToCam = -incomingRay;
+        oceanFoamSampleXZ = i.largeWaveSourceXZ + viewToCam.xz
+            * (OCEAN_FOAM_PARALLAX_HEIGHT / max(viewToCam.y, OCEAN_FOAM_PARALLAX_MIN_VIEW_Y));
 
-            // Stock white _FoamTex -> pattern ~= 1 -> solid coverage (no regression); a real
-            // foam texture dissolves in as lace. Distance anti-tiling (second rotated octave)
-            // hides the repeat toward the horizon; the contrast sharpen breaks round blobs.
-            float foamCamDist = distance(i.largeWaveSourceXZ, _WorldSpaceCameraPos.xz);
-            oceanFoamPattern = SampleOceanWhitecapPattern(oceanFoamSampleXZ, foamCamDist,
-                                                          foamWorldDdx, foamWorldDdy);
-            // Shared KWS contrast/dissolve law (FoamDissolve above); no erosion term.
-            oceanFoam = FoamDissolve(oceanFoamPattern.r, coverage, _OceanFoamFeather, 0.0);
-        }
+        // Stock white _FoamTex -> pattern ~= 1 -> solid coverage (no regression); a real
+        // foam texture dissolves in as lace. Distance anti-tiling (second rotated octave)
+        // hides the repeat toward the horizon; the contrast sharpen breaks round blobs.
+        float foamCamDist = distance(i.largeWaveSourceXZ, _WorldSpaceCameraPos.xz);
+        oceanFoamPattern = SampleOceanWhitecapPattern(oceanFoamSampleXZ, foamCamDist,
+                                                      foamWorldDdx, foamWorldDdy);
+        // Shared KWS contrast/dissolve law (FoamDissolve above); no erosion term.
+        oceanFoam = FoamDissolve(oceanFoamPattern.r, coverage, _OceanFoamFeather, 0.0);
     }
 
     float oceanFoamAlpha = 0.0;
     float3 oceanFoamLook = float3(0.0, 0.0, 0.0);
 
     // ---- Ocean whitecap look: lit with the same wrapped-sun + ambient model as the pond
-    // foam so crests shade with the waves instead of reading as flat paint. Gated on the
-    // FFT ocean, so pools stay unchanged. ----
+    // foam so crests shade with the waves instead of reading as flat paint. Reached only
+    // when a coverage source above produced foam (FFT ocean, or the analytic floor), so
+    // pools stay unchanged. ----
     if (oceanFoam > FOAM_MASK_EPSILON)
     {
         // ---- Foam relief: emboss the lighting normal by the foam normal map (same flipbook,
@@ -587,7 +600,11 @@ FoamLayer SurfWhitewashLayer(v2f i, WaterGeomStage g, float2 foamWorldDdx,
     float3 normal = g.normal;
     float3 incomingRay = g.incomingRay;
     SurfWaveSample surfFrag = g.surf;
-    float surfGeomFoam = g.surfGeomFoam;
+    // Off surf bodies the front terms are inert, but the geometry foam can now be non-zero
+    // there too (_LbwGeomFoamFloor - the ANALYTIC whitecap source for ocean-surface chunks,
+    // rendered by OceanWhitecapLayer): keep it out of the whitewash on those bodies or a
+    // chunk would draw the same foam through two pipelines at once.
+    float surfGeomFoam = (_SurfActive > 0.5) ? g.surfGeomFoam : 0.0;
     // ---- Surf whitewash look: ANALYTIC coverage from the breaker-front layer (broken
     // bores + trailing churn) + GEOMETRY foam (the surface's own Jacobian/slope,
     // computed beside the normal above - white glued to whatever the rendered waves

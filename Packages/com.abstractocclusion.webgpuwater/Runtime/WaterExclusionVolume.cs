@@ -157,6 +157,27 @@ namespace AbstractOcclusion.WebGpuWater
         /// abs(local) &lt;= 0.5 per axis.</summary>
         internal Matrix4x4 WorldToBoxMatrix() => BoxToWorldMatrix().inverse;
 
+        // MUST equal EXCLUSION_BOX_HALF_EXTENT (WaterExclusion.hlsl): the unit-box half-extent
+        // the world->box matrices map into, shared by the shader inside test and the CPU mirror.
+        const float BoxHalfExtent = 0.5f;
+
+        /// <summary>True when the world point lies inside ANY active exclusion volume - the CPU
+        /// mirror of the shader's InsideExclusion (same WorldToBoxMatrix frame, same half-extent).
+        /// Used by CPU-side gates that must agree with the render carve, e.g. the input router
+        /// refusing to ripple/splash a click that lands inside a dry room.</summary>
+        internal static bool ContainsPoint(Vector3 worldPoint)
+        {
+            for (int i = 0; i < _active.Count; i++)
+            {
+                Vector3 local = _active[i].WorldToBoxMatrix().MultiplyPoint3x4(worldPoint);
+                if (Mathf.Abs(local.x) <= BoxHalfExtent
+                    && Mathf.Abs(local.y) <= BoxHalfExtent
+                    && Mathf.Abs(local.z) <= BoxHalfExtent)
+                    return true;
+            }
+            return false;
+        }
+
         /// <summary>Fill the uniform buffers (each length MaxVolumes exactly) with up to
         /// MaxVolumes active volumes and return the count used. <paramref name="matrices"/> is
         /// required; <paramref name="edgeColors"/>/<paramref name="edgeParams"/> (the per-volume

@@ -1225,13 +1225,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 961739749}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0.025304608, z: 0, w: 0.9996798}
-  m_LocalPosition: {x: 0, y: 5.5, z: -10}
+  m_LocalRotation: {x: -0, y: -0.84577435, z: 0, w: -0.5335408}
+  m_LocalPosition: {x: 0, y: -1.47, z: 15.59}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 2.9, z: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: -244.49, z: 0}
 --- !u!114 &961739755
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1345,7 +1345,7 @@ ParticleSystemRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: ac8aedb79c3f2b54392e126b79c491cb, type: 2}
+  - {fileID: 2100000, guid: 909b276cc9362bf4e8526facffff30c2, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -6181,7 +6181,7 @@ ParticleSystemRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: defef1ba89e773a4480a25f2504a266f, type: 2}
+  - {fileID: 2100000, guid: 2b1eaf485cc59674c88dda7e3ca2d131, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -11089,8 +11089,8 @@ MonoBehaviour:
   sun: {fileID: 177695280}
   tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
   sky: {fileID: 8900000, guid: 85bd64faed533b54a88c144de0f680b6, type: 3}
-  foamPatternTexture: {fileID: 0}
-  foamPatternGrid: {x: 1, y: 1}
+  foamPatternTexture: {fileID: 2800000, guid: 74ed02889dbed0e4096685ebafa011b6, type: 3}
+  foamPatternGrid: {x: 4, y: 4}
   foamPatternFps: 10
   foamReliefStrength: 1
   oceanWhitecapTexture: {fileID: 2800000, guid: 1ee279c16b027ad48a8eb248749ff66c, type: 3}
@@ -11126,6 +11126,11 @@ MonoBehaviour:
     largeGodRayAnisotropy: 0.29
     largeGodRayExtinction: 0
     largeGodRayCausticStrength: 4
+    largeGodRayCausticSmooth: 2
+    largeGodRayCausticDepthSoften: 0.25
+    largeCausticTimeScale: 0.5
+    largeCausticRippleScale: 3
+    largeCausticRippleStrength: 1
     oceanFoamWindThreshold: 2
     oceanFoamCoverage: 0.9
     oceanFoamStrength: 0.9
@@ -11197,6 +11202,19 @@ MonoBehaviour:
     strength: 0.4
     tileMeters: 20
     scrollSpeed: 0.5
+  underwaterSurfaceSettings:
+    physicalFresnel: 1
+    tirEdgeSoftness: 0.08
+    fresnelFloor: 0
+    reflectionStrength: 0.277
+    mirrorWaterBlend: 0.85
+    foamSilhouetteDarken: 0.6
+    foamSunGlow: 0.4
+    detailNormalStrength: 1
+    meniscus: 1
+    meniscusWidthPixels: 5
+    meniscusStrength: 0.7
+    meniscusWarp: 0.35
   _legacyReflectionMode: 1
   _legacyEnvironmentSource: 0
   timeScale: 1
@@ -11217,7 +11235,7 @@ MonoBehaviour:
     waterFog: 1
     fogColor: {r: 0.0132, g: 0.2439, b: 0.2391, a: 1}
     fogExtinction: {r: 0.8125, g: 0.0667, b: 0.1043, a: 1}
-    fogDensity: 0.6
+    fogDensity: 1
     waterOpacity: 0
   _legacyWaterFog: 0
   _legacyFogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}

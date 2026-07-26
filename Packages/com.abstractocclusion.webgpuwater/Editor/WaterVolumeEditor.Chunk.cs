@@ -42,6 +42,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 ChunkSlider("chunkRefraction", ChunkRefractionLabel, ChunkUnitMin, ChunkUnitMax);
                 ChunkSlider("chunkReflectivity", ChunkReflectivityLabel, ChunkUnitMin, ChunkUnitMax);
                 ChunkSlider("chunkMeniscus", ChunkMeniscusLabel, ChunkUnitMin, ChunkUnitMax);
+                ChunkSlider("chunkFoamStrength", ChunkFoamLabel, ChunkUnitMin, ChunkFoamMax);
                 ChunkSlider("chunkGodRayStrength", ChunkGodRayLabel, ChunkUnitMin, ChunkGodRayMax);
                 SerializedProperty godRayColor = Prop("chunkGodRayColor");
                 if (godRayColor != null) EditorGUILayout.PropertyField(godRayColor, ChunkGodRayColorLabel);
@@ -66,6 +67,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const float ChunkUnitMin = 0f;
         const float ChunkUnitMax = 1f;
         const float ChunkGodRayMax = 4f;
+        const float ChunkFoamMax = 3f;
 
         static readonly GUIContent ChunkFootprintLabel = new GUIContent(
             "Footprint", "None = an ordinary body. Box / Sphere turn this body into a floating chunk of " +
@@ -90,6 +92,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         static readonly GUIContent ChunkMeniscusLabel = new GUIContent(
             "Meniscus", "Strength of the thin surface-tension line drawn along the waterline on the " +
             "near-plane 'at 0' frames. 0 = off.");
+        static readonly GUIContent ChunkFoamLabel = new GUIContent(
+            "Whitecap Foam", "Whitecaps on the chunk's OPEN-WATER surface, driven by the analytic waves' " +
+            "own crest pinch + steepness (needs some Choppiness/Amplitude to break). 1 = physical, above " +
+            "1 whitens milder crests too, 0 = off. The look rides the body's Ocean Foam colour/feather.");
         static readonly GUIContent ChunkGodRayLabel = new GUIContent(
             "God Ray Strength", "Volumetric light shafts inside the chunk, focused by its own caustics and " +
             "shaped to the shape + fill level (marched in the shell wall). 0 = off.");

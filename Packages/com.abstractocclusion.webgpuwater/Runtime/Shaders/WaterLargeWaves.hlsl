@@ -411,6 +411,14 @@ void LargeBodyWaveHeightDispShore(float2 worldXZ, ShoreData shore, SurfWaveSampl
 #define LBW_BREAK_SLOPE_MAX 0.65
 #define LBW_PINCH_GAIN      1.5
 
+// Ambient geometry-foam floor, published PER BODY (0 default). An ocean-surface CHUNK has
+// no FFT accumulator (the FFT runs only for unbounded clipmap oceans) and no surf band -
+// with the shore-gated gate below returning 0, it had NO whitecap source at all. The floor
+// lets the analytic Jacobian/steepness foam emit off-shore for exactly those bodies
+// (WaterUniformPublisher sets 1 for chunk + open-water, 0 everywhere else, so FFT oceans
+// and every existing scene are byte-identical).
+float _LbwGeomFoamFloor;
+
 // Near-shore gate for the geometry foam - and the whitecap-suppression weight in the fragment
 // (accumulated FFT whitecaps fade by 1 - gate where the surf owns the shallows). This is EXACTLY
 // SurfFieldMask: the same window, wet fade and shore-exposure gate the surf whitewash itself uses,
@@ -419,7 +427,7 @@ void LargeBodyWaveHeightDispShore(float2 worldXZ, ShoreData shore, SurfWaveSampl
 // and in the outer band ring where NO surf foam appears - a visibly barren strip of clean water.
 float LbwGeometryFoamGate(ShoreData shore)
 {
-    if (_SurfActive < 0.5) return 0.0;
+    if (_SurfActive < 0.5) return _LbwGeomFoamFloor;
     return SurfFieldMask(shore.depth, shore.toShore, shore.influence);
 }
 

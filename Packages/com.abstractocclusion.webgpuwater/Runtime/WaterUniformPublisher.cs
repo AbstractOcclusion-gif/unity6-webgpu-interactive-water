@@ -90,6 +90,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_OceanFoamColor = Shader.PropertyToID("_OceanFoamColor");
         static readonly int ID_OceanFoamTileSize = Shader.PropertyToID("_OceanFoamTileSize");
         static readonly int ID_OceanFoamFeather = Shader.PropertyToID("_OceanFoamFeather");
+        static readonly int ID_LbwGeomFoamFloor = Shader.PropertyToID("_LbwGeomFoamFloor");
         static readonly int ID_LargeWaveAmp = Shader.PropertyToID("_LargeWaveAmplitude");
         static readonly int ID_LargeWaveWind = Shader.PropertyToID("_LargeWaveWindHeading");
         static readonly int ID_LargeWaveChop = Shader.PropertyToID("_LargeWaveChoppiness");
@@ -344,6 +345,13 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetColor(ID_OceanFoamColor, _body.OceanFoamColor);
             sink.SetFloat(ID_OceanFoamTileSize, _body.OceanFoamTileSize);
             sink.SetFloat(ID_OceanFoamFeather, _body.OceanFoamFeather);
+            // Ambient geometry-foam floor: an ocean-surface CHUNK has no FFT accumulator and no
+            // surf band, so the analytic Jacobian/steepness foam is its ONLY whitecap source -
+            // enabled there and nowhere else (FFT oceans + every existing scene publish 0 and
+            // stay byte-identical). The value is the body's Whitecap Foam knob: 1 = physical
+            // pinch/steepness, >1 whitens milder crests, 0 = off. See LbwGeometryFoamGate.
+            sink.SetFloat(ID_LbwGeomFoamFloor,
+                          _body.IsChunk && _body.openWater ? _body.chunkFoamStrength : 0f);
             sink.SetFloat(ID_LargeWaveAmp, _body.LargeWaveAmplitudeEffective);
             sink.SetFloat(ID_LargeWaveWind, _body.LargeWaveHeadingRad);
             sink.SetFloat(ID_LargeWaveChop, _body.LargeWaveChoppiness);

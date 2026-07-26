@@ -82,7 +82,6 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
             float  _ChunkGodRayStrength;
             float4 _ChunkGodRayColor;
 
-            #define CHUNK_SUN_WRAP 0.5
             #define CHUNK_COLUMN_EPSILON 1e-4
             #define CHUNK_UV_MIN 0.001
             #define CHUNK_UV_MAX 0.999
@@ -371,9 +370,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
                     // no normals RT. Noisy at silhouettes (a clipped neighbour's far position), but
                     // the sides are fog-dominated so it never reads. Cross order gives an outward N.
                     // Inside the mesh (no front face) frontWS is the constant eye position -> a zero
-                    // gradient -> NaN, so fall back to the view direction. The inside view is the
-                    // cameraInWater veil, which ignores this normal for refraction; it only feeds the
-                    // inscatter sun wrap, where the view direction is a fine stand-in.
+                    // gradient -> NaN, so fall back to the view direction. Harmless: the inside view
+                    // is the cameraInWater veil, which zeroes the reflection sheen and skips the
+                    // refraction bend - the only two consumers of this normal.
                     surfaceN = meshHasEntryFace
                              ? normalize(cross(ddy(frontWS), ddx(frontWS)))
                              : viewDirWS;
@@ -385,8 +384,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
                 }
                 if (dot(surfaceN, viewDirWS) < 0.0) surfaceN = -surfaceN;
 
-                float sunWrap = saturate((dot(surfaceN, _LightDir) + CHUNK_SUN_WRAP) / (1.0 + CHUNK_SUN_WRAP));
-                float3 inscatter = WaterInscatterColor(viewDirWS, _LightDir, _SunColor * sunWrap, 0.0);
+                // FULL sun into the in-scatter - the same convention as the disc surface, the
+                // fullscreen underwater fog and the exclusion wall (WaterInscatterColor's phase
+                // term already provides the directional glow). The old entry-face sun WRAP scaled
+                // the sun by wrap(N.L) of whichever face the ray entered - and by the VIEW
+                // direction when the camera was inside - so the fog's colour and intensity
+                // changed with the viewpoint (above / close / inside / outside all disagreed).
+                // One volume, one water colour: the face normal keeps feeding only the
+                // reflection sheen and the refraction bend below.
+                float3 inscatter = WaterInscatterColor(viewDirWS, _LightDir, _SunColor, 0.0);
                 float3 transmittance = exp(-_WaterExtinction.rgb * (_WaterFogDensity * column));
                 float3 reflection = ChunkSurfaceReflection(surfaceN, viewDirWS);
 

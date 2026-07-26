@@ -263,7 +263,26 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             }
             else
             {
-                // No surface at this pixel: flat rest-plane crossing (the march's far fallback).
+                // No surface at this pixel. A camera SEALED INSIDE a dry exclusion volume (a
+                // sunken room below sea level) makes this fallback lie for CAMERA-UNDER rays:
+                // the ray leaves through the carve pane ABOVE the outside waterline - any
+                // genuinely wet up-ray from in here would see the rendered surface underside
+                // and never reach this branch. The flat rest-plane crossing then fogged the
+                // AIR between the pane and the rest plane: the bright "band above water"
+                // hugging the waterline on the walls. Dry ray, no fog.
+                // SCENE-UNDER rays (camera above the plane looking DOWN through the carve hole
+                // at real water) must NOT take this out: no-surface is their NORMAL state -
+                // the sheet is carved exactly where they cross the plane - and the flat
+                // fallback + dry-span carve prices their fog correctly. Guarding them too
+                // popped the pane fog on/off as the camera bobbed across water level.
+                if (camUnder && _ExclusionCount > 0.5 && InsideExclusion(cam))
+                {
+                    pathLen = 0.0;
+                    deepestY = _VolumeCenter.y;
+                    surfaceRefY = camSurf;
+                    return;
+                }
+                // Flat rest-plane crossing (the march's far fallback).
                 float dySafe = ray.y + (ray.y >= 0.0 ? 1e-4 : -1e-4);
                 hit = cam + ray * saturate((_VolumeCenter.y - cam.y) / dySafe);
             }

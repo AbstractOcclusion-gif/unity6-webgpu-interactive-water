@@ -29,6 +29,10 @@ namespace AbstractOcclusion.WebGpuWater
         // waterline, drawn only on the near-plane "at 0" frames by WaterChunkWall.shader. Look-tune
         // knob - wire an inspector slider in WaterVolumeEditor.Chunk.cs like the others if desired.
         [SerializeField, HideInInspector] internal float chunkMeniscus = 0.5f;
+        // Whitecap foam strength for an OPEN-WATER chunk surface: published as the analytic
+        // geometry-foam floor (_LbwGeomFoamFloor - see WaterUniformPublisher / LbwGeometryFoamGate).
+        // 1 = physical crest pinch/steepness, >1 whitens milder crests, 0 = off.
+        [SerializeField, HideInInspector] internal float chunkFoamStrength = 1f;
         // Volumetric god-ray shafts inside the chunk (0 = off). The shell wall marches the submerged
         // column and accumulates the body's caustic focusing, so the shafts are shaped to the chunk
         // primitive + fill level. Default off - opt-in look knob (WaterChunkWall.shader reads both).
@@ -88,7 +92,14 @@ namespace AbstractOcclusion.WebGpuWater
         // near-plane corner decides (mirrors ComputeCameraSubmerged), with the same hysteresis,
         // so the veil engages the moment the view starts dipping under and a crest bobbing across
         // the waterline cannot toggle it every frame. A per-pixel ray test was tried and flickered.
-        const float ChunkCameraFootprintMargin = 1.1f;
+        //
+        // The footprint margin exists ONLY because the near PLANE can dip into the water before
+        // the camera POINT does, so it is sized from the near-clip reach in WORLD metres - a
+        // near-plane corner sits at most ~2x the near-clip distance from the camera at common
+        // FOVs. The old margin was RELATIVE (10% of the chunk's own size): walking up to a chunk
+        // at eye level flipped the veil while still standing in AIR, killing the reflection
+        // sheen and the refracted backdrop in one frame - "the water darkens when I come close".
+        const float ChunkCameraNearReachScale = 2f;
         bool _wasChunkCameraUnder;
 
         MeshRenderer _chunkShellRenderer;
@@ -177,7 +188,8 @@ namespace AbstractOcclusion.WebGpuWater
             if (cam == null) { _wasChunkCameraUnder = false; return false; }
 
             Vector3 cameraPos = cam.transform.position;
-            if (!ChunkCameraInsideFootprint(cameraPos)) { _wasChunkCameraUnder = false; return false; }
+            float nearReach = cam.nearClipPlane * ChunkCameraNearReachScale;
+            if (!ChunkCameraInsideFootprint(cameraPos, nearReach)) { _wasChunkCameraUnder = false; return false; }
 
             float near = cam.nearClipPlane;
             float referenceY = cameraPos.y;
@@ -193,13 +205,56 @@ namespace AbstractOcclusion.WebGpuWater
             return _wasChunkCameraUnder;
         }
 
-        bool ChunkCameraInsideFootprint(Vector3 cameraPos)
+        // Camera within the chunk primitive plus the near-plane reach (world metres, converted
+        // per axis into pool units) - the tightest region where the near plane could already be
+        // touching the water while the camera point is still outside it.
+        bool ChunkCameraInsideFootprint(Vector3 cameraPos, float nearReachWorld)
         {
             Vector3 pool = WorldToPool(cameraPos);
+            Vector3 extent = VolumeExtentSafe;
             if (chunkFootprint == ChunkFootprint.Sphere)
-                return pool.sqrMagnitude <= ChunkCameraFootprintMargin * ChunkCameraFootprintMargin;
-            return Mathf.Max(Mathf.Abs(pool.x), Mathf.Max(Mathf.Abs(pool.y), Mathf.Abs(pool.z)))
-                   <= ChunkCameraFootprintMargin;
+            {
+                float radius = 1f + nearReachWorld / Mathf.Min(extent.x, Mathf.Min(extent.y, extent.z));
+                return pool.sqrMagnitude <= radius * radius;
+            }
+            if (chunkFootprint == ChunkFootprint.Mesh && chunkMesh != null)
+            {
+                // Chunk meshes are authored IN pool space (the depth prepass draws them through
+                // PoolToWorld with an identity object matrix - WaterChunkDepth.shader), so the
+                // mesh's local bounds ARE its pool-space bounds: the tightest cheap containment.
+                // The whole-VOLUME-box test stood in before, and a mesh smaller than its box (the
+                // built-in primitives span only +-0.5 on xz) flipped the veil while the camera was
+                // visibly in AIR beside the water below surface level - the fog colour/light
+                // popped on approach (masked at fog density > ~3 only because the veil and the
+                // refracted composite converge once transmittance is ~0).
+                //
+                // KNOWN LIMITATION: this is the mesh's AABB, not the mesh. In the gap between
+                // the box and a round/concave shape (a cylinder's corners, a concave pocket)
+                // the veil can still flip while the camera is in air below surface level -
+                // visible as the same colour/light pop, ONLY at low fog density. Confirmed
+                // reachable on concave/collider-wall meshes (Bert, 2026-07-26); accepted for
+                // now as a big improvement over the volume box.
+                // FIX TO RE-EXPLORE: choose the composite PER PIXEL in WaterChunkWall.shader
+                // from data it already has - a ray with a front ENTRY face (meshHasEntryFace /
+                // nearInAir) starts in air and can take the refracted-backdrop path even while
+                // this CPU flag says "under"; only entry-less rays need the veil. That removes
+                // the containment question entirely. A per-pixel camera-under DECISION was
+                // tried once and flickered at the waterline - the re-attempt should keep this
+                // CPU flag as the OUTER gate and only split the composite inside it, with the
+                // near-plane hysteresis still owning the on/off.
+                Bounds meshBounds = chunkMesh.bounds;
+                Vector3 boundsMin = meshBounds.min;
+                Vector3 boundsMax = meshBounds.max;
+                return pool.x >= boundsMin.x - nearReachWorld / extent.x
+                    && pool.x <= boundsMax.x + nearReachWorld / extent.x
+                    && pool.y >= boundsMin.y - nearReachWorld / extent.y
+                    && pool.y <= boundsMax.y + nearReachWorld / extent.y
+                    && pool.z >= boundsMin.z - nearReachWorld / extent.z
+                    && pool.z <= boundsMax.z + nearReachWorld / extent.z;
+            }
+            return Mathf.Abs(pool.x) <= 1f + nearReachWorld / extent.x
+                && Mathf.Abs(pool.y) <= 1f + nearReachWorld / extent.y
+                && Mathf.Abs(pool.z) <= 1f + nearReachWorld / extent.z;
         }
 
         // Feed the shell THIS body's block (frame + waves + fog: written by WriteBodyProps into the
