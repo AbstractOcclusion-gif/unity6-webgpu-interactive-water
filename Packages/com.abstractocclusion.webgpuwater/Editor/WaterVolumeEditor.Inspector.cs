@@ -1,7 +1,19 @@
 // WebGpuWater - WaterVolume custom inspector (orchestration).
-// Draws the cyan header, every feature section in a readable top-down order, and the footer.
-// The scene-view gizmos/handles live in WaterVolumeEditor.cs; the per-section drawing lives in
-// the WaterVolumeEditor.Setup/Dynamics/Ocean/Appearance partials. Editor-only.
+// Draws the cyan header, the body-type + water-colour presets, the category tab bar, and the footer.
+// The scene-view gizmos/handles live in WaterVolumeEditor.cs; the per-section drawing lives in one
+// partial PER TAB (Body / Motion / Surface / Volume / Interaction / Budget), plus Chunk and Jerlov
+// which are single sections large enough to own their file. Editor-only.
+//
+// TABS ARE NAMED FOR WHAT THEY DO, NOT FOR A FEATURE. A field belongs to the tab whose charter
+// covers it, even when the feature it serves is shown elsewhere - that is what stops the drift this
+// layout replaced (a caustic RESOLUTION filed under waves, ocean knobs scattered over four tabs,
+// foam split three ways). The charters, in one line each:
+//   Body        - what the body IS and where: extent, renderers, chunk, bed floor, wiring, camera.
+//   Motion      - every source of surface height, ordered by scale.
+//   Surface     - the film itself: textures, reflections, the underside, foam.
+//   Volume      - what light does THROUGH the water: fog, scatter, caustics, shafts, depth colour.
+//   Interaction - what the world does to the water: obstacles, splashes, FX components.
+//   Budget      - anything that trades frame time for fidelity, wherever that fidelity shows.
 #if UNITY_EDITOR
 using UnityEditor;
 using UnityEngine;
@@ -10,36 +22,68 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 {
     public partial class WaterVolumeEditor
     {
-        // Foldout state. Only the placement/look/body blocks a user reaches for first start open;
-        // the rest stay collapsed so the inspector opens compact. Persisted through SessionState
-        // (see OnEnable/OnDisable): per-instance fields reset on every selection change, which
-        // re-collapsed whatever section the user was working in each time they clicked away.
-        bool _showWiring = false;
-        bool _showLook = true;
+        // Foldout state. Only the blocks a user reaches for first start open; the rest stay collapsed
+        // so the inspector opens compact. Persisted through SessionState (see OnEnable/OnDisable):
+        // per-instance fields reset on every selection change, which re-collapsed whatever section
+        // the user was working in each time they clicked away.
+        // Every "Advanced" fold below holds the second-order knobs of the section above it: solver
+        // and numerical parameters, refinements of a primary knob, and wizard-set-once values. They
+        // all default closed - the visible fields are the ones that answer "make it more like X".
         bool _showPlacement = true;
         bool _showBody = true;
+        bool _showBodyAdvanced = false;
+        bool _showBedSource = false;
         bool _showChunk = false;
-        bool _showPerformance = false;
-        bool _showReflections = false;
-        bool _showUnderwaterSurface = false;
-        bool _showSimulation = false;
+        bool _showWiring = false;
+        bool _showCamera = false;
+
         bool _showRipple = false;
+        bool _showRippleAdvanced = false;
         bool _showWindWaves = false;
-        bool _showWindow = false;
-        bool _showOceanOpenWater = false;
-        bool _showOceanClipmap = false;
-        bool _showOceanGodRays = false;
-        bool _showOceanFoam = false;
-        bool _showObjectInteraction = false;
+        bool _showWindWavesAdvanced = false;
+        bool _showOceanSwell = false;
+        bool _showOceanSwellAdvanced = false;
+        bool _showSurf = false;
+        bool _showSurfAdvanced = false;
+
+        bool _showTextures = true;
+        bool _showTexturesAdvanced = false;
+        bool _showReflections = false;
+        bool _showReflectFresnel = false;
+        bool _showReflectRoughness = false;
+        bool _showReflectScreenSpace = false;
+        bool _showUnderwaterSurface = false;
+        bool _showUnderwaterAdvanced = false;
+        bool _showFoam = false;
+        bool _showFoamTurbulence = true;
+        bool _showFoamTurbulenceAdvanced = false;
+        bool _showFoamWhitecaps = false;
+        bool _showFoamShore = false;
+        bool _showFoamShading = false;
+
         bool _showWaterFog = false;
         bool _showScatter = false;
-        bool _showDepth = false;
-        bool _showBedDepth = false;
-        bool _showFoam = false;
+        bool _showScatterAdvanced = false;
         bool _showCrestGlow = true;
-        bool _showSurfAdvanced = false;
-        bool _showCamera = false;
+        bool _showDepth = false;
+        bool _showCaustics = false;
+        bool _showCausticsAdvanced = false;
+        bool _showGodRays = false;
+        bool _showGodRaysAdvanced = false;
+        bool _showBedColour = false;
+        bool _showBedColourAdvanced = false;
+        bool _showHorizonHaze = false;
+
+        bool _showObjectInteraction = false;
+        bool _showObjectInteractionAdvanced = false;
         bool _showSplash = false;
+
+        bool _showQuality = false;
+        bool _showQualityAdvanced = false;
+        bool _showWindow = false;
+        bool _showWindowAdvanced = false;
+        bool _showClipmap = false;
+        bool _showClipmapAdvanced = false;
 
         const string FoldoutKeyPrefix = "WebGpuWater.WaterVolumeEditor.";
         const string TabSessionKey = FoldoutKeyPrefix + "_tab";
@@ -60,32 +104,61 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // of load/save. The field initializers above remain the first-session defaults.
         void SyncFoldouts(bool load)
         {
-            Sync(ref _showWiring, nameof(_showWiring), load);
-            Sync(ref _showLook, nameof(_showLook), load);
             Sync(ref _showPlacement, nameof(_showPlacement), load);
             Sync(ref _showBody, nameof(_showBody), load);
+            Sync(ref _showBodyAdvanced, nameof(_showBodyAdvanced), load);
+            Sync(ref _showBedSource, nameof(_showBedSource), load);
             Sync(ref _showChunk, nameof(_showChunk), load);
-            Sync(ref _showPerformance, nameof(_showPerformance), load);
-            Sync(ref _showReflections, nameof(_showReflections), load);
-            Sync(ref _showUnderwaterSurface, nameof(_showUnderwaterSurface), load);
-            Sync(ref _showSimulation, nameof(_showSimulation), load);
+            Sync(ref _showWiring, nameof(_showWiring), load);
+            Sync(ref _showCamera, nameof(_showCamera), load);
+
             Sync(ref _showRipple, nameof(_showRipple), load);
+            Sync(ref _showRippleAdvanced, nameof(_showRippleAdvanced), load);
             Sync(ref _showWindWaves, nameof(_showWindWaves), load);
-            Sync(ref _showWindow, nameof(_showWindow), load);
-            Sync(ref _showOceanOpenWater, nameof(_showOceanOpenWater), load);
-            Sync(ref _showOceanClipmap, nameof(_showOceanClipmap), load);
-            Sync(ref _showOceanGodRays, nameof(_showOceanGodRays), load);
-            Sync(ref _showOceanFoam, nameof(_showOceanFoam), load);
-            Sync(ref _showObjectInteraction, nameof(_showObjectInteraction), load);
+            Sync(ref _showWindWavesAdvanced, nameof(_showWindWavesAdvanced), load);
+            Sync(ref _showOceanSwell, nameof(_showOceanSwell), load);
+            Sync(ref _showOceanSwellAdvanced, nameof(_showOceanSwellAdvanced), load);
+            Sync(ref _showSurf, nameof(_showSurf), load);
+            Sync(ref _showSurfAdvanced, nameof(_showSurfAdvanced), load);
+
+            Sync(ref _showTextures, nameof(_showTextures), load);
+            Sync(ref _showTexturesAdvanced, nameof(_showTexturesAdvanced), load);
+            Sync(ref _showReflections, nameof(_showReflections), load);
+            Sync(ref _showReflectFresnel, nameof(_showReflectFresnel), load);
+            Sync(ref _showReflectRoughness, nameof(_showReflectRoughness), load);
+            Sync(ref _showReflectScreenSpace, nameof(_showReflectScreenSpace), load);
+            Sync(ref _showUnderwaterSurface, nameof(_showUnderwaterSurface), load);
+            Sync(ref _showUnderwaterAdvanced, nameof(_showUnderwaterAdvanced), load);
+            Sync(ref _showFoam, nameof(_showFoam), load);
+            Sync(ref _showFoamTurbulence, nameof(_showFoamTurbulence), load);
+            Sync(ref _showFoamTurbulenceAdvanced, nameof(_showFoamTurbulenceAdvanced), load);
+            Sync(ref _showFoamWhitecaps, nameof(_showFoamWhitecaps), load);
+            Sync(ref _showFoamShore, nameof(_showFoamShore), load);
+            Sync(ref _showFoamShading, nameof(_showFoamShading), load);
+
             Sync(ref _showWaterFog, nameof(_showWaterFog), load);
             Sync(ref _showScatter, nameof(_showScatter), load);
-            Sync(ref _showDepth, nameof(_showDepth), load);
-            Sync(ref _showBedDepth, nameof(_showBedDepth), load);
-            Sync(ref _showFoam, nameof(_showFoam), load);
+            Sync(ref _showScatterAdvanced, nameof(_showScatterAdvanced), load);
             Sync(ref _showCrestGlow, nameof(_showCrestGlow), load);
-            Sync(ref _showSurfAdvanced, nameof(_showSurfAdvanced), load);
-            Sync(ref _showCamera, nameof(_showCamera), load);
+            Sync(ref _showDepth, nameof(_showDepth), load);
+            Sync(ref _showCaustics, nameof(_showCaustics), load);
+            Sync(ref _showCausticsAdvanced, nameof(_showCausticsAdvanced), load);
+            Sync(ref _showGodRays, nameof(_showGodRays), load);
+            Sync(ref _showGodRaysAdvanced, nameof(_showGodRaysAdvanced), load);
+            Sync(ref _showBedColour, nameof(_showBedColour), load);
+            Sync(ref _showBedColourAdvanced, nameof(_showBedColourAdvanced), load);
+            Sync(ref _showHorizonHaze, nameof(_showHorizonHaze), load);
+
+            Sync(ref _showObjectInteraction, nameof(_showObjectInteraction), load);
+            Sync(ref _showObjectInteractionAdvanced, nameof(_showObjectInteractionAdvanced), load);
             Sync(ref _showSplash, nameof(_showSplash), load);
+
+            Sync(ref _showQuality, nameof(_showQuality), load);
+            Sync(ref _showQualityAdvanced, nameof(_showQualityAdvanced), load);
+            Sync(ref _showWindow, nameof(_showWindow), load);
+            Sync(ref _showWindowAdvanced, nameof(_showWindowAdvanced), load);
+            Sync(ref _showClipmap, nameof(_showClipmap), load);
+            Sync(ref _showClipmapAdvanced, nameof(_showClipmapAdvanced), load);
         }
 
         static void Sync(ref bool value, string key, bool load)
@@ -94,11 +167,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             else SessionState.SetBool(FoldoutKeyPrefix + key, value);
         }
 
-        // The sun-driven lightDir is shown read-only; repaint live only while the Simulation section
-        // is VISIBLE (its tab active + open) AND a sun drives it, so the greyed value tracks the sun
+        // The sun-driven lightDir is shown read-only; repaint live only while the Wiring section is
+        // VISIBLE (its tab active + open) AND a sun drives it, so the greyed value tracks the sun
         // instead of showing a stale vector - and idle inspectors pay no continuous-repaint cost.
         public override bool RequiresConstantRepaint() =>
-            _tab == InspectorTab.WavesWind && _showSimulation && HasSun;
+            _tab == InspectorTab.Body && _showWiring && HasSun;
 
         public override void OnInspectorGUI()
         {
@@ -114,54 +187,52 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             // Physically-based Jerlov water colour: writes Fog Extinction + body/scatter colour.
             DrawJerlovWaterTypeSelector();
 
-            // Top-level category tabs: one category's sections render at a time instead of the
-            // former flat scroll of 20+ foldouts. The mapping mirrors the runtime partial split
-            // (Settings / Look / Waves / Shore / Performance), which is what makes it honest.
             _tab = (InspectorTab)WaterEditorUI.TabBar((int)_tab, TabLabels);
             switch (_tab)
             {
-                case InspectorTab.Core:
-                    // Make it exist + hook it up: placement, wiring, cameras, interaction plumbing.
+                case InspectorTab.Body:
                     DrawPlacementSection();
                     DrawBodySection();
+                    DrawBedSourceSection();
                     DrawChunkSection();
                     DrawWiringSection();
-                    DrawObjectInteractionSection();
                     DrawCameraSection();
-                    DrawSplashSection();
                     break;
 
-                case InspectorTab.Look:
-                    // Everything that changes pixels but not motion.
-                    DrawLookSection();
+                case InspectorTab.Motion:
+                    DrawMotionGlobals();
+                    DrawRippleSection();
+                    DrawWindWavesSection();
+                    DrawOceanSwellSection();
+                    DrawSurfFrontsSection();
+                    break;
+
+                case InspectorTab.Surface:
+                    DrawTexturesSection();
                     DrawReflectionsSection();
                     DrawUnderwaterSurfaceSection();
-                    DrawWaterFogSection();
-                    DrawVolumeScatterSection();
-                    DrawDepthAttenuationSection();
-                    DrawOceanGodRaysSection();
                     DrawFoamSection();
                     break;
 
-                case InspectorTab.WavesWind:
-                    // Everything that moves the surface.
-                    DrawSimulationSection();
-                    DrawRippleSection();
-                    DrawWindWavesSection();
-                    DrawOceanOpenWaterSection();
-                    DrawOceanFoamSection();
+                case InspectorTab.Volume:
+                    DrawWaterFogSection();
+                    DrawVolumeScatterSection();
+                    DrawDepthAttenuationSection();
+                    DrawCausticsSection();
+                    DrawGodRaysSection();
+                    DrawBedColourSection();
+                    DrawHorizonHazeSection();
                     break;
 
-                case InspectorTab.ShoreSurf:
-                    // The coastline family (bed depth carries the shoal/surf/swash UI).
-                    DrawBedDepthSection();
+                case InspectorTab.Interaction:
+                    DrawObjectInteractionSection();
+                    DrawSplashSection();
                     break;
 
-                case InspectorTab.Performance:
-                    // The budget levers: quality tier, sim window, horizon clipmap.
-                    DrawPerformanceSection();
+                case InspectorTab.Budget:
+                    DrawQualitySection();
                     DrawWindowSection();
-                    DrawOceanClipmapSection();
+                    DrawClipmapSection();
                     break;
             }
 
@@ -170,13 +241,16 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             serializedObject.ApplyModifiedProperties();
         }
 
-        // Category tabs. Order = a user's journey: create/wire it, make it pretty, make it move,
-        // shape the coast, then pay for it.
-        enum InspectorTab { Core, Look, WavesWind, ShoreSurf, Performance }
+        // Category tabs, ordered as a user's journey: make it exist, make it move, make it look
+        // right at the surface, then through the water, then let the world hit it, then pay for it.
+        enum InspectorTab { Body, Motion, Surface, Volume, Interaction, Budget }
 
-        static readonly string[] TabLabels = { "Core", "Look", "Waves & Wind", "Shore & Surf", "Performance" };
+        // "Interact" rather than "Interaction": GUILayout.Toolbar splits its width evenly and clips
+        // the longest label first, which a narrow inspector would do to this one.
+        static readonly string[] TabLabels =
+            { "Body", "Motion", "Surface", "Volume", "Interact", "Budget" };
 
-        InspectorTab _tab = InspectorTab.Core;
+        InspectorTab _tab = InspectorTab.Body;
 
         // Shorthand for a serialized property by path; nested Settings blocks use dotted paths
         // (e.g. "ocean.openWater"). Kept single-sourced so no section invents a raw string twice.
@@ -193,7 +267,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 EditorGUILayout.PropertyField(Prop(paths[i]), true);
         }
 
-        // ---- body-type applicability (advisory) --------------------------------------------
+        // ---- applicability (advisory) --------------------------------------------------------
         // The bodyType enum drives which sections are relevant; sections grey their body when a
         // feature doesn't apply to the chosen archetype. Advisory only - it never changes runtime
         // behaviour by itself (the functional flags still gate the actual paths).
@@ -202,6 +276,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         bool IsOcean => CurrentType == WaterVolume.WaterBodyType.Ocean;
         bool LakeOrOcean => CurrentType != WaterVolume.WaterBodyType.Pond;
         bool Bounded => CurrentType != WaterVolume.WaterBodyType.Ocean; // pond + lake have real walls / finite volume
+
+        // The bed terrain is authored in the Body tab; everything derived from it (surf motion, deep
+        // colour + clarity, bake resolution) greys out on this one flag from its own tab.
+        bool UsesBedDepth => Prop(WaterVolumePropertyPaths.UseBedDepth).boolValue;
+
+        // True when this body draws the analytic pool, i.e. when a Pool Renderer is wired. The pool
+        // tile albedo is only ever sampled on that path, so it greys on this rather than on bodyType.
+        bool HasProceduralPool => target is WaterVolume volume && volume.HasProceduralPool;
 
         // Draw the given fields greyed unless the applicability condition holds (fine-grained, in-section).
         void DrawFieldsIf(bool enabled, params string[] paths)

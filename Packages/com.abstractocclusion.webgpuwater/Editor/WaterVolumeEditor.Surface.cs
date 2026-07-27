@@ -1,0 +1,317 @@
+// WebGpuWater - WaterVolume inspector: the SURFACE tab.
+// The film itself: its textures, what it reflects and refracts, how it reads from below, and its
+// foam. Light travelling THROUGH the water is the Volume tab; what moves the surface is Motion.
+//
+// FOAM is one section here, but four independent engines. They were previously split across three
+// tabs, which made them impossible to compare; they are now side by side WITHOUT being wired
+// together - each sub-block keeps its own enable gate and its own applicability greying, and no
+// knob is shared between families.
+#if UNITY_EDITOR
+using UnityEditor;
+using UnityEngine;
+
+namespace AbstractOcclusion.WebGpuWater.Editor
+{
+    public partial class WaterVolumeEditor
+    {
+        // One dedicated section for every author-time SURFACE texture slot + its tweaks. The foam pattern
+        // and ocean whitecap used to be reachable only on the water material; they live on the body now, so
+        // all surface textures are configured from one place. Empty foam/whitecap slots keep the material's.
+        void DrawTexturesSection()
+        {
+            _showTextures = WaterEditorUI.Section("Textures", _showTextures, () =>
+            {
+                // Greyed on the REAL gate (a pool renderer exists), not on body type: a bounded body
+                // with no analytic pool ignores this texture just as much as an ocean does.
+                WaterEditorUI.SubHeading("Pool tiles (analytic pool only)");
+                DrawFieldsIf(HasProceduralPool, "tiles");
+                EditorGUILayout.HelpBox(TilesHelp, MessageType.Info);
+
+                WaterEditorUI.SubHeading("Sky (reflection base)");
+                DrawFields("sky");
+                EditorGUILayout.HelpBox(SkyHelp, MessageType.Info);
+
+                // Crest-style crossing scrolling detail normals: off (flat) until a tiling
+                // water-normal texture is assigned; the sliders shape the layer once it is.
+                bool hasDetailNormal =
+                    Prop(WaterVolumePropertyPaths.DetailNormalTexture).objectReferenceValue != null;
+                WaterEditorUI.SubHeading("Detail normals (micro ripples)");
+                DrawFields(WaterVolumePropertyPaths.DetailNormalTexture);
+                DrawFieldsIf(hasDetailNormal, "detailNormalSettings.strength");
+
+                WaterEditorUI.SubHeading("Surface foam pattern");
+                EditorGUILayout.HelpBox("Empty keeps the water material's own foam texture. Assign here to " +
+                    "drive it from this body; the flipbook grid/rate and relief apply once a texture is set.",
+                    MessageType.None);
+                DrawFields("foamPatternTexture");
+
+                WaterEditorUI.SubHeading("Ocean whitecap");
+                DrawFields("oceanWhitecapTexture");
+
+                WaterEditorUI.SubHeading("Foam relief (foam pattern + whitecap)");
+                DrawFields("foamReliefStrength");
+
+                // The flipbook grid/rate DESCRIBE the assigned sheet rather than tune the look, and
+                // the detail-normal tiling/scroll are set once with the texture.
+                _showTexturesAdvanced = WaterEditorUI.SubSection("Advanced", _showTexturesAdvanced, () =>
+                {
+                    WaterEditorUI.SubHeading("Detail normal layout");
+                    DrawFieldsIf(hasDetailNormal,
+                        "detailNormalSettings.tileMeters",
+                        "detailNormalSettings.scrollSpeed");
+                    WaterEditorUI.SubHeading("Foam pattern flipbook");
+                    DrawFieldsIf(Prop("foamPatternTexture").objectReferenceValue != null,
+                        "foamPatternGrid", "foamPatternFps");
+                    WaterEditorUI.SubHeading("Whitecap flipbook");
+                    DrawFieldsIf(Prop("oceanWhitecapTexture").objectReferenceValue != null,
+                        "oceanWhitecapGrid", "oceanWhitecapFps");
+                });
+            });
+        }
+
+        void DrawReflectionsSection()
+        {
+            _showReflections = WaterEditorUI.Section("Reflections", _showReflections, () =>
+            {
+                DrawFields(
+                    WaterVolumePropertyPaths.ScreenSpaceReflection,
+                    WaterVolumePropertyPaths.PlanarReflection,
+                    "reflectionSettings.reflectUrpProbe",
+                    WaterVolumePropertyPaths.RealRefraction);
+                // Greyed unless planar is on: it is the planar mirror's culling mask and does
+                // nothing to SSR or the environment base.
+                DrawFieldsIf(Prop(WaterVolumePropertyPaths.PlanarReflection).boolValue,
+                    "reflectionSettings.planarExcludeLayers");
+                DrawFields("refractShadows");
+                if (Prop("refractShadows").boolValue)
+                    DrawFields("refractShadowSoftness");
+                if (!Prop("refractShadows").boolValue)
+                    EditorGUILayout.HelpBox(
+                        "Refract Underwater Shadows is OFF: every material (incl. Standard Lit) shows one " +
+                        "consistent shadow from URP's straight shadow map - but the shadow and the caustics " +
+                        "drift apart on a deep pool. On = shadows line up with the caustics (Water Receiver " +
+                        "shader on submerged objects).", MessageType.None);
+                WaterEditorUI.SubHeading("Look");
+                DrawFields(
+                    "reflectionSettings.reflectionStrength",
+                    "reflectionSettings.envReflectionIntensity",
+                    "reflectionSettings.reflectionDistortion",
+                    "reflectionSettings.sunRoughness",
+                    "reflectionSettings.ssrStrength");
+
+                // Three refinement families, each a second-order shaping of a knob above. The five
+                // fields left visible are the ones that answer "more/less reflective, sharper/softer".
+                _showReflectFresnel = WaterEditorUI.SubSection("Advanced · Fresnel", _showReflectFresnel, () =>
+                    DrawFields(
+                        "reflectionSettings.fresnelFloor",
+                        "reflectionSettings.fresnelPower"));
+
+                _showReflectRoughness = WaterEditorUI.SubSection("Advanced · Roughness ramp + sun lobe",
+                    _showReflectRoughness, () =>
+                    DrawFields(
+                        "reflectionSettings.roughnessFar",
+                        "reflectionSettings.roughnessFarDistance",
+                        "reflectionSettings.roughnessFalloff",
+                        "reflectionSettings.reflectionAnisoStretch",
+                        "reflectionSettings.sunSheen",
+                        "reflectionSettings.sunSheenRoughness",
+                        "reflectionSettings.sunGrazeBoost"));
+
+                _showReflectScreenSpace = WaterEditorUI.SubSection("Advanced · Screen-space tracing",
+                    _showReflectScreenSpace, () =>
+                    DrawFields(
+                        "reflectionSettings.ssrStepSize",
+                        "reflectionSettings.ssrMaxSteps",
+                        "reflectionSettings.ssrThickness",
+                        "reflectionSettings.refractionDistortion"));
+            });
+        }
+
+        // The surface seen FROM BELOW + the camera-crossing waterline. Its own section (not a
+        // Reflections sub-block): the underside used to run on hard-coded constants, and artists
+        // looking for "why is it milky underwater" should find one obvious foldout.
+        void DrawUnderwaterSurfaceSection()
+        {
+            _showUnderwaterSurface = WaterEditorUI.Section("Underwater Surface (seen from below)",
+                _showUnderwaterSurface, () =>
+            {
+                bool physicalFresnel = Prop("underwaterSurfaceSettings.physicalFresnel").boolValue;
+                bool meniscus = Prop("underwaterSurfaceSettings.meniscus").boolValue;
+                DrawFields(
+                    "underwaterSurfaceSettings.physicalFresnel",
+                    "underwaterSurfaceSettings.reflectionStrength",
+                    "underwaterSurfaceSettings.mirrorWaterBlend");
+                WaterEditorUI.SubHeading("Foam seen from below");
+                DrawFields(
+                    "underwaterSurfaceSettings.foamSilhouetteDarken",
+                    "underwaterSurfaceSettings.foamSunGlow");
+                WaterEditorUI.SubHeading("Waterline (partial submersion)");
+                DrawFields("underwaterSurfaceSettings.meniscus");
+                DrawFieldsIf(meniscus, "underwaterSurfaceSettings.meniscusStrength");
+
+                _showUnderwaterAdvanced = WaterEditorUI.SubSection("Advanced", _showUnderwaterAdvanced, () =>
+                {
+                    WaterEditorUI.SubHeading("Snell window edge");
+                    DrawFieldsIf(physicalFresnel,
+                        "underwaterSurfaceSettings.tirEdgeSoftness",
+                        "underwaterSurfaceSettings.fresnelFloor");
+                    WaterEditorUI.SubHeading("Detail + meniscus shaping");
+                    DrawFields("underwaterSurfaceSettings.detailNormalStrength");
+                    DrawFieldsIf(meniscus,
+                        "underwaterSurfaceSettings.meniscusWidthPixels",
+                        "underwaterSurfaceSettings.meniscusWarp");
+                });
+            });
+        }
+
+        // ---- foam: one section, four independent engines -------------------------------------
+        void DrawFoamSection()
+        {
+            _showFoam = WaterEditorUI.Section("Foam", _showFoam, () =>
+            {
+                EditorGUILayout.HelpBox(FoamFamiliesHelp, MessageType.None);
+                DrawFoamTurbulenceBlock();
+                DrawFoamWhitecapsBlock();
+                DrawFoamShoreBlock();
+                DrawFoamShadingBlock();
+            });
+        }
+
+        // Engine 1: the interactive sim's turbulence foam (advect + generate + decay).
+        void DrawFoamTurbulenceBlock()
+        {
+            _showFoamTurbulence = WaterEditorUI.SubSection("Turbulence (generation & decay)",
+                _showFoamTurbulence, () =>
+            {
+                SerializedProperty foamEnabled = Prop("foamSettings.foam");
+                EditorGUILayout.PropertyField(foamEnabled, true);
+                DrawFieldsIf(foamEnabled.boolValue,
+                    WaterVolumePropertyPaths.FoamGenRate,
+                    "foamSettings.foamDecay",
+                    "foamSettings.foamSpread",
+                    "foamSettings.foamAdvect");
+
+                // Everything below tunes WHICH water generates foam rather than how much or how
+                // long it lasts - the four above are the ones reached for first.
+                _showFoamTurbulenceAdvanced = WaterEditorUI.SubSection("Advanced",
+                    _showFoamTurbulenceAdvanced, () =>
+                {
+                    WaterEditorUI.SubHeading("Generation sources");
+                    DrawFields(
+                        "foamSettings.foamGenThreshold",
+                        "foamSettings.foamMinWaveHeight",
+                        "foamSettings.foamFromSpeed",
+                        "foamSettings.foamFromCurvature",
+                        "foamSettings.foamCrestBias");
+                    WaterEditorUI.SubHeading("Breaking + deposit");
+                    DrawFields(
+                        "foamSettings.foamDeposit",
+                        "foamSettings.foamBreakStrength",
+                        "foamSettings.foamBreakRange");
+                    WaterEditorUI.SubHeading("Wake stamp");
+                    DrawFields(
+                        "foamSettings.foamWakeStrength",
+                        "foamSettings.foamWakeRadiusScale");
+                    WaterEditorUI.SubHeading("Decay shaping");
+                    DrawFields(
+                        "foamSettings.foamDecayResidual",
+                        "foamSettings.foamDecayRate");
+                },
+                contentEnabled: foamEnabled.boolValue);
+            });
+        }
+
+        // Engine 2: ocean whitecaps, driven by the FFT wave field. Ocean-only, own colour + tiling
+        // (deliberately NOT shared with the turbulence shading below - different look, different
+        // source, and merging them would silently retune every existing ocean).
+        void DrawFoamWhitecapsBlock()
+        {
+            _showFoamWhitecaps = WaterEditorUI.SubSection("Whitecaps (ocean)", _showFoamWhitecaps, () =>
+                DrawFields(
+                    "ocean.oceanFoamWindThreshold",
+                    "ocean.oceanFoamCoverage",
+                    "ocean.oceanFoamStrength",
+                    "ocean.oceanFoamFadeRate",
+                    "ocean.oceanFoamColor",
+                    "ocean.oceanFoamTileSize",
+                    "ocean.oceanFoamFeather",
+                    "ocean.oceanFoamDeposit",
+                    "ocean.oceanFoamDrift",
+                    "ocean.oceanFoamMaxBuildup"),
+                contentEnabled: IsOcean);
+        }
+
+        // Engine 3: whitewash + swash foam laid down by the surf fronts (Motion tab).
+        void DrawFoamShoreBlock()
+        {
+            _showFoamShore = WaterEditorUI.SubSection("Shore & Swash", _showFoamShore, () =>
+            {
+                WaterEditorUI.SubHeading("Breaker foam");
+                DrawFields(
+                    "bedDepthSettings.surfFoamGain",
+                    "bedDepthSettings.surfWaterlineFoam",
+                    "bedDepthSettings.surfSmallWaveFoam",
+                    "bedDepthSettings.surfFoamStrength",
+                    "bedDepthSettings.surfFoamFeather",
+                    "bedDepthSettings.surfFoamTileSize",
+                    "bedDepthSettings.surfFoamColor");
+                WaterEditorUI.SubHeading("Crest foam pop curve");
+                DrawFields("bedDepthSettings.surfCrestFoamCurveEnabled");
+                DrawFieldsIf(Prop("bedDepthSettings.surfCrestFoamCurveEnabled").boolValue,
+                    "bedDepthSettings.surfCrestFoamCurve",
+                    "bedDepthSettings.surfCrestFoamGain");
+                // FOAM-4 crest cap: independent of the pop curve, so always shown.
+                DrawFields("bedDepthSettings.surfFoamCrestCap");
+                WaterEditorUI.SubHeading("Whitewash repartition");
+                DrawFields(
+                    "bedDepthSettings.surfFoamBoreGain",
+                    "bedDepthSettings.surfFoamTrailGain",
+                    "bedDepthSettings.surfFoamTrailLength",
+                    "bedDepthSettings.surfFoamTrailDissolve");
+                WaterEditorUI.SubHeading("Swash foam");
+                DrawFields(
+                    "bedDepthSettings.surfSwashFoam",
+                    "bedDepthSettings.surfSwashFoamWidth",
+                    "bedDepthSettings.surfSwashFoamDissolve",
+                    "bedDepthSettings.surfSwashStreak",
+                    "bedDepthSettings.surfSwashDepositGain");
+            },
+            contentEnabled: UsesBedDepth && Prop(WaterVolumePropertyPaths.SurfEnabled).boolValue);
+        }
+
+        // Engine 4: how the turbulence foam mask is SHADED (the mask itself comes from block 1).
+        void DrawFoamShadingBlock()
+        {
+            _showFoamShading = WaterEditorUI.SubSection("Shading (turbulence foam)", _showFoamShading, () =>
+            {
+                DrawFields(
+                    "foamSettings.foamColor",
+                    "foamSettings.foamPatternSize",
+                    "foamSettings.foamStrength",
+                    "foamSettings.foamFeather",
+                    "foamSettings.foamCoreCut");
+                // Pool-wall border foam + geometry contact foam are bounded-only.
+                DrawFieldsIf(Bounded,
+                    "foamSettings.foamBorderWidth",
+                    "foamSettings.foamContactDepth");
+            },
+            contentEnabled: Prop("foamSettings.foam").boolValue);
+        }
+
+        const string TilesHelp =
+            "LEGACY analytic-pool path. This albedo is sampled by the pool walls/floor and by the " +
+            "surface's own trace into the pool - it is what the water reflects and refracts on a " +
+            "procedural pool. A body with no Pool Renderer (Body tab) never reads it: open water " +
+            "refracts the real scene instead.";
+        const string SkyHelp =
+            "Reflection BASE only - SSR and Planar Reflection layer on top of it. With Reflect URP " +
+            "Probe on, the scene skybox's own cubemap is used instead, but ONLY when that skybox is a " +
+            "Skybox/Cubemap material; panoramic HDRI, 6-sided and procedural skyboxes expose no " +
+            "samplable cube, so for those this slot is the FALLBACK that actually gets reflected.";
+        const string FoamFamiliesHelp =
+            "Four independent foam engines, grouped so they can be compared - not merged. Each has " +
+            "its own switch and its own source: the sim's turbulence, the ocean's FFT crests, the " +
+            "surf fronts' whitewash, and the shading of the turbulence mask.";
+    }
+}
+#endif

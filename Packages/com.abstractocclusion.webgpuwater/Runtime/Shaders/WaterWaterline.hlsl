@@ -86,6 +86,16 @@ float SurfaceSignedGap(float3 world)
 // Floor for the screen derivative of the surface gap (degenerate on a view exactly parallel to
 // the surface, where the gap is the same at every pixel and the ramp would divide by zero).
 #define WATERLINE_GRADIENT_MIN 1e-5
+// CEILING on that same derivative, expressed as the widest gap the feather may span. The floor
+// alone left the divisor unbounded ABOVE, and the derivative is legitimately huge at grazing
+// incidence: the exclusion wall differentiates its own fragment's positionWS, so on a carve
+// floor or top face seen edge-on a single pixel covers metres of surface, the feather covers
+// tens of metres of gap, and the ramp flattens toward 0.5 across a large screen area - the wall
+// painting itself in at half strength instead of resolving at its waterline. Past a wave
+// amplitude or so the model the ramp rests on (gap varying linearly across one pixel) has no
+// meaning anyway, so clamping there costs nothing that was ever correct. Inert wherever the
+// derivative is already sane: this can only ever NARROW a ramp, never widen one.
+#define WATERLINE_FEATHER_METERS_MAX 0.5
 // Screen pixels the fog's edge is pushed toward the AIR side when the eye is inside a dry carve
 // (KWS's over-cover rule: where two masks can miss each other, a slightly thick edge reads as
 // water and a gap reads as a hole). Lives here rather than in the fog because the exclusion wall
@@ -96,13 +106,17 @@ float SurfaceSignedGap(float3 world)
 // surfaceGap  : signed metres above the displaced surface at this pixel's classification point.
 // gapPerPixel : fwidth(surfaceGap), taken by the CALLER so the derivative sits in ITS uniform
 //               control flow (fwidth is fragment-only and must not be hidden behind a branch).
+//               Clamped BOTH ways below - a raw fwidth is bounded neither below (a view
+//               parallel to the surface) nor above (grazing incidence).
 // overCoverPixels: shift the whole ramp toward the AIR side by this many screen pixels. KWS's
 //               rule - when two masks can miss each other, OVER-cover rather than under-cover
 //               (gather-max one texel UP, the hole fix, the 10% OBB dilation): a slightly thick
 //               edge reads as water, a gap reads as a hole. Pass 0 for an exact edge.
 float WaterlineCoverage(float surfaceGap, float gapPerPixel, float overCoverPixels)
 {
-    float gapPixels = surfaceGap / max(gapPerPixel, WATERLINE_GRADIENT_MIN);
+    float perPixel = clamp(gapPerPixel, WATERLINE_GRADIENT_MIN,
+                           WATERLINE_FEATHER_METERS_MAX / WATERLINE_FEATHER_PIXELS);
+    float gapPixels = surfaceGap / perPixel;
     return saturate(0.5 - (gapPixels - overCoverPixels) / WATERLINE_FEATHER_PIXELS);
 }
 
