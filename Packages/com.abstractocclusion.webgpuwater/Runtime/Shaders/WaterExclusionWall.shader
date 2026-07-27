@@ -69,6 +69,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
             // 1 = the quality tier's Simple fog mode (flat waterline): the wall then keeps the
             // flat rest-plane clip, the same branch the fog itself takes on that tier.
             float _UnderwaterFogSimple;
+            // The rest of the fog's own gate state, read here so this wall can work out how much
+            // of each pixel the fullscreen pass will actually paint (see FogCoverageAtPixel).
+            float _UnderwaterUnbounded; // 1 = ocean half-space, 0 = bounded body (fog never masked)
+            float _CameraDryVolume;     // 1 = the EYE sits inside a dry carve
+            float _UnderwaterSurfaceY;  // CPU surface height at the eye, the Simple tier's waterline
             // Opaque scene colour behind this fragment (the wall stays out of the depth texture, so
             // depth + opaque colour both hold the REAL scene through the carve). Same codebase-wide
             // sampler2D style as WaterSurfaceScreen.hlsl.
@@ -85,6 +90,51 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
             // is drawn per volume, so plain uniforms replace the array lookup here).
             float4 _WallEdgeColor;  // rgb = tint target, a = intensity
             float  _WallEdgeSpread;
+
+            // Floor for the eye -> near-plane direction, mirroring the fog's own guard.
+            #define WALL_CLASSIFY_DIR_EPSILON 1e-5
+
+            // How much of THIS PIXEL the fullscreen fog will paint. The wall's mirror of the fog's
+            // ArmWeight, so the two can hand off PER PIXEL instead of through a screen-wide flag.
+            //
+            // WHY THIS EXISTS. The wall used to self-complete on _UnderwaterFogArmed alone: fog
+            // armed -> wall stands down. But the fog's mask is per pixel, and with the eye in air
+            // just above the surface it admits NOTHING while the pass is still armed. So arming
+            // switched the wall off without switching the fog on in its place, and a carve seen
+            // from just above the water was painted by nobody - the empty zone, which read as the
+            // wall "disappearing a bit too quick" from this side and as a masked-away span
+            // (debug mode 8 magenta) from the fog's. The same binary handoff, on the other side,
+            // is what produced the crossing hole fixed in the fog's arming gate.
+            //
+            // DUPLICATED ONLY THIS FAR, and deliberately: the CURVE is the shared
+            // WaterlineCoverage, so the two edges cannot come out different shapes. Only the
+            // classification POINT is re-derived here - the project rule is that duplicating a
+            // classification is cheap while duplicating a silhouette is not, so share the test and
+            // let each consumer resolve its own edge per pixel.
+            //
+            // Derivative safety: every branch below is on a UNIFORM global, so the fwidth sits in
+            // uniform control flow, and the caller evaluates this before any per-pixel clip.
+            float FogCoverageAtPixel(float2 screenUV)
+            {
+                if (_UnderwaterFogArmed < 0.5) return 0.0;  // the pass will not run: it paints nothing
+                if (_UnderwaterUnbounded < 0.5) return 1.0; // bounded body: the fog is never masked
+                float3 classifyPoint = ComputeWorldSpacePosition(screenUV, UNITY_NEAR_CLIP_VALUE,
+                                                                 UNITY_MATRIX_I_VP);
+                if (_CameraDryVolume > 0.5)
+                {
+                    // Eye inside a carve: the fog pushes its point out to where the ray LEAVES the
+                    // carve (the Crest portal move) because a lens in a sunken room says nothing
+                    // about the water outside. Same push, same function.
+                    float3 toNear = classifyPoint - _WorldSpaceCameraPos;
+                    float3 rayDir = toNear / max(length(toNear), WALL_CLASSIFY_DIR_EPSILON);
+                    classifyPoint += rayDir * ExclusionPushToExit(classifyPoint, rayDir, 0.0,
+                                                                  _ProjectionParams.z);
+                }
+                float gap = (_UnderwaterFogSimple > 0.5) ? classifyPoint.y - _UnderwaterSurfaceY
+                                                         : SurfaceSignedGap(classifyPoint);
+                float overCover = (_CameraDryVolume > 0.5) ? WATERLINE_CARVE_OVER_COVER_PIXELS : 0.0;
+                return WaterlineCoverage(gap, fwidth(gap), overCover);
+            }
 
             // Waterline classification (see frag): the curve and its gradient floor are SHARED
             // with the fullscreen fog's mask (WaterWaterline.hlsl, WaterlineCoverage) so the two
@@ -201,6 +251,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
                 float3 sceneWorld = ComputeWorldSpacePosition(screenUV, SampleSceneDepth(screenUV),
                                                               UNITY_MATRIX_I_VP);
 
+                // How much of this pixel the fullscreen fog will paint (see FogCoverageAtPixel).
+                // Taken HERE: still ahead of every per-pixel clip, so its fwidth and the one above
+                // sit in the same uniform control flow, and screenUV is derived only once.
+                float fogWeight = FogCoverageAtPixel(screenUV);
+
                 // Unit-local coords of this fragment: the draw matrix IS the volume's
                 // shape-to-world, so its inverse lands us in exactly the space the carve math
                 // uses. Shared by the surface normal and the boundary occlusion below.
@@ -273,7 +328,17 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
                 // behind the veil after transparents, so the wall must NOT cover it with an
                 // opaque backdrop. A submerged camera without fog (tier Off) keeps the bare veil,
                 // matching the fogless open water around it.
-                if (_UnderwaterFogArmed < 0.5 && _CameraUnderwater < 0.5)
+                // PER-PIXEL HANDOFF. The fullscreen fog paints fogWeight of this pixel; the wall
+                // completes the remaining (1 - fogWeight). The two sum to ONE by construction, so
+                // there is no gap for an empty zone to live in and no overlap to double-paint -
+                // where the fog's mask admits nothing, the wall covers all of it, and where the fog
+                // paints fully the wall adds no backdrop at all. This replaces a screen-wide
+                // _UnderwaterFogArmed switch, which could only ever be right for the whole frame at
+                // once and was wrong for every frame where the pass was armed but masked out.
+                // _CameraUnderwater still gates it: with the eye IN water the fullscreen pass owns
+                // the frame and an opaque backdrop here would hide the correctly fogged scene.
+                float reconstructFill = 1.0 - fogWeight;
+                if (_CameraUnderwater < 0.5 && reconstructFill > 0.0)
                 {
                     float3 background = ReconstructedFogBackground(IN.positionWS, viewDirWS,
                                                                    sceneWorld, screenUV);
@@ -281,8 +346,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
                     // being looked through, so its own edge tint + facet shade the background
                     // exactly as the armed fog pass shades its pierced face.
                     background *= edgeTint * ExclusionFacetFactor(normalWS, _LightDir);
-                    color += (1.0 - coverage) * background;
-                    coverage = 1.0;
+                    // Premultiplied: fill the veil's remaining transparency by reconstructFill and
+                    // raise the alpha by the same fraction, so a partial handoff composites exactly
+                    // like the old full one did at reconstructFill = 1.
+                    color += (1.0 - coverage) * background * reconstructFill;
+                    coverage = lerp(coverage, 1.0, reconstructFill);
                 }
                 // Waterline classification applied LAST so it fades the reconstructed background out
                 // together with the veil: above the line this wall contributes nothing at all.

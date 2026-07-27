@@ -86,6 +86,12 @@ float SurfaceSignedGap(float3 world)
 // Floor for the screen derivative of the surface gap (degenerate on a view exactly parallel to
 // the surface, where the gap is the same at every pixel and the ramp would divide by zero).
 #define WATERLINE_GRADIENT_MIN 1e-5
+// Screen pixels the fog's edge is pushed toward the AIR side when the eye is inside a dry carve
+// (KWS's over-cover rule: where two masks can miss each other, a slightly thick edge reads as
+// water and a gap reads as a hole). Lives here rather than in the fog because the exclusion wall
+// mirrors the fog's coverage to hand off against it, and a second copy of the number would be a
+// second place for the two edges to drift apart.
+#define WATERLINE_CARVE_OVER_COVER_PIXELS 3.0
 
 // surfaceGap  : signed metres above the displaced surface at this pixel's classification point.
 // gapPerPixel : fwidth(surfaceGap), taken by the CALLER so the derivative sits in ITS uniform

@@ -14,9 +14,15 @@
 // 1+2 = separable Gaussian blur of the shafts; 3 = additive composite of the blurred result
 // (global _LargeGodRayTex) over the camera colour. Jitter + temporal + blur are the calm trio -
 // few march steps read as many, and fast flicker cannot survive the accumulation.
-// Runs only when the camera is submerged (the shader fades in over the first centimetres below the
-// surface and early-outs above it - spatial, so wave-driven crossings never pop). Requires the
-// URP asset's Depth Texture ON and main-light shadows enabled. All tuning comes from published globals.
+// Runs when the camera is submerged (fading in over the first centimetres below the surface -
+// spatial, so wave-driven crossings never pop) AND, at _LargeGodRayFromAir > 0, when an above-water
+// camera looks into the water THROUGH AN EXCLUSION VOLUME'S WINDOW. The from-air case is culled to
+// exactly that: a ray whose waterline crossing lands inside a carve - and that crossing is solved
+// against the DISPLACED surface at its own xz, so the pane's edge follows the waves and does not
+// move when the camera does. Over open sea a viewer in air
+// gets nothing, because the surface shader owns that view and shafts there would be painted onto
+// water the viewer is not inside. Requires the URP asset's Depth Texture ON and main-light shadows
+// enabled. All tuning comes from published globals.
 Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
 {
     SubShader
@@ -50,6 +56,11 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             #include "WaterShared.hlsl" // IOR_*, SafeRefractedLightY (caustic light projection)
             #include "WaterExclusion.hlsl" // dry-interior volumes: marched samples inside are air
             #include "WaterFog.hlsl"    // shared water fog + downwelling helpers/globals (view-fog tint, depth fade)
+            // SurfaceHeightAtXZ: the displaced surface, READ-ONLY. Included to ASK the shared
+            // waterline where the water is, never to change it - the last attempt at from-air
+            // shafts moved a helper INTO this header to share it and coupled the trusted fog to an
+            // experiment, which is what forced that revert. Nothing here writes to it.
+            #include "WaterWaterline.hlsl"
 
             float3 _LightDir;   // global, normalized direction toward the sun
             float3 _SunColor;   // global, sun colour * intensity
@@ -73,6 +84,10 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             // Needs the caustic RT's mips (WaterCausticsPass generates them for ocean-clipmap bodies);
             // without mips the LOD clamps to 0 and this degrades to the legacy look.
             float  _LargeGodRayCausticDepthSoften;
+            // Strength of the from-air, through-a-pane view relative to the submerged one.
+            // 0 (the default) makes every above-water pixel early-out exactly as it did before this
+            // existed, so the shipped underwater look is byte-identical until an author opts in.
+            float  _LargeGodRayFromAir;
 
             // Temporal reprojection (the KWS calm): the pass renders into a persistent history RT and
             // blends each pixel with last frame's value reprojected by scene world position. Combined
@@ -163,21 +178,94 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 return focus * fade;
             }
 
+            // Iterations solving the from-air waterline crossing against the DISPLACED surface at
+            // the crossing's OWN xz. Three lands well inside the surface's own slope error. NOT a
+            // bisection over a band: an earlier attempt bracketed +-amplitude and bisected five
+            // times, which quantised the crossing to ~30 cm and printed visible steps. A fixed
+            // point on a height field has no bracket to quantise.
+            #define GODRAY_PANE_CROSS_ITERS 3
+
+            // Distance along the ray at which an ABOVE-WATER camera's view ray meets the water.
+            //
+            // WHY THIS EXISTS. The obvious answer is the ray's intersection with the plane at
+            // _UnderwaterSurfaceY, and it is wrong in a way a still frame cannot show:
+            // _UnderwaterSurfaceY is the surface height at the CAMERA's xz. For a submerged eye
+            // that is right - the eye IS at that xz. For a viewer in air looking at a distant pane
+            // it makes the plane bob with the camera's own travel through the swell, so the pane's
+            // edge SLIDES WITH THE VIEWER. Camera-coupled world geometry; on screen it read as
+            // "the god ray box moves when the cam moves".
+            //
+            // So the height is read at the CROSSING's own xz instead, by fixed point: solve against
+            // the current guess, re-read the real surface where that lands, repeat. The answer then
+            // depends only on the world and the ray - track the camera sideways without turning and
+            // the crossing stays put. It also follows the wave form for free, since it is the
+            // displaced surface being asked, not a plane fitted to it.
+            //
+            // COST: SurfaceHeightAtXZ is ~6 texture fetches on an ocean body, so ~24 per pixel here.
+            // Paid only by ABOVE-WATER pixels, only on downward rays, only in a scene that has an
+            // exclusion volume at all, and only at half res - the caller gates all three.
+            //
+            // GRAZING RAYS converge slowest: with rayDir.y near 0 a small height change slides the
+            // crossing far horizontally, onto a different part of the wave field. The clamp keeps
+            // every iterate inside the span so one overshoot cannot throw the result - such a ray
+            // lands somewhere plausible on the surface rather than exactly on its crossing. Those
+            // rays meet the water near the horizon, where the shafts have already faded out.
+            float PaneWaterlineDistance(float3 camWorld, float3 rayDir, float maxDist)
+            {
+                float planeY = _UnderwaterSurfaceY; // first guess: the flat, camera-local height
+                [unroll]
+                for (int i = 0; i < GODRAY_PANE_CROSS_ITERS; i++)
+                {
+                    float t = clamp((planeY - camWorld.y) / rayDir.y, 0.0, maxDist);
+                    planeY = SurfaceHeightAtXZ((camWorld + rayDir * t).xz);
+                }
+                return clamp((planeY - camWorld.y) / rayDir.y, 0.0, maxDist);
+            }
+
             // The shafts' submersion fade: zero at the surface, full this many metres below. SPATIAL
             // and current-frame (same pattern as the fog's murk ramp): the binary _CameraUnderwater
             // flag carries the CPU gate's readback staleness and hysteresis, so gating the scatter
             // on it popped the shafts a frame early/late whenever WAVES drove the crossing.
             #define GODRAY_SUBMERGE_FADE_METERS 0.25
+            // Submersion depth over which the TEMPORAL accumulation comes up - deliberately far
+            // deeper than the shafts' own fade above, and that separation IS the fix.
+            //
+            // Sharing one fade put the accumulation's arming at 0-0.25 m, which is exactly where the
+            // image it accumulates CHANGES SHAPE: above the line only pane pixels are drawn, and the
+            // instant the eye is under, every pixel has a span. So it switched on precisely as its
+            // own history became meaningless, and spent its first frames converging away from a
+            // stale pane. Bert, seeing it: "at water level crossing we still have a stale, i think
+            // system have hard time to decide if it should smooth the ray or no" - the system was
+            // not deciding badly, it was being asked at the one moment the answer was changing.
+            //
+            // This is the fog's arming rule applied to a different gate: a gate is safe when it is a
+            // SUPERSET of where its effect can alter the result, so toggling it changes nothing. At
+            // two metres down the field has been full-screen and stable for many frames, so bringing
+            // the history in there cannot resurrect anything from the crossing.
+            //
+            // (The strictly doctrinal form would be PER PIXEL - store the regime that produced each
+            // history texel and drop it where it disagrees. Not free: the half-res target inherits
+            // the camera colour format, which on a common URP HDR setup is B10G11R11 with no alpha
+            // channel to put it in. That is the upgrade path if this proves not enough.)
+            #define GODRAY_TEMPORAL_FADE_METERS 1.0
 
             half4 FragRaymarch(Varyings input) : SV_Target
             {
-                // Underwater only: these shafts are the view from BELOW the surface. Fade over the
-                // first centimetres of submersion instead of switching on the binary flag, so the
-                // scatter rises with the water taking the lens rather than popping. (The feature
-                // also gates on an active god-ray ocean.)
+                // Submerged: fade in over the first centimetres of submersion rather than
+                // switching on the binary flag, so the scatter rises with the water taking the lens
+                // instead of popping. In AIR this is 0 and the pane weight below decides instead.
+                // (The feature also gates on an active god-ray ocean.)
                 float submergeFade = saturate((_UnderwaterSurfaceY - _WorldSpaceCameraPos.y)
                                               / GODRAY_SUBMERGE_FADE_METERS);
-                if (_LargeGodRayDensity <= 0.0 || submergeFade <= 0.0) return half4(0.0, 0.0, 0.0, 1.0);
+                // The accumulation's own, much deeper fade - see GODRAY_TEMPORAL_FADE_METERS. It
+                // drives BOTH the animated jitter and the history blend, because those two are one
+                // mechanism and must arm together.
+                float temporalFade = saturate((_UnderwaterSurfaceY - _WorldSpaceCameraPos.y)
+                                              / GODRAY_TEMPORAL_FADE_METERS);
+                if (_LargeGodRayDensity <= 0.0) return half4(0.0, 0.0, 0.0, 1.0);
+                // With the from-air knob at 0 this is the ORIGINAL early-out, unchanged: an
+                // above-water pixel costs one compare and leaves.
+                if (submergeFade <= 0.0 && _LargeGodRayFromAir <= 0.0) return half4(0.0, 0.0, 0.0, 1.0);
 
                 float rawDepth = SampleSceneDepth(input.uv);
                 float3 sceneWorld = ComputeWorldSpacePosition(input.uv, rawDepth, UNITY_MATRIX_I_VP);
@@ -187,15 +275,48 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 float sceneDist = length(toScene);
                 float3 rayDir = toScene / max(sceneDist, 1e-5);
 
-                // Bound the march to the IN-WATER span of the view ray: never past the scene, never past
-                // the far plane (sky pixels), and - for an up-facing ray - never past the surface, so a
-                // shaft stops where the water ends instead of streaking up into the air.
-                float marchDist = min(sceneDist, SHAFT_MAX_DISTANCE);
-                if (rayDir.y > 1e-4)
+                // The BELOW-SURFACE span [tEnter, tExit] of the view ray against the flat waterline.
+                // ONE formulation for both viewpoints, rather than a second regime bolted beside the
+                // first: submerged, the span starts at the eye and (for an up-ray) ends where the ray
+                // leaves the water, so a shaft stops where the water ends instead of streaking into
+                // the air; from air, it STARTS where the ray dips under, and a ray that never dips has
+                // no span at all. Never past the scene, and never past SHAFT_MAX_DISTANCE.
+                float camGap = _UnderwaterSurfaceY - camWorld.y; // > 0 = the eye is below the surface
+                float tEnter = 0.0;
+                float tExit = min(sceneDist, SHAFT_MAX_DISTANCE);
+                if (camGap > 0.0)
                 {
-                    float toSurface = (_UnderwaterSurfaceY - camWorld.y) / rayDir.y;
-                    if (toSurface > 0.0) marchDist = min(marchDist, toSurface);
+                    if (rayDir.y > 1e-4) tExit = min(tExit, camGap / rayDir.y);
                 }
+                else
+                {
+                    // In air, so this pixel can only ever be a PANE view - and a pane needs a
+                    // volume. Leaving here first keeps a scene with no carve from paying for the
+                    // surface field at all.
+                    if (_ExclusionCount < 0.5) return half4(0.0, 0.0, 0.0, 1.0);
+                    // Only a DOWNWARD ray reaches the water.
+                    if (rayDir.y > -1e-4) return half4(0.0, 0.0, 0.0, 1.0);
+                    // Solved at the CROSSING's own xz, not the camera's - see PaneWaterlineDistance.
+                    tEnter = PaneWaterlineDistance(camWorld, rayDir, tExit);
+                }
+                if (tExit <= tEnter) return half4(0.0, 0.0, 0.0, 1.0);
+
+                // THE PANE CULL - the whole reason from-air shafts are safe to draw at all. Tested at
+                // the point where this ray crosses the waterline: inside a carve that point is a
+                // WINDOW into a lit water volume, which is exactly the view worth drawing; outside, it
+                // is open sea, which the surface shader owns and which must get nothing.
+                //
+                // The two regimes are MAXed rather than blended through a camera-height ramp, and that
+                // is safe for a reason worth stating: underwater the eye is IN WATER, so it is never
+                // inside a dry carve, so this term is 0 there and the submerged look is bit-for-bit
+                // what it was. An earlier attempt floored the submerged side at the knob instead and
+                // popped the shafts on diving in.
+                float3 waterEntry = camWorld + rayDir * tEnter;
+                float paneWeight = InsideExclusion(waterEntry) ? _LargeGodRayFromAir : 0.0;
+                float regime = max(submergeFade, paneWeight);
+                if (regime <= 0.0) return half4(0.0, 0.0, 0.0, 1.0);
+
+                float marchDist = tExit - tEnter;
 
                 // Clamped in the SHADER, not just by the publisher: this pass has no Properties
                 // block, so _LargeGodRaySteps is a plain global with no Range() to bound it (unlike
@@ -206,7 +327,16 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 // ANIMATED jitter (Jimenez): shifting the noise pattern every frame turns the static
                 // dither into per-frame samples the temporal accumulation below averages - a few
                 // marched steps behave like many.
-                float jitter = InterleavedGradientNoise(input.positionCS.xy + 5.588238 * _GodRayFrame);
+                //
+                // Faded out by the SAME submersion factor as that accumulation, because the two are
+                // one mechanism and only make sense together: an animated pattern with nothing
+                // averaging it does not smooth, it CRAWLS - a fresh dither every frame, shifting the
+                // samples by up to a full step through the shadow and caustic field. Where the
+                // accumulation is off (the from-air pane view - see the blend below) this leaves a
+                // STATIC dither instead, which the separable blur can smooth. Fading the frame term
+                // rather than switching it keeps the pattern morphing smoothly across the crossing.
+                float jitter = InterleavedGradientNoise(input.positionCS.xy
+                                                        + 5.588238 * _GodRayFrame * temporalFade);
 
                 // Constant along a straight view ray -> hoisted: the sun glow (phase) and the per-step
                 // view-fog factor (Beer-Lambert over one step, per channel so red dies first).
@@ -230,7 +360,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 [loop]
                 for (int s = 0; s < steps; s++)
                 {
-                    float t = (s + jitter) * dt;
+                    float t = tEnter + (s + jitter) * dt;
                     float3 p = camWorld + rayDir * t;
                     float shadow = MainLightRealtimeShadow(TransformWorldToShadowCoord(p));
                     // Carved presence: a dry volume between this sample and the sun blocks the
@@ -270,12 +400,26 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 accum /= max(viewFogWeightSum, 1e-4);
 
                 float3 col = _LargeGodRayColor.rgb * _SunColor * (accum * _LargeGodRayDensity * phase);
-                col *= submergeFade; // submersion fade (see GODRAY_SUBMERGE_FADE_METERS above)
+                // Submerged fade, or the from-air pane weight - whichever claims this pixel.
+                col *= regime;
 
                 // Temporal accumulation: blend with last frame's value at this scene point. The history
                 // is the pre-blur RT (ping-ponged by the C# pass), so accumulation sharpness is kept
                 // and the blur only shapes the composited result. Off-screen history = fresh value.
-                if (_GodRayTemporalBlend > 0.0)
+                //
+                // SUBMERGED-FIELD ONLY, hence the fade. Reprojecting by the SCENE world position is
+                // sound while the shafts are a smooth volume in front of real geometry: the value at
+                // a pixel really is a property of the point behind it. A from-air PANE view breaks
+                // that premise outright - what a pane pixel shows is a property of the whole marched
+                // span through the carve, so translating the camera changes the span completely while
+                // the reprojection still hands back most of last frame's value from wherever that
+                // scene point went. On screen that is a stale copy of the pane sliding along with the
+                // camera and dissolving over the ~8 frames the 0.88 weight integrates.
+                // Scaling by submergeFade removes it exactly where the premise fails and leaves the
+                // underwater calm bit-for-bit as it was; the same factor is continuous across the
+                // crossing, so the accumulation fades in rather than switching on.
+                float temporalBlend = _GodRayTemporalBlend * temporalFade;
+                if (temporalBlend > 0.0)
                 {
                     // SELF-CALIBRATING reprojection: project this pixel's scene point through BOTH
                     // frames' matrices with identical math and apply only the DELTA to the raster
@@ -297,7 +441,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                         {
                             float3 history = SAMPLE_TEXTURE2D_LOD(_LargeGodRayHistory,
                                                  sampler_LargeGodRayHistory, prevUV, 0).rgb;
-                            col = lerp(col, history, _GodRayTemporalBlend);
+                            col = lerp(col, history, temporalBlend);
                         }
                     }
                 }

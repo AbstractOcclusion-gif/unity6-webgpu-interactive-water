@@ -112,6 +112,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_LargeGodRayExtinction = Shader.PropertyToID("_LargeGodRayExtinction");
         static readonly int ID_LargeGodRayCausticStrength = Shader.PropertyToID("_LargeGodRayCausticStrength");
         static readonly int ID_LargeGodRayCausticDepthSoften = Shader.PropertyToID("_LargeGodRayCausticDepthSoften");
+        static readonly int ID_LargeGodRayFromAir = Shader.PropertyToID("_LargeGodRayFromAir");
         static readonly int ID_CameraUnderwater = Shader.PropertyToID("_CameraUnderwater");
         static readonly int ID_CameraDryVolume = Shader.PropertyToID("_CameraDryVolume");
         static readonly int ID_UnderwaterSurfaceY = Shader.PropertyToID("_UnderwaterSurfaceY");
@@ -397,6 +398,7 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_LargeGodRayExtinction, _body.LargeGodRayExtinction);
             sink.SetFloat(ID_LargeGodRayCausticStrength, _body.LargeGodRayCausticStrength);
             sink.SetFloat(ID_LargeGodRayCausticDepthSoften, _body.LargeGodRayCausticDepthSoften);
+            sink.SetFloat(ID_LargeGodRayFromAir, _body.LargeGodRayFromAir);
 
             sink.SetVectorArray(ID_WaveA, _body.WaveBank.PackedA);
             sink.SetVectorArray(ID_WaveB, _body.WaveBank.PackedB);

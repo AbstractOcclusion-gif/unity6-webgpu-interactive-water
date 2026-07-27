@@ -62,6 +62,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 DrawFields(
                     "ocean.largeGodRayColor",
                     WaterVolumePropertyPaths.LargeGodRayDensity,
+                    "ocean.largeGodRayFromAir",
                     "ocean.largeGodRaySteps",
                     "ocean.largeGodRayAnisotropy",
                     "ocean.largeGodRayExtinction",

@@ -88,11 +88,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // Floor for the eye -> near-plane direction (degenerate only if the near plane sat on the
         // eye), used when pushing a dry-carve pixel out to its exit face.
         #define CLASSIFY_DIR_EPSILON 1e-5
-        // Screen pixels the fog's edge is pushed toward the AIR side when the eye is inside a dry
-        // carve. ONLY there: in the open the wall does not exist, the surface sheet owns the
-        // from-above view and over-covering would paint fog onto it. Inside a carve the fog's edge
-        // has to MEET the wall's, and the wall is what the extra pixels land on.
-        #define WATERLINE_CARVE_OVER_COVER_PIXELS 3.0
+        // WATERLINE_CARVE_OVER_COVER_PIXELS moved to WaterWaterline.hlsl beside the curve it
+        // shifts: the exclusion wall now mirrors this coverage to hand off against it, so the
+        // number has to have exactly one home.
 
         // False-colour views for THIS pass (WaterFogDebug.hlsl), inert unless _WaterDebugMode
         // selects one. Included here rather than with the headers at the top on purpose: it reads
@@ -292,6 +290,34 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 // nearest crossing. A per-pixel raster fact cannot make that mistake.
                 if (sheetSeenFromAir)
                 {
+                    // SCOPED TO WHERE ITS PREMISE HOLDS. The rule above assumes the surface shader
+                    // already absorbed THIS ray's water column when it shaded the sheet. That is
+                    // false when part of the column BEYOND the sheet is a dry exclusion volume: the
+                    // sheet's shading has no idea a room is carved back there, so suppressing the
+                    // span here leaves it painted by nobody at all.
+                    //
+                    // The symptom, and it is a nasty one because the fog looks innocent: stand near
+                    // a carve with a wave crest between you and it. The CREST is the nearest sheet,
+                    // so it wins the depth prepass and this branch claims the pixel - for the WHOLE
+                    // ray, including the hole behind it. Bert: "the system picks the closest water
+                    // point to activate deactivate fog. In this case math are wrong."
+                    //
+                    // Such pixels go to the SAME carve path the no-prepass case below uses, rather
+                    // than to a second span rule invented here: one validated behaviour, and mode 10
+                    // then reads CARVE_MARCH over the hole instead of PREPASS_AIR.
+                    float3 sheetHit = cam + dir * hitDist;
+                    float beyondLen = rayLen - hitDist;
+                    float carveBeyond = ExclusionRayLength(sheetHit, dir, beyondLen);
+                    if (_ExclusionMeshCount > 0.5)
+                        carveBeyond += ExclusionMeshRayLength(uv, sheetHit, dir, beyondLen);
+                    if (carveBeyond > 0.0)
+                    {
+                        OceanWavyPath(sceneWorld, cam, rayStartsWet, pathLen, deepestY, surfaceRefY,
+                                      wetStart);
+                        // After the call, which stamps its own id on entry - this is a carve pixel.
+                        WaterFogDebugBranch(WATER_FOG_BRANCH_CARVE_MARCH);
+                        return;
+                    }
                     WaterFogDebugBranch(WATER_FOG_BRANCH_PREPASS_AIR);
                     pathLen = 0.0;
                     deepestY = _VolumeCenter.y;

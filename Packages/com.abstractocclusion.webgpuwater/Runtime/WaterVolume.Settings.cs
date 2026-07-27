@@ -174,6 +174,14 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("Master intensity of the ocean god-ray shafts. 0 = off (also the gate: the fullscreen " +
                      "shaft pass is skipped entirely). Raise for brighter volumetric beams.")]
             [Min(0f)] public float largeGodRayDensity = 0f;
+            [Tooltip("Shafts seen from ABOVE the water, THROUGH AN EXCLUSION VOLUME'S WINDOW - a " +
+                     "sunken room's pane, a hull opening. 0 = underwater only (the default, and the " +
+                     "look this asset shipped with). Above water the shafts draw ONLY where the view " +
+                     "ray crosses the waterline INSIDE a carve: over open sea the surface shader owns " +
+                     "the view and beams there would be painted onto water the viewer is not inside, " +
+                     "but looking through a pane genuinely IS looking into a lit water volume. Scales " +
+                     "the shafts relative to the submerged view, which always renders full strength.")]
+            [Range(0f, 1f)] public float largeGodRayFromAir = 0f;
             [Tooltip("Raymarch samples per pixel for the ocean shafts - SEPARATE from the pool god-ray steps. " +
                      "More = smoother beams, higher cost.")]
             [Range(LargeGodRayMinSteps, LargeGodRayMaxSteps)] public int largeGodRaySteps = DefaultLargeGodRaySteps;
@@ -427,6 +435,9 @@ namespace AbstractOcclusion.WebGpuWater
         internal float LargeGodRayCausticStrength => IsOceanClipmap ? largeGodRayCausticStrength : 0f;
         internal float LargeGodRayCausticSmooth => ocean.largeGodRayCausticSmooth;
         internal float LargeGodRayCausticDepthSoften => ocean.largeGodRayCausticDepthSoften;
+        /// <summary>Strength of the from-air (through-a-carve-pane) shafts relative to the
+        /// submerged view. Ocean-only, like every other shaft term.</summary>
+        internal float LargeGodRayFromAir => IsOceanClipmap ? ocean.largeGodRayFromAir : 0f;
         internal float LargeCausticTimeScale => ocean.largeCausticTimeScale;
         internal float LargeCausticRippleScale => ocean.largeCausticRippleScale;
         internal float LargeCausticRippleStrength => ocean.largeCausticRippleStrength;
