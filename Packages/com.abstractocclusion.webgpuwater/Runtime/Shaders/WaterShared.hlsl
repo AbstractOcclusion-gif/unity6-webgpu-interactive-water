@@ -99,9 +99,20 @@ float2 ProjectCausticUV(float3 poolPos, float3 refractedLight)
            * 0.5 + 0.5;
 }
 
+// Refract-shadow look (published per body with _CausticOccluderActive by WaterUniformPublisher):
+// the softness knob widens the vertical fade band below the occluder AND drives the lateral PCF
+// penumbra; the sun strength is the directional light's own Shadow Strength, so this refracted
+// path dims its shadows exactly like URP's shadow map does on the fallback path
+// (shadowAttenuation folds the same value in) - toggling Refract Shadows no longer jumps from
+// tuned shadows to pitch black.
+float _OccluderShadowSoftness;  // 0 = legacy hard silhouette .. 1 = widest band + penumbra
+float _SunShadowStrength;       // the sun's Light.shadowStrength (1 when no sun is wired)
+
 // Soft depth band (normalised pool depth) over which the occluder shadow fades in just below the
-// occluder, so its top edge isn't a hard step.
-#define OCCLUDER_SHADOW_SOFTEN 0.03
+// occluder, so its top edge isn't a hard step. The BASE keeps softness 0 at the legacy look; the
+// softness knob widens it up to the MAX on top.
+#define OCCLUDER_SHADOW_SOFTEN     0.03
+#define OCCLUDER_SHADOW_SOFTEN_MAX 0.25
 
 // The caustic RT's GREEN channel encodes the NORMALISED DEPTH (0 at the surface, 1 at the floor) of the
 // SHALLOWEST submerged occluder along this refracted ray - min-blended by CausticOccluder, and 1 (floor,
@@ -112,7 +123,44 @@ float2 ProjectCausticUV(float3 poolPos, float3 refractedLight)
 float OccluderLitFromGreen(float poolPosY, float greenDepth)
 {
     float pointDepth = saturate(-poolPosY / POOL_HEIGHT); // 0 surface .. 1 floor
-    return 1.0 - saturate((pointDepth - greenDepth) / OCCLUDER_SHADOW_SOFTEN);
+    float band = OCCLUDER_SHADOW_SOFTEN + _OccluderShadowSoftness * OCCLUDER_SHADOW_SOFTEN_MAX;
+    float lit = 1.0 - saturate((pointDepth - greenDepth) / band);
+    // The sun's Shadow Strength caps how dark ANY refracted shadow gets (identity at strength 1),
+    // exactly like shadowAttenuation caps the shadow-map path.
+    return lerp(1.0, lit, _SunShadowStrength);
+}
+
+// ---- Lateral penumbra: 4-tap PCF around the green silhouette ----
+// A real shadow softens with distance below its caster. Green stores DEPTH, so blurring it would
+// MIX depths and shift the edge instead of softening the shadow - the taps therefore COMPARE
+// first (OccluderLitFromGreen) and average after, classic PCF. The radius grows with the
+// receiving point's own depth (a proxy for distance below the occluder - most occluders float
+// near the surface), so shallow points stay crisp and the floor goes soft, on BOTH sides of the
+// silhouette edge. Callers fetch the four taps themselves - the two shader families bind
+// _CausticTex differently (sampler2D vs TEXTURE2D) - but the offsets, radius and combine all
+// live HERE so the pattern can never drift between consumers. Tap fetches are explicit-LOD, so
+// every call site stays WGSL-safe in any control flow. Radius 0 (softness 0, or at the surface)
+// collapses every tap onto the centre = the legacy single-sample look.
+#define OCCLUDER_PCF_RADIUS_MAX 0.025 // caustic-UV penumbra radius at softness 1, floor depth
+#define OCCLUDER_PCF_TAP0 float2( 0.7,  0.3)
+#define OCCLUDER_PCF_TAP1 float2(-0.3,  0.7)
+#define OCCLUDER_PCF_TAP2 float2(-0.7, -0.3)
+#define OCCLUDER_PCF_TAP3 float2( 0.3, -0.7)
+
+float OccluderPenumbraRadiusUV(float poolPosY)
+{
+    float pointDepth = saturate(-poolPosY / POOL_HEIGHT);
+    return _OccluderShadowSoftness * OCCLUDER_PCF_RADIUS_MAX * pointDepth;
+}
+
+// Centre + the four taps, compared individually then averaged (see the PCF note above).
+float OccluderLitFromGreenPCF(float poolPosY, float centerGreen, float4 tapGreens)
+{
+    return 0.2 * (OccluderLitFromGreen(poolPosY, centerGreen)
+                + OccluderLitFromGreen(poolPosY, tapGreens.x)
+                + OccluderLitFromGreen(poolPosY, tapGreens.y)
+                + OccluderLitFromGreen(poolPosY, tapGreens.z)
+                + OccluderLitFromGreen(poolPosY, tapGreens.w));
 }
 
 #endif // WEBGL_WATER_SHARED_INCLUDED

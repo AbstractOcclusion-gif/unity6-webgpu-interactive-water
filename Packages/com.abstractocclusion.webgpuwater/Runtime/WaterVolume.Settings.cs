@@ -1000,6 +1000,12 @@ namespace AbstractOcclusion.WebGpuWater
                  "consistent shadow - at the cost of the shadow and caustics drifting apart on a DEEP pool.")]
         [SerializeField] internal bool refractShadows = true;
 
+        [Tooltip("How soft the refracted underwater shadow reads (with Refract Shadows ON). Widens the " +
+                 "vertical fade below the occluder and grows a lateral penumbra with depth - like a real " +
+                 "shadow softening away from its caster. 0 = the legacy hard silhouette. Overall shadow " +
+                 "darkness follows the sun's Shadow Strength, matching URP's shadow-map path.")]
+        [Range(0f, 1f)] [SerializeField] internal float refractShadowSoftness = 0.5f;
+
         [Header("Depth attenuation (downwelling)")]
         [SerializeField] DepthAttenuationSettings depthAttenuation = new DepthAttenuationSettings();
 

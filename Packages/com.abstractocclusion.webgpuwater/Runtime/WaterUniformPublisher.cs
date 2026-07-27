@@ -18,6 +18,8 @@ namespace AbstractOcclusion.WebGpuWater
         // the per-frame body-uniform path, where an inline string was the one uncached exception.
         static readonly int ID_SkyboxCubemapTex = Shader.PropertyToID("_Tex");
         static readonly int ID_CausticOccluderActive = Shader.PropertyToID("_CausticOccluderActive");
+        static readonly int ID_OccluderShadowSoftness = Shader.PropertyToID("_OccluderShadowSoftness");
+        static readonly int ID_SunShadowStrength = Shader.PropertyToID("_SunShadowStrength");
         static readonly int ID_Tiles = Shader.PropertyToID("_Tiles");
         static readonly int ID_Sky = Shader.PropertyToID("_Sky");
         static readonly int ID_Light = WaterShaderProps.LightDir;
@@ -339,6 +341,11 @@ namespace AbstractOcclusion.WebGpuWater
             // Per body (a global was last-writer-wins with 2+ caustic bodies): 1 when THIS body's pass
             // wrote submerged-object silhouettes into caustic.g this frame.
             sink.SetFloat(ID_CausticOccluderActive, _body.CausticOccluderActive ? 1f : 0f);
+            // Refract-shadow look: the per-body softness knob, plus the sun's OWN Shadow Strength -
+            // so the refracted occluder path dims its shadows exactly like URP's shadow map does on
+            // the fallback path (shadowAttenuation folds the same value in). No sun wired = full 1.
+            sink.SetFloat(ID_OccluderShadowSoftness, _body.refractShadowSoftness);
+            sink.SetFloat(ID_SunShadowStrength, _body.sun != null ? _body.sun.shadowStrength : 1f);
 
             sink.SetVector(ID_VolumeCenter, _body.VolumeCenter);
             sink.SetVector(ID_VolumeExtent, _body.VolumeExtentSafe);

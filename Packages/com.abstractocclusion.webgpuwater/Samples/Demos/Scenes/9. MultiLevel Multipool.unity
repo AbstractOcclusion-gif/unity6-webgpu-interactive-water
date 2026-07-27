@@ -396,6 +396,7 @@ MonoBehaviour:
   chunkRefraction: 0.5
   chunkReflectivity: 0.6
   chunkMeniscus: 0.5
+  chunkFoamStrength: 1
   chunkGodRayStrength: 0
   chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
@@ -579,13 +580,15 @@ MonoBehaviour:
     sssPinchMin: 0.1
     sssPinchMax: 0.6
     sssPinchFalloff: 1.5
-  refractShadows: 0
+  refractShadows: 1
+  refractShadowSoftness: 0.5
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
     depthDarkenStrength: 1
     causticDepthFade: 0.5
     screenSpaceCaustics: 0
+    screenCausticIntensity: 1
     godRayDepthFade: 0.5
     linkDepthToFog: 0
   _legacyDepthDarken: 0
@@ -1197,6 +1200,7 @@ MonoBehaviour:
   chunkRefraction: 0.5
   chunkReflectivity: 0.6
   chunkMeniscus: 0.5
+  chunkFoamStrength: 1
   chunkGodRayStrength: 0
   chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
@@ -1380,13 +1384,15 @@ MonoBehaviour:
     sssPinchMin: 0.1
     sssPinchMax: 0.6
     sssPinchFalloff: 1.5
-  refractShadows: 0
+  refractShadows: 1
+  refractShadowSoftness: 0.5
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
     depthDarkenStrength: 1
     causticDepthFade: 0.5
     screenSpaceCaustics: 0
+    screenCausticIntensity: 1
     godRayDepthFade: 0.5
     linkDepthToFog: 0
   _legacyDepthDarken: 0
@@ -2152,6 +2158,7 @@ MonoBehaviour:
   chunkRefraction: 0.5
   chunkReflectivity: 0.6
   chunkMeniscus: 0.5
+  chunkFoamStrength: 1
   chunkGodRayStrength: 0
   chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
@@ -2336,12 +2343,14 @@ MonoBehaviour:
     sssPinchMax: 0.6
     sssPinchFalloff: 1.5
   refractShadows: 1
+  refractShadowSoftness: 0.5
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
     depthDarkenStrength: 1
     causticDepthFade: 0.5
     screenSpaceCaustics: 0
+    screenCausticIntensity: 1
     godRayDepthFade: 0.5
     linkDepthToFog: 0
   _legacyDepthDarken: 0
@@ -2859,6 +2868,7 @@ MonoBehaviour:
   chunkRefraction: 0.5
   chunkReflectivity: 0.6
   chunkMeniscus: 0.5
+  chunkFoamStrength: 1
   chunkGodRayStrength: 0
   chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
@@ -3043,12 +3053,14 @@ MonoBehaviour:
     sssPinchMax: 0.6
     sssPinchFalloff: 1.5
   refractShadows: 1
+  refractShadowSoftness: 0.5
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
     depthDarkenStrength: 1
     causticDepthFade: 0.5
     screenSpaceCaustics: 0
+    screenCausticIntensity: 1
     godRayDepthFade: 0.5
     linkDepthToFog: 0
   _legacyDepthDarken: 0

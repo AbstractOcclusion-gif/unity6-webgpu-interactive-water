@@ -19,6 +19,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "reflectionSettings.reflectUrpProbe",
                     WaterVolumePropertyPaths.RealRefraction);
                 DrawFields("refractShadows");
+                if (Prop("refractShadows").boolValue)
+                    DrawFields("refractShadowSoftness");
                 if (!Prop("refractShadows").boolValue)
                     EditorGUILayout.HelpBox(
                         "Refract Underwater Shadows is OFF: every material (incl. Standard Lit) shows one " +

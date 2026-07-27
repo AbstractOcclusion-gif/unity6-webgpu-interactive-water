@@ -154,9 +154,17 @@ float GetWallShadeSplit(float3 p, float3 normal, float3 pDdx, float3 pDdy, out f
         float2 cuvDdx = ProjectCausticUV(p + pDdx, poolRefract) - cuv;
         float2 cuvDdy = ProjectCausticUV(p + pDdy, poolRefract) - cuv;
         float4 caustic = tex2Dgrad(_CausticTex, cuv, cuvDdx, cuvDdy);
-        // Green is the occluder's depth: this point is shadowed only below it (OccluderLitFromGreen).
-        // With no occluder green stays 1 (floor) -> lit -> byte-identical to the old caustic.g == 1.
-        causticTerm = diffuse * caustic.r * OccluderLitFromGreen(p.y, caustic.g);
+        // Green is the occluder's depth: this point is shadowed only below it. Four extra
+        // explicit-LOD taps give the silhouette its distance-grown penumbra (the shared PCF in
+        // WaterShared). With no occluder green stays 1 everywhere -> lit -> byte-identical to
+        // the old caustic.g == 1.
+        float occRadius = OccluderPenumbraRadiusUV(p.y);
+        float4 occGreens = float4(
+            tex2Dlod(_CausticTex, float4(cuv + OCCLUDER_PCF_TAP0 * occRadius, 0.0, 0.0)).g,
+            tex2Dlod(_CausticTex, float4(cuv + OCCLUDER_PCF_TAP1 * occRadius, 0.0, 0.0)).g,
+            tex2Dlod(_CausticTex, float4(cuv + OCCLUDER_PCF_TAP2 * occRadius, 0.0, 0.0)).g,
+            tex2Dlod(_CausticTex, float4(cuv + OCCLUDER_PCF_TAP3 * occRadius, 0.0, 0.0)).g);
+        causticTerm = diffuse * caustic.r * OccluderLitFromGreenPCF(p.y, caustic.g, occGreens);
     }
     else
     {

@@ -107,7 +107,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterCausticProjection"
         // must run before any branch - an implicit-derivative sample inside a per-fragment branch is undefined on
         // WebGPU/WGSL). Both passes call this so they project identically and stay registered.
         void SampleProjection(float2 uv, out float3 poolPos, out float3 worldPos,
-                              out float underwaterMask, out float4 causticSample, out float surfaceY)
+                              out float underwaterMask, out float4 causticSample, out float surfaceY,
+                              out float occluderLit)
         {
             float rawDepth = SampleSceneDepth(uv);
             worldPos = ComputeWorldSpacePosition(uv, rawDepth, UNITY_MATRIX_I_VP);
@@ -125,6 +126,17 @@ Shader "AbstractOcclusion/WebGpuWater/WaterCausticProjection"
             bool isSky = (rawDepth == UNITY_RAW_FAR_CLIP_VALUE);
             underwaterMask = (!isSky && inside > 0.5 && poolPos.y < simH) ? 1.0 : 0.0;
             surfaceY = PoolToWorld(float3(poolPos.x, simH, poolPos.z)).y;
+
+            // Occluder lit factor, computed ONCE here so both passes shade the identical shadow:
+            // four extra explicit-LOD taps = the shared distance-grown PCF penumbra (WaterShared);
+            // radius 0 collapses onto the centre sample = the legacy look.
+            float occRadius = OccluderPenumbraRadiusUV(poolPos.y);
+            float4 occGreens = float4(
+                SAMPLE_TEXTURE2D_LOD(_CausticTex, sampler_CausticTex, cuv + OCCLUDER_PCF_TAP0 * occRadius, 0).g,
+                SAMPLE_TEXTURE2D_LOD(_CausticTex, sampler_CausticTex, cuv + OCCLUDER_PCF_TAP1 * occRadius, 0).g,
+                SAMPLE_TEXTURE2D_LOD(_CausticTex, sampler_CausticTex, cuv + OCCLUDER_PCF_TAP2 * occRadius, 0).g,
+                SAMPLE_TEXTURE2D_LOD(_CausticTex, sampler_CausticTex, cuv + OCCLUDER_PCF_TAP3 * occRadius, 0).g);
+            occluderLit = OccluderLitFromGreenPCF(poolPos.y, causticSample.g, occGreens);
         }
 
         // Pass 0: additive refracted caustics. Faded with depth, killed under an occluder (green). Masked to 0
@@ -132,10 +144,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterCausticProjection"
         half4 FragCaustic(Varyings IN) : SV_Target
         {
             float3 poolPos, worldPos; float underwaterMask; float4 causticSample; float surfaceY;
-            SampleProjection(IN.uv, poolPos, worldPos, underwaterMask, causticSample, surfaceY);
+            float occluderLit;
+            SampleProjection(IN.uv, poolPos, worldPos, underwaterMask, causticSample, surfaceY,
+                             occluderLit);
 
             float causticFade = DepthFadeScalar(worldPos.y, surfaceY, _CausticDepthFade);
-            float lit = OccluderLitFromGreen(poolPos.y, causticSample.g);
+            float lit = occluderLit;
             float3 caustic = _CausticTint.rgb
                            * (causticSample.r * _CausticStrength * _ScreenCausticIntensity
                               * causticFade * lit * underwaterMask);
@@ -149,9 +163,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterCausticProjection"
         half4 FragShadow(Varyings IN) : SV_Target
         {
             float3 poolPos, worldPos; float underwaterMask; float4 causticSample; float surfaceY;
-            SampleProjection(IN.uv, poolPos, worldPos, underwaterMask, causticSample, surfaceY);
+            float occluderLit;
+            SampleProjection(IN.uv, poolPos, worldPos, underwaterMask, causticSample, surfaceY,
+                             occluderLit);
 
-            float lit = OccluderLitFromGreen(poolPos.y, causticSample.g);
+            float lit = occluderLit;
             float shadowAmount = _RefractedShadowStrength * underwaterMask * step(0.5, _CausticOccluderActive);
             float factor = lerp(1.0, lit, shadowAmount); // 1 = unshadowed; < 1 under an occluder
             return half4(factor, factor, factor, 1.0);    // Blend Zero SrcColor => dst *= factor

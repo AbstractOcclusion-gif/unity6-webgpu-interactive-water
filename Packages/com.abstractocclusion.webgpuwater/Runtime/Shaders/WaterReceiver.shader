@@ -186,9 +186,20 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
                 // which lands offset at depth and drew the second shadow. Above water / no occluder wired:
                 // the real shadow map. (URP's shadow on shaders we DON'T own - e.g. Standard Lit - stays
                 // un-refracted and we cannot intercept it; use WaterReceiver on submerged objects instead.)
-                float lightShadow = (underwater && _CausticOccluderActive > 0.5)
-                                    ? OccluderLitFromGreen(poolPos.y, causticSample.g)
-                                    : mainLight.shadowAttenuation;
+                float lightShadow = mainLight.shadowAttenuation;
+                if (underwater && _CausticOccluderActive > 0.5)
+                {
+                    // Shared distance-grown PCF penumbra (WaterShared): four extra explicit-LOD
+                    // taps around the silhouette (branch-safe); radius 0 collapses onto the
+                    // centre sample = the legacy look.
+                    float occRadius = OccluderPenumbraRadiusUV(poolPos.y);
+                    float4 occGreens = float4(
+                        SAMPLE_TEXTURE2D_LOD(_CausticTex, sampler_CausticTex, cuv + OCCLUDER_PCF_TAP0 * occRadius, 0).g,
+                        SAMPLE_TEXTURE2D_LOD(_CausticTex, sampler_CausticTex, cuv + OCCLUDER_PCF_TAP1 * occRadius, 0).g,
+                        SAMPLE_TEXTURE2D_LOD(_CausticTex, sampler_CausticTex, cuv + OCCLUDER_PCF_TAP2 * occRadius, 0).g,
+                        SAMPLE_TEXTURE2D_LOD(_CausticTex, sampler_CausticTex, cuv + OCCLUDER_PCF_TAP3 * occRadius, 0).g);
+                    lightShadow = OccluderLitFromGreenPCF(poolPos.y, causticSample.g, occGreens);
+                }
                 float3 color = albedo * (ambient + mainLight.color * (ndl * lightShadow));
 
                 // Smoothness-driven specular from the main light (Blinn-Phong with URP's

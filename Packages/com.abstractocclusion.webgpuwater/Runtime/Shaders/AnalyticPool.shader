@@ -143,9 +143,18 @@ Shader "AbstractOcclusion/WebGpuWater/AnalyticPool"
                 // same projection (1 = lit where nothing is submerged); use it below the waterline, keep
                 // the real shadow map for the sunlit rim above. The shadow-map fallback remains only for
                 // setups without the occluder shader wired (_CausticOccluderActive 0).
-                float occluderGreen = tex2D(_CausticTex, ProjectCausticUV(i.position, WorldDirToPool(-refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER)))).g;
-                // Green is the occluder's depth: this floor/wall point is shadowed only below that depth.
-                float occluderShadow = OccluderLitFromGreen(i.position.y, occluderGreen);
+                float2 occCuv = ProjectCausticUV(i.position, WorldDirToPool(-refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER)));
+                float occluderGreen = tex2D(_CausticTex, occCuv).g;
+                // Green is the occluder's depth: this floor/wall point is shadowed only below that
+                // depth. Four extra explicit-LOD taps = the shared distance-grown PCF penumbra
+                // (WaterShared); radius 0 collapses onto the centre = the legacy look.
+                float occRadius = OccluderPenumbraRadiusUV(i.position.y);
+                float4 occGreens = float4(
+                    tex2Dlod(_CausticTex, float4(occCuv + OCCLUDER_PCF_TAP0 * occRadius, 0.0, 0.0)).g,
+                    tex2Dlod(_CausticTex, float4(occCuv + OCCLUDER_PCF_TAP1 * occRadius, 0.0, 0.0)).g,
+                    tex2Dlod(_CausticTex, float4(occCuv + OCCLUDER_PCF_TAP2 * occRadius, 0.0, 0.0)).g,
+                    tex2Dlod(_CausticTex, float4(occCuv + OCCLUDER_PCF_TAP3 * occRadius, 0.0, 0.0)).g);
+                float occluderShadow = OccluderLitFromGreenPCF(i.position.y, occluderGreen, occGreens);
                 float objectShadow = (_CausticOccluderActive > 0.5 && underwater) ? occluderShadow : urpShadow;
                 // wallCaustic already carries the green occlusion, so when the pass is active the
                 // refracted shadow is baked into it - don't also multiply the un-refracted shadow map on top.
