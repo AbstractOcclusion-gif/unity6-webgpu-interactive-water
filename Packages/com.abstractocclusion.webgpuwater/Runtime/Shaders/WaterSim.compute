@@ -274,8 +274,8 @@ static const float BED_DEEP_DEPTH = 1000.0;
 static const float DRAIN_BAND = 0.08;
 
 // Still-water column depth (pool units) at a sim cell: the rest surface sits at pool y = 0 and the
-// bed below it, so depth = -bedPoolY. Point-sampled (r32 isn't filterable on WebGPU; the bed is
-// smooth, so this is fine).
+// bed below it, so depth = -bedPoolY. Read through the texture's own BILINEAR filter, not point:
+// the surface shares this texture and needs filtering for depth-clarity (see WaterBedBaker).
 float BedColumnDepth(float2 uv)
 {
     if (_UseBedDepth < 0.5) return BED_DEEP_DEPTH;

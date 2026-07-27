@@ -78,6 +78,10 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (_bedTex != null && _bedTex.width == res) return;
             if (_bedTex != null) DestroyBedTexture();
+            // Bilinear is load-bearing and must not be "fixed" to Point: the SURFACE reads this
+            // texture per pixel for depth-clarity (WaterSurfaceFragStages.hlsl:175), where point
+            // sampling quantises transparency to the bed texel grid. The sim's point-sampling note
+            // describes that one consumer's intent, not this resource's contract.
             _bedTex = new Texture2D(res, res, TextureFormat.RFloat, false, true)
             {
                 wrapMode = TextureWrapMode.Clamp,
