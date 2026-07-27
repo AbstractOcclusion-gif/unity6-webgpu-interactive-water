@@ -41,6 +41,11 @@ namespace AbstractOcclusion.WebGpuWater
             if (WaterPassCameraGate.SkipCameraFullscreen(renderingData.cameraData.cameraType)) return;
             if (_pass == null) return;                                // shader unassigned / not created
             if (!LargeBodyAtmosphereGate.HasActiveGodRayOcean) return; // ocean-only, and only when shafts are on
+            // A fullscreen-fog debug view owns the frame: these shafts inject one slot AFTER the
+            // fog and add WATER-TINTED light concentrated near the waterline, which tinted every
+            // false-colour view green exactly where the boundary under investigation sits. An
+            // instrument the scene can write on is not an instrument. See WaterDebugView.
+            if (WaterDebugView.FogViewActive) return;
             renderer.EnqueuePass(_pass);
         }
 

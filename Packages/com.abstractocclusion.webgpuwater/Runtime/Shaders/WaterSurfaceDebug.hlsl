@@ -12,19 +12,14 @@
 #ifndef WATER_SURFACE_DEBUG_INCLUDED
 #define WATER_SURFACE_DEBUG_INCLUDED
 
-float _WaterDebugMode;
+// _WaterDebugMode and every WATER_DEBUG_* ordinal live in WaterDebugMode.hlsl: the fullscreen fog
+// ships its own views off the same selector, and two private copies of the list would be two
+// places for it to drift from WaterDebugView.Mode.
+#include "WaterDebugMode.hlsl"
 
 // Summed-RGB below which a mirror texel counts as "nothing was rendered here" (view 6). Low, so a
 // genuinely dark reflection is not mistaken for an empty one.
 #define MIRROR_EMPTY_THRESHOLD 0.02
-
-#define WATER_DEBUG_OFF             0
-#define WATER_DEBUG_REFLECTION_GATE 1
-#define WATER_DEBUG_RENDERER_ID     2
-#define WATER_DEBUG_PLANAR_UV       3
-#define WATER_DEBUG_VIEW_NORMAL     4
-#define WATER_DEBUG_RAW_MIRROR      5
-#define WATER_DEBUG_MIRROR_EMPTY    6
 
 // Distinct hue per renderer so overlapping sheets are obvious: coincident draws that should be
 // resolved to ONE owner show as two colours interleaved across the same water.
@@ -46,6 +41,9 @@ bool WaterDebugColor(float4 screenPos, float3 normalWS, out float3 color)
     if (_WaterDebugMode < 0.5) return false;
 
     int mode = (int)(_WaterDebugMode + 0.5);
+    // Fog ordinals belong to the fullscreen pass (WaterFogDebug.hlsl), which replaces the whole
+    // frame - the surface must leave those pixels alone or both would paint the same mode.
+    if (mode >= WATER_DEBUG_FOG_FIRST) return false;
     if (mode == WATER_DEBUG_REFLECTION_GATE)
     {
         // RED = SSR on, GREEN = planar on, BLUE = real refraction on - AS THE SHADER READS THEM.

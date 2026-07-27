@@ -94,6 +94,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // has to MEET the wall's, and the wall is what the extra pixels land on.
         #define WATERLINE_CARVE_OVER_COVER_PIXELS 3.0
 
+        // False-colour views for THIS pass (WaterFogDebug.hlsl), inert unless _WaterDebugMode
+        // selects one. Included here rather than with the headers at the top on purpose: it reads
+        // _CameraDryVolume and _UnderwaterFogSimple out of the uniform block directly above, so it
+        // is a splinter of this pass, not a library - the same relationship WaterSurfaceFragStages
+        // has with WaterSurface.shader.
+        #include "WaterFogDebug.hlsl"
+
         struct Attributes { uint vertexID : SV_VertexID; };
         struct Varyings   { float4 positionCS : SV_POSITION; float2 uv : TEXCOORD0; };
 
@@ -144,6 +151,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                            out float pathLen, out float deepestY, out float surfaceRefY,
                            out float3 wetStart)
         {
+            // All three returns below are this one path; the carve handoff in OceanPrepassPath
+            // re-stamps the id AFTER its call, so a marched carve pixel still reads as the carve.
+            WaterFogDebugBranch(WATER_FOG_BRANCH_WAVY_MARCH);
             float camSurf = SurfaceHeightAtXZ(cam.xz);
             float sceneSurf = SurfaceHeightAtXZ(sceneWorld.xz);
             bool sceneUnder = sceneWorld.y <= sceneSurf;
@@ -282,6 +292,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 // nearest crossing. A per-pixel raster fact cannot make that mistake.
                 if (sheetSeenFromAir)
                 {
+                    WaterFogDebugBranch(WATER_FOG_BRANCH_PREPASS_AIR);
                     pathLen = 0.0;
                     deepestY = _VolumeCenter.y;
                     surfaceRefY = camSurf;
@@ -293,6 +304,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 // the old both-under early-out claimed: what is drawn past the exit is the
                 // sheet's own reflection/refraction imagery - the fog cannot see it and must
                 // not price it.
+                WaterFogDebugBranch(WATER_FOG_BRANCH_PREPASS_WET);
                 hit = cam + dir * hitDist;
                 pathLen = hitDist;
                 deepestY = min(cam.y, hit.y);
@@ -304,6 +316,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // authority (deep murk, floor views, past the clipmap - places the sheet never
             // drew, where the skybox cannot masquerade as a waterline). Ordered AFTER the
             // prepass on purpose - see the authority note above.
+            WaterFogDebugBranch(WATER_FOG_BRANCH_ANALYTIC);
             if (rayStartsWet && sceneUnder)
             {
                 pathLen = length(sceneWorld - cam);
@@ -350,10 +363,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 {
                     OceanWavyPath(sceneWorld, cam, rayStartsWet, pathLen, deepestY, surfaceRefY,
                                   wetStart);
+                    // AFTER the call, which stamps WAVY_MARCH on entry: this pixel is a carve
+                    // pixel that happens to be priced by the marcher, and the view must say so.
+                    WaterFogDebugBranch(WATER_FOG_BRANCH_CARVE_MARCH);
                     return;
                 }
             }
 
+            WaterFogDebugBranch(WATER_FOG_BRANCH_FLAT_FALLBACK);
             float3 underEnd = sceneUnder ? sceneWorld : cam;
             pathLen = length(underEnd - hit);
             deepestY = min(hit.y, underEnd.y);
@@ -371,6 +388,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                            out float pathLen, out float deepestY, out float surfaceRefY,
                            out float3 wetStart)
         {
+            WaterFogDebugBranch(WATER_FOG_BRANCH_FLAT_SIMPLE);
             float level = _UnderwaterSurfaceY;
             pathLen = WaterPathLength(sceneWorld, cam, level);
             // min against 'level' makes an in-air endpoint contribute its crossing at the waterline,
@@ -425,6 +443,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
 
             // Pond: clip the ray to the pool water box in pool space ([-1,1] xz, [-1,0] y). Working in
             // pool space lets one IntersectCube handle the surface top AND the walls/floor at once.
+            WaterFogDebugBranch(WATER_FOG_BRANCH_POND);
             float3 originPool = WorldToPool(cam);
             float3 scenePool = WorldToPool(sceneWorld);
             float3 rayPool = scenePool - originPool;
@@ -521,28 +540,36 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // MESH volumes are skipped by the analytic push (their exact exit needs the back-face
         // prepass), and a near-plane point that no analytic volume contains pushes by 0 - both
         // fall back to the near-plane point, which is the pre-carve behaviour.
-        float3 WaterlineClassifyPoint(float2 uv)
+        // 'pushDist' reports how far the point was moved out to a carve exit, in world metres.
+        // 0 means the push found nothing to push out of, so the classification stayed on the near
+        // plane - which is the CORRECT answer in the open and a silent FAILURE inside a carve
+        // (the near-plane point is then dry air below sea level, saying nothing about the water
+        // being looked at). Returned rather than re-derived so the debug view reads the number
+        // this function actually used.
+        float3 WaterlineClassifyPoint(float2 uv, out float pushDist)
         {
+            pushDist = 0.0;
             float3 nearWorld = ComputeWorldSpacePosition(uv, UNITY_NEAR_CLIP_VALUE,
                                                          UNITY_MATRIX_I_VP);
             if (_CameraDryVolume < 0.5) return nearWorld; // uniform: the eye is not in a carve
             float3 toNear = nearWorld - _WorldSpaceCameraPos;
             float3 rayDir = toNear / max(length(toNear), CLASSIFY_DIR_EPSILON);
-            float exitDist = ExclusionPushToExit(nearWorld, rayDir, 0.0, _ProjectionParams.z);
-            return nearWorld + rayDir * exitDist;
+            pushDist = ExclusionPushToExit(nearWorld, rayDir, 0.0, _ProjectionParams.z);
+            return nearWorld + rayDir * pushDist;
         }
 
         // Returns the coverage weight AND the signed gap it was derived from, so the caller can
         // take the hard "does this ray start in water" decision from the SAME number the soft
         // weight feathers - the two can then never disagree about where the line is.
-        float ArmWeight(float2 uv, out float classifyGap)
+        float ArmWeight(float2 uv, out float classifyGap, out float classifyPushDist)
         {
             // Bounded bodies are a finite fog VOLUME meant to be seen from OUTSIDE (circle a pond
             // and look into the murk), so they are never masked by the eye's own waterline; their
             // rays always start inside the box the pond path clips to.
             classifyGap = -1.0;
+            classifyPushDist = 0.0;
             if (_UnderwaterUnbounded < 0.5) return 1.0;
-            float3 classifyPoint = WaterlineClassifyPoint(uv);
+            float3 classifyPoint = WaterlineClassifyPoint(uv, classifyPushDist);
             classifyGap = (_UnderwaterFogSimple > 0.5) ? classifyPoint.y - _UnderwaterSurfaceY
                                                        : SurfaceSignedGap(classifyPoint);
             float overCoverPixels = (_CameraDryVolume > 0.5) ? WATERLINE_CARVE_OVER_COVER_PIXELS
@@ -554,12 +581,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // the sun visibility of the wet span past the exclusion volumes (1 = unshadowed), and the
         // per-pixel waterline mask (see ArmWeight).
         float3 UnderwaterFog(float2 uv, out float3 depthAttenuation, out float sunVisibility,
-                             out float armWeight)
+                             out float armWeight, out float4 debugColor)
         {
             // FIRST, ahead of every per-pixel march below: the waterline mask takes a screen
             // derivative and must be evaluated in uniform control flow.
             float classifyGap;
-            armWeight = ArmWeight(uv, classifyGap);
+            float classifyPushDist;
+            armWeight = ArmWeight(uv, classifyGap, classifyPushDist);
             // Does THIS PIXEL'S ray start in water? Per pixel, and from the SAME gap the mask
             // feathers over. It replaces `camUnder` - one camera-height boolean that held the
             // identical value for every pixel on screen while selecting between branches whose
@@ -641,6 +669,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             float clarity = WaterDepthClarity(ShoreShoalDepth(sceneWorld.xz));
             float density = _WaterFogDensity * lerp(CLARITY_FOG_DENSITY_MAX, 1.0, clarity);
             float3 transmittance = exp(-_WaterExtinction.rgb * (density * pathLen));
+            // Instrument LAST, off the finished numbers rather than off a re-derivation: this
+            // pixel's span BEFORE the carve (wetSpanLen), what survived it (pathLen), and what the
+            // waterline mask let through (armWeight). debugColor.a stays 0 - and every caller
+            // stays on its normal path - unless _WaterDebugMode selects a fog view.
+            float3 debugRgb;
+            debugColor = WaterFogDebugColor(armWeight, classifyPushDist, wetSpanLen, pathLen,
+                                            debugRgb)
+                       ? float4(debugRgb, 1.0)
+                       : float4(0.0, 0.0, 0.0, 0.0);
             return transmittance;
         }
 
@@ -670,8 +707,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 float3 depthAttenuation;
                 float sunVisibilityUnused; // absorption is sun-independent; only the in-scatter shadows
                 float armWeight;
+                float4 debugColor;
                 float3 pathTransmittance = UnderwaterFog(input.uv, depthAttenuation, sunVisibilityUnused,
-                                                         armWeight);
+                                                         armWeight, debugColor);
+                // Debug view: WIPE the frame. This pass blends Zero SrcColor (dst *= src), so
+                // returning 0 clears the target and the in-scatter pass immediately after - Blend
+                // One One - writes the false colour into it. The two passes that already exist ARE
+                // the replacement: no extra render pass, no C# change, nothing left behind when off.
+                if (debugColor.a > 0.5) return half4(0.0, 0.0, 0.0, 1.0);
                 // Per-pixel arm fade: below-line rays are full-strength instantly (weight 1); only
                 // the through-surface murk eases in, so the gate can flip a frame early/late with
                 // no visible change (at murk weight 0 the multiplier is 1 = scene untouched).
@@ -698,8 +741,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 float3 depthAttenuation;
                 float sunVisibility;
                 float armWeight;
+                float4 debugColor;
                 float3 pathTransmittance = UnderwaterFog(input.uv, depthAttenuation, sunVisibility,
-                                                         armWeight);
+                                                         armWeight, debugColor);
+                // Additive onto the target the absorb pass just cleared: this IS the view.
+                if (debugColor.a > 0.5) return half4(debugColor.rgb, 1.0);
                 // Lit in-scatter target: the same WaterInscatterColor the surface uses, so the fog colour
                 // seen from below matches the water colour seen from above (continuous across the waterline).
                 // The view ray is surface->camera, reconstructed from the scene depth. WaterInscatterColor

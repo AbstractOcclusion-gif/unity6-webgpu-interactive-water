@@ -51,7 +51,12 @@ namespace AbstractOcclusion.WebGpuWater
             // EXACTLY those gates, independent of the fog shader being assigned, or the
             // reroute would eat the particles/foam entirely on a misconfigured renderer.
             bool foamOverlayNeeded = !WaterVolume.CameraSubmerged && WaterVolume.AnyFoamOverlayBody();
-            if (WaterVolume.UnderwaterFogActive && _particlePass != null
+            // A fullscreen-fog debug view owns the frame, so the sprites and the foam overlay
+            // stand down rather than paint over it. They vanish entirely for the duration - their
+            // queue-time draw is already skipped while the fog is armed - which is the right
+            // trade for a view whose whole job is to show what the FOG did. See WaterDebugView.
+            if (!WaterDebugView.FogViewActive
+                && WaterVolume.UnderwaterFogActive && _particlePass != null
                 && (WaterFoamParticles.Live.Count > 0 || WaterSplashEmitter.Live.Count > 0
                     || foamOverlayNeeded))
                 renderer.EnqueuePass(_particlePass);

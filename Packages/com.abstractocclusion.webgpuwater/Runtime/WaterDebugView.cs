@@ -1,7 +1,9 @@
-// WebGpuWater - false-colour debug views for the water surface.
+// WebGpuWater - false-colour debug views for the water surface AND the fullscreen underwater fog.
 // Drop this on ANY object in the scene and pick a mode; it publishes _WaterDebugMode and the
-// surface shader replaces its final colour with the view (WaterSurfaceDebug.hlsl). Remove the
-// component (or set Off) and the shader is back to one uniform compare per pixel.
+// matching shader replaces its output with the view - the surface pass for modes 1-6
+// (WaterSurfaceDebug.hlsl), the fullscreen fog for modes 7-11 (WaterFogDebug.hlsl). The two
+// ranges are disjoint and each side declines the other's, so exactly one of them ever paints.
+// Remove the component (or set Off) and both are back to one uniform compare per pixel.
 //
 // WHY THIS EXISTS: reading the C# gates is not the same as reading what the GPU received. A
 // renderer that never gets a MaterialPropertyBlock silently falls back to the MATERIAL ASSET's
@@ -43,9 +45,80 @@ namespace AbstractOcclusion.WebGpuWater
             /// areas mean the reflection camera's frustum, oblique clip plane or culling is
             /// dropping the scene.</summary>
             MirrorEmpty = 6,
+
+            // ---- Fullscreen underwater-fog views (WaterFogDebug.hlsl) --------------------
+            // These REPLACE THE WHOLE FRAME, not just the water surface, and they only draw
+            // while the fullscreen fog pass is armed (WaterVolume.UnderwaterFogActive). That
+            // is a reading, not a limitation: the view showing means the pass ran this frame,
+            // the view vanishing back to normal shading means it did not - and the arm gate is
+            // a CPU near-plane-corner test against a ~1-2 frame stale FFT readback, while every
+            // mask these views draw is live and per-pixel. Post-processing still runs after the
+            // fog, so turn post off before trusting a hue.
+
+            /// <summary>Greyscale waterline mask: how much of this pixel the fog is allowed to
+            /// paint. Black = the pass contributes nothing here, white = full strength.</summary>
+            FogArmWeight = 7,
+
+            /// <summary>The hole hunt. MAGENTA = the pass computed a real wet span for this
+            /// pixel and then threw it away on the waterline mask - water in front of it, no fog
+            /// on it. WHITE = painted at full strength, CYAN = the feather band, BLUE = the span
+            /// was eaten by an exclusion carve (correct, not a hole), dark grey = no water on
+            /// this ray. A magenta band hugging the waterline is a feather/derivative problem; a
+            /// magenta sheet across the screen is the classification point being wrong for every
+            /// pixel at once.</summary>
+            FogUnpainted = 8,
+
+            /// <summary>Where the mask classified this pixel against the waterline. BLUE = its
+            /// own near-plane point (the open-water rule). GREEN = pushed out to an exclusion
+            /// volume's exit face, the way Crest moves its mask onto portal geometry. RED = the
+            /// eye is in a dry carve but the push moved nothing, so the classification fell back
+            /// to a near-plane point sitting in dry air below sea level - which says nothing
+            /// about the water being looked at.</summary>
+            FogClassifySource = 9,
+
+            /// <summary>Which of the span paths priced this pixel. Orange = bounded pond box,
+            /// grey = Simple tier flat waterline, GREEN = rendered sheet seen from air (fog
+            /// suppressed), BLUE = submerged, span ends at the rendered sheet, YELLOW = analytic
+            /// early-out with no prepass sample, MAGENTA = carve pixel handed to the crossing
+            /// march, RED = flat rest-plane fallback, CYAN = the no-prepass tier's own march.
+            /// Black means nothing ran, which is a wiring bug rather than a water one.</summary>
+            FogPathBranch = 10,
+
+            /// <summary>Flat screen colour of the CPU gate state AS THE GPU RECEIVED IT:
+            /// R = eye in water, G = eye inside a dry carve, B = Simple tier. The armed flag
+            /// needs no channel - the view only draws while the pass is armed.</summary>
+            FogGates = 11,
+
+            /// <summary>The two halves of "should this pixel be fogged", shown disagreeing.
+            /// RED = the waterline mask says paint and the span is ZERO, so nothing is painted -
+            /// an unfogged pixel the mask wanted fogged, whatever zeroed the span. MAGENTA = a
+            /// span exists and the mask threw it away. Neutral greys where the two agree (dark =
+            /// both off, mid = both on), so only the faults carry colour. CAVEAT: a bounded pond
+            /// sets the mask to 1 unconditionally (it is a finite volume seen from outside), so
+            /// red is EXPECTED wherever a pond ray misses the box - this view is for oceans.</summary>
+            FogMaskVsSpan = 12,
         }
 
-        [Tooltip("Which false-colour view the water surface draws. Off restores normal shading.")]
+        /// <summary>True while a FULLSCREEN-FOG view (modes 7+) is selected. The passes that draw
+        /// AFTER the fog read this and stand down, so the false colour the fog writes reaches the
+        /// screen undisturbed. It is not cosmetic: the god-ray shafts inject one slot after the
+        /// fog and add water-tinted light near the waterline, which tinted every view green there
+        /// and read exactly like a finding.</summary>
+        internal static bool FogViewActive { get; private set; }
+
+        // Cleared by WaterVolume.ResetStaticState for Fast Enter Play Mode (no domain reload).
+        // BOTH halves: the shader global survives a skipped reload exactly as the flag does, and a
+        // flag left set would silently keep the god rays, the after-fog sprites and the meniscus
+        // switched off across every later session with nothing on screen explaining why.
+        internal static void ResetStaticState()
+        {
+            FogViewActive = false;
+            Shader.SetGlobalFloat(ID_WaterDebugMode, 0f);
+        }
+
+        [Tooltip("Which false-colour view to draw. Modes 1-6 replace the water surface's colour; " +
+                 "the Fog modes replace the whole frame and only appear while the fullscreen " +
+                 "underwater fog pass is armed. Off restores normal shading.")]
         [SerializeField] Mode mode = Mode.Off;
 
         static readonly int ID_WaterDebugMode = Shader.PropertyToID("_WaterDebugMode");
@@ -66,8 +139,21 @@ namespace AbstractOcclusion.WebGpuWater
 
         // Leaving the mode set after the component goes away would be a trap - the water would
         // stay false-coloured with nothing in the scene explaining it.
-        void OnDisable() => Shader.SetGlobalFloat(ID_WaterDebugMode, 0f);
+        void OnDisable()
+        {
+            Shader.SetGlobalFloat(ID_WaterDebugMode, 0f);
+            FogViewActive = false;
+        }
 
-        void Publish() => Shader.SetGlobalFloat(ID_WaterDebugMode, (float)mode);
+        // ONE writer for both halves of the selection - the shader global the views read, and the
+        // CPU flag the after-fog passes stand down on - so the two can never disagree about which
+        // view is live. FirstFogMode pairs with WATER_DEBUG_FOG_FIRST in WaterDebugMode.hlsl.
+        const Mode FirstFogMode = Mode.FogArmWeight;
+
+        void Publish()
+        {
+            Shader.SetGlobalFloat(ID_WaterDebugMode, (float)mode);
+            FogViewActive = mode >= FirstFogMode;
+        }
     }
 }

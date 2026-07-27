@@ -530,6 +530,15 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("Real (screen-space) refraction: see the actual scene through the water instead of " +
                      "the analytic approximation. Needs the URP opaque texture; a tier may force it off.")]
             public bool realRefraction = false;
+            [Tooltip("Layers kept OUT of the planar mirror, on top of this body's own water layer " +
+                     "(always excluded). USE IT FOR DYNAMIC FLOATERS. A plane cannot fit a displaced " +
+                     "surface: an object floating h above the mirror plane has its image placed at -h " +
+                     "while the wave it sits on is at +h, so the reflection lands low and swims as the " +
+                     "swell lifts it. Excluding it here leaves planar owning the SKY, which it does " +
+                     "well; turn SSR on to get that object's reflection back, since SSR marches the " +
+                     "real reflected ray and sticks to it by construction. Affects PLANAR only - SSR " +
+                     "and the environment base ignore this.")]
+            public LayerMask planarExcludeLayers = 0;
 
             // Look (drives the above-water surface; the under-water surface uses the same strength /
             // distortion for its total-internal-reflection view). Ranges mirror the shader.
@@ -594,6 +603,9 @@ namespace AbstractOcclusion.WebGpuWater
         // EffectiveUsePlanar, so they can never disagree within a frame.
         internal bool WantsPlanar => _richReflectionsAllowed && reflectionSettings.usePlanarReflection;
         internal bool EffectiveUsePlanar => WantsPlanar && WaterReflections.IsPlanarGranted(this);
+        /// <summary>Layers the author wants kept out of this body's planar mirror (on top of the
+        /// water layer, which <see cref="PlanarReflectLayers"/> always removes).</summary>
+        internal LayerMask PlanarExcludeLayers => reflectionSettings.planarExcludeLayers;
         internal bool EffectiveRealRefraction => _realRefractionAllowed && reflectionSettings.realRefraction;
         internal bool ReflectUrpProbe => reflectionSettings.reflectUrpProbe;
         internal float ReflectionStrength => reflectionSettings.reflectionStrength;
@@ -816,6 +828,7 @@ namespace AbstractOcclusion.WebGpuWater
             CameraSubmerged = false;
             WaterSimScheduler.ResetStaticState();
             WaterInteractable.ResetStaticState();
+            WaterDebugView.ResetStaticState();
             WaterExclusionVolume.ResetStaticState();
             WaterBuoyancy.ResetStaticState();
         }

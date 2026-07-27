@@ -18,6 +18,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     WaterVolumePropertyPaths.PlanarReflection,
                     "reflectionSettings.reflectUrpProbe",
                     WaterVolumePropertyPaths.RealRefraction);
+                // Greyed unless planar is on: it is the planar mirror's culling mask and does
+                // nothing to SSR or the environment base.
+                DrawFieldsIf(Prop(WaterVolumePropertyPaths.PlanarReflection).boolValue,
+                    "reflectionSettings.planarExcludeLayers");
                 DrawFields("refractShadows");
                 if (Prop("refractShadows").boolValue)
                     DrawFields("refractShadowSoftness");

@@ -141,10 +141,20 @@ namespace AbstractOcclusion.WebGpuWater
         // Reflect everything the camera sees EXCEPT this body's own water surface layer, so the mirror
         // never contains the surface it feeds (a feedback smear). Matches AssignSurfaceLayers, which puts
         // the surface on its own layer precisely so planar can exclude it.
+        //
+        // Plus whatever the author excluded (Reflections > Planar Exclude Layers), which exists because
+        // a plane CANNOT fit a displaced surface: a floating object h above the mirror plane has its
+        // image placed at -h while the wave carrying it is at +h, so the reflection sits low and swims
+        // as the swell moves it. That is a property of planar reflection, not a bug to chase - the fix
+        // is to keep dynamic floaters out of the mirror and let SSR, which marches the real reflected
+        // ray, own them. Default 0 excludes nothing, so an existing scene is unchanged.
+        //
+        // Doing it HERE rather than in PlanarMirror keeps one owner for "what this body reflects":
+        // the mirror is handed a finished mask and never has to know why a layer is missing.
         LayerMask PlanarReflectLayers()
         {
             int surfaceLayer = surfaceAbove != null ? surfaceAbove.gameObject.layer : gameObject.layer;
-            return ~(1 << surfaceLayer);
+            return ~(1 << surfaceLayer) & ~PlanarExcludeLayers.value;
         }
 
         // Detect whether the camera is submerged in THIS (primary) body and publish the globals the
@@ -178,10 +188,31 @@ namespace AbstractOcclusion.WebGpuWater
             // the murk inside) whenever Water Fog is on. The quality tier's Off mode wins over everything:
             // the fullscreen pass never enqueues on tiers that can't afford it.
             bool tierAllowsFog = _underwaterFogMode != WaterQuality.UnderwaterMode.Off;
-            // Ocean arming uses the WIDE near-surface band (not the submerge flag): the shader's
-            // spatial murk fade is already zero at the band edge, so the pass toggling there is
-            // invisible - the transition itself is entirely per-pixel and current-frame.
-            UnderwaterFogActive = waterFog && tierAllowsFog && (IsOceanClipmap ? _fogNearSurface : true);
+            // Ocean arming uses the WIDE near-surface band (not the submerge flag), and the rule
+            // that makes toggling it invisible is that the band must be a strict SUPERSET of what
+            // the shader's per-pixel mask can admit - so on the frame the pass first runs, the set
+            // of pixels the mask lets through is still empty. Both references depend on the same
+            // property (Crest a +-2 m dead band, KWS a wind-scaled downward bias).
+            //
+            // INSIDE A DRY CARVE that property fails, and the near-plane band cannot restore it.
+            // The mask does not classify at the near plane there: WaterlineClassifyPoint pushes the
+            // point out to where the ray LEAVES the carve (the Crest portal move), which sits an
+            // arbitrary distance and height away - so a corner test on the lens says nothing about
+            // which pixels the mask will admit. The gap was visible: crossing the water level
+            // inside a semi-submerged room, a band between the surface and the fog popped for the
+            // few frames before the pass armed, and vanished the moment it did.
+            //
+            // Arming unconditionally in there restores the superset by making the question moot,
+            // and it also DELETES a handoff rather than moving it: the exclusion wall
+            // self-completes the whole fog integral only while _UnderwaterFogArmed is 0
+            // (WaterExclusionWall.shader), and from inside a room its own veil is an exiting face
+            // carrying ~zero chord, so those were the frames nobody was painting. With the pass
+            // always armed in a carve the wall never has to take over at all. Costs one fullscreen
+            // pass while the eye is inside a carve - bounded, and the pass is what carves the dry
+            // room out of every ray in the first place (see the note in ComputeCameraSubmerged
+            // about the CPU early-out that was tried there and reverted).
+            UnderwaterFogActive = waterFog && tierAllowsFog
+                               && (IsOceanClipmap ? (_fogNearSurface || eyeInDryVolume) : true);
             // Screen-space waterline (meniscus): armed while the near plane STRADDLES the displaced
             // surface - exactly the half-in/half-out band the binary submerge gate cannot represent -
             // so the crossing shows a surface-tension line instead of a hard pop. Rides the same tier

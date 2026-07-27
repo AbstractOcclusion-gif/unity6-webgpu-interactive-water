@@ -93,7 +93,11 @@ namespace AbstractOcclusion.WebGpuWater
                 RecordFogPass(renderGraph, resources, cameraColor, AbsorbShaderPass, "WaterUnderwaterFog.Absorb");
                 RecordFogPass(renderGraph, resources, cameraColor, InscatterShaderPass, "WaterUnderwaterFog.Inscatter");
             }
-            if (WaterVolume.WaterlineActive)
+            // The meniscus darkens the finished frame along the crossing - the exact band a fog
+            // debug view exists to show - so it stands down while one is selected. The absorb and
+            // inscatter passes above are NOT gated: they ARE the view (absorb wipes, inscatter
+            // writes), which is also why a view only appears while the fog is armed.
+            if (WaterVolume.WaterlineActive && !WaterDebugView.FogViewActive)
                 RecordWaterlinePass(renderGraph, resources, cameraColor);
         }
 
