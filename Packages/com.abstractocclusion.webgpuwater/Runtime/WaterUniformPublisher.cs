@@ -113,6 +113,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_LargeGodRayCausticStrength = Shader.PropertyToID("_LargeGodRayCausticStrength");
         static readonly int ID_LargeGodRayCausticDepthSoften = Shader.PropertyToID("_LargeGodRayCausticDepthSoften");
         static readonly int ID_CameraUnderwater = Shader.PropertyToID("_CameraUnderwater");
+        static readonly int ID_CameraDryVolume = Shader.PropertyToID("_CameraDryVolume");
         static readonly int ID_UnderwaterSurfaceY = Shader.PropertyToID("_UnderwaterSurfaceY");
         static readonly int ID_UnderwaterUnbounded = Shader.PropertyToID("_UnderwaterUnbounded");
         static readonly int ID_UnderwaterFogSimple = Shader.PropertyToID("_UnderwaterFogSimple");
@@ -288,11 +289,17 @@ namespace AbstractOcclusion.WebGpuWater
         /// path (against surfaceY) instead of the per-pixel wavy-surface march.
         /// fogArmed 1 = the fullscreen fog pass runs this frame (WaterVolume.UnderwaterFogActive):
         /// the exclusion wall reads it to know whether the fog will paint behind its veil or the
-        /// wall must reconstruct the fog result itself (above-water ocean views).</summary>
+        /// wall must reconstruct the fog result itself (above-water ocean views).
+        /// cameraDryVolume 1 = the eye sits INSIDE a dry exclusion volume. Deliberately a separate
+        /// flag from cameraUnderwater rather than a special case of it: "the fog pass must run" and
+        /// "the eye is in water" are different questions, and in a sunken room below sea level they
+        /// have opposite answers. Every camera-height term downstream keys on this to stand down.
+        /// </summary>
         internal void PublishUnderwater(float cameraUnderwater, float surfaceY, float unbounded,
-                                        float fogSimple, float fogArmed)
+                                        float fogSimple, float fogArmed, float cameraDryVolume)
         {
             Shader.SetGlobalFloat(ID_CameraUnderwater, cameraUnderwater);
+            Shader.SetGlobalFloat(ID_CameraDryVolume, cameraDryVolume);
             Shader.SetGlobalFloat(ID_UnderwaterSurfaceY, surfaceY);
             Shader.SetGlobalFloat(ID_UnderwaterUnbounded, unbounded);
             Shader.SetGlobalFloat(ID_UnderwaterFogSimple, fogSimple);

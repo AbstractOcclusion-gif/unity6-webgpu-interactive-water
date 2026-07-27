@@ -70,4 +70,34 @@ float SurfaceSignedGap(float3 world)
     return world.y - SurfaceHeightAtXZ(world.xz);
 }
 
+// ---- Waterline coverage: ONE curve for every consumer -------------------------------
+// The fullscreen fog's mask and the exclusion wall's per-fragment classification both answer
+// "how much of this pixel is below the waterline". They used to answer it with two hand-rolled
+// copies of the same expression, each hard over ONE pixel - and two 1-pixel steps derived from
+// DIFFERENT gap variables (the fog's near-plane / carve-exit point, the wall's own fragment) do
+// not land on the same pixel. Where they missed each other the frame showed a thin band with
+// neither the fog nor the wall in it: the empty zone at the crossing. Sharing the curve makes
+// the two edges the same shape by construction, and widening it past one pixel makes a
+// half-pixel disagreement cost a fraction of a fragment instead of a whole one.
+//
+// Both references do exactly this and neither relies on a razor edge: Crest hides its hard
+// discard under a meniscus ~11% of screen height, KWS under a 40-80 px blurred tension band.
+#define WATERLINE_FEATHER_PIXELS 6.0
+// Floor for the screen derivative of the surface gap (degenerate on a view exactly parallel to
+// the surface, where the gap is the same at every pixel and the ramp would divide by zero).
+#define WATERLINE_GRADIENT_MIN 1e-5
+
+// surfaceGap  : signed metres above the displaced surface at this pixel's classification point.
+// gapPerPixel : fwidth(surfaceGap), taken by the CALLER so the derivative sits in ITS uniform
+//               control flow (fwidth is fragment-only and must not be hidden behind a branch).
+// overCoverPixels: shift the whole ramp toward the AIR side by this many screen pixels. KWS's
+//               rule - when two masks can miss each other, OVER-cover rather than under-cover
+//               (gather-max one texel UP, the hole fix, the 10% OBB dilation): a slightly thick
+//               edge reads as water, a gap reads as a hole. Pass 0 for an exact edge.
+float WaterlineCoverage(float surfaceGap, float gapPerPixel, float overCoverPixels)
+{
+    float gapPixels = surfaceGap / max(gapPerPixel, WATERLINE_GRADIENT_MIN);
+    return saturate(0.5 - (gapPixels - overCoverPixels) / WATERLINE_FEATHER_PIXELS);
+}
+
 #endif // WEBGPUWATER_WATERLINE_INCLUDED

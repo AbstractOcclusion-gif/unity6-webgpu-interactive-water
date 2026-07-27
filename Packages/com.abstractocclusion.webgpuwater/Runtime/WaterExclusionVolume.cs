@@ -8,6 +8,7 @@
 // the hull still floats and still carves a wake.
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Rendering; // RenderQueue: the wall's explicit sort offset (see WallRenderQueueOffset)
 
 namespace AbstractOcclusion.WebGpuWater
 {
@@ -245,8 +246,21 @@ namespace AbstractOcclusion.WebGpuWater
 
         // ---- water walls (the drawn carve boundary) --------------------------------------
         // One shared mesh PER SHAPE + one shared material for every volume (per-volume state
-        // rides the MaterialPropertyBlock); DrawMesh enqueues into the normal render passes, so
-        // the walls write depth (fog and god rays occlude against them like any opaque geometry).
+        // rides the MaterialPropertyBlock); DrawMesh enqueues into the normal render passes.
+        // The wall does NOT write depth (WaterExclusionWall.shader is ZWrite Off and ships no
+        // depth pass, on purpose - see its header): the fullscreen fog and the god rays must
+        // integrate to the REAL scene through the carve, and the transparent veil tints on top.
+        //
+        // The wall shares the Transparent queue with the water surface, and inside a volume its
+        // bounds centre sits at or behind the eye - so URP's back-to-front CommonTransparent sort
+        // key is degenerate there and surface-vs-wall draw order FLIPPED as the camera moved. The
+        // surface is ZWrite On and the wall ZWrite Off / ZTest LEqual, so the flip was visible:
+        // wall-then-surface hid the wall, surface-then-wall let it tint over. An explicit offset
+        // makes the order a fact instead of a distance comparison. Same value, same reason, as the
+        // chunk shell's ChunkShellRenderQueueOffset (WaterVolume.Chunk.cs) - the two boundaries are
+        // the same kind of draw and must not disagree about where they sit.
+        const int WallRenderQueueOffset = 10;
+
         static Mesh _wallCubeMesh;
         static Mesh _wallSphereMesh;
         static Material _wallMaterial;
@@ -305,6 +319,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (shader == null) return null;
             // HideAndDontSave: an edit-mode preview must never serialize this into the scene.
             _wallMaterial = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
+            _wallMaterial.renderQueue = (int)RenderQueue.Transparent + WallRenderQueueOffset;
             return _wallMaterial;
         }
 

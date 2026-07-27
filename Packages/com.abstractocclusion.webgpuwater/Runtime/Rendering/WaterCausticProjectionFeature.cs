@@ -89,7 +89,8 @@ namespace AbstractOcclusion.WebGpuWater
         public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
         {
             // Never for material/prefab thumbnails - see WaterPassCameraGate.
-            if (WaterPassCameraGate.SkipCamera(renderingData.cameraData.cameraType)) return;
+            // Fullscreen paint: also excluded from reflections. See WaterPassCameraGate.
+            if (WaterPassCameraGate.SkipCameraFullscreen(renderingData.cameraData.cameraType)) return;
             if (_pass == null) return;                          // shader unassigned / not created
             if (!WaterVolume.AnyCausticProjectionBody()) return; // no body has the opt-in on + a caustic RT
             ApplyMaterialParameters();

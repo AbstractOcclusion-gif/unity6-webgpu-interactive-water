@@ -40,8 +40,10 @@ namespace AbstractOcclusion.WebGpuWater
 
         public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
         {
-            // Never for material/prefab thumbnails - see WaterPassCameraGate.
-            if (WaterPassCameraGate.SkipCamera(renderingData.cameraData.cameraType)) return;
+            // Never for material/prefab thumbnails, and never into a REFLECTION: this pass paints
+            // the camera colour, and a mirror rendered from below the surface would come back with
+            // the water's own fog painted over it. See WaterPassCameraGate.
+            if (WaterPassCameraGate.SkipCameraFullscreen(renderingData.cameraData.cameraType)) return;
             // After-fog reroute: WaterFoamParticles/WaterSplashEmitter SKIP their queue-time
             // draws whenever the fullscreen fog is armed (the fog would paint the water
             // column's fog over the sprites), and the water surface skips its POND FOAM on

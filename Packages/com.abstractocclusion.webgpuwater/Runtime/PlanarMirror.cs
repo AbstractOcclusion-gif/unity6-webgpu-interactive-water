@@ -61,6 +61,19 @@ namespace AbstractOcclusion.WebGpuWater
             Vector4 clipPlane = CameraSpacePlane(_reflectionCamera, new Vector3(0f, waterHeight, 0f), normal, clipPlaneOffset);
             _reflectionCamera.projectionMatrix = src.CalculateObliqueMatrix(clipPlane);
 
+            // CULL WITH THE NON-OBLIQUE PROJECTION. Unity's default culling frustum is
+            // projectionMatrix * worldToCameraMatrix, and the oblique matrix above replaces the
+            // near plane with the water plane - a severely skewed frustum that culls geometry
+            // sitting ON that plane. A floating boat sits exactly there, so it was culled out of
+            // its own reflection: the mirror held sky (never culled) and a BOAT-SHAPED HOLE.
+            // Downstream that hole read as a dark smear under the hull which drifted with the
+            // wave-nudged sample UV - the "reflection detaching from the boat". Overriding
+            // cullingMatrix decouples what is CULLED from what is CLIPPED, which is exactly what
+            // this property exists for; the oblique matrix still does the clipping, so submerged
+            // geometry stays out of the mirror.
+            // Must come after worldToCameraMatrix above, and after CopyFrom (which resets it).
+            _reflectionCamera.cullingMatrix = src.projectionMatrix * _reflectionCamera.worldToCameraMatrix;
+
             _reflectionCamera.transform.position = mirroredPos;
 
             // Reflections invert winding order. try/finally: if the render request throws (e.g. device
@@ -103,7 +116,14 @@ namespace AbstractOcclusion.WebGpuWater
                 _rt = new RenderTexture(width, height, ReflectionDepthBits, RenderTextureFormat.DefaultHDR)
                 {
                     name = _rtName,
-                    wrapMode = TextureWrapMode.Clamp,
+                    // MIRROR, not Clamp. The water shader nudges its sample by the surface normal,
+                    // so near the screen border that sample legitimately lands outside the RT.
+                    // Clamp answered with the border ROW repeated, which smeared a band along the
+                    // edge; shader-side attempts to avoid it were worse (fading to the sky drew a
+                    // seam, scaling the nudge to fit collapsed the wobble into a visible strip at
+                    // each side). Mirror wrap answers with the neighbouring pixels reflected back
+                    // in - continuous across the border, plausible content, and it costs nothing.
+                    wrapMode = TextureWrapMode.Mirror,
                     // Trilinear + a mip chain: the water surface samples this mirror at a
                     // roughness-driven mip (tex2Dlod in SamplePlanarReflection), so rough/far
                     // water blurs its planar reflection exactly like the sky path - without
@@ -129,6 +149,12 @@ namespace AbstractOcclusion.WebGpuWater
 
             // Copy the important settings each frame so editor tweaks track live.
             _reflectionCamera.CopyFrom(src);
+            // AFTER CopyFrom, which overwrites it with the SOURCE camera's type (Game). Without
+            // this the mirror camera was indistinguishable from the player's camera, so every
+            // fullscreen water pass ran on it and painted the water's own fog and god rays INTO
+            // the mirror - a black boat reflected back teal, carrying a wave pattern evaluated at
+            // the mirrored position. WaterPassCameraGate.SkipCameraFullscreen keys on this.
+            _reflectionCamera.cameraType = CameraType.Reflection;
             _reflectionCamera.targetTexture = _rt;
             _reflectionCamera.cullingMask = reflectLayers & src.cullingMask;
             _reflectionCamera.enabled = false;

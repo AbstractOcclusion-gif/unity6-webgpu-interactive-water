@@ -142,6 +142,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // shared with the ocean-surface eye-depth prepass (Pass 1 below) so that pass
             // displaces EXACTLY like this visible one. ----
             #include "WaterSurfaceVertStage.hlsl"
+            // AFTER VertStage: the renderer-id view reads _IsClipmap / _IsPatch / _PatchDepthBias,
+            // which VertStage declares. Inert whenever _WaterDebugMode is 0.
+            #include "WaterSurfaceDebug.hlsl"
 
             // frag() stages (SHADER-SPLIT-3): a splinter of THIS pass, not a library -
             // it reads the uniforms/v2f/SampleRipple above, so it must stay HERE, the
@@ -259,6 +262,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                                           foamWorldDdx, foamWorldDdy, swashFoamLayer);
                 outColor = FinalCompositeStage(i, geom, outColor, oceanFoamLayer, pondFoamLayer,
                                                surfFoamLayer, swashFoamLayer);
+                // Debug views LAST, so they REPLACE the finished colour rather than perturb it.
+                // Uniform branch: one compare per pixel whenever _WaterDebugMode is 0.
+                float3 debugColor;
+                if (WaterDebugColor(i.screenPos, geom.normal, debugColor))
+                    return float4(debugColor, 1.0);
                 return float4(outColor, 1.0);
             }
             ENDCG
@@ -272,12 +280,17 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
         // mismatched the far waves and read as sorting errors along the distant waterline.
         // Drawn EXPLICITLY by WaterUnderwaterFogPass with each surface renderer's own mesh,
         // matrix, material and property block - never by the camera (no LightMode tag, and the
-        // camera only ever renders Pass 0 of a surface material). Cull Off: both the above and
-        // under sheets contribute; the depth test keeps the nearest crossing.
+        // camera only ever renders Pass 0 of a surface material).
+        //
+        // Cull [_Cull], NOT Cull Off. The above and under sheets are COINCIDENT twins with
+        // opposite culling (_Cull 2 / _Underwater 0, and _Cull 1 / _Underwater 1), so Cull Off
+        // rasterised four fragments at one depth and the winner was a coin toss - which made the
+        // sign written below meaningless. Mirroring Pass 0's own cull state leaves exactly the
+        // fragment the camera actually sees, which is also the only thing the fog should price.
         Pass
         {
             Name "OceanSurfaceEyeDepth"
-            Cull Off
+            Cull [_Cull]
             ZWrite On
             ZTest LEqual
 
@@ -318,8 +331,22 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                                                  LinearEyeDepth(i.pos.z), _ProjectionParams.z))
                         discard;
                 }
-                // Linear EYE depth of the displaced surface; the RT clears to 0 = "no surface".
-                return float4(LinearEyeDepth(i.pos.z), 0.0, 0.0, 1.0);
+                // Linear EYE depth of the displaced surface, SIGNED by which side of the sheet is
+                // visible here: + = the ABOVE sheet (this pixel's water is seen from the air), - =
+                // the UNDER sheet (seen from below). The RT clears to 0 = "no surface at all".
+                //
+                // WHY THE SIGN: the fullscreen fog draws AFTER the surface, so it cannot rely on
+                // the sheet overwriting it the way Crest's does - it has to know, per pixel,
+                // whether the water it is about to fog is already shaded from above. It used to
+                // infer that from the eye's own waterline, and near the surface the two disagree:
+                // with the near plane dipped under a wave the mask says "wet" while the pixels
+                // below it still show the ABOVE sheet, so the fog washed its scatter colour over
+                // a from-above surface (the turquoise band at the crossing). This is the same
+                // ownership KWS encodes as mask 0.25 = front / 0.75 = back
+                // (KWS_WaterFragPass.cginc fragDepth) and Crest gets for free from draw order.
+                // _Underwater is a per-material float, so it is exact and needs no winding guess.
+                float visibleSide = (_Underwater > 0.5) ? -1.0 : 1.0;
+                return float4(LinearEyeDepth(i.pos.z) * visibleSide, 0.0, 0.0, 1.0);
             }
             ENDCG
         }

@@ -55,8 +55,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
             // Sun globals (published by WaterUniformPublisher), same declarations as the fog pass.
             float3 _LightDir;
             float3 _SunColor;
-            // Camera-submerged flag (published by PublishUnderwater): with the armed flag below it
+            // "The eye is IN WATER" (published by PublishUnderwater): with the armed flag below it
             // gates the above-water fog reconstruction. Camera state -> uniform -> screen-coherent.
+            // NOT "below the surface plane": an eye inside a dry carve is below sea level and still
+            // in air, and reads 0 - so with the fullscreen fog disarmed the wall correctly
+            // self-completes the water seen through the pane from inside a sunken room.
             float _CameraUnderwater;
             // 1 when the fullscreen underwater fog pass runs this frame (published by
             // PublishUnderwater from WaterVolume.UnderwaterFogActive). When armed, the fog paints
@@ -82,6 +85,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
             // is drawn per volume, so plain uniforms replace the array lookup here).
             float4 _WallEdgeColor;  // rgb = tint target, a = intensity
             float  _WallEdgeSpread;
+
+            // Waterline classification (see frag): the curve and its gradient floor are SHARED
+            // with the fullscreen fog's mask (WaterWaterline.hlsl, WaterlineCoverage) so the two
+            // edges are the same shape and cannot leave a band between them. Only the coverage
+            // below which a fragment is dropped instead of paying the blend lives here.
+            #define WALL_MIN_COVERAGE 0.002
 
             // The sun-wrap, edge-occlusion and facet constants live in WaterExclusion.hlsl
             // (EXCLUSION_PANE_* / EXCLUSION_EDGE_*): the fog's carve-boundary pane shading and
@@ -168,7 +177,20 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
                 float waterlineY = (_UnderwaterFogSimple > 0.5)
                                  ? _VolumeCenter.y
                                  : SurfaceHeightAtXZ(IN.positionWS.xz);
-                clip(waterlineY - IN.positionWS.y);
+                // CLASSIFY the fragment against that waterline - do NOT cut the mesh at it.
+                // A clip turns this test into a SILHOUETTE, and a silhouette then has to line up to
+                // the pixel with the surface sheet's own carve silhouette AND with wherever the fog
+                // stopped integrating. Where it did not, the frame showed an empty band between the
+                // waterline and the fog. A classification cannot gap: the wall mesh is continuous
+                // across the line and its contribution simply falls to zero over ONE pixel, resolved
+                // from the screen derivative of the gap - the same metres-per-pixel trick the fog's
+                // meniscus pass uses for a constant-width band. Crest's portal fragment does exactly
+                // this (returns above/below per pixel; it never clips the portal mesh).
+                // The derivative is taken HERE, in uniform control flow, ahead of every clip below.
+                float surfaceGap = IN.positionWS.y - waterlineY;   // > 0 = this fragment is in air
+                // No over-cover here: the wall must not paint water ABOVE its own waterline. The
+                // fog is the side that over-covers, and it over-covers ONTO this fragment.
+                float submerged = WaterlineCoverage(surfaceGap, fwidth(surfaceGap), 0.0);
 
                 float3 viewDirWS = normalize(_WorldSpaceCameraPos - IN.positionWS);
 
@@ -262,6 +284,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
                     color += (1.0 - coverage) * background;
                     coverage = 1.0;
                 }
+                // Waterline classification applied LAST so it fades the reconstructed background out
+                // together with the veil: above the line this wall contributes nothing at all.
+                color *= submerged;
+                coverage *= submerged;
+                clip(coverage - WALL_MIN_COVERAGE); // fully dry fragments skip the blend entirely
                 return half4(color, coverage);
             }
             ENDHLSL

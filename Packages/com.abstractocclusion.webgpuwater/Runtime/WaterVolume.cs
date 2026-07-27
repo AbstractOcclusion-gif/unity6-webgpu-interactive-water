@@ -399,7 +399,7 @@ namespace AbstractOcclusion.WebGpuWater
                 UnderwaterFogActive = false;
                 WaterlineActive = false; // same static-gate pattern: the meniscus pass reads it too
                 CameraSubmerged = false; // same pattern: the after-fog foam overlay reads it
-                Publisher.PublishUnderwater(0f, 0f, 0f, 0f, 0f);
+                Publisher.PublishUnderwater(0f, 0f, 0f, 0f, 0f, 0f);
             }
             DisposeModules();      // disposes the six eager collaborator modules (sim, obstacle, caustics,
                                    // surface sampler, ocean FFT, sim window) - releases the same GPU

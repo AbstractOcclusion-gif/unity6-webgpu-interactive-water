@@ -36,7 +36,9 @@ namespace AbstractOcclusion.WebGpuWater
         public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
         {
             // Never for material/prefab thumbnails - see WaterPassCameraGate.
-            if (WaterPassCameraGate.SkipCamera(renderingData.cameraData.cameraType)) return;
+            // Fullscreen paint: also excluded from reflections - god-ray shafts belong in the view,
+            // never composited into the mirror the view reflects. See WaterPassCameraGate.
+            if (WaterPassCameraGate.SkipCameraFullscreen(renderingData.cameraData.cameraType)) return;
             if (_pass == null) return;                                // shader unassigned / not created
             if (!LargeBodyAtmosphereGate.HasActiveGodRayOcean) return; // ocean-only, and only when shafts are on
             renderer.EnqueuePass(_pass);

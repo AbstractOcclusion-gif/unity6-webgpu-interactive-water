@@ -122,7 +122,19 @@ namespace AbstractOcclusion.WebGpuWater
                 return;
             }
             _planarMirror ??= new PlanarMirror(name + "_PlanarMirror");
-            _planarMirror.Render(cam, transform.position.y, PlanarMirrorResolutionScale,
+            // Mirror across the WAVE-AWARE surface height, not the flat rest plane. A planar mirror
+            // is exact only ON its plane: an object floating at height h above the plane has its
+            // image placed at -h while the surface it should reflect in sits at +h, so the
+            // reflection lands 2h too low - and as a swell LIFTS the object by h its reflection
+            // DROPS by h. That signature (up one way, down the other, twice the amount) is exactly
+            // what a floating boat showed. Using the same height that arms the fog collapses the
+            // error to the wave-height DIFFERENCE between the camera and the reflected object,
+            // instead of the full wave amplitude, and costs nothing - the value is already
+            // computed every frame.
+            // NOT a complete fix, and cannot be: one plane cannot fit a displaced surface, so an
+            // object far away on a different wave phase is still offset. The exact answer for
+            // near-field object reflections is SSR, which marches the real reflected ray.
+            _planarMirror.Render(cam, SurfaceHeightAtCamera(), PlanarMirrorResolutionScale,
                                  PlanarMirrorClipPlaneOffset, PlanarReflectLayers());
         }
 
@@ -143,7 +155,24 @@ namespace AbstractOcclusion.WebGpuWater
         void UpdateUnderwaterState()
         {
             bool submerged = ComputeCameraSubmerged(out float surfaceY, out bool nearPlaneStraddles);
-            CameraSubmerged = submerged; // CPU mirror for the after-fog foam overlay's gate
+            // "The fog pass must run" and "the eye is in water" are two DIFFERENT questions, and
+            // inside a semi-submerged exclusion volume they have opposite answers: the eye sits in
+            // AIR, in a sunken room, below sea level, with water all around it. They used to be one
+            // flag, which is why every camera-height term downstream (the fog's murk arm-fade, the
+            // prepass dry-camera guard) fired at a waterline the eye was never actually crossing -
+            // the fog visibly fading out and vanishing at water level from inside a carve.
+            // ARMING is unchanged and still keys on the near-plane band below: the pass MUST stay
+            // armed in there, because it is what carves the dry room out of every ray. Only the
+            // "eye in water" flag stands down. KWS makes the same split - it clears
+            // IsCameraPartialUnderwater when the camera is inside a clip zone while leaving the
+            // pass alive; Crest disables its camera-height heuristics outright while a portal is
+            // active, for the same reason (you can be anywhere relative to the sea and still be
+            // looking into an aquarium).
+            Camera eyeCamera = targetCamera;
+            bool eyeInDryVolume = eyeCamera != null
+                               && WaterExclusionVolume.ContainsPoint(eyeCamera.transform.position);
+            bool eyeInWater = submerged && !eyeInDryVolume;
+            CameraSubmerged = eyeInWater; // CPU mirror for the after-fog foam overlay's gate
             // Ocean fog is infinite, so it only matters when the camera is submerged. A bounded pond is a
             // finite fog volume clipped to its box, so it should render from ANY angle (circle it and see
             // the murk inside) whenever Water Fog is on. The quality tier's Off mode wins over everything:
@@ -168,8 +197,9 @@ namespace AbstractOcclusion.WebGpuWater
             // (reconstructs the fog behind its veil) ONLY when the fullscreen pass will not paint,
             // and the surface's underside stage skips its own camera-depth downwelling dim (the
             // fog pass applies the identical term, which used to double-darken the ceiling).
-            Publisher.PublishUnderwater(submerged ? 1f : 0f, surfaceY, IsOceanClipmap ? 1f : 0f,
-                                        fogSimple ? 1f : 0f, UnderwaterFogActive ? 1f : 0f);
+            Publisher.PublishUnderwater(eyeInWater ? 1f : 0f, surfaceY, IsOceanClipmap ? 1f : 0f,
+                                        fogSimple ? 1f : 0f, UnderwaterFogActive ? 1f : 0f,
+                                        eyeInDryVolume ? 1f : 0f);
             // Screen-space caustics are gated PER BODY (AnyCausticProjectionBody / CollectCausticProjectionBodies),
             // not from this primary-only path, so a secondary chunk drives its own projection independently.
         }

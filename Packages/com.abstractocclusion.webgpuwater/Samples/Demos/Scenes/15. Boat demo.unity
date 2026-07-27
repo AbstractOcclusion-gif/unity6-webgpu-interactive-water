@@ -5783,6 +5783,51 @@ MonoBehaviour:
   localOffset: {x: 0, y: 4.5, z: -11}
   lookHeight: 1
   followSharpness: 4
+--- !u!1 &1000572585
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1000572587}
+  - component: {fileID: 1000572586}
+  m_Layer: 0
+  m_Name: GameObject
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1000572586
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1000572585}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7eb9d5ff936dc3d4d8ed8d039315f50f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterDebugView
+  mode: 0
+--- !u!4 &1000572587
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1000572585}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -35.20309, y: -1.8219, z: -63.63163}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1085506803
 GameObject:
   m_ObjectHideFlags: 0
@@ -5793,7 +5838,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1085506804}
   - component: {fileID: 1085506805}
-  m_Layer: 0
+  m_Layer: 4
   m_Name: GameObject
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -10770,12 +10815,12 @@ MonoBehaviour:
     swellWavelength: 120
     unboundedOcean: 1
     edgeFeatherMeters: 10
-    clipmapGridResolution: 64
+    clipmapGridResolution: 128
     clipmapOuterRadius: 10000
-    oceanDetailFalloff: 0.03
+    oceanDetailFalloff: 0.003
     horizonFadeDistance: 9000
     horizonHazeColor: {r: 0.15688857, g: 0.24528301, b: 0.20912164, a: 0}
-    horizonHazeDensity: 0.2
+    horizonHazeDensity: 0.5
     largeGodRayColor: {r: 0.5264151, g: 0.94304496, b: 1, a: 1}
     largeGodRayDensity: 1
     largeGodRaySteps: 24
@@ -10832,10 +10877,10 @@ MonoBehaviour:
   activationDistance: 1000
   reflectionSettings:
     useScreenSpaceReflection: 0
-    usePlanarReflection: 0
-    reflectUrpProbe: 1
+    usePlanarReflection: 1
+    reflectUrpProbe: 0
     realRefraction: 1
-    reflectionStrength: 0.3
+    reflectionStrength: 0.413
     envReflectionIntensity: 0.3
     fresnelFloor: 0.266
     fresnelPower: 1.94
@@ -11440,13 +11485,25 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 3456765701327585525, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
+      propertyPath: m_Layer
+      value: 4
+      objectReference: {fileID: 0}
     - target: {fileID: 3617034866730795775, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
       propertyPath: m_LocalPosition.y
       value: 1.1
       objectReference: {fileID: 0}
+    - target: {fileID: 3742016877824233298, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
+      propertyPath: m_Layer
+      value: 4
+      objectReference: {fileID: 0}
     - target: {fileID: 4004186478888447971, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
       propertyPath: m_Name
       value: Boat
+      objectReference: {fileID: 0}
+    - target: {fileID: 4004186478888447971, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
+      propertyPath: m_Layer
+      value: 4
       objectReference: {fileID: 0}
     - target: {fileID: 4081809557851641320, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
       propertyPath: m_LocalPosition.x
@@ -11492,6 +11549,18 @@ PrefabInstance:
       propertyPath: 'm_Materials.Array.data[0]'
       value: 
       objectReference: {fileID: 2100000, guid: dcfbc996eb3d7b54b87f8137fb6ec3a6, type: 2}
+    - target: {fileID: 6639139920753266565, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
+      propertyPath: m_Layer
+      value: 4
+      objectReference: {fileID: 0}
+    - target: {fileID: 7257071806122945113, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
+      propertyPath: m_Layer
+      value: 4
+      objectReference: {fileID: 0}
+    - target: {fileID: 8185256251361034357, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
+      propertyPath: m_Layer
+      value: 4
+      objectReference: {fileID: 0}
     - target: {fileID: 8811967127911468787, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
       value: 
@@ -11579,3 +11648,4 @@ SceneRoots:
   - {fileID: 5632503593265976343}
   - {fileID: 7294502053632601990}
   - {fileID: 775939798}
+  - {fileID: 1000572587}

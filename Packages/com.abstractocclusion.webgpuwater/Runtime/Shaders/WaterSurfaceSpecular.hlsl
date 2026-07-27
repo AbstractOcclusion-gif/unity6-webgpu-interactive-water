@@ -121,9 +121,12 @@ float _UnderDetailNormalStrength; // detail-normal tilt on the underside (0 = of
 // underwater fog pass will paint this frame. The underside stage reads it to skip its own
 // camera-depth downwelling dim, which that pass would otherwise apply a second time.
 float _UnderwaterFogArmed;
-// Its sibling PublishUnderwater global: 1 while the camera is submerged in the primary body.
-// The pond-foam skip/overlay pair keys on BOTH (armed + camera in air), so the queue-time
-// surface pass and the after-fog PondFoamOverlay pass can never both draw the same foam.
+// Its sibling PublishUnderwater global: 1 while the eye is IN WATER in the primary body. Not the
+// same as "below the surface plane" - an eye inside a dry exclusion volume (a sunken room) is below
+// sea level and still in AIR, and reads 0 here (see _CameraDryVolume, its other sibling). Arming
+// (_UnderwaterFogArmed) is the separate question and stays true in there.
+// The pond-foam skip/overlay pair keys on BOTH (armed + eye in air), so the queue-time surface pass
+// and the after-fog PondFoamOverlay pass can never both draw the same foam.
 float _CameraUnderwater;
 
 // Below-water Fresnel (unpolarized Schlick evaluated at the TRANSMITTED angle - the standard
@@ -205,23 +208,64 @@ float RoughnessToSkyMip(float roughness)
          * SKY_MIP_STEPS;
 }
 
-// Sample the planar reflection RT at the fragment's screen UV, nudged by the
-// surface normal so ripples wobble the mirror image. Roughness picks the RT mip
-// (PlanarMirror now renders with a mip chain) and the shared vertical smear
-// stretches it, so the planar mirror obeys the SAME roughness knobs as the sky -
-// without this a planar body ignored them entirely and stayed razor sharp.
-// Explicit-LOD taps: WGSL-safe, no extra sampler.
+// WAVE PARALLAX WAS TRIED AND REMOVED - do not re-add it without reading this.
+// A planar mirror is exact only ON its plane, and PlanarMirror renders across the body's flat REST
+// plane while the fragment sits on the DISPLACED surface, so a floating object's reflection drifts
+// as the swell lifts the water. The correction is derivable: RT[s] holds the MIRRORED scene along
+// the camera ray through s, so the radiance wanted is that scene along a ray PARALLEL to the camera
+// ray but starting at mirror(P) - i.e. sample the screen projection of mirror(P).
+// IT DOES NOT WORK, for a reason no tuning fixes: that translated ray does not pass through the
+// eye, so NO pixel of the RT holds it. Reprojecting mirror(P) is exact only when the reflected
+// content is AT the water (t -> 0); for distant content (t -> infinity) the correct sample is the
+// fragment's own screen UV, which is what the plain code already does. Right answer at one end,
+// wrong at the other - "sticks better sometimes". Blending the two by any screen-space validity
+// term makes it worse, not better: the blend is spatially varying, so its transition is VISIBLE as
+// a band (a 0.10 fade printed a 10%-wide strip down each side of the screen) and the two UV
+// mappings duplicate features where they overlap - the "double reflection".
+// Knowing t is a ray query, which is exactly what SSR does and a planar mirror cannot. If the
+// detaching reflection needs solving, it belongs in SSR (MarchSSR), not here.// NOTE on the RT border: the mirror is allocated with TextureWrapMode.Mirror (PlanarMirror.cs), so
+// a sample pushed past an edge by the normal nudge reflects back into valid pixels instead of
+// repeating the border row. Nothing here needs to clamp, fade or scale to stay inside - every
+// shader-side attempt at that was worse than the artifact (a sky fade drew a seam around the frame;
+// scaling the nudge to fit collapsed the wobble into a visible strip down each side, because one
+// axis running out of room killed the other's offset too).
+
+// Sample the planar reflection RT for a fragment on the DISPLACED surface. Roughness picks the RT
+// mip (PlanarMirror renders a mip chain) and the shared vertical smear stretches it, so the planar
+// mirror obeys the SAME roughness knobs as the sky. Explicit-LOD taps: WGSL-safe, no extra sampler.
+// 'weight' returns how much of this sample is real data - the caller blends the sky in for the rest.
+//
+// TWO corrections live here, and both were wrong in ways that only showed on a wavy surface.
+//
+// 1. PARALLAX. A planar mirror is exact only ON its plane. PlanarMirror renders across the body's
+//    REST plane (_VolumeCenter.y) while this fragment sits on the DISPLACED surface, so a swell
+//    lifts it off the plane and the mirror image slides across it - a floating boat's reflection
+//    visibly detaching from the hull as the swell passes. Derivation: RT[s] holds the MIRRORED
+//    scene along the camera ray through s. The radiance we want is the scene along the REFLECTED
+//    ray from P; mirroring both sides of that statement, it is the mirrored scene along a ray
+//    PARALLEL to the camera ray but starting at mirror(P). So the correct sample is the screen
+//    projection of mirror(P) = (P.x, 2*planeY - P.y, P.z). At P.y == planeY that collapses to the
+//    fragment's own screen UV, so a flat body is byte-identical to before.
+//
+// 2. The normal nudge is taken in VIEW space, not world space. The RT is a SCREEN-space image, so
+//    its u axis is the camera's right vector and its v axis its up vector - but the offset used to
+//    be the WORLD normal's xz, which maps onto those axes differently for every camera heading and
+//    inverts outright on the opposite one. That is why a wave rising made the reflection appear to
+//    sink. (Crest solves the same problem by projecting the water normal onto the camera plane -
+//    g_Crest_HorizonNormal, WaterRenderer.cs:1106-1111.)
 float3 SamplePlanarReflection(float4 screenPos, float3 normal, float roughness)
 {
     float2 uv = ScreenUV(screenPos);
-    uv += normal.xz * _ReflectionDistortion;
+    float3 normalVS = mul((float3x3)UNITY_MATRIX_V, normal);
+    uv += normalVS.xy * _ReflectionDistortion;
+
     float mip = RoughnessToSkyMip(roughness);
     float spread = _ReflectionAnisoStretch * roughness * SCREEN_ANISO_SPREAD_MAX;
     float3 color = float3(0.0, 0.0, 0.0);
     [unroll]
     for (int tap = 0; tap < SKY_ANISO_TAP_COUNT; tap++)
     {
-        float2 tapUV = saturate(uv + float2(0.0, spread * ANISO_TAP_OFFSETS[tap]));
+        float2 tapUV = uv + float2(0.0, spread * ANISO_TAP_OFFSETS[tap]);
         color += tex2Dlod(_PlanarReflectionTex, float4(tapUV, 0.0, mip)).rgb
                * ANISO_TAP_WEIGHTS[tap];
     }

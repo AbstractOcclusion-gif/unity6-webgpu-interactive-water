@@ -326,6 +326,9 @@ float3 ReflectionStage(v2f i, WaterGeomStage g, out float fresnel)
 
     // ---- Reflection: analytic -> planar -> SSR (SSR wins where it hits). The toggles
     // are uniform-driven (published per body via the property block), so they are live. ----
+    // The mirror covers exactly the screen and is MIRROR-wrapped (PlanarMirror.cs), so every
+    // sample has real data and the sky needs no blending back in. Blending it at the border was
+    // tried and drew a visible seam around the frame instead.
     if (_UsePlanar > 0.5)
         reflectedColor = SamplePlanarReflection(i.screenPos, normal, surfaceRoughness);
     if (_UseSSR > 0.5)

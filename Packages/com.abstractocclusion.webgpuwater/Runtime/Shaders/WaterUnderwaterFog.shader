@@ -35,10 +35,17 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         float _UnderwaterSurfaceY;
         float _UnderwaterUnbounded; // 1 = ocean half-space, 0 = clip to this body's box (pond)
         float _UnderwaterFogSimple; // 1 = tier Simple mode: flat waterline, skip the crossing march
+        // 1 = the EYE sits inside a dry exclusion volume (PublishUnderwater, alongside
+        // _CameraUnderwater - which now means "the eye is in WATER" and reads 0 in here). A uniform,
+        // so the camera-height terms below stand down on a screen-coherent branch: in a sunken room
+        // the eye's height against the outside waterline is not a measure of anything.
+        float _CameraDryVolume;
         // Ocean-surface eye-depth prepass (KWS-style rendered waterline): the DISPLACED surface's
-        // linear eye depth per pixel (0 = no surface rasterised there), written by WaterSurface's
-        // "OceanSurfaceEyeDepth" pass via WaterUnderwaterFogPass. When valid, the fog's crossing
-        // comes from this - the rendered surface itself - instead of the bounded analytic march.
+        // linear eye depth per pixel, SIGNED by which side of the sheet is visible (+ = the ABOVE
+        // sheet, seen from the air; - = the UNDER sheet, seen from below; 0 = no surface
+        // rasterised there). Written by WaterSurface's "OceanSurfaceEyeDepth" pass via
+        // WaterUnderwaterFogPass. When valid, the fog's crossing comes from this - the rendered
+        // surface itself - instead of the bounded analytic march.
         TEXTURE2D(_OceanSurfaceEyeDepth);
         float _OceanSurfaceDepthValid; // 1 = the prepass ran this frame (set by the fog pass)
         // Sun globals (published by WaterUniformPublisher) - not in this shader's include chain otherwise.
@@ -51,7 +58,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // at a height that follows crests/troughs, so we bracket the FIRST sign change of
         // (rayY - SurfaceHeightAtXZ) with a constant-step coarse scan and refine by bisection. Constant
         // step/iteration counts keep this fullscreen pass cheap and allocation-free.
-        #define UNDERWATER_CROSS_REFINE_ITERS 5
+        // 12 bisections on the ONE 1.5 m march step that brackets the crossing -> ~0.4 mm, so
+        // the fog waterline agrees with the exclusion wall's EXACT per-pixel classification even
+        // under grazing magnification (5 iterations left ~5 cm of error, which a horizontal look
+        // at water level stretched into a visible empty band between the wall line and the fog
+        // line). RULE (round-1 post-mortem): the iteration count must be sized to THIS bracket -
+        // never reuse it on a wider one.
+        #define UNDERWATER_CROSS_REFINE_ITERS 12
         // Crossing search: march the surface band with a FIXED WORLD STEP (constant, wave-scale resolution
         // so a crest is never skipped or aliased) up to a step cap; beyond the cap - the far horizon, where
         // waves are sub-pixel - fall back to the flat rest-plane waterline. Band = max(swell reach, surf
@@ -69,22 +82,17 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // Fraction of the march reach where the wavy crossing starts fading to the flat fallback
         // (fully flat AT the reach), so the wavy->flat handover is a blend, not a seam.
         #define UNDERWATER_SEAM_BLEND_START  0.75
-        // Arm-fade split distances (ArmWeightFor): a wet span starting within NEAR metres of the
-        // camera is the LENS region (submerged lens pixels - including half-submersion, where the
-        // crossing sits centimetres in front of the eye) and gets full fog instantly; a span
-        // starting past FAR is genuine from-above murk on water ahead and takes the approach
-        // ramp. Blended between.
-        #define ARM_LENS_NEAR 0.5
-        #define ARM_LENS_FAR  2.0
-        // The murk's approach ramp: full when the camera reaches the surface, zero this many
-        // metres ABOVE it. SPATIAL, current-frame (the KWS lesson taken fully - no temporal
-        // state anywhere): the transition lasts exactly as long as the physical crossing, at any
-        // wave speed, so it can never read slow or drag behind the water. KEEP smaller than
-        // WaterVolume's FogArmBandMeters, so the pass only toggles where this fade is already 0.
-        #define MURK_FADE_ABOVE_METERS 0.25
-        // camSurfaceY sentinel for bounded bodies: far above any camera, so the murk ramp
-        // saturates to 1 (a pond's box fog is a volume seen from ANY side, never gated).
-        #define POND_CAM_SURF_SENTINEL 1e8
+        // The waterline coverage curve and its gradient floor are shared with the exclusion wall
+        // (WaterWaterline.hlsl, WaterlineCoverage) so the two edges cannot land on different
+        // pixels. Only the carve-specific over-cover lives here.
+        // Floor for the eye -> near-plane direction (degenerate only if the near plane sat on the
+        // eye), used when pushing a dry-carve pixel out to its exit face.
+        #define CLASSIFY_DIR_EPSILON 1e-5
+        // Screen pixels the fog's edge is pushed toward the AIR side when the eye is inside a dry
+        // carve. ONLY there: in the open the wall does not exist, the surface sheet owns the
+        // from-above view and over-covering would paint fog onto it. Inside a carve the fog's edge
+        // has to MEET the wall's, and the wall is what the extra pixels land on.
+        #define WATERLINE_CARVE_OVER_COVER_PIXELS 3.0
 
         struct Attributes { uint vertexID : SV_VertexID; };
         struct Varyings   { float4 positionCS : SV_POSITION; float2 uv : TEXCOORD0; };
@@ -132,26 +140,24 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // height), plus the deepest submerged Y and the surface height above that deepest point (the
         // depth-darkening reference). The crossing follows crests/troughs, so the fog waterline is a real
         // meniscus: no fog over a trough, fog under a crest.
-        void OceanWavyPath(float3 sceneWorld, float3 cam,
+        void OceanWavyPath(float3 sceneWorld, float3 cam, bool rayStartsWet,
                            out float pathLen, out float deepestY, out float surfaceRefY,
-                           out float3 wetStart, out float camSurfaceY)
+                           out float3 wetStart)
         {
             float camSurf = SurfaceHeightAtXZ(cam.xz);
-            camSurfaceY = camSurf; // the murk arm-fade's reference (ArmWeightFor)
             float sceneSurf = SurfaceHeightAtXZ(sceneWorld.xz);
-            bool camUnder = cam.y <= camSurf;
             bool sceneUnder = sceneWorld.y <= sceneSurf;
             wetStart = cam; // start of the in-water span ALONG the ray (exclusion subtraction origin)
 
             // Whole segment on one side of the surface: no crossing to search for.
-            if (camUnder && sceneUnder)
+            if (rayStartsWet && sceneUnder)
             {
                 pathLen = length(sceneWorld - cam);
                 deepestY = min(cam.y, sceneWorld.y);
                 surfaceRefY = (cam.y <= sceneWorld.y) ? camSurf : sceneSurf;
                 return;
             }
-            if (!camUnder && !sceneUnder)
+            if (!rayStartsWet && !sceneUnder)
             {
                 pathLen = 0.0;
                 deepestY = _VolumeCenter.y;
@@ -212,7 +218,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             pathLen = length(underEnd - hit);
             deepestY = min(hit.y, underEnd.y);
             surfaceRefY = sceneUnder ? sceneSurf : camSurf; // surface above the submerged endpoint
-            wetStart = camUnder ? cam : hit;                // wet span runs [start -> far end] along the ray
+            wetStart = rayStartsWet ? cam : hit;            // wet span runs [start -> far end] along the ray
         }
 
         // Rendered-surface ocean path (the KWS trick): the crossing is the DISPLACED surface's own
@@ -221,26 +227,91 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // with no surface rasterised (looking straight down at the floor, or past the clipmap's
         // reach) fall back to the flat rest-plane crossing, exactly like the march's own far
         // fallback. Structure mirrors OceanWavyPath so the outputs stay drop-in compatible.
-        void OceanPrepassPath(float2 uv, float3 sceneWorld, float3 cam,
+        void OceanPrepassPath(float2 uv, float3 sceneWorld, float3 cam, bool rayStartsWet,
                               out float pathLen, out float deepestY, out float surfaceRefY,
-                              out float3 wetStart, out float camSurfaceY)
+                              out float3 wetStart)
         {
             float camSurf = SurfaceHeightAtXZ(cam.xz);
-            camSurfaceY = camSurf; // the murk arm-fade's reference (ArmWeightFor)
             float sceneSurf = SurfaceHeightAtXZ(sceneWorld.xz);
-            bool camUnder = cam.y <= camSurf;
             bool sceneUnder = sceneWorld.y <= sceneSurf;
             wetStart = cam;
 
-            // Whole segment on one side of the surface: no crossing to look up.
-            if (camUnder && sceneUnder)
+            // RASTERIZED SURFACE FIRST (authority inversion - the Crest/KWS ranking). The
+            // analytic early-outs used to run BEFORE this lookup, classifying the ray against the
+            // OPAQUE scene point - and the drawn water is transparent, so at the distant waterline
+            // that "scene" is the SKYBOX at the far plane. Any ray whose far-plane point dipped
+            // below the analytic field took the both-under early-out and integrated fog over the
+            // WHOLE ray to the skybox, painted OVER the drawn sheet: from underwater at grazing,
+            // the visible waterline (the drawn crest silhouette) sits BELOW the analytic plane's
+            // horizon on screen, so every pixel between the two got a straight fog edge overriding
+            // the wavy line, and the underside read as sorted BEHIND the fog. Both references make
+            // the rasterized surface depth BOUND the span (Crest: clamp(scene, backFace) -
+            // frontFace) - nothing analytic can override it. Same here now: a prepass sample in
+            // front of the scene IS the crossing; the analytic classification only speaks where
+            // the sheet genuinely never rasterised.
+            float3 ray = sceneWorld - cam;
+            float rayLen = max(length(ray), 1e-4);
+            float3 dir = ray / rayLen;
+            float surfaceSigned = LOAD_TEXTURE2D(_OceanSurfaceEyeDepth,
+                                                 int2(uv * _ScaledScreenParams.xy)).r;
+            float surfaceEye = abs(surfaceSigned);
+            // Which face of the sheet this pixel shows - a RASTER fact, per pixel, from the same
+            // draw the camera made. It replaces the eye's own waterline as the owner test below.
+            bool sheetSeenFromAir = surfaceSigned > 0.0;
+            // Eye depth is view-space Z; divide by the ray/forward cosine for distance along the ray.
+            float3 camForward = -UNITY_MATRIX_V[2].xyz;
+            float hitDist = surfaceEye / max(dot(dir, camForward), 1e-4);
+            float3 hit;
+            if (surfaceEye > 0.0 && hitDist < rayLen)
+            {
+                // The pixel's water STARTS at the rendered surface seen from the AIR side: the
+                // sheet's own from-above shading (its transmittance + WaterDepthClarity) already
+                // absorbed everything behind it, so fogging [surface -> scene] again here painted
+                // a flat second fog over the drawn waves - the "plain band" at water level, and
+                // the same band from inside a dry room above sea level. Crest and KWS never let
+                // the volume pass touch a from-above water pixel - the surface shader owns that
+                // view. Pixels with the sheet NEAR-CLIPPED (surfaceEye 0, the lens-in-water strip
+                // at the bottom of a straddling frame) keep full fog below: that strip is exactly
+                // what both references hand to the volume pass.
+                //
+                // The owner test is the PREPASS SIGN, not the eye's waterline. Those two disagree
+                // exactly at the crossing: with the near plane dipped under a wave the mask reads
+                // "wet" for a band of pixels that still show the ABOVE sheet, and this pass then
+                // washed its scatter colour over a surface the sheet had already shaded from air -
+                // fog "reflected onto" the water, and a span that looked like it had skipped the
+                // nearest crossing. A per-pixel raster fact cannot make that mistake.
+                if (sheetSeenFromAir)
+                {
+                    pathLen = 0.0;
+                    deepestY = _VolumeCenter.y;
+                    surfaceRefY = camSurf;
+                    return;
+                }
+                // Submerged eye, drawn surface in front: the visible water column ends AT
+                // the sheet, so the span is [eye -> hit] no matter what the analytic field says
+                // about the opaque scene point behind it. This intentionally also captures rays
+                // the old both-under early-out claimed: what is drawn past the exit is the
+                // sheet's own reflection/refraction imagery - the fog cannot see it and must
+                // not price it.
+                hit = cam + dir * hitDist;
+                pathLen = hitDist;
+                deepestY = min(cam.y, hit.y);
+                surfaceRefY = camSurf;
+                return;
+            }
+
+            // NO rasterized surface at this pixel: the analytic classification is the right
+            // authority (deep murk, floor views, past the clipmap - places the sheet never
+            // drew, where the skybox cannot masquerade as a waterline). Ordered AFTER the
+            // prepass on purpose - see the authority note above.
+            if (rayStartsWet && sceneUnder)
             {
                 pathLen = length(sceneWorld - cam);
                 deepestY = min(cam.y, sceneWorld.y);
                 surfaceRefY = (cam.y <= sceneWorld.y) ? camSurf : sceneSurf;
                 return;
             }
-            if (!camUnder && !sceneUnder)
+            if (!rayStartsWet && !sceneUnder)
             {
                 pathLen = 0.0;
                 deepestY = _VolumeCenter.y;
@@ -248,51 +319,46 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 return;
             }
 
-            // Mixed: take the crossing from the rendered surface's eye depth at this pixel.
-            float3 ray = sceneWorld - cam;
-            float rayLen = max(length(ray), 1e-4);
-            float3 dir = ray / rayLen;
-            float surfaceEye = LOAD_TEXTURE2D(_OceanSurfaceEyeDepth,
-                                              int2(uv * _ScaledScreenParams.xy)).r;
-            // Eye depth is view-space Z; divide by the ray/forward cosine for distance along the ray.
-            float3 camForward = -UNITY_MATRIX_V[2].xyz;
-            float hitDist = surfaceEye / max(dot(dir, camForward), 1e-4);
-            float3 hit;
-            if (surfaceEye > 0.0 && hitDist < rayLen)
+            // Mixed ray with NO prepass sample: the analytic fallback (flat crossing + the
+            // carve handoff to the validated marcher) prices the crossing.
             {
-                hit = cam + dir * hitDist;
-            }
-            else
-            {
-                // No surface at this pixel. A camera SEALED INSIDE a dry exclusion volume (a
-                // sunken room below sea level) makes this fallback lie for CAMERA-UNDER rays:
-                // the ray leaves through the carve pane ABOVE the outside waterline - any
-                // genuinely wet up-ray from in here would see the rendered surface underside
-                // and never reach this branch. The flat rest-plane crossing then fogged the
-                // AIR between the pane and the rest plane: the bright "band above water"
-                // hugging the waterline on the walls. Dry ray, no fog.
-                // SCENE-UNDER rays (camera above the plane looking DOWN through the carve hole
-                // at real water) must NOT take this out: no-surface is their NORMAL state -
-                // the sheet is carved exactly where they cross the plane - and the flat
-                // fallback + dry-span carve prices their fog correctly. Guarding them too
-                // popped the pane fog on/off as the camera bobbed across water level.
-                if (camUnder && _ExclusionCount > 0.5 && InsideExclusion(cam))
+                // No surface rasterised at this pixel. TWO causes land here and they must not
+                // share an answer invented on the spot:
+                //  * the far horizon past the clipmap, or a straight-down look. Open water: the flat
+                //    rest-plane crossing has always been right for it, and stays untouched.
+                //  * an exclusion volume DISCARDED the sheet (WaterSurface's carve discard). There
+                //    the flat rest plane is simply the WRONG waterline: the exclusion wall
+                //    classifies against the DISPLACED surface (SurfaceHeightAtXZ), so a flat fog
+                //    line sat a full wave amplitude away from it - the hole between the waterline
+                //    and the fog. Hand those pixels to OceanWavyPath: the SAME crossing search the
+                //    non-prepass tier runs, against the SAME displaced surface the wall uses, so the
+                //    two waterlines are ONE curve by construction instead of by agreement.
+                //    It also removes the old "band above water" on a sealed room's walls without any
+                //    camera-height guard: the wavy crossing lands INSIDE the room, so
+                //    ExclusionRayLength carves that whole span away and the air is never fogged.
+                //    (The flat crossing landed OUTSIDE the box, uncarved - which is why that band
+                //    existed and why it needed a guard that flipped with the eye's height.)
+                // Deliberately NOT a bespoke refine here: an earlier attempt bisected a +-band
+                // bracket five times, quantising the crossing to ~30 cm and printing steps.
+                // OceanWavyPath's fixed 1.5 m march + refine is the validated resolution.
+                float dySafe = ray.y + (ray.y >= 0.0 ? 1e-4 : -1e-4);
+                float tFlat = saturate((_VolumeCenter.y - cam.y) / dySafe);
+                hit = cam + ray * tFlat;
+                bool overCarve = _ExclusionCount > 0.5
+                              && (_CameraDryVolume > 0.5 || InsideExclusion(hit));
+                if (overCarve)
                 {
-                    pathLen = 0.0;
-                    deepestY = _VolumeCenter.y;
-                    surfaceRefY = camSurf;
+                    OceanWavyPath(sceneWorld, cam, rayStartsWet, pathLen, deepestY, surfaceRefY,
+                                  wetStart);
                     return;
                 }
-                // Flat rest-plane crossing (the march's far fallback).
-                float dySafe = ray.y + (ray.y >= 0.0 ? 1e-4 : -1e-4);
-                hit = cam + ray * saturate((_VolumeCenter.y - cam.y) / dySafe);
             }
 
             float3 underEnd = sceneUnder ? sceneWorld : cam;
             pathLen = length(underEnd - hit);
             deepestY = min(hit.y, underEnd.y);
             surfaceRefY = sceneUnder ? sceneSurf : camSurf; // surface above the submerged endpoint
-            wetStart = camUnder ? cam : hit;                // wet span runs [start -> far end] along the ray
+            wetStart = rayStartsWet ? cam : hit;            // wet span runs [start -> far end] along the ray
         }
 
         // Simple-mode ocean path (tier budget path): the closed-form in-water span against the FLAT
@@ -303,10 +369,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // UNDERWATER_CROSS_MAX_STEPS surface evaluations per pixel.
         void OceanFlatPath(float3 sceneWorld, float3 cam,
                            out float pathLen, out float deepestY, out float surfaceRefY,
-                           out float3 wetStart, out float camSurfaceY)
+                           out float3 wetStart)
         {
             float level = _UnderwaterSurfaceY;
-            camSurfaceY = level; // the murk arm-fade's reference (flat, matching this tier's waterline)
             pathLen = WaterPathLength(sceneWorld, cam, level);
             // min against 'level' makes an in-air endpoint contribute its crossing at the waterline,
             // so the deepest submerged point is exact in every camera-above/below combination.
@@ -337,13 +402,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // World-space length of the in-water part of the camera->scene ray, the deepest submerged point's
         // world Y (for downwelling), and the displaced surface height above it (the depth reference).
         // pathLen 0 = this pixel's ray never enters the water.
-        void UnderwaterSegment(float2 uv, float3 sceneWorld, out float pathLen, out float deepestY,
-                               out float surfaceRefY, out float3 wetStart, out float camSurfaceY)
+        void UnderwaterSegment(float2 uv, float3 sceneWorld, bool rayStartsWet, out float pathLen,
+                               out float deepestY, out float surfaceRefY, out float3 wetStart)
         {
             float3 cam = _WorldSpaceCameraPos;
-            // Bounded bodies: sentinel far above any camera, so the murk arm-fade saturates to 1
-            // (their box fog is a volume seen from any side, never a gated fullscreen state).
-            camSurfaceY = POND_CAM_SURF_SENTINEL;
 
             if (_UnderwaterUnbounded > 0.5)
             {
@@ -351,11 +413,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 // coherent across the screen - Simple tiers never pay for the wavy march, and when
                 // the rendered-surface prepass ran, nobody does (the crossing is a texture load).
                 if (_UnderwaterFogSimple > 0.5)
-                    OceanFlatPath(sceneWorld, cam, pathLen, deepestY, surfaceRefY, wetStart, camSurfaceY);
+                    OceanFlatPath(sceneWorld, cam, pathLen, deepestY, surfaceRefY, wetStart);
                 else if (_OceanSurfaceDepthValid > 0.5)
-                    OceanPrepassPath(uv, sceneWorld, cam, pathLen, deepestY, surfaceRefY, wetStart, camSurfaceY);
+                    OceanPrepassPath(uv, sceneWorld, cam, rayStartsWet, pathLen, deepestY,
+                                     surfaceRefY, wetStart);
                 else
-                    OceanWavyPath(sceneWorld, cam, pathLen, deepestY, surfaceRefY, wetStart, camSurfaceY);
+                    OceanWavyPath(sceneWorld, cam, rayStartsWet, pathLen, deepestY, surfaceRefY,
+                                  wetStart);
                 return;
             }
 
@@ -401,41 +465,117 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // live in WaterExclusion.hlsl: the exclusion wall's above-water fog reconstruction
         // shares them, so both views of the carve shade identically.
 
-        // Per-pixel arm fade (the KWS lesson): KWS/Crest have NO temporal fade - their underwater
-        // effect is binary per pixel against the RASTERIZED surface, frame-exact by construction,
-        // with the meniscus hiding the edge. Match that where it matters: a ray that STARTS in
-        // water gets FULL fog instantly (the below-line lens region - its edge is the per-pixel
-        // waterline, current-frame GPU math, no readback staleness). Only the through-surface murk
-        // (camera-above rays crossing into the water ahead) fades - and even that fade is SPATIAL,
-        // driven by the camera's live height above the surface, never by time: the gate can flip
-        // a frame early/late for free because the murk is already zero that far from the water.
-        float ArmWeightFor(float3 wetStart, float pathLen, float camSurfaceY)
+        // Per-pixel waterline mask - the one thing BOTH references do and we did not.
+        // Crest classifies every pixel by testing its NEAR-CLIP-PLANE world position against the
+        // displaced surface (Volume/Mask.compute: `position.y <= height ? -1 : 1`), and its
+        // fullscreen underwater pass then DISCARDS every above-surface pixel
+        // (Volume/Underwater.hlsl: `if (mask > CREST_MASK_BELOW_SURFACE) discard;`). KWS is the
+        // same shape (KWS_Underwater.shader: `alpha = ... waterMask > 0.5 ? 1 : 0; if (alpha == 0)
+        // discard;`). NEITHER applies any camera-height ramp to the effect.
+        //
+        // WHY THAT MATTERS FOR ARMING: it is precisely why neither of them pops when its CPU gate
+        // flips. The gate is a SUPERSET of this per-pixel coverage, so on the frame the pass first
+        // runs, the set of pixels this mask lets through is still empty - submitting the pass
+        // changes nothing on screen. A hard bool cannot produce a hard edge. Our arm band
+        // (FogArmBandMeters) now has that same property for free.
+        //
+        // WHAT THIS REPLACES: a camera-height arm fade - a 0.25 m ramp on cam.y against the
+        // surface at the EYE's xz, plus a "lens exemption" keyed on how near this ray's water
+        // began. Two faults. It dimmed the WHOLE SCREEN together as the camera neared the surface
+        // (one global number, so every pixel moved at once - the transition band reading as weird);
+        // and the lens exemption held steeply-down-looking rays at FULL fog right up to the frame
+        // the gate toggled off, because their crossing is only ~0.5 m away - the pop as the water
+        // reached the camera.
+        //
+        // Above-water pixels lose nothing by being masked out: the surface shader already applies
+        // the water column's absorption for a view from above (its own transmittance +
+        // WaterDepthClarity), exactly as Crest's Fragment.hlsl and KWS's fragWater do. The
+        // fullscreen pass painting them was double-counting that.
+        //
+        // FEATHERED over one pixel instead of a hard discard: both references hide their hard edge
+        // under a far wider meniscus than ours (Crest ~11% of screen height on the air side, KWS a
+        // 40-80 px blurred band; ours defaults to 5 px), so our boundary itself has to be clean.
+        // The meniscus pass evaluates the IDENTICAL gap, so the line it draws and this edge are the
+        // same curve by construction - there is no seam between them to hide.
+        //
+        // Derivative safety: every early-out below is on a UNIFORM global (_UnderwaterUnbounded,
+        // _CameraDryVolume, _UnderwaterFogSimple), and this is called before any per-pixel
+        // marching, so fwidth sits in uniform control flow.
+
+        // The world point this pixel's coverage is decided at. Normally the pixel's own
+        // NEAR-CLIP-PLANE position - Crest's mask, verbatim.
+        //
+        // Inside a dry carve that point is useless: the lens sits in AIR below sea level, so its
+        // waterline says nothing about the water it is looking at through the pane. The previous
+        // answer was to give up and return full coverage, citing Crest disabling its camera-height
+        // heuristics under a portal. That was a misreading. Crest disables the height RAMPS; it
+        // never disables the MASK - it MOVES it onto the portal geometry, classifying the portal
+        // WALL's world position against the water line (Portals.hlsl Fragment: `positionWS.y <=
+        // height ? -1 : 1`, fed by a height field fitted to the portal bounds).
+        //
+        // Same move here, analytically: push the ray to where it LEAVES the carve and classify
+        // THAT point. It is the same boundary point WaterExclusionWall shades and classifies
+        // against the same SurfaceHeightAtXZ, so the fog's waterline and the wall's waterline are
+        // ONE curve by construction rather than two curves that have to agree.
+        //
+        // MESH volumes are skipped by the analytic push (their exact exit needs the back-face
+        // prepass), and a near-plane point that no analytic volume contains pushes by 0 - both
+        // fall back to the near-plane point, which is the pre-carve behaviour.
+        float3 WaterlineClassifyPoint(float2 uv)
         {
-            if (pathLen <= 0.0) return 1.0; // no fog on this ray; weight is moot
-            float heightAbove = _WorldSpaceCameraPos.y - camSurfaceY;
-            float murkWeight = 1.0 - saturate(heightAbove / MURK_FADE_ABOVE_METERS);
-            // Distance to where this ray's water STARTS: ~0..near-plane for the submerged part
-            // of the lens, metres for genuine from-above murk. Smooth blend so no ring appears
-            // where the two regimes meet during a half-submerged frame.
-            float startDist = distance(wetStart, _WorldSpaceCameraPos);
-            float murkiness = smoothstep(ARM_LENS_NEAR, ARM_LENS_FAR, startDist);
-            return lerp(1.0, murkWeight, murkiness);
+            float3 nearWorld = ComputeWorldSpacePosition(uv, UNITY_NEAR_CLIP_VALUE,
+                                                         UNITY_MATRIX_I_VP);
+            if (_CameraDryVolume < 0.5) return nearWorld; // uniform: the eye is not in a carve
+            float3 toNear = nearWorld - _WorldSpaceCameraPos;
+            float3 rayDir = toNear / max(length(toNear), CLASSIFY_DIR_EPSILON);
+            float exitDist = ExclusionPushToExit(nearWorld, rayDir, 0.0, _ProjectionParams.z);
+            return nearWorld + rayDir * exitDist;
+        }
+
+        // Returns the coverage weight AND the signed gap it was derived from, so the caller can
+        // take the hard "does this ray start in water" decision from the SAME number the soft
+        // weight feathers - the two can then never disagree about where the line is.
+        float ArmWeight(float2 uv, out float classifyGap)
+        {
+            // Bounded bodies are a finite fog VOLUME meant to be seen from OUTSIDE (circle a pond
+            // and look into the murk), so they are never masked by the eye's own waterline; their
+            // rays always start inside the box the pond path clips to.
+            classifyGap = -1.0;
+            if (_UnderwaterUnbounded < 0.5) return 1.0;
+            float3 classifyPoint = WaterlineClassifyPoint(uv);
+            classifyGap = (_UnderwaterFogSimple > 0.5) ? classifyPoint.y - _UnderwaterSurfaceY
+                                                       : SurfaceSignedGap(classifyPoint);
+            float overCoverPixels = (_CameraDryVolume > 0.5) ? WATERLINE_CARVE_OVER_COVER_PIXELS
+                                                             : 0.0;
+            return WaterlineCoverage(classifyGap, fwidth(classifyGap), overCoverPixels);
         }
 
         // Per-channel path transmittance for this pixel; also returns the depth-darkening term,
         // the sun visibility of the wet span past the exclusion volumes (1 = unshadowed), and the
-        // per-pixel arm-fade weight (see ArmWeightFor).
+        // per-pixel waterline mask (see ArmWeight).
         float3 UnderwaterFog(float2 uv, out float3 depthAttenuation, out float sunVisibility,
                              out float armWeight)
         {
+            // FIRST, ahead of every per-pixel march below: the waterline mask takes a screen
+            // derivative and must be evaluated in uniform control flow.
+            float classifyGap;
+            armWeight = ArmWeight(uv, classifyGap);
+            // Does THIS PIXEL'S ray start in water? Per pixel, and from the SAME gap the mask
+            // feathers over. It replaces `camUnder` - one camera-height boolean that held the
+            // identical value for every pixel on screen while selecting between branches whose
+            // path lengths differ by the whole ray (0 one frame, the full span the next, over the
+            // entire frame at once, and worst on the horizontal/up looks where the span is long).
+            // Sharing one number means the branch can only flip where the weight is already
+            // crossing 0.5, so the step is multiplied by ~0 - which is exactly why neither
+            // reference pops: the coverage test and the span test are the same test.
+            bool rayStartsWet = classifyGap <= 0.0;
             float3 sceneWorld = SceneWorldPos(uv);
             float pathLen;
             float deepestY;
             float surfaceRefY;
             float3 wetStart;
-            float camSurfaceY;
-            UnderwaterSegment(uv, sceneWorld, pathLen, deepestY, surfaceRefY, wetStart, camSurfaceY);
-            armWeight = ArmWeightFor(wetStart, pathLen, camSurfaceY);
+            UnderwaterSegment(uv, sceneWorld, rayStartsWet, pathLen, deepestY, surfaceRefY,
+                              wetStart);
             // Dry-interior exclusion: the part of the wet span that crosses an exclusion volume is
             // AIR, so carve it out of the fog integral. Zero volumes = the loops never run. When
             // the whole span is dry (camera in a submerged room looking at its own wall), the
