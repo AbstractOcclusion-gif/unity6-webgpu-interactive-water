@@ -103,7 +103,7 @@ namespace AbstractOcclusion.WebGpuWater
         void DestroyBedTexture()
         {
             if (_bedTex == null) return;
-            if (Application.isPlaying) Object.Destroy(_bedTex); else Object.DestroyImmediate(_bedTex);
+            WaterObjects.DestroyRuntime(_bedTex);
             _bedTex = null;
         }
     }

@@ -26,7 +26,10 @@ namespace AbstractOcclusion.WebGpuWater
         [System.Serializable]
         public sealed class WaterFogSettings
         {
-            [Tooltip("Global depth absorption, shared by the surface, objects and pool.")]
+            [Tooltip("Global depth absorption, shared by the surface, objects and pool. The " +
+                     "UNDERWATER view of it (the fullscreen fog you see with the camera below the " +
+                     "surface) is drawn by the WaterUnderwaterFog renderer feature - add it to your " +
+                     "URP renderer, or this ticks on and nothing happens below the waterline.")]
             public bool waterFog = false;
             public Color fogColor = new Color(0.10f, 0.30f, 0.40f);
             [Tooltip("Per-channel extinction; red highest so it absorbs first. HDR: push a channel " +

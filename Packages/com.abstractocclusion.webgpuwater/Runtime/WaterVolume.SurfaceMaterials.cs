@@ -37,10 +37,20 @@ namespace AbstractOcclusion.WebGpuWater
         // Put water surfaces on the built-in "Water" layer so the planar reflection - configured to
         // exclude that layer - never mirrors the water into itself (which reads as a second, independently
         // waving surface). The scene camera still renders the layer, so the water itself is unaffected.
-        const string WaterLayerName = "Water";
+        // internal: the build kit assigns the same layer at author time (WaterBuildKit.AssignWaterLayer)
+        // and must not spell the name a second time.
+        internal const string WaterLayerName = "Water";
 
+        // PLAY MODE ONLY. surfaceAbove/surfaceUnder are USER-assigned renderers, so writing their
+        // layer in edit mode (TryInitialize runs under [ExecuteAlways]) rewrote a customer's own
+        // GameObject - permanently, since nothing ever restored it. Author-time assignment is the
+        // build kit's job, where it lands as authored data the user can see and undo.
+        // The two OTHER ApplyWaterLayer callers - OceanClipmap and SimWindowPatch - stay unguarded
+        // on purpose: those GameObjects are created by the package at runtime, not user data.
         void AssignSurfaceLayers()
         {
+            if (!Application.isPlaying) return;
+
             ApplyWaterLayer(surfaceAbove);
             ApplyWaterLayer(surfaceUnder);
         }
@@ -54,6 +64,26 @@ namespace AbstractOcclusion.WebGpuWater
         {
             int layer = LayerMask.NameToLayer(WaterLayerName);
             if (go != null && layer >= 0 && go.layer != layer) go.layer = layer;
+        }
+
+        // ONE factory for the runtime surface renderers this body spawns - the near-field sim-window
+        // patch and every ocean clipmap ring. They were two byte-identical methods differing only in
+        // which mesh they took; a parameter add to one silently left the other behind. Never-shadowing
+        // by construction (the water surface neither casts nor receives), parented beside the authored
+        // surface, and on the Water layer like it. DontSave: these are rebuilt every enable and must
+        // never be serialized into the user's scene.
+        // Their per-renderer flags (_IsPatch / _IsClipmap) ride the property block, set by the caller.
+        MeshRenderer CreateSurfaceRenderer(string objectName, Mesh mesh, Material material)
+        {
+            var go = new GameObject(objectName) { hideFlags = HideFlags.DontSave };
+            go.transform.SetParent(surfaceAbove.transform.parent, false);
+            ApplyWaterLayer(go);
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var mr = go.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = material;
+            mr.shadowCastingMode = ShadowCastingMode.Off;
+            mr.receiveShadows = false;
+            return mr;
         }
 
         // Replace the renderer's shared material with a per-body instance (play-mode only, so

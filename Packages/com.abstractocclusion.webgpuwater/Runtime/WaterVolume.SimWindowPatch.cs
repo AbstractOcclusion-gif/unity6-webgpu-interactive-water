@@ -75,29 +75,14 @@ namespace AbstractOcclusion.WebGpuWater
 
             _patchGrid = WaterMeshBuilder.BuildGrid(Mathf.Max(1, _simRes));
             _patchGrid.hideFlags = HideFlags.HideAndDontSave;
-            _patchRenderer = CreatePatchRenderer(PatchObjectName, surfaceAbove.sharedMaterial);
+            _patchRenderer = CreateSurfaceRenderer(PatchObjectName, _patchGrid, surfaceAbove.sharedMaterial);
 
             // Underside twin (ocean clipmap only): the same dense grid drawn with the under-water
             // material fills the under-clipmap's centre hole and matches the top vertex-for-vertex, so
             // the two never show through each other at the waterline. Bounded and non-ocean windowed
             // bodies keep their single bounded under-plane (no twin), so they stay unchanged.
             if (IsOceanClipmap && surfaceUnder != null && surfaceUnder.sharedMaterial != null)
-                _patchUnderRenderer = CreatePatchRenderer(PatchUnderObjectName, surfaceUnder.sharedMaterial);
-        }
-
-        // Build one near-field patch renderer over the shared sim-resolution grid using the given
-        // per-body surface material instance. The _IsPatch window remap rides its property block.
-        MeshRenderer CreatePatchRenderer(string objectName, Material material)
-        {
-            var go = new GameObject(objectName) { hideFlags = HideFlags.DontSave };
-            go.transform.SetParent(surfaceAbove.transform.parent, false);
-            ApplyWaterLayer(go);
-            go.AddComponent<MeshFilter>().sharedMesh = _patchGrid;
-            var mr = go.AddComponent<MeshRenderer>();
-            mr.sharedMaterial = material;
-            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            mr.receiveShadows = false;
-            return mr;
+                _patchUnderRenderer = CreateSurfaceRenderer(PatchUnderObjectName, _patchGrid, surfaceUnder.sharedMaterial);
         }
 
         void DestroySimWindowPatch()

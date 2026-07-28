@@ -184,7 +184,17 @@ namespace AbstractOcclusion.WebGpuWater
             SetChunkShellEnabled(on);
         }
 
-        static void SetRendererEnabled(Renderer r, bool on) { if (r != null && r.enabled != on) r.enabled = on; }
+        // forceRenderingOff, NOT '.enabled': enabled is SERIALIZED, and this runs every frame from
+        // Update under [ExecuteAlways] - so the culling gate was writing the user's scene, and saving
+        // while a body sat off-screen baked its water renderer disabled. forceRenderingOff is the
+        // runtime-only equivalent, the same idiom WaterSplashEmitter uses to mute its Shuriken draws.
+        // This is the ONE choke point: the clipmap levels route through it too.
+        static void SetRendererEnabled(Renderer r, bool on)
+        {
+            if (r == null) return;
+            bool off = !on;
+            if (r.forceRenderingOff != off) r.forceRenderingOff = off;
+        }
 
         // ---- edit-mode preview ------------------------------------------------
         // The editor preview driver (Editor/WaterEditorPreviewDriver) pumps the player loop

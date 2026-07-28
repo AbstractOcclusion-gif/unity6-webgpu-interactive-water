@@ -9,11 +9,20 @@
 // view ray (stops at the scene, the far plane, or the surface for an up-ray), tinted + thinned by the
 // shared water fog and downwelling depth. Caustic shimmer arrives next (near-field sim caustic).
 //
-// Four passes: 0 = raymarch into a half-res persistent history target (reads scene depth + main-
-// light shadows via URP globals; animated-jitter march + temporal reprojection accumulation);
-// 1+2 = separable Gaussian blur of the shafts; 3 = additive composite of the blurred result
-// (global _LargeGodRayTex) over the camera colour. Jitter + temporal + blur are the calm trio -
-// few march steps read as many, and fast flicker cannot survive the accumulation.
+// Four passes are DECLARED, TWO are dispatched: 0 = raymarch into a half-res persistent history
+// target (reads scene depth + main-light shadows via URP globals; animated-jitter march + temporal
+// reprojection accumulation); 3 = additive composite (global _LargeGodRayTex) over the camera
+// colour. Jitter + temporal accumulation are what calms the shafts today - few march steps read as
+// many, and fast flicker cannot survive the accumulation.
+//
+// 1+2 = separable Gaussian blur. COMPILED BUT NEVER DISPATCHED - LargeBodyAtmospherePass runs
+// RaymarchShaderPass (0) then CompositeShaderPass (3); see its line 41. They are kept for the
+// UNDERWATER view, where softening the shafts is pure gain. They are NOT simply switched on because
+// of the from-air case below: a fullscreen separable blur bleeds across depth discontinuities, and
+// an above-water camera looking through an exclusion volume's window (_LargeGodRayFromAir > 0)
+// depends on the carve boundary staying a HARD edge - blurred shafts would smear across the wall's
+// silhouette. Wiring them therefore means gating on submersion, or making the blur depth-aware.
+// Unfinished work, not an oversight: do not delete, and do not assume they run.
 // Runs when the camera is submerged (fading in over the first centimetres below the surface -
 // spatial, so wave-driven crossings never pop) AND, at _LargeGodRayFromAir > 0, when an above-water
 // camera looks into the water THROUGH AN EXCLUSION VOLUME'S WINDOW. The from-air case is culled to
@@ -404,8 +413,9 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 col *= regime;
 
                 // Temporal accumulation: blend with last frame's value at this scene point. The history
-                // is the pre-blur RT (ping-ponged by the C# pass), so accumulation sharpness is kept
-                // and the blur only shapes the composited result. Off-screen history = fresh value.
+                // is the raw march RT (ping-ponged by the C# pass), which is also what the composite
+                // reads - the blur passes are not dispatched (see the file header). Off-screen history
+                // = fresh value.
                 //
                 // SUBMERGED-FIELD ONLY, hence the fade. Reprojecting by the SCENE world position is
                 // sound while the shafts are a smooth volume in front of real geometry: the value at
@@ -451,8 +461,10 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
         }
 
         // ---- Passes 1+2: separable Gaussian blur of the half-res shafts (the KWS pyramid-blur
-        // equivalent) - the third calm pillar after jitter + temporal accumulation. Linear-sampled
-        // 9-tap Gaussian in two directions; the composite reads the blurred result. --------------
+        // equivalent), intended as a third calm pillar after jitter + temporal accumulation.
+        // Linear-sampled 9-tap Gaussian in two directions.
+        // NOT DISPATCHED: the composite reads the RAW march target, not this. Parked for the
+        // underwater view; see the file header for why it cannot just be turned on globally. -------
         Pass
         {
             Name "LargeBodyGodRaysBlurH"

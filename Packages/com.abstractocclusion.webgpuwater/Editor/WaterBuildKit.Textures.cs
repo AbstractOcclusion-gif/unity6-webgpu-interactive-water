@@ -157,8 +157,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             if (!File.Exists(genPath))
             {
-                string packagedSheet = PackagedSheetPath(packageRelativePath);
-                if (packagedSheet == null || !File.Exists(packagedSheet))
+                string packagedSheet = WaterPackagePaths.Physical(packageRelativePath);
+                if (!File.Exists(packagedSheet))
                 {
                     Debug.LogWarning($"WebGpuWater: crown sheet not found in the package " +
                                      $"('{packageRelativePath}'); the splash crown will miss this sheet.");
@@ -171,16 +171,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             }
 
             return LoadFlipbook(genPath, TextureWrapMode.Clamp, mipmaps: false, linear: true);
-        }
-
-        // Physical path of a packaged sheet inside the package's Samples~ folder. resolvedPath
-        // differs between embedded and registry/tarball installs, so it is resolved via the
-        // package system rather than assumed to sit under the project's Packages folder.
-        static string PackagedSheetPath(string packageRelativePath)
-        {
-            UnityEditor.PackageManager.PackageInfo package =
-                UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(WaterBuildKit).Assembly);
-            return package == null ? null : Path.Combine(package.resolvedPath, packageRelativePath);
         }
 
     }

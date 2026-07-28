@@ -177,12 +177,12 @@ namespace AbstractOcclusion.WebGpuWater
                     // past the outer edge.
                     morphStart = outermost ? ClipmapGridRes : (ClipmapGridRes / 2f - morphBandCells),
                     morphScale = 1f / morphBandCells,
-                    above = CreateClipmapRenderer(ClipmapObjectName, _clipmapTemplate, surfaceAbove.sharedMaterial),
+                    above = CreateSurfaceRenderer(ClipmapObjectName, _clipmapTemplate, surfaceAbove.sharedMaterial),
                     aboveBlock = new MaterialPropertyBlock(),
                 };
                 if (buildUnder)
                 {
-                    entry.under = CreateClipmapRenderer(ClipmapUnderObjectName, _clipmapTemplate, surfaceUnder.sharedMaterial);
+                    entry.under = CreateSurfaceRenderer(ClipmapUnderObjectName, _clipmapTemplate, surfaceUnder.sharedMaterial);
                     entry.underBlock = new MaterialPropertyBlock();
                 }
                 _clipmapLevels[level] = entry;
@@ -198,22 +198,6 @@ namespace AbstractOcclusion.WebGpuWater
                 SetRendererEnabled(_clipmapLevels[i].above, on);
                 SetRendererEnabled(_clipmapLevels[i].under, on);
             }
-        }
-
-        // Build one clipmap renderer: a never-shadowing MeshRenderer over 'mesh' using the given per-body
-        // surface material instance, parented beside the surface. The _IsClipmap flag rides its property
-        // block (written in ApplyClipmapBlock), so it never leaks onto the pool-grid renderers.
-        MeshRenderer CreateClipmapRenderer(string objectName, Mesh mesh, Material material)
-        {
-            var go = new GameObject(objectName) { hideFlags = HideFlags.DontSave };
-            go.transform.SetParent(surfaceAbove.transform.parent, false);
-            ApplyWaterLayer(go);
-            go.AddComponent<MeshFilter>().sharedMesh = mesh;
-            var mr = go.AddComponent<MeshRenderer>();
-            mr.sharedMaterial = material;
-            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            mr.receiveShadows = false;
-            return mr;
         }
 
         void DestroyOceanClipmap()

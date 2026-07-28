@@ -1,7 +1,7 @@
 // WebGpuWater - false-colour debug views for the water surface AND the fullscreen underwater fog.
 // Drop this on ANY object in the scene and pick a mode; it publishes _WaterDebugMode and the
 // matching shader replaces its output with the view - the surface pass for modes 1-6
-// (WaterSurfaceDebug.hlsl), the fullscreen fog for modes 7-11 (WaterFogDebug.hlsl). The two
+// (WaterSurfaceDebug.hlsl), the fullscreen fog for modes 7-12 (WaterFogDebug.hlsl). The two
 // ranges are disjoint and each side declines the other's, so exactly one of them ever paints.
 // Remove the component (or set Off) and both are back to one uniform compare per pixel.
 //
@@ -19,7 +19,8 @@ namespace AbstractOcclusion.WebGpuWater
     public sealed class WaterDebugView : MonoBehaviour
     {
         /// <summary>Which false-colour view the water surface draws. Values MUST match the
-        /// WATER_DEBUG_* defines in Runtime/Shaders/WaterSurfaceDebug.hlsl.</summary>
+        /// WATER_DEBUG_* ordinals in Runtime/Shaders/WaterDebugMode.hlsl (the shared ordinal
+        /// header both WaterSurfaceDebug.hlsl and WaterFogDebug.hlsl include).</summary>
         public enum Mode
         {
             /// <summary>Normal shading.</summary>

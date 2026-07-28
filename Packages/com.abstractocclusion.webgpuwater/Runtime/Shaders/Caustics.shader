@@ -27,7 +27,7 @@ Shader "AbstractOcclusion/WebGpuWater/Caustics"
             // CAUSTIC_NORMAL_SOFTEN (shared with LargeBodyCaustics), RIM_SHADOW_*, POOL_*.
             #include "WaterCommon.hlsl"
             // WaveSlope + _WaveTime: the SAME analytic wind-wave layer the surface folds into its
-            // normal (WaterSurfaceFragStages.hlsl:61), so the caustic focuses through the exact
+            // normal (EvaluateSurfaceGeometry, WaterSurfaceFragStages.hlsl), so the caustic focuses through the exact
             // waves the surface shows - correlated by construction. The params
             // (_WaveA/_WaveB/_WaveCount/_WaveMetersPerUnit/_WaveTime) are per-body, so they are set
             // on THIS material in WaterCausticsPass.Render (the body block isn't applied at caustic
@@ -64,7 +64,7 @@ Shader "AbstractOcclusion/WebGpuWater/Caustics"
                 // large-body caustic): full-strength slopes over-focus into hard sparkles.
                 info.ba *= CAUSTIC_NORMAL_SOFTEN;
                 // Fold in the wind-wave slope exactly as the surface does (same MINUS sign and raw
-                // * _WaveNormalStrength, WaterSurfaceFragStages.hlsl:61) so the caustic - and the
+                // * _WaveNormalStrength, in EvaluateSurfaceGeometry) so the caustic - and the
                 // chunk god-ray shafts that sample it - inherit the wave structure the surface shows.
                 // Ripple keeps its soften; the wave term is raw (mirrors the surface). With Wind Waves
                 // off WaveSlope() is 0, so nxz == the softened ripple normal -> byte-identical RT.

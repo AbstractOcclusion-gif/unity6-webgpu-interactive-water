@@ -100,6 +100,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var under = CreateRenderer(SurfaceUnderName, ctx.Grid, ctx.MatUnder, rendGO.transform);
             volume.surfaceAbove = above.GetComponent<Renderer>();
             volume.surfaceUnder = under.GetComponent<Renderer>();
+            AssignWaterLayer(volume.surfaceAbove, volume.surfaceUnder);
 
             if (withPool && ctx.MatPool != null)
             {

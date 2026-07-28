@@ -77,6 +77,15 @@ Shader "AbstractOcclusion/WebGpuWater/GodRays"
                 return frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
             }
 
+            // Upper bound on the march, mirroring LARGE_GOD_RAY_MAX_STEPS in LargeBodyGodRays.shader.
+            // _GodRaySteps' Range(8,64) is an INSPECTOR drawer attribute: it bounds the slider, not the
+            // uniform, and this one is written every frame through the per-body property block
+            // (WaterUniformPublisher), which bypasses the material property entirely. The whole upstream
+            // chain takes Max and never Min, so a WaterQuality asset edited outside the inspector can
+            // hand this shader any value - and an unbounded dynamic loop is a TDR / device-lost on
+            // WebGPU and mobile, not merely a slow frame.
+            #define GOD_RAY_MAX_STEPS 64
+
             CBUFFER_START(UnityPerMaterial)
                 float4 _GodRayColor;
                 float  _GodRayDensity;
@@ -135,7 +144,7 @@ Shader "AbstractOcclusion/WebGpuWater/GodRays"
                 float2 uv = IN.screenPos.xy / max(IN.screenPos.w, 1e-5);
                 float sceneEye = LinearEyeDepth(SampleSceneDepth(uv), _ZBufferParams);
 
-                int steps = max(1, (int)_GodRaySteps); // guard against divide-by-zero at 0 steps
+                int steps = clamp((int)_GodRaySteps, 1, GOD_RAY_MAX_STEPS); // 0 steps would divide by zero; see GOD_RAY_MAX_STEPS
                 float dt = (tExit - tEnter) / steps;
                 float3 refractedLight = -refract(-_LightDir, float3(0, 1, 0), IOR_AIR / IOR_WATER);
                 // Pool-space refracted ray for ProjectCausticUV: its xz/y ratio is only valid in pool

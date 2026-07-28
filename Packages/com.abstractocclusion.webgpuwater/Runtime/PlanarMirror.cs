@@ -98,8 +98,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (_reflectionCamera != null)
             {
-                if (Application.isPlaying) Object.Destroy(_reflectionCamera.gameObject);
-                else Object.DestroyImmediate(_reflectionCamera.gameObject);
+                WaterObjects.DestroyRuntime(_reflectionCamera.gameObject);
                 _reflectionCamera = null;
             }
             ReleaseAndDestroy(ref _rt);
@@ -166,7 +165,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (rt == null) return;
             rt.Release();
-            if (Application.isPlaying) Object.Destroy(rt); else Object.DestroyImmediate(rt);
+            WaterObjects.DestroyRuntime(rt);
             rt = null;
         }
 

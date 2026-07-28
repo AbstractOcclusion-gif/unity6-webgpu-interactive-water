@@ -11,9 +11,6 @@
 using System.IO;
 using UnityEditor;
 using UnityEngine;
-// Alias: plain 'PackageInfo' is ambiguous inside UnityEditor code (legacy
-// UnityEditor.PackageInfo also exists) - CS0104 without this.
-using PackageInfo = UnityEditor.PackageManager.PackageInfo;
 
 namespace AbstractOcclusion.WebGpuWater.Editor
 {
@@ -31,16 +28,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         [MenuItem(MenuPath)]
         static void Install()
         {
-            PackageInfo package = PackageInfo.FindForAssembly(
-                typeof(WaterWebTemplateInstaller).Assembly);
-            if (package == null)
-            {
-                Debug.LogError("WebGpuWater: could not resolve the package location; " +
-                               "web template not installed.");
-                return;
-            }
-
-            string source = Path.Combine(package.resolvedPath, PackageTemplateFolder);
+            string source = WaterPackagePaths.Physical(PackageTemplateFolder);
             if (!Directory.Exists(source))
             {
                 Debug.LogError($"WebGpuWater: template source missing at '{source}'; " +

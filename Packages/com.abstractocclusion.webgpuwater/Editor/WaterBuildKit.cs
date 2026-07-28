@@ -27,11 +27,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string Root = "Assets/WebGpuWater";
         internal const string Gen = "Assets/WebGpuWater/Generated";
 
-        // Immutable package assets loaded by path (compute shaders). Lives inside the package, so it
-        // must be addressed via the Packages/ mount, not Assets/.
-        internal const string PackageShadersRoot = "Packages/com.abstractocclusion.webgpuwater/Runtime/Shaders";
-        internal const string SimComputePath = PackageShadersRoot + "/WaterSim.compute";
-        internal const string OceanFftComputePath = PackageShadersRoot + "/OceanFft.compute";
+        // Immutable package assets loaded by path (compute shaders). They live inside the package,
+        // whose root is RESOLVED (WaterPackagePaths) rather than assumed: an Asset Store
+        // .unitypackage import lands the package under Assets/, where a Packages/ literal cannot
+        // resolve. Properties rather than consts for the same reason - the root is only known at
+        // editor runtime.
+        internal static string PackageShadersRoot => WaterPackagePaths.Asset("Runtime/Shaders");
+        internal static string SimComputePath => PackageShadersRoot + "/WaterSim.compute";
+        internal static string OceanFftComputePath => PackageShadersRoot + "/OceanFft.compute";
 
         internal const int GridDetail = 200;
         internal const int SkyCubemapSize = 128;
@@ -73,7 +76,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string PropCull = "_Cull";
         internal const string PropBaseColor = "_BaseColor";
         internal const string PropRealRefraction = "_RealRefraction";
-        internal const string KeywordRealRefraction = "_REAL_REFRACTION";
         internal const string PropGodRayColor = "_GodRayColor";
         internal const string PropGodRayDensity = "_GodRayDensity";
         internal const string PropFoamTex = "_FoamTex";
@@ -83,7 +85,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // GPU foam particles (compute + procedural-quad shader + sprite atlas).
         internal const string ShaderFoamParticles = WaterShaderNames.FoamParticles;
         internal const string ShaderFoamDensityComposite = WaterShaderNames.FoamDensityComposite;
-        internal const string FoamParticleComputePath = PackageShadersRoot + "/WaterFoamParticles.compute";
+        internal static string FoamParticleComputePath => PackageShadersRoot + "/WaterFoamParticles.compute";
         internal const string FoamParticleAtlasPath = Gen + "/FoamParticleAtlas_2x2.png";
         // Round soft droplet sprite for the airborne spray pass (its own look, separate from foam).
         internal const string FoamDropletTexPath = Gen + "/FoamDroplet.png";
@@ -136,7 +138,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // They live in the package's IMPORTED Runtime/Textures folder (with their authored .meta
         // import settings - the detail map stays a Normal Map), unlike the crown sheet, which is
         // provisioned out of Samples~ because it is copied into consumer-project Gen assets.
-        internal const string DefaultTexturesRoot = "Packages/com.abstractocclusion.webgpuwater/Runtime/Textures";
+        internal static string DefaultTexturesRoot => WaterPackagePaths.Asset("Runtime/Textures");
 
         // Demo camera framing. FOV/clip planes come from WaterVolume's internal constants (the
         // single source of truth; the volume's activation distance is coupled to the far clip).

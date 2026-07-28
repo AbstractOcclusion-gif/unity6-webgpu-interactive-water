@@ -567,7 +567,7 @@ namespace AbstractOcclusion.WebGpuWater
         static void DestroyTexture(ref Texture2D tex)
         {
             if (tex == null) return;
-            if (Application.isPlaying) Object.Destroy(tex); else Object.DestroyImmediate(tex);
+            WaterObjects.DestroyRuntime(tex);
             tex = null;
         }
     }

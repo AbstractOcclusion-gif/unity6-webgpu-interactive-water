@@ -10,7 +10,6 @@
 #if WEBGPUWATER_URP
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.Experimental.Rendering;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.RenderGraphModule;
 using UnityEngine.Rendering.Universal;
@@ -62,24 +61,11 @@ namespace AbstractOcclusion.WebGpuWater
             TextureHandle sizeSource = resources.activeColorTexture;
             if (!sizeSource.IsValid()) return;
 
-            TextureHandle front = CreateDepthTarget(renderGraph, sizeSource, "_ChunkFogFrontDepth");
-            TextureHandle back  = CreateDepthTarget(renderGraph, sizeSource, "_ChunkFogBackDepth");
+            TextureHandle front = WaterDepthTarget.Create(renderGraph, sizeSource, "_ChunkFogFrontDepth");
+            TextureHandle back  = WaterDepthTarget.Create(renderGraph, sizeSource, "_ChunkFogBackDepth");
 
             RecordFacePass(renderGraph, front, FrontFaceShaderPass, ID_FrontDepth, _frontSampler);
             RecordFacePass(renderGraph, back,  BackFaceShaderPass,  ID_BackDepth,  _backSampler);
-        }
-
-        // A camera-sized depth-only target. Cleared depth reads as FAR ("no chunk here"), which the
-        // wall treats as empty, matching Crest's "raw == 0 -> not in view" convention.
-        TextureHandle CreateDepthTarget(RenderGraph renderGraph, TextureHandle sizeSource, string name)
-        {
-            TextureDesc desc = renderGraph.GetTextureDesc(sizeSource);
-            desc.name = name;
-            desc.colorFormat = GraphicsFormat.None;   // depth only
-            desc.depthBufferBits = DepthBits.Depth32;
-            desc.msaaSamples = MSAASamples.None;
-            desc.clearBuffer = true;
-            return renderGraph.CreateTexture(desc);
         }
 
         void RecordFacePass(RenderGraph renderGraph, TextureHandle depth, int shaderPass, int globalId,

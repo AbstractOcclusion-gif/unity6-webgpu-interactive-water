@@ -14,6 +14,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_Water = WaterShaderProps.WaterTex;
         static readonly int ID_WaterTexel = Shader.PropertyToID("_WaterTexel");
         static readonly int ID_Caustic = Shader.PropertyToID("_CausticTex");
+        // Stand-down flag for ClearBodyGlobals; 0 (the unpublished default) means business as usual.
+        static readonly int ID_NoWaterBodies = Shader.PropertyToID("_NoWaterBodies");
         // "Skybox/Cubemap" material texture slot - cached like every other ID: the lookup runs on
         // the per-frame body-uniform path, where an inline string was the one uncached exception.
         static readonly int ID_SkyboxCubemapTex = Shader.PropertyToID("_Tex");
@@ -188,6 +190,8 @@ namespace AbstractOcclusion.WebGpuWater
         // Genuinely shared across all bodies: the sun and the environment.
         internal void PublishSharedGlobals()
         {
+            // A live body is publishing, so lift any stand-down left by a previous scene's teardown.
+            Shader.SetGlobalFloat(ID_NoWaterBodies, 0f);
             Shader.SetGlobalVector(ID_Light, _body.EffectiveLightDir.normalized);
             Shader.SetGlobalColor(ID_SunColor, _body.sun != null ? _body.sun.color * _body.sun.intensity : Color.white);
             // Scene ambient feeds the volume-scatter in-scatter so shaded (away-from-sun) water isn't black.
@@ -268,6 +272,20 @@ namespace AbstractOcclusion.WebGpuWater
         // The primary body mirrors its per-body uniforms to shader globals, the fallback that
         // object shaders without a WaterMembership read. Same derivations as the property block.
         internal void PublishBodyGlobals() => WriteBodyUniforms(_globalSink);
+
+        /// <summary>Stand the water globals down after the LAST body leaves. Shader globals survive
+        /// scene loads, so without this the dead body's volume frame keeps describing a real box and a
+        /// WaterReceiver floor in the NEXT scene renders wet inside its footprint. The gate is the
+        /// lever: ONE flag, read by FootprintMaskPool, which every consumer already routes through.
+        /// The two textures are blacked out as well because they are sampled UNGATED
+        /// (WaterReceiver.shader), where a destroyed RT otherwise resolves to Unity's substitute.
+        /// Static: the caller is the body on its way out, and there is nothing left to derive from.</summary>
+        internal static void ClearBodyGlobals()
+        {
+            Shader.SetGlobalFloat(ID_NoWaterBodies, 1f);
+            Shader.SetGlobalTexture(ID_Water, Texture2D.blackTexture);
+            Shader.SetGlobalTexture(ID_Caustic, Texture2D.blackTexture);
+        }
 
         // Set ONLY the wind-wave uniforms on a material the caustic pass draws with directly. That pass
         // runs BEFORE ApplyBodyBlock populates the per-body block, so the caustic material can't see the

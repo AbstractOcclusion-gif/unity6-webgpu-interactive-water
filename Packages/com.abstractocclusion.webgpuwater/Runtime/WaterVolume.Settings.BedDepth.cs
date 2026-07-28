@@ -217,7 +217,10 @@ namespace AbstractOcclusion.WebGpuWater
         // SURF_DEEPWATER_LENGTH_COEF in WaterSurfWaves.hlsl / SurfDeepwaterLengthCoef in
         // LargeWaveField.cs. The auto spacing is this fraction of L0 (0.2 lands the default
         // 9 s period on ~25 m, matching the historical hand default of 26 m).
-        const float SurfDispersionLengthCoef = 1.56f;
+        // Aliases the validator-guarded LargeWaveField mirror of SURF_DEEPWATER_LENGTH_COEF (the
+        // deep-water dispersion coefficient, L0 = coef * T^2) rather than re-authoring 1.56 a third
+        // time - same pattern as SurfBeatWrapFronts just below. It cannot drift.
+        const float SurfDispersionLengthCoef = LargeWaveField.SurfDeepwaterLengthCoef;
         const float SurfAutoWavelengthFraction = 0.2f;
         // Fronts per master-beat wrap - aliases the validator-guarded LargeWaveField mirror of
         // SURF_BEAT_WRAP_FRONTS (must stay a multiple of SURF_SET_WAVES for beat periodicity).

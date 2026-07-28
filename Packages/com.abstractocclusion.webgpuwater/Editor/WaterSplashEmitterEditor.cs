@@ -93,40 +93,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             EditorGUILayout.Space();
         }
 
-        // One-click jump to the single tweak surface. When no profile exists yet it is created and
-        // pointed at BOTH this emitter and the body's foam particles, so foam + splash are configured
-        // from one asset instead of two components.
+        // The control itself is shared (WaterEditorUI); only finding the owning body is local.
         void DrawFoamProfileLink()
         {
-            var linked = _profile.objectReferenceValue as WaterFoamProfile;
-            if (linked != null)
-            {
-                if (GUILayout.Button("Edit Foam Profile"))
-                {
-                    Selection.activeObject = linked;
-                    EditorGUIUtility.PingObject(linked);
-                }
-                return;
-            }
-
-            if (!GUILayout.Button("Create & Assign Foam Profile (one place for foam + splash)"))
-                return;
-
             var emitter = target as WaterSplashEmitter;
             var body = emitter != null ? emitter.GetComponentInParent<WaterVolume>() : null;
-            WaterBuildKit.EnsureGenFolder();
-            var created = WaterBuildKit.LoadOrCreateFoamProfile(WaterBuildKit.Gen);
-            if (body != null)
-            {
-                WaterBuildKit.AssignFoamProfileToBody(body, created);
-                serializedObject.Update();
-            }
-            else
-            {
-                _profile.objectReferenceValue = created;
-            }
-            Selection.activeObject = created;
-            EditorGUIUtility.PingObject(created);
+            WaterEditorUI.DrawFoamProfileLink(serializedObject, _profile, body);
         }
 
         void DrawWiring()

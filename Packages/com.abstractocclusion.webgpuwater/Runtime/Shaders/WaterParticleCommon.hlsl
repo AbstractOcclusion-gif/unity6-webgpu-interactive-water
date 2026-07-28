@@ -2,9 +2,9 @@
 //
 // ONE home for the idioms every particle stage used to carry as hand-synced copies:
 //   WaterFoamParticles.compute  - hash, shore-field fetch
-//   WaterSurfRoller.compute     - hash, shore-field fetch
 //   FoamParticles.shader        - billboard corner expansion, flipbook atlas cell
-//   SurfRollerParticles.shader  - billboard corner expansion, flipbook atlas cell
+// (The surf-roller pair this was also written for - WaterSurfRoller.compute and
+//  SurfRollerParticles.shader - was removed with the curl/roller experiment on 2026-07-16.)
 // Pure functions + constants; the shore-field block (uniforms + textures) is opt-in via
 // WATER_PARTICLE_SHORE_FIELD so draw shaders that never read the field don't declare its
 // resources. Safe in vertex, fragment and compute stages alike (SampleLevel only).

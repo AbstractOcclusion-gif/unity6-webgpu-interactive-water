@@ -307,7 +307,7 @@ bool ClaimPoolSlot(out uint slot)
     return false;
 }
 
-// Pcg/Rand01 come from WaterParticleCommon.hlsl (shared with WaterSurfRoller.compute).
+// Pcg/Rand01 come from WaterParticleCommon.hlsl.
 
 // World-lattice key of a spawn candidate. Two window texels that cover the same world
 // cell make the SAME rolls, and a texel keeps its rolls while the window glides under
@@ -386,7 +386,7 @@ bool ProjectToScreen(float3 world, out float2 uv, out float eyeDepth)
 }
 
 // ---- Layer A shore field for the surf-lip spray. The uniforms, textures and the raw
-// fail-fast fetch live in WaterParticleCommon.hlsl (shared with WaterSurfRoller.compute);
+// fail-fast fetch live in WaterParticleCommon.hlsl;
 // the shoal math (ShoalWeight + its _ShoreShoalDepth knob) comes with it from
 // WaterShoreMath.hlsl - the shared implementation that replaced this file's ShoalWeightSim.
 

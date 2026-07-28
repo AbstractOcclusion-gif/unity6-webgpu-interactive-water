@@ -614,7 +614,7 @@ namespace AbstractOcclusion.WebGpuWater
             _heightCpu = null;
             if (_butterfly != null)
             {
-                if (Application.isPlaying) Object.Destroy(_butterfly); else Object.DestroyImmediate(_butterfly);
+                WaterObjects.DestroyRuntime(_butterfly);
                 _butterfly = null;
             }
             _ready = false;
@@ -625,7 +625,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (rt == null) return;
             rt.Release();
-            if (Application.isPlaying) Object.Destroy(rt); else Object.DestroyImmediate(rt);
+            WaterObjects.DestroyRuntime(rt);
             rt = null;
         }
     }

@@ -93,8 +93,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             ("SURF_MIN_DEPTH",              "SurfMinDepth"),
             // Master-beat wrap + the two beat-periodic segmentation drifts (BEAT-1: the old
             // single SURF_CREST_SEED_DRIFT split into per-octave drifts, each an exact multiple
-            // of 2pi/SURF_BEAT_WRAP_FRONTS). WaterVolume.SurfBeatWrapFronts carries a third copy
-            // of the wrap for the clock itself - not parsed here; keep it lockstep by hand.
+            // of 2pi/SURF_BEAT_WRAP_FRONTS). WaterVolume's clock reads the wrap through
+            // WaterVolume.Settings.BedDepth.cs, which ALIASES LargeWaveField.SurfBeatWrapFronts
+            // (= this pair's C# side) rather than re-authoring it - it cannot drift, so there is
+            // nothing extra to guard.
             ("SURF_BEAT_WRAP_FRONTS",       "SurfBeatWrapFronts"),
             ("SURF_CREST_SEED_DRIFT_A",     "SurfCrestSeedDriftA"),
             ("SURF_CREST_SEED_DRIFT_B",     "SurfCrestSeedDriftB"),

@@ -229,7 +229,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (rt == null) return;
             rt.Release();
-            if (Application.isPlaying) Object.Destroy(rt); else Object.DestroyImmediate(rt);
+            WaterObjects.DestroyRuntime(rt);
             rt = null;
         }
 

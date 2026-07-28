@@ -13,7 +13,10 @@ namespace AbstractOcclusion.WebGpuWater
     /// </summary>
     internal sealed class WaterContext
     {
-        /// <summary>The body that owns these modules; the facade for state not yet lifted here.</summary>
+        /// <summary>The body that owns these modules; the facade for state not yet lifted here.
+        /// NOTE: nothing reads this yet - every module was given its owner directly at construction
+        /// instead. It is kept as the seam the later increments above are meant to flow through;
+        /// delete the whole context if that plan is ever abandoned.</summary>
         public WaterVolume Owner { get; }
 
         public WaterContext(WaterVolume owner) => Owner = owner;

@@ -29,12 +29,13 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             return (above, under, pool);
         }
 
-        // Turn on the surface shader's real (screen-space) refraction toggle: set the property AND
-        // the linked shader keyword, since setting the float alone doesn't flip the keyword.
+        // Turn on the surface shader's real (screen-space) refraction toggle. The mode is
+        // UNIFORM-driven: no shader in the package declares a _REAL_REFRACTION keyword, so the
+        // EnableKeyword call that used to sit here only ever wrote a keyword nothing read (it is
+        // still baked into the demo materials, harmlessly).
         static void EnableRealRefraction(Material m)
         {
             m.SetFloat(PropRealRefraction, 1f);
-            m.EnableKeyword(KeywordRealRefraction);
         }
 
         // Give a water surface material the animated foam pattern. Skipped silently when the

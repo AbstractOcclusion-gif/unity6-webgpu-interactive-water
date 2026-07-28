@@ -75,6 +75,11 @@ namespace AbstractOcclusion.WebGpuWater
         // the asset never keeps a tier's values.
 #if WEBGPUWATER_URP
         static WaterVolume _pipelineOwner; // the body that applied the tweaks (and must restore them)
+        // The asset the values were SAVED FROM. Restore used to re-read
+        // UniversalRenderPipeline.asset at teardown, which is whatever is active THEN: switch quality
+        // level during play and the other tier's asset was permanently stamped with this one's
+        // render scale. A saved reference cannot be fooled by the switch.
+        static UnityEngine.Rendering.Universal.UniversalRenderPipelineAsset _pipelineAsset;
         static float _savedRenderScale;
         static bool _savedOpaqueTexture;
 #endif
@@ -90,6 +95,7 @@ namespace AbstractOcclusion.WebGpuWater
             bool wantOpaqueOff = !_realRefractionAllowed; // nothing else in the package reads the opaque copy
             if (!wantScale && !wantOpaqueOff) return;
 
+            _pipelineAsset = pipeline;
             _savedRenderScale = pipeline.renderScale;
             _savedOpaqueTexture = pipeline.supportsCameraOpaqueTexture;
             if (wantScale) pipeline.renderScale = _renderScale;
@@ -102,12 +108,13 @@ namespace AbstractOcclusion.WebGpuWater
         {
 #if WEBGPUWATER_URP
             if (_pipelineOwner != this) return; // only the body that applied restores
-            var pipeline = UnityEngine.Rendering.Universal.UniversalRenderPipeline.asset;
-            if (pipeline != null)
+            // The SAVED asset, never the currently-active one (see _pipelineAsset).
+            if (_pipelineAsset != null)
             {
-                pipeline.renderScale = _savedRenderScale;
-                pipeline.supportsCameraOpaqueTexture = _savedOpaqueTexture;
+                _pipelineAsset.renderScale = _savedRenderScale;
+                _pipelineAsset.supportsCameraOpaqueTexture = _savedOpaqueTexture;
             }
+            _pipelineAsset = null;
             _pipelineOwner = null;
 #endif
         }

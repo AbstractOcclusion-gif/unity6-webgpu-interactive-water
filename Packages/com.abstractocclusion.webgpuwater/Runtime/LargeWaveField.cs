@@ -92,7 +92,8 @@ namespace AbstractOcclusion.WebGpuWater
         const float SurfXiSpillEndHi = 0.60f;
         const float SurfXiSurgeStartLo = 2.8f;
         const float SurfXiSurgeStartHi = 3.6f;
-        const float SurfDeepwaterLengthCoef = 1.56f;
+        // internal: WaterVolume.Settings.BedDepth.cs aliases this instead of re-authoring 1.56.
+        internal const float SurfDeepwaterLengthCoef = 1.56f;
         const float SurfXiHeightEpsilon = 1e-3f;
         const float SurfGammaBase = 0.6f;
         const float SurfGammaSlopeGain = 5.0f;

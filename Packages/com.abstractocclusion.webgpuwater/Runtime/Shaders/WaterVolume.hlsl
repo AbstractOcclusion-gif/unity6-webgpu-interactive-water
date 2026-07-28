@@ -38,6 +38,12 @@ float    _SimEdgeFadeTexels; // border falloff width, in sim texels
 // unpublished, so nothing changes for bodies that never set it.
 float    _LargeBody;
 
+// 1 only after the LAST water body was disabled (WaterUniformPublisher.ClearBodyGlobals). Shader
+// globals survive scene loads, so a dead body's volume frame otherwise keeps describing a real box
+// and the next scene's receivers test inside it. ZERO is the safe default: unpublished, or any live
+// body publishing, means business as usual.
+float    _NoWaterBodies;
+
 float3 VolumeExtentSafe()
 {
     return float3(_VolumeExtent.x > 1e-5 ? _VolumeExtent.x : 1.0,
@@ -72,6 +78,7 @@ float3 WorldToPool(float3 worldPos)
 // outside its footprint). Y is intentionally ignored here; submersion is a separate test.
 float FootprintMaskPool(float3 poolPos)
 {
+    if (_NoWaterBodies > 0.5) return 0.0; // no body alive: no footprint anywhere (see the declaration)
     return (max(abs(poolPos.x), abs(poolPos.z)) <= 1.0 + FOOTPRINT_EDGE_EPSILON) ? 1.0 : 0.0;
 }
 

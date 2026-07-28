@@ -48,11 +48,37 @@ namespace AbstractOcclusion.WebGpuWater
             original = null;
         }
 
+        // Drop the per-body property block from every renderer this body drives. The block holds this
+        // body's sim/caustic RTs, destroyed moments later; clearing it lets each renderer fall back to
+        // its material's own values instead of sampling a dead target. Property blocks are runtime-only
+        // state, never serialized, so this is safe in edit mode.
+        void ClearBodyRendererBlocks()
+        {
+            ClearRendererBlock(surfaceAbove);
+            ClearRendererBlock(surfaceUnder);
+            ClearRendererBlock(poolRenderer);
+            ClearRendererBlock(godRayRenderer);
+        }
+
+        static void ClearRendererBlock(Renderer r)
+        {
+            if (r != null) r.SetPropertyBlock(null);
+        }
+
         // Fill in the scene-level references a prefab can't carry, so dropping the WaterVolume
         // prefab into a fresh scene "just works". Only unset fields are touched, so an explicitly
         // wired scene (e.g. the demo builder) is left exactly as authored.
+        //
+        // PLAY MODE ONLY. These are [SerializeField]s and TryInitialize runs under [ExecuteAlways],
+        // so resolving in edit mode wrote scene objects into AUTHORED data: merely opening a scene
+        // filled them in and the next save baked them, and in prefab-isolation mode the write landed
+        // on the prefab asset. Same rule as ApplyQuality (tier values live in '_' runtime fields) and
+        // EffectiveLightDir (derived, never written back). A wizard-built scene is unaffected - the
+        // build kit assigns camera/sun/orbit explicitly at author time.
         void ResolveSceneRefs()
         {
+            if (!Application.isPlaying) return;
+
             if (targetCamera == null) targetCamera = Camera.main;
             if (sun == null) sun = ResolveSun();
             if (orbit == null && targetCamera != null) orbit = targetCamera.GetComponent<OrbitCamera>();

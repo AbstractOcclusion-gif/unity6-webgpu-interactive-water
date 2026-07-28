@@ -41,6 +41,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             WireWaterVolumeAssets(volume, ctx.Shaders, ctx.Grid, ctx.Tiles, ctx.Sky, ctx.Quality);
             volume.surfaceAbove = above.GetComponent<Renderer>();
             volume.surfaceUnder = under.GetComponent<Renderer>();
+            AssignWaterLayer(volume.surfaceAbove, volume.surfaceUnder);
             volume.IsPrimary = true;
 
             var prefab = PrefabUtility.SaveAsPrefabAsset(root, WaterVolumePrefabPath);
@@ -178,6 +179,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             rendGO.transform.SetParent(bodyRoot.transform);
             body.surfaceAbove = CloneBodyRenderer(primary.surfaceAbove, rendGO.transform, SurfaceAboveName);
             body.surfaceUnder = CloneBodyRenderer(primary.surfaceUnder, rendGO.transform, SurfaceUnderName);
+            AssignWaterLayer(body.surfaceAbove, body.surfaceUnder);
             body.poolRenderer = CloneBodyRenderer(primary.poolRenderer, rendGO.transform, AnalyticPoolName);
             body.godRayRenderer = CloneBodyRenderer(primary.godRayRenderer, rendGO.transform, GodRaysObjectName);
 

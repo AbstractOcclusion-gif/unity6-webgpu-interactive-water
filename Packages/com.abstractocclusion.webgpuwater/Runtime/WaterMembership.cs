@@ -28,10 +28,18 @@ namespace AbstractOcclusion.WebGpuWater
         // (its Update runs at DefaultExecutionOrder -50) before we copy its uniforms.
         void LateUpdate()
         {
-            WaterVolume body = WaterVolume.BodyContaining(transform.position);
-            if (body == null) return; // no water in the scene; keep the material's defaults
-
             EnsureInitialized();
+
+            WaterVolume body = WaterVolume.BodyContaining(transform.position);
+            if (body == null)
+            {
+                // No body contains this object any more (the lake was disabled, or it drifted out).
+                // Returning early used to LEAVE THE LAST BLOCK in place, so a floating crate kept
+                // rendering the dead body's caustics forever. Drop it and fall back to the material.
+                _renderer.SetPropertyBlock(null);
+                return;
+            }
+
             body.WriteBodyProps(_mpb);
             _renderer.SetPropertyBlock(_mpb);
         }

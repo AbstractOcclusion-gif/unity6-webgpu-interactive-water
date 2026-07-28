@@ -51,7 +51,8 @@ namespace AbstractOcclusion.WebGpuWater
         public enum WaterBodyType { Pond, Lake, Ocean }
 
         // Serialized configuration surface (wiring fields, Settings blocks + accessors,
-        // registry/autolink statics, legacy migrations, LUT bake) -> WaterVolume.Settings.cs.
+        // registry/autolink statics, legacy migrations, LUT bake) -> the WaterVolume.Settings*.cs
+        // family; it outgrew one file (the Bodies registry, for one, lives in .Settings.Underwater.cs).
 
         // runtime collaborators (see the header comment for the responsibility map)
         //
@@ -244,6 +245,15 @@ namespace AbstractOcclusion.WebGpuWater
             if (!_initialized) return; // never initialized (missing wiring / capability guard)
 
             _initialized = false;
+            // A disabled body must STOP DRAWING. Nothing else hid these renderers - SetRenderersEnabled
+            // only ever ran from Update - so the surface planes kept drawing with a property block full
+            // of sim/caustic RTs destroyed moments later: a flat dark plane where the water should have
+            // disappeared. Done FIRST, while the clipmap/patch renderers still exist to be hidden.
+            // Both calls touch runtime-only state (forceRenderingOff and property blocks are not
+            // serialized), so they are safe in edit mode - which is where the symptom shows.
+            SetRenderersEnabled(false);
+            ClearBodyRendererBlocks();
+
             if (Primary == this) Primary = FindNextPrimary(this);
             Bodies.Remove(this);
             // Last body out (scene teardown / File > New Scene): the static fog gate and the
@@ -259,6 +269,11 @@ namespace AbstractOcclusion.WebGpuWater
                 WaterlineActive = false; // same static-gate pattern: the meniscus pass reads it too
                 CameraSubmerged = false; // same pattern: the after-fog foam overlay reads it
                 Publisher.PublishUnderwater(0f, 0f, 0f, 0f, 0f, 0f);
+                // The rest of the body globals - the volume frame above all. Without this the dead
+                // body's footprint still describes a real box, and a WaterReceiver floor in the NEXT
+                // scene renders wet inside it. Must run BEFORE DisposeModules, while the textures it
+                // stands down are still the ones actually bound.
+                WaterUniformPublisher.ClearBodyGlobals();
             }
             DisposeModules();      // disposes the six eager collaborator modules (sim, obstacle, caustics,
                                    // surface sampler, ocean FFT, sim window) - releases the same GPU

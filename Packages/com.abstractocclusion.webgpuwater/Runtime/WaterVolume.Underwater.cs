@@ -289,10 +289,11 @@ namespace AbstractOcclusion.WebGpuWater
                 // Bottom corners (viewport y = 0) double as the early-arm prediction points.
                 if (viewport.y < 0.5f && corner.y - WavePredictionMeters < cornerSurfaceY + hysteresis)
                     predictedUnder = true;
-                // Wider band arming the OCEAN fog pass: the shader's murk arm-fade is SPATIAL and
-                // reaches zero well inside this band (MURK_FADE_ABOVE_METERS < FogArmBandMeters),
-                // so the pass toggling at the band edge is invisible by construction - the ~frame
-                // staleness of the readback stops mattering entirely.
+                // Wider band arming the OCEAN fog pass. The shader-side fade this band used to be
+                // sized against (MURK_FADE_ABOVE_METERS) NO LONGER EXISTS - the camera-height murk
+                // ramp was replaced by the per-pixel waterline mask, which never paints an
+                // above-water pixel at all. The band survives as readback-staleness slack: it must
+                // stay wide enough that arming toggles before the eye reaches the surface.
                 if (corner.y < cornerSurfaceY + FogArmBandMeters) cornersNearOrUnder++;
             }
             _fogNearSurface = cornersNearOrUnder > 0;
@@ -325,9 +326,10 @@ namespace AbstractOcclusion.WebGpuWater
         // Downward test offset (metres) absorbing the FFT readback staleness, so the fog arms a
         // touch early rather than late on descent (KWS's OceanWavesPredictionOffset equivalent).
         const float WavePredictionMeters = 0.1f;
-        // Vertical band ABOVE the surface within which the ocean fog pass stays armed. MUST stay
-        // comfortably larger than the shader's MURK_FADE_ABOVE_METERS (0.25) plus the readback
-        // staleness, so the pass always toggles where the shader's spatial arm-fade is already 0.
+        // Vertical band ABOVE the surface within which the ocean fog pass stays armed. Sized for
+        // READBACK STALENESS: the corner test runs on a ~frame-old readback, so the band must be
+        // wider than the eye can travel in that time. (It used to be pinned to the shader's
+        // MURK_FADE_ABOVE_METERS; that constant is gone - see the arming site above.)
         const float FogArmBandMeters = 0.5f;
         // This frame's "any near-plane corner within FogArmBandMeters of its surface" flag.
         bool _fogNearSurface;

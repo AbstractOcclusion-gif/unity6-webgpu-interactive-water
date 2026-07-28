@@ -4,7 +4,10 @@
       "version": "file:com.abstractocclusion.webgpuwater",
       "depth": 0,
       "source": "embedded",
-      "dependencies": {}
+      "dependencies": {
+        "com.unity.render-pipelines.universal": "17.0.0",
+        "com.unity.inputsystem": "1.18.0"
+      }
     },
     "com.needle.upm-in-unitypackage": {
       "version": "https://github.com/needle-tools/upm-in-unitypackage.git",

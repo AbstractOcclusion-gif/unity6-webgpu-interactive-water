@@ -4,8 +4,7 @@
     "references": [
         "Unity.RenderPipelines.Core.Runtime",
         "Unity.RenderPipelines.Universal.Runtime",
-        "Unity.InputSystem",
-        "Unity.Collections"
+        "Unity.InputSystem"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
@@ -17,7 +16,7 @@
     "versionDefines": [
         {
             "name": "com.unity.render-pipelines.universal",
-            "expression": "12.0.0",
+            "expression": "17.0.0",
             "define": "WEBGPUWATER_URP"
         }
     ],

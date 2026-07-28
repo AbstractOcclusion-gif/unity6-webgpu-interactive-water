@@ -226,6 +226,43 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             onFocused = { textColor = Style.SectionTitleColor }
         };
 
+        /// <summary>The "one place for foam + splash" button, shared by the splash-emitter and
+        /// foam-particles inspectors. Both drew the identical control; only how they find the owning
+        /// body differed, so that stays with the caller. With a profile linked this pings it; with
+        /// none it creates one and assigns it to the whole body (foam AND splash) so the two are
+        /// never configured from two separate assets.</summary>
+        internal static void DrawFoamProfileLink(SerializedObject serializedObject,
+                                                 SerializedProperty profile, WaterVolume body)
+        {
+            var linked = profile.objectReferenceValue as WaterFoamProfile;
+            if (linked != null)
+            {
+                if (GUILayout.Button("Edit Foam Profile"))
+                {
+                    Selection.activeObject = linked;
+                    EditorGUIUtility.PingObject(linked);
+                }
+                return;
+            }
+
+            if (!GUILayout.Button("Create & Assign Foam Profile (one place for foam + splash)"))
+                return;
+
+            WaterBuildKit.EnsureGenFolder();
+            var created = WaterBuildKit.LoadOrCreateFoamProfile(WaterBuildKit.Gen);
+            if (body != null)
+            {
+                WaterBuildKit.AssignFoamProfileToBody(body, created);
+                serializedObject.Update();
+            }
+            else
+            {
+                profile.objectReferenceValue = created;
+            }
+            Selection.activeObject = created;
+            EditorGUIUtility.PingObject(created);
+        }
+
         // ---- footer text (resolved package version, no hardcoded number) ---------------------
 
         private static string _footerText;
@@ -234,9 +271,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             get
             {
                 if (_footerText != null) return _footerText;
-                UnityEditor.PackageManager.PackageInfo package = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(WaterEditorUI).Assembly);
-                _footerText = package != null
-                    ? Style.FooterPrefix + "  v" + package.version
+                // Null off a package install (the Asset Store path has no manifest to read a
+                // version from) - the footer simply drops the version rather than reading "v".
+                string version = WaterPackagePaths.Version;
+                _footerText = version != null
+                    ? Style.FooterPrefix + "  v" + version
                     : Style.FooterPrefix;
                 return _footerText;
             }

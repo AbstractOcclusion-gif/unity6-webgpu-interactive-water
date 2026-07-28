@@ -66,7 +66,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
 
             static const float KIND_SPRAY = 1.0;
             // Corner expansion + flipbook cell come from WaterParticleCommon.hlsl (shared
-            // with SurfRollerParticles.shader).
+            // with the other particle draw shaders).
 
             // MUST match FoamParticle in WaterFoamParticles.compute (48 bytes).
             struct FoamParticle

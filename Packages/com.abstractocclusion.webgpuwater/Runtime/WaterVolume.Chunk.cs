@@ -26,8 +26,8 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField, HideInInspector] internal float chunkRefraction = 0.5f;
         [SerializeField, HideInInspector] internal float chunkReflectivity = 0.6f;
         // Meniscus line strength (0 = off). A thin surface-tension darkening along the on-screen
-        // waterline, drawn only on the near-plane "at 0" frames by WaterChunkWall.shader. Look-tune
-        // knob - wire an inspector slider in WaterVolumeEditor.Chunk.cs like the others if desired.
+        // waterline, drawn only on the near-plane "at 0" frames by WaterChunkWall.shader. Exposed as
+        // a slider like the other chunk knobs (WaterVolumeEditor.Chunk.cs).
         [SerializeField, HideInInspector] internal float chunkMeniscus = 0.5f;
         // Whitecap foam strength for an OPEN-WATER chunk surface: published as the analytic
         // geometry-foam floor (_LbwGeomFoamFloor - see WaterUniformPublisher / LbwGeometryFoamGate).
@@ -53,7 +53,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal Mesh ChunkDepthMesh => chunkMesh;
 
         // Scanned by WaterChunkDepthFeature (any-active gate) and WaterChunkDepthPass (draw list).
-        // Bodies is the package-wide registry (WaterVolume.Settings.cs).
+        // Bodies is the package-wide registry (declared in WaterVolume.Settings.Underwater.cs).
         internal static bool AnyMeshChunkActive()
         {
             for (int i = 0; i < Bodies.Count; i++)
