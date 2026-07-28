@@ -13,6 +13,17 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 {
     public partial class WaterVolumeEditor
     {
+        // Sits next to the slider rather than in the Caustics section: this is the tab a user reaches
+        // for when caustics look blocky, and raising this is the first thing they will try.
+        const string CausticResolutionBudgetHelp =
+            "Caustic resolution above the SIM resolution adds no detail: the generator writes one focus " +
+            "value per sim grid cell, so how fine the pattern can get is set by Ripple Quality - and on an " +
+            "ocean by the sim window size. Higher values here only smooth the sampling. One map feeds " +
+            "everything that shows caustics: pool walls and floor, water receivers, terrain and other " +
+            "foreign surfaces via the screen-space pass, and the light shafts.\n\n" +
+            "Assigning a Quality asset replaces this value outright, so the field greys out; clear the " +
+            "asset to author it per body.";
+
         void DrawQualitySection()
         {
             _showQuality = WaterEditorUI.Section("Quality & Culling", _showQuality, () =>
@@ -22,7 +33,13 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 _showQualityAdvanced = WaterEditorUI.SubSection("Advanced", _showQualityAdvanced, () =>
                 {
                     WaterEditorUI.SubHeading("Resolutions");
-                    DrawFields("causticResolution");
+                    // A quality asset REPLACES this outright (ApplyQuality -> _causticRes), so the
+                    // authored value is dead while one is assigned - grey it rather than let the user
+                    // drag a slider that does nothing. With no asset it is the only source, so it stays
+                    // live. Greyed, not hidden: the value still ships in the scene and still applies the
+                    // moment the asset is cleared.
+                    DrawFieldsIf(Prop("quality").objectReferenceValue == null, "causticResolution");
+                    EditorGUILayout.HelpBox(CausticResolutionBudgetHelp, MessageType.None);
                     // The bed bake only happens when a bed terrain drives this body (Body tab).
                     DrawFieldsIf(UsesBedDepth, "bedDepthSettings.bedResolution");
                     WaterEditorUI.SubHeading("Culling");

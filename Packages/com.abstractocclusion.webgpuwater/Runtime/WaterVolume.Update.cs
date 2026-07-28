@@ -71,7 +71,9 @@ namespace AbstractOcclusion.WebGpuWater
             // large waves they must animate whenever the body is live, or the surface would sample stale
             // cascades and render differently in edit vs play, where _simulate follows game-camera culling).
             // The surface only reads them when _OceanFftActive is published, so this stays ocean-only.
-            if (IsOceanClipmap && !_paused)
+            // Tier-amortised too, but on a tighter cap: a stale caustic RT only dims the pattern,
+            // whereas a skipped dispatch freezes the ocean SURFACE itself (WaterQuality.MaxOceanFftInterval).
+            if (IsOceanClipmap && !_paused && Time.frameCount % _oceanFftInterval == 0)
             {
                 Vector2 camXZ = targetCamera != null
                     ? new Vector2(targetCamera.transform.position.x, targetCamera.transform.position.z)

@@ -40,6 +40,7 @@ namespace AbstractOcclusion.WebGpuWater
         const int DefaultMeshDetail = 0;            // 0 = keep the authored grid mesh
         const int DefaultCausticInterval = 1;       // render caustics every simulated frame
         const int DefaultReadbackInterval = 1;      // request the height readback every frame
+        const int DefaultOceanFftInterval = 1;      // refresh the FFT ocean cascades every frame
         const int DefaultMaxFoamParticles = 65536;  // effectively "no cap" (the component max)
         const UnderwaterMode DefaultUnderwaterMode = UnderwaterMode.Full; // the original wavy-waterline fog
 
@@ -47,6 +48,9 @@ namespace AbstractOcclusion.WebGpuWater
         const float MinRenderScale = 0.25f;
         const int MaxMeshDetail = 400;
         const int MaxUpdateInterval = 8;   // beyond this, caustics/buoyancy visibly lag
+        // Tighter than MaxUpdateInterval on purpose: a stale caustic RT only dims, but a skipped FFT
+        // dispatch FREEZES the ocean surface itself, which reads as a stutter well before 8 frames.
+        const int MaxOceanFftInterval = 4;
         const int MinFoamParticleCap = 64; // one update thread-group
 
         /// <summary>An immutable snapshot of the cost knobs a tier scales, handed to a body.
@@ -65,14 +69,15 @@ namespace AbstractOcclusion.WebGpuWater
             public readonly int MeshDetail;        // >0 = rebuild the surface grid at this detail (0 = authored mesh)
             public readonly int CausticInterval;   // render caustics every Nth simulated frame
             public readonly int ReadbackInterval;  // request the buoyancy height readback every Nth frame
+            public readonly int OceanFftInterval;  // refresh the FFT ocean cascades every Nth frame
             public readonly int MaxFoamParticles;  // cap on the GPU foam-particle pool
             public readonly UnderwaterMode UnderwaterFog; // fullscreen underwater fog cost mode
 
             public Tier(int simResolution, int causticResolution, int godRaySteps, bool godRays,
                         bool richReflections, int maxWaveCount, int refineSteps,
                         float renderScale, bool realRefraction, int meshDetail,
-                        int causticInterval, int readbackInterval, int maxFoamParticles,
-                        UnderwaterMode underwaterFog)
+                        int causticInterval, int readbackInterval, int oceanFftInterval,
+                        int maxFoamParticles, UnderwaterMode underwaterFog)
             {
                 SimResolution = SanitizeResolution(simResolution);
                 CausticResolution = Mathf.Max(MinCausticResolution, causticResolution);
@@ -86,6 +91,7 @@ namespace AbstractOcclusion.WebGpuWater
                 MeshDetail = Mathf.Clamp(meshDetail, 0, MaxMeshDetail);
                 CausticInterval = Mathf.Clamp(causticInterval, 1, MaxUpdateInterval);
                 ReadbackInterval = Mathf.Clamp(readbackInterval, 1, MaxUpdateInterval);
+                OceanFftInterval = Mathf.Clamp(oceanFftInterval, 1, MaxOceanFftInterval);
                 MaxFoamParticles = Mathf.Max(MinFoamParticleCap, maxFoamParticles);
                 UnderwaterFog = underwaterFog;
             }
@@ -104,7 +110,8 @@ namespace AbstractOcclusion.WebGpuWater
                                                DefaultMaxWaveCount, DefaultRefineSteps,
                                                DefaultRenderScale, true, DefaultMeshDetail,
                                                DefaultCausticInterval, DefaultReadbackInterval,
-                                               DefaultMaxFoamParticles, DefaultUnderwaterMode);
+                                               DefaultOceanFftInterval, DefaultMaxFoamParticles,
+                                               DefaultUnderwaterMode);
 
         [Tooltip("Auto picks a tier from a capability probe (WebGPU/mobile -> Low). The Force* " +
                  "options pin a specific tier, e.g. to preview Low in a desktop editor.")]
@@ -134,6 +141,9 @@ namespace AbstractOcclusion.WebGpuWater
         [Range(1, MaxUpdateInterval)] [SerializeField] int highCausticInterval = DefaultCausticInterval;
         [Tooltip("Request the buoyancy height readback every Nth frame (readback bandwidth).")]
         [Range(1, MaxUpdateInterval)] [SerializeField] int highReadbackInterval = DefaultReadbackInterval;
+        [Tooltip("Refresh the FFT ocean cascades every Nth frame (unbounded-ocean bodies only). The " +
+                 "surface holds its last cascades in between, so this trades motion smoothness for GPU time.")]
+        [Range(1, MaxOceanFftInterval)] [SerializeField] int highOceanFftInterval = DefaultOceanFftInterval;
         [Tooltip("Cap on the GPU foam-particle pool (all capacity is drawn every frame).")]
         [SerializeField] int highMaxFoamParticles = DefaultMaxFoamParticles;
         [Tooltip("Underwater fog: Full = wavy waterline (per-pixel surface march), Simple = flat " +
@@ -161,6 +171,8 @@ namespace AbstractOcclusion.WebGpuWater
         [Range(1, MaxUpdateInterval)] [SerializeField] int mediumCausticInterval = DefaultCausticInterval;
         [Tooltip("Request the buoyancy height readback every Nth frame.")]
         [Range(1, MaxUpdateInterval)] [SerializeField] int mediumReadbackInterval = DefaultReadbackInterval;
+        [Tooltip("Refresh the FFT ocean cascades every Nth frame (unbounded-ocean bodies only).")]
+        [Range(1, MaxOceanFftInterval)] [SerializeField] int mediumOceanFftInterval = DefaultOceanFftInterval;
         [Tooltip("Cap on the GPU foam-particle pool.")]
         [SerializeField] int mediumMaxFoamParticles = DefaultMaxFoamParticles;
         [Tooltip("Underwater fog: Full = wavy waterline (per-pixel surface march), Simple = flat " +
@@ -197,6 +209,10 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("Request the buoyancy height readback every Nth frame (readback bandwidth; " +
                  "buoyancy already tolerates async latency).")]
         [Range(1, MaxUpdateInterval)] [SerializeField] int lowReadbackInterval = 3;
+        [Tooltip("Refresh the FFT ocean cascades every Nth frame (unbounded-ocean bodies only). The " +
+                 "FFT chain is the only per-frame compute with no other tier knob, so 2 is the cheapest " +
+                 "win available here; 3+ starts to read as a stutter on a moving ocean.")]
+        [Range(1, MaxOceanFftInterval)] [SerializeField] int lowOceanFftInterval = 2;
         [Tooltip("Cap on the GPU foam-particle pool (all capacity is drawn every frame).")]
         [SerializeField] int lowMaxFoamParticles = 1024;
         // Simple by default: the Full mode's per-pixel waterline march (up to 40 surface evaluations
@@ -221,18 +237,18 @@ namespace AbstractOcclusion.WebGpuWater
         Tier High => new Tier(highSimResolution, highCausticResolution, highGodRaySteps, highGodRays,
                               highRichReflections, highMaxWaveCount, highRefineSteps,
                               highRenderScale, highRealRefraction, highMeshDetail,
-                              highCausticInterval, highReadbackInterval, highMaxFoamParticles,
-                              highUnderwaterFog);
+                              highCausticInterval, highReadbackInterval, highOceanFftInterval,
+                              highMaxFoamParticles, highUnderwaterFog);
         Tier Medium => new Tier(mediumSimResolution, mediumCausticResolution, mediumGodRaySteps, mediumGodRays,
                                 mediumRichReflections, mediumMaxWaveCount, mediumRefineSteps,
                                 mediumRenderScale, mediumRealRefraction, mediumMeshDetail,
-                                mediumCausticInterval, mediumReadbackInterval, mediumMaxFoamParticles,
-                                mediumUnderwaterFog);
+                                mediumCausticInterval, mediumReadbackInterval, mediumOceanFftInterval,
+                                mediumMaxFoamParticles, mediumUnderwaterFog);
         Tier Low => new Tier(lowSimResolution, lowCausticResolution, lowGodRaySteps, lowGodRays,
                              lowRichReflections, lowMaxWaveCount, lowRefineSteps,
                              lowRenderScale, lowRealRefraction, lowMeshDetail,
-                             lowCausticInterval, lowReadbackInterval, lowMaxFoamParticles,
-                             lowUnderwaterFog);
+                             lowCausticInterval, lowReadbackInterval, lowOceanFftInterval,
+                             lowMaxFoamParticles, lowUnderwaterFog);
 
         // Pick a tier from the running hardware. The web player is how Unity ships WebGPU
         // builds, and async readback (buoyancy) is often unavailable there - both force Low.

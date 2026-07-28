@@ -231,6 +231,10 @@ namespace AbstractOcclusion.WebGpuWater
 
         [Tooltip("Direction TOWARD the light. Used when no 'sun' is assigned (a sun overrides it).")]
         [SerializeField] internal Vector3 lightDir = new Vector3(2f, 2f, -1f);
+        [Tooltip("Caustic map size. Detail is capped by the SIM resolution, not by this: the generator " +
+                 "writes ONE focus value per sim grid cell, so above the sim resolution this only smooths " +
+                 "the sampling and never adds a finer pattern. For finer caustics raise Ripple Quality " +
+                 "(sim resolution), or narrow the sim window on an ocean.")]
         [SerializeField] internal int causticResolution = 1024;
         // Tier override for the caustic RT resolution; 0 = no tier applied -> the authored
         // causticResolution above (see ApplyQuality for why the serialized field is never written).

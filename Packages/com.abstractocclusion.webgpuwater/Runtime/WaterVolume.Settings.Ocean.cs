@@ -124,6 +124,11 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0.5f, 10f)] public float largeCausticRippleScale = 3f;
             [Tooltip("Strength of the dedicated caustic ripples. 0 = caustic from the smoothed swell only.")]
             [Range(0f, 2f)] public float largeCausticRippleStrength = 1f;
+            [Tooltip("EXTRA softening (in mip levels) for the SCREEN-SPACE caustics painted on the seabed - " +
+                     "the light shafts are never affected, they keep reading the sharp map. A floor is applied " +
+                     "automatically so the projection never samples finer than the generator grid actually " +
+                     "resolves; raise this only if you want the pattern softer than physically necessary.")]
+            [Range(0f, ProjectionSoftenMax)] public float largeCausticProjectionSoften = 0f;
 
             [Header("Ocean foam (whitecaps)")]
             [Tooltip("Wind speed (m/s) below which the FFT ocean grows NO whitecaps (KWS foams above ~4). Tie " +
@@ -283,6 +288,9 @@ namespace AbstractOcclusion.WebGpuWater
         // Geometry-clipmap authoring + guard rails. Grid resolution = cells per side of each LOD level;
         // the level count is derived so the outermost reaches clipmapOuterRadius (the horizon target).
         const int DefaultClipmapGridResolution = 64;
+        // Beyond this the projected pattern is averaged away to a flat wash - the same "flattened to
+        // near-DC" failure the shaft caustic term is documented against.
+        internal const float ProjectionSoftenMax = 4f;
         const int ClipmapMinGridResolution = 8;
         const int ClipmapMaxLevels = 12;
         const int ClipmapMinLevels = 2;
@@ -353,6 +361,26 @@ namespace AbstractOcclusion.WebGpuWater
         internal float LargeCausticTimeScale => ocean.largeCausticTimeScale;
         internal float LargeCausticRippleScale => ocean.largeCausticRippleScale;
         internal float LargeCausticRippleStrength => ocean.largeCausticRippleStrength;
+
+        /// <summary>Mip bias the screen-space caustic projection samples the caustic RT at.
+        /// The generator flat-shades ONE value per grid cell (the focus term is an area Jacobian
+        /// across the projected triangle, and ddx/ddy of a linearly interpolated attribute is
+        /// constant over a triangle), so a caustic RT larger than the grid stores each cell as a
+        /// block of identical texels - visible as hard pixelation, and NOT fixable by changing the
+        /// RT resolution because the information content is set by the grid. Sampling at
+        /// log2(rt / grid) puts one texel back on one cell, which is the finest level that carries
+        /// real detail; the artist term adds softness beyond that. The shafts do not use this - they
+        /// keep their own LOD, so the beam banding stays sharp.</summary>
+        internal float LargeCausticProjectionLod
+        {
+            get
+            {
+                float cellsPerTexel = EffectiveCausticResolution
+                                    / (float)Mathf.Max(1, SimResolution);
+                float gridFloor = Mathf.Max(0f, Mathf.Log(Mathf.Max(1f, cellsPerTexel), 2f));
+                return gridFloor + ocean.largeCausticProjectionSoften;
+            }
+        }
 
         [Header("Water body (multi-instance)")]
         [Tooltip("Renderers driven by THIS body via a MaterialPropertyBlock (surface above/under, " +

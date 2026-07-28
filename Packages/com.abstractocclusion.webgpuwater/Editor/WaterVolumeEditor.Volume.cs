@@ -81,8 +81,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                         "ocean.largeCausticRippleStrength");
                     WaterEditorUI.SubHeading("Softening");
                     DrawFields(
-                        "ocean.largeGodRayCausticSmooth",
-                        "ocean.largeGodRayCausticDepthSoften");
+                        "ocean.largeCausticProjectionSoften",
+                        "ocean.largeGodRayCausticSmooth");
                 }, contentEnabled: IsOcean);
                 EditorGUILayout.HelpBox(CausticResolutionHelp, MessageType.None);
             });
@@ -100,7 +100,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 _showGodRaysAdvanced = WaterEditorUI.SubSection("Advanced", _showGodRaysAdvanced, () =>
                 {
                     DrawFields(WaterVolumePropertyPaths.GodRayDepthFade);
+                    // Lives here, not under Ocean caustics: it is read ONLY by the shaft march
+                    // (LargeBodyGodRays), never by the caustics painted on the ground.
                     DrawFieldsIf(IsOcean,
+                        "ocean.largeGodRayCausticDepthSoften",
                         "ocean.largeGodRayFromAir",
                         "ocean.largeGodRaySteps",
                         "ocean.largeGodRayAnisotropy",

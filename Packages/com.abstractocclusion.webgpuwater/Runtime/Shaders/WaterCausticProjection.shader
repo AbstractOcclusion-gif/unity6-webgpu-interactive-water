@@ -62,12 +62,17 @@ Shader "AbstractOcclusion/WebGpuWater/WaterCausticProjection"
         #include "WaterFog.hlsl"    // DepthFadeScalar + _CausticDepthFade (published global)
 
         // Caustic map + green occluder-shadow channel (published globals; UseAllGlobalTextures binds them).
+        // Hard ceiling on the projection mip bias: past this the pattern averages to a flat wash.
+        #define CAUSTIC_PROJECTION_LOD_MAX 4.0
         TEXTURE2D(_CausticTex); SAMPLER(sampler_CausticTex);
         // Sim state, for the wavy surface height that decides above/below water (same source the surfaces use).
         TEXTURE2D(_WaterTex);   SAMPLER(sampler_WaterTex);
         float4 _WaterTexel;           // (1/w, 1/h, w, h) of _WaterTex
         float3 _LightDir;             // global "toward the light", driven from the Unity sun
         float _CausticOccluderActive; // 1 when caustic.g is this body's valid refracted occluder-shadow channel
+        // Mip bias for THIS pass only (see WaterVolume.LargeCausticProjectionLod). The god rays sample the
+        // same RT at their own LOD and are untouched - the beam banding must reach their march sharp.
+        float _LargeCausticProjectionLod;
 
         CBUFFER_START(UnityPerMaterial)
             float _CausticStrength;
@@ -142,7 +147,16 @@ Shader "AbstractOcclusion/WebGpuWater/WaterCausticProjection"
             // ONE sample, selected without a branch: the GRAD sample must stay in uniform control flow
             // (an implicit-derivative sample inside a per-fragment branch is undefined on WebGPU/WGSL).
             float2 cuv = windowFrame ? (windowNorm * 0.5 + 0.5) : poolCuv;
-            causticSample = SAMPLE_TEXTURE2D_GRAD(_CausticTex, sampler_CausticTex, cuv, ddx(cuv), ddy(cuv));
+            // Widen the sampling footprint instead of switching to an explicit LOD: scaling both
+            // derivatives by 2^bias raises the mip exactly as adding the bias would, but KEEPS the screen
+            // footprint's shape, so a grazing view still filters along the direction it is stretched in -
+            // which an isotropic LOD sample would throw away, at the very angle that aliases worst.
+            // Window frame only: pool RTs carry no mip chain (WaterCausticsPass) and their samplers were
+            // tuned against LOD 0. The scale is a uniform, so control flow stays coherent.
+            float projectionLod = clamp(_LargeCausticProjectionLod, 0.0, CAUSTIC_PROJECTION_LOD_MAX);
+            float footprintScale = windowFrame ? exp2(projectionLod) : 1.0;
+            causticSample = SAMPLE_TEXTURE2D_GRAD(_CausticTex, sampler_CausticTex, cuv,
+                                                  ddx(cuv) * footprintScale, ddy(cuv) * footprintScale);
 
             // Footprint and waterline, each answered in the frame that owns it. The mode is a uniform, so
             // this branch is coherent across the whole draw and costs nothing per pixel.

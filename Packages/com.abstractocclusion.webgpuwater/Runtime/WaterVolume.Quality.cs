@@ -148,6 +148,7 @@ namespace AbstractOcclusion.WebGpuWater
             _meshDetail = tier.MeshDetail;
             _causticInterval = tier.CausticInterval;
             _readbackInterval = tier.ReadbackInterval;
+            _oceanFftInterval = tier.OceanFftInterval;
             _maxFoamParticles = tier.MaxFoamParticles;
             _underwaterFogMode = tier.UnderwaterFog;
 

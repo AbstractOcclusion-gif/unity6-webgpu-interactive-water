@@ -43,6 +43,7 @@ namespace AbstractOcclusion.WebGpuWater
         int _meshDetail = WaterQuality.Default.MeshDetail;
         int _causticInterval = WaterQuality.Default.CausticInterval;
         int _readbackInterval = WaterQuality.Default.ReadbackInterval;
+        int _oceanFftInterval = WaterQuality.Default.OceanFftInterval;
         int _maxFoamParticles = WaterQuality.Default.MaxFoamParticles;
         WaterQuality.UnderwaterMode _underwaterFogMode = WaterQuality.Default.UnderwaterFog;
         /// <summary>Tier cap on the GPU foam-particle pool (WaterFoamParticles clamps to it).</summary>
