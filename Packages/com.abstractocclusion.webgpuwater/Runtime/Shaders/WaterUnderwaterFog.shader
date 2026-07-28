@@ -366,6 +366,41 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                         WaterFogDebugBranch(WATER_FOG_BRANCH_CARVE_MARCH);
                         return;
                     }
+                    // THE MIRROR CASE, and the one the rule above cannot see: the carve is not BEYOND
+                    // the sheet, it is BETWEEN THE EYE AND IT. Looking out through a carve rim at water
+                    // level, the sheet that wins this pixel is the one OUTSIDE the carve, seen nearly
+                    // edge-on - so which of the two coincident twins survives backface culling is
+                    // settled by depth precision, per pixel, and wherever the ABOVE twin wins, this rule
+                    // zeroed a span the waterline mask demanded. That is the carve-rim seam: the same
+                    // coin toss as the horizon line, but ~5 px thick instead of 1, which is exactly why
+                    // the vertical corroboration below cannot reject it - the run corroborates itself.
+                    //
+                    // The premise is falsifiable per pixel, from RASTER: if the ray LEAVES the carve
+                    // BELOW the displaced surface, it is already in water at that point, so whatever
+                    // sheet it meets afterwards is not water seen from the air - whichever twin drew it.
+                    //
+                    // Note what this does NOT read: not the eye's near plane (rayStartsWet / armWeight),
+                    // not the camera's state (_CameraDryVolume), not the neighbouring pixels. All three
+                    // were proposed and refuted, because in every scalar the shader had, the failing
+                    // case and the intended case were identical. This one is a fact about the CARVE
+                    // BOUNDARY at this pixel, rasterised - which only became available for Box and
+                    // Sphere volumes when WaterExclusionDepthPass was widened past the Mesh tier.
+                    //
+                    // Same destination as the carve-beyond case above (OceanWavyPath, ONE validated
+                    // crossing search) rather than a second span rule invented here.
+                    float2 carveRawSpan;
+                    float carveExitDist;
+                    if (ExclusionPrepassExitDistance(uv, cam, dir, carveRawSpan, carveExitDist)
+                        && carveExitDist < hitDist
+                        && SurfaceSignedGap(cam + dir * carveExitDist) <= 0.0)
+                    {
+                        OceanWavyPath(sceneWorld, cam, rayStartsWet, pathLen, deepestY, surfaceRefY,
+                                      wetStart);
+                        // After the call, which stamps its own id on entry - this is a carve pixel.
+                        WaterFogDebugBranch(WATER_FOG_BRANCH_CARVE_MARCH);
+                        return;
+                    }
+
                     // ONLY HERE. Suppressing the span outright needs the premise that this pixel is
                     // genuinely water seen FROM THE AIR. A real above-water view is a large contiguous
                     // region - the straddling-frame band this rule was written for, every pixel of
@@ -680,7 +715,28 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // Sharing one number means the branch can only flip where the weight is already
             // crossing 0.5, so the step is multiplied by ~0 - which is exactly why neither
             // reference pops: the coverage test and the span test are the same test.
-            bool rayStartsWet = classifyGap <= 0.0;
+            //
+            // TAKEN FROM THE WEIGHT, NOT FROM THE RAW GAP - and that difference was a shipped bug.
+            // `classifyGap <= 0.0` flips at gapPixels == 0, but WaterlineCoverage crosses 0.5 at
+            // gapPixels == overCoverPixels, and inside a dry carve ArmWeight hands it
+            // WATERLINE_CARVE_OVER_COVER_PIXELS (3). So the two parted by three pixels at exactly
+            // the place the invariant above claims they cannot, and the weight's 0.98 contour
+            // landed at gapPixels = +0.12 - on the AIR side of zero. In that sliver the mask
+            // demanded FULL fog while this bool said the ray started dry, so OceanWavyPath took
+            // its `!rayStartsWet && !sceneUnder` early-out and returned pathLen 0. That is the thin
+            // red line along the carve waterline in fog debug view 12, and it appeared ONLY with
+            // the eye inside a carve because that is the only place the over-cover is non-zero.
+            //
+            // Reading the weight restores the stated invariant by construction, and is a NO-OP
+            // wherever the over-cover is 0: WaterlineCoverage >= 0.5 is then algebraically
+            // classifyGap <= 0, so open water, ponds, the straddling near plane and the horizon
+            // are untouched.
+            //
+            // classifyGap is now written and never read here. Left in place deliberately rather
+            // than pruned from ArmWeight's signature: that is a refactor and this is an experiment
+            // awaiting a play-test, and the two must not travel together. (The out-param the debug
+            // views actually read is classifyPushDist, via WaterFogDebugColor.)
+            bool rayStartsWet = armWeight >= WATERLINE_COVERAGE_WET_MIN;
             float3 sceneWorld = SceneWorldPos(uv);
             float pathLen;
             float deepestY;

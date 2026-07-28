@@ -232,14 +232,45 @@ namespace AbstractOcclusion.WebGpuWater
             return state;
         }
 
+        /// <summary>Which frame this body's caustic RT is written in.</summary>
+        internal enum CausticFrame
+        {
+            /// <summary>Bounded body: projected onto the pool floor, indexed by ProjectCausticUV.
+            /// Zero so an unpublished body reads as the original pool behaviour.</summary>
+            Pool = 0,
+            /// <summary>Windowed ocean: projected onto the shared reference plane and indexed in the
+            /// sim window's world frame, since a moving window has no fixed floor.</summary>
+            Window = 1,
+            /// <summary>Windowed but not an ocean clipmap. NOTHING draws into the RT for these - it is
+            /// allocated in the caustic pass's constructor and never even cleared - so its contents are
+            /// undefined and every consumer must contribute its identity instead of sampling it.</summary>
+            None = 2,
+        }
+
         // Choose the caustic path for this body: bounded bodies use the pool caustic (projected onto
         // the pool floor); the windowed OCEAN uses the large-body caustic (projected in the sim-window's
         // world frame, since a moving window has no fixed floor). Other windowed bodies still skip
         // caustics - the pool projection would be mismapped over their scrolling window.
+        //
+        // ONE decision, read twice: here to pick the generator, and by WaterUniformPublisher to tell
+        // WaterCausticProjection.shader how to undo the projection it is about to sample. Re-deriving
+        // it shader-side from _LargeBody/_SimWindowed would drop the unboundedOcean term and could
+        // classify a body the generator classified differently.
+        internal CausticFrame CausticProjectionFrame
+        {
+            get
+            {
+                if (!_windowed) return CausticFrame.Pool;
+                return IsOceanClipmap ? CausticFrame.Window : CausticFrame.None;
+            }
+        }
+
         void RenderCausticsForThisBody()
         {
-            if (!_windowed) { RenderCaustics(); return; }
-            if (IsOceanClipmap) RenderLargeBodyCaustics();
+            CausticFrame frame = CausticProjectionFrame;
+            if (frame == CausticFrame.Pool) { RenderCaustics(); return; }
+            if (frame == CausticFrame.Window) { RenderLargeBodyCaustics(); return; }
+            // CausticFrame.None: nothing draws. See the enum member for why that is not an oversight.
         }
 
         // Render this body's own sim into its own caustic RT. The RT reaches the renderers

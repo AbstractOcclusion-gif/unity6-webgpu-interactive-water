@@ -1,10 +1,13 @@
 // WebGpuWater - mesh-exclusion depth PREPASS render feature (URP, RenderGraph).
-// Renders every active MESH-shape exclusion volume's front and back faces into two depth RTs the
-// carve consumers read to bound the dry column against an arbitrary closed mesh. Add this feature
+// Renders every active exclusion volume's front and back faces into two depth RTs the carve
+// consumers read to bound the dry column against the volume's real silhouette. Add this feature
 // once to the renderer used by the water camera and assign the WaterExclusionDepth shader; it
-// self-gates on WaterExclusionVolume.AnyMeshVolumeActive(), so it costs nothing and changes nothing
-// when no mesh volume is in the scene (Box/Sphere volumes never trigger it - they stay fully
-// analytic). Twin of WaterChunkDepthFeature.
+// self-gates on WaterExclusionVolume.AnyPrepassVolumeActive(), so it costs nothing and changes
+// nothing when no exclusion volume is in the scene. Twin of WaterChunkDepthFeature.
+//
+// EVERY shape is drawn, but only MESH volumes are read back today (the _ExclusionMeshCount gate) -
+// so a Box/Sphere scene still carves correctly with this feature absent, exactly as before. See
+// WaterExclusionDepthPass for why the two were separated.
 //
 // URP-only: ScriptableRendererFeature is a URP type, so the whole file compiles only when the
 // Universal Render Pipeline is present (WEBGPUWATER_URP).
@@ -42,7 +45,7 @@ namespace AbstractOcclusion.WebGpuWater
             // Never for material/prefab thumbnails - see WaterPassCameraGate.
             if (WaterPassCameraGate.SkipCamera(renderingData.cameraData.cameraType)) return;
             if (_pass == null) return;                                 // shader unassigned / not created
-            if (!WaterExclusionVolume.AnyMeshVolumeActive()) return;   // no mesh volume: nothing to prepass
+            if (!WaterExclusionVolume.AnyPrepassVolumeActive()) return; // no volume: nothing to prepass
             renderer.EnqueuePass(_pass);
         }
 

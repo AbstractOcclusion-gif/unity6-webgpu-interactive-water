@@ -113,19 +113,76 @@ Shader "AbstractOcclusion/WebGpuWater/WaterCausticProjection"
             float rawDepth = SampleSceneDepth(uv);
             worldPos = ComputeWorldSpacePosition(uv, rawDepth, UNITY_MATRIX_I_VP);
             poolPos = WorldToPool(worldPos);
+            bool isSky = (rawDepth == UNITY_RAW_FAR_CLIP_VALUE);
 
-            float3 refractedLight = -refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
-            // Pool-space refracted ray: ProjectCausticUV's xz/y ratio is only valid in pool space, so a WORLD
+            // WHICH FRAME THE RT WAS WRITTEN IN. WaterVolume.RenderCausticsForThisBody picks between two
+            // generators and this shader only ever undid the POOL one - so an ocean sampled a window-frame
+            // RT through a pool-frame map. Both the origin (_VolumeCenter vs _SimCenter) and the scale
+            // (_VolumeExtent vs _SimExtent) were wrong, and since _SimCenter tracks the camera the pattern
+            // SLID across the floor as you moved. The mode is published from that same decision.
+            int causticFrame = (int)(_CausticFrameMode + 0.5);
+            bool windowFrame = (causticFrame == CAUSTIC_FRAME_WINDOW);
+
+            // POOL frame, unchanged: ProjectCausticUV's xz/y ratio is only valid in pool space, so a WORLD
             // direction mis-projects on non-uniform (deep) bodies. Uniform extents are byte-identical.
-            float2 cuv = ProjectCausticUV(poolPos, WorldDirToPool(refractedLight));
+            float3 refractedLight = -refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
+            float2 poolCuv = ProjectCausticUV(poolPos, WorldDirToPool(refractedLight));
+
+            // WINDOW frame: LargeBodyGodRays' LargeBodyCausticAt expression, reproduced exactly - same
+            // refracted-sun form (NOT negated, unlike the pool ray above), same reference plane, same
+            // normalisation - because that is the map proven to register with what LargeBodyCaustics.shader
+            // wrote. The plane is the GENERATOR's (_SimCenter.y - LARGE_CAUSTIC_REFERENCE_DEPTH, see that
+            // shader's vert), NOT the eye's waterline, which is a different plane.
+            float3 refractedSun = refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
+            float causticRefPlaneY = _SimCenter.y - LARGE_CAUSTIC_REFERENCE_DEPTH;
+            float2 projXZ = worldPos.xz + refractedSun.xz
+                          * ((causticRefPlaneY - worldPos.y) / SafeRefractedLightY(refractedSun.y));
+            float2 windowNorm = (projXZ - _SimCenter.xz) / max(_SimExtent.xz, 1e-3);
+
+            // ONE sample, selected without a branch: the GRAD sample must stay in uniform control flow
+            // (an implicit-derivative sample inside a per-fragment branch is undefined on WebGPU/WGSL).
+            float2 cuv = windowFrame ? (windowNorm * 0.5 + 0.5) : poolCuv;
             causticSample = SAMPLE_TEXTURE2D_GRAD(_CausticTex, sampler_CausticTex, cuv, ddx(cuv), ddy(cuv));
 
-            float inside = FootprintMaskPool(poolPos);
-            float2 wuv = poolPos.xz * 0.5 + 0.5;
-            float simH = SampleWaterHeightBilinear(wuv);
-            bool isSky = (rawDepth == UNITY_RAW_FAR_CLIP_VALUE);
-            underwaterMask = (!isSky && inside > 0.5 && poolPos.y < simH) ? 1.0 : 0.0;
-            surfaceY = PoolToWorld(float3(poolPos.x, simH, poolPos.z)).y;
+            // Footprint and waterline, each answered in the frame that owns it. The mode is a uniform, so
+            // this branch is coherent across the whole draw and costs nothing per pixel.
+            float inside;
+            bool belowSurface;
+            if (windowFrame)
+            {
+                // The RT holds data only inside the drawn window (cleared transparent outside), so the
+                // window IS the footprint - the pool box is an arbitrary rectangle on an unbounded ocean.
+                // Faded at the border with the shared constant the shafts use, so caustics and shafts die
+                // out together instead of the caustics popping at the edge.
+                float2 edge = 1.0 - abs(windowNorm);
+                inside = (edge.x <= 0.0 || edge.y <= 0.0)
+                       ? 0.0 : saturate(min(edge.x, edge.y) / CAUSTIC_WINDOW_FADE);
+                // The generator authored the pattern against the window's rest plane, so the depth fade
+                // measures from that same plane. A _WaterTex lookup here would be wrong twice over: wrong
+                // frame (the sim is indexed by WorldToSim on a windowed body, not pool xz) and wrong
+                // quantity (on an ocean the sim carries only a local ripple delta and returns 0 outside
+                // the window - the swell lives in the analytic field, not in the sim texture).
+                surfaceY = _SimCenter.y;
+                belowSurface = worldPos.y < surfaceY;
+            }
+            else
+            {
+                inside = FootprintMaskPool(poolPos);
+                float2 wuv = poolPos.xz * 0.5 + 0.5;
+                float simH = SampleWaterHeightBilinear(wuv);
+                surfaceY = PoolToWorld(float3(poolPos.x, simH, poolPos.z)).y;
+                // Kept in POOL space, exactly as before: PoolToWorld applies rotation and per-axis extent,
+                // so a world-space comparison is NOT equivalent on a rotated or non-uniform body.
+                belowSurface = poolPos.y < simH;
+            }
+
+            // CAUSTIC_FRAME_NONE - a windowed body that is not an ocean clipmap. Nothing ever draws into
+            // its RT and it is never cleared, so its contents are undefined; mask to 0 and both passes
+            // contribute their identity (add 0 / multiply 1) instead of projecting uninitialised memory.
+            // Carrying 'inside' through instead of a bare 1.0 is what gives the window its edge fade;
+            // on a pool FootprintMaskPool is already exactly 0 or 1, so the result is byte-identical.
+            bool frameHasData = (causticFrame != CAUSTIC_FRAME_NONE);
+            underwaterMask = (!isSky && frameHasData && belowSurface) ? inside : 0.0;
 
             // Occluder lit factor, computed ONCE here so both passes shade the identical shadow:
             // four extra explicit-LOD taps = the shared distance-grown PCF penumbra (WaterShared);
@@ -149,7 +206,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterCausticProjection"
                              occluderLit);
 
             float causticFade = DepthFadeScalar(worldPos.y, surfaceY, _CausticDepthFade);
-            float lit = occluderLit;
+            // Gate on the occluder flag exactly as FragShadow already does. Without it an ocean - which
+            // publishes _CausticOccluderActive 0 and never writes a real green channel - had its caustics
+            // multiplied toward zero by a shadow term that means nothing there. Pools publish 1: unchanged.
+            float lit = (_CausticOccluderActive > 0.5) ? occluderLit : 1.0;
             float3 caustic = _CausticTint.rgb
                            * (causticSample.r * _CausticStrength * _ScreenCausticIntensity
                               * causticFade * lit * underwaterMask);

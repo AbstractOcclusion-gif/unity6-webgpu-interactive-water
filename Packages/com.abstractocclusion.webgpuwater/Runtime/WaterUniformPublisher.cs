@@ -20,6 +20,7 @@ namespace AbstractOcclusion.WebGpuWater
         // the per-frame body-uniform path, where an inline string was the one uncached exception.
         static readonly int ID_SkyboxCubemapTex = Shader.PropertyToID("_Tex");
         static readonly int ID_CausticOccluderActive = Shader.PropertyToID("_CausticOccluderActive");
+        static readonly int ID_CausticFrameMode = Shader.PropertyToID("_CausticFrameMode");
         static readonly int ID_OccluderShadowSoftness = Shader.PropertyToID("_OccluderShadowSoftness");
         static readonly int ID_SunShadowStrength = Shader.PropertyToID("_SunShadowStrength");
         static readonly int ID_Tiles = Shader.PropertyToID("_Tiles");
@@ -165,6 +166,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_ExclusionWorldToLocal = WaterShaderProps.ExclusionWorldToLocal;
         static readonly int ID_ExclusionShape = WaterShaderProps.ExclusionShape;
         static readonly int ID_ExclusionMeshCount = Shader.PropertyToID("_ExclusionMeshCount");
+        static readonly int ID_ExclusionPrepassValid = Shader.PropertyToID("_ExclusionPrepassValid");
         static readonly int ID_ExclusionEdgeColor = Shader.PropertyToID("_ExclusionEdgeColor");
         static readonly int ID_ExclusionEdgeParams = WaterShaderProps.ExclusionEdgeParams;
 
@@ -228,6 +230,13 @@ namespace AbstractOcclusion.WebGpuWater
             // volume. Published unconditionally (unlike the arrays) because dropping to zero has to
             // REACH the shaders - a stale 1 would leave them reading last frame's depth targets.
             Shader.SetGlobalFloat(ID_ExclusionMeshCount, WaterExclusionVolume.MeshVolumeCount);
+            // LOWERED here, RAISED by WaterExclusionDepthPass when it actually records. This runs
+            // every frame from PublishSharedGlobals - ahead of rendering - so a renderer with no
+            // WaterExclusionDepthFeature installed leaves it at 0 all frame and every consumer keeps
+            // its analytic path. A flag the pass alone owned would latch at 1 and then go stale the
+            // moment the feature was removed: the same failure the underwater fog avoids by
+            // refreshing _OceanSurfaceDepthValid on EVERY record.
+            Shader.SetGlobalFloat(ID_ExclusionPrepassValid, 0f);
             // With count 0 the shader loop never reads the arrays, so skipping the sets is
             // safe and keeps the zero-volume frame free of the array uploads.
             if (count > 0)
@@ -367,6 +376,9 @@ namespace AbstractOcclusion.WebGpuWater
             // Per body (a global was last-writer-wins with 2+ caustic bodies): 1 when THIS body's pass
             // wrote submerged-object silhouettes into caustic.g this frame.
             sink.SetFloat(ID_CausticOccluderActive, _body.CausticOccluderActive ? 1f : 0f);
+            // Which frame that RT was written in - published beside the texture itself so the two can
+            // never be separated. WaterCausticProjection.shader undoes the matching projection.
+            sink.SetFloat(ID_CausticFrameMode, (float)_body.CausticProjectionFrame);
             // Refract-shadow look: the per-body softness knob, plus the sun's OWN Shadow Strength -
             // so the refracted occluder path dims its shadows exactly like URP's shadow map does on
             // the fallback path (shadowAttenuation folds the same value in). No sun wired = full 1.

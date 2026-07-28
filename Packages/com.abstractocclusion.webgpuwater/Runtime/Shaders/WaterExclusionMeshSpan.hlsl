@@ -14,6 +14,35 @@
 
 #include "WaterExclusionMesh.hlsl" // the raw prepass fetch + the far-plane emptiness convention
 
+// Distance along the ray at which it LEAVES the rasterised exclusion silhouette at this pixel.
+// False when no carve covers the pixel, when the exit lies behind the ray's own origin, or when the
+// prepass did not run this frame - in which case the depth RTs hold nothing this frame may trust and
+// every caller falls back to its analytic path.
+//
+// `rawSpan` is handed back rather than re-fetched by the caller: ExclusionMeshRawSpan LOADs BOTH
+// depth textures, so a second call would double this function's texel traffic for one number the
+// first call already had. Callers that only want the exit pass a dummy and ignore it.
+//
+// This is the ONE place a back-face depth becomes a world distance. ExclusionMeshRayLength below
+// uses it instead of reconstructing the exit a second time.
+bool ExclusionPrepassExitDistance(float2 screenUV, float3 origin, float3 segDir,
+                                  out float2 rawSpan, out float exitDist)
+{
+    rawSpan = float2(0.0, 0.0);
+    exitDist = 0.0;
+    if (_ExclusionPrepassValid < 0.5) return false;
+
+    rawSpan = ExclusionMeshRawSpan(int2(screenUV * _ScreenParams.xy));
+
+    // No exit face at this pixel means no exclusion volume stands along this ray at all.
+    float backEye = LinearEyeDepth(rawSpan.y, _ZBufferParams);
+    if (ExclusionMeshDepthEmpty(backEye, _ProjectionParams.z)) return false;
+
+    float3 backWS = ComputeWorldSpacePosition(screenUV, rawSpan.y, UNITY_MATRIX_I_VP);
+    exitDist = dot(backWS - origin, segDir);
+    return exitDist > 0.0;
+}
+
 // Dry length of the segment [origin, origin + segDir * maxDist] inside the MESH exclusion volumes,
 // taken from the prepass at screenUV. 0 when no mesh volume covers the pixel. Callers still gate on
 // _ExclusionMeshCount so a scene without mesh volumes never even issues the texel fetches.
@@ -22,15 +51,16 @@
 // EXACT rather than approximate because origin and segDir lie on this pixel's camera ray by
 // construction - which is precisely the contract that confines the mesh tier to camera-ray
 // queries in the first place (see WaterExclusionMesh.hlsl).
+//
+// Behaviour is unchanged by routing the exit through the helper above: a non-positive tBack already
+// produced 0 through the final max(), and an unwritten RT already read as empty. The only new
+// refusal is the explicit _ExclusionPrepassValid gate, which now says so instead of relying on a
+// cleared target to mean the same thing by accident.
 float ExclusionMeshRayLength(float2 screenUV, float3 origin, float3 segDir, float maxDist)
 {
-    float2 rawSpan = ExclusionMeshRawSpan(int2(screenUV * _ScreenParams.xy));
-
-    // No exit face at this pixel means no mesh volume stands along this ray at all.
-    float backEye = LinearEyeDepth(rawSpan.y, _ZBufferParams);
-    if (ExclusionMeshDepthEmpty(backEye, _ProjectionParams.z)) return 0.0;
-    float3 backWS = ComputeWorldSpacePosition(screenUV, rawSpan.y, UNITY_MATRIX_I_VP);
-    float tBack = dot(backWS - origin, segDir);
+    float2 rawSpan;
+    float tBack;
+    if (!ExclusionPrepassExitDistance(screenUV, origin, segDir, rawSpan, tBack)) return 0.0;
 
     // Front empty + back valid = the camera sits INSIDE the mesh (its front faces are behind the
     // eye, so nothing rasterised), and the dry column starts at the ray's own origin - the same

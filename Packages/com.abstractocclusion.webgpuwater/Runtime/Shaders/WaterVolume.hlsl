@@ -31,6 +31,19 @@ float    _SimEdgeFadeTexels; // border falloff width, in sim texels
 // (sampling) so both use the exact same projection plane; keep them in lockstep.
 #define LARGE_CAUSTIC_REFERENCE_DEPTH 4.0
 
+// Window-border fraction over which the near-field caustic fades out (no hard edge). SHARED, for the
+// same reason as the plane above: the god-ray shafts and the screen-space caustic projection read the
+// SAME RT, so if their fades drift apart the two die at different distances and print a seam.
+#define CAUSTIC_WINDOW_FADE 0.15
+
+// Which frame this body's caustic RT was written in, published per body from
+// WaterVolume.CausticProjectionFrame - the same expression that picks the generator, so the reader
+// can never disagree with the writer. POOL is 0 so an unpublished body keeps the original behaviour.
+#define CAUSTIC_FRAME_POOL   0 // projected onto the pool floor, indexed by ProjectCausticUV
+#define CAUSTIC_FRAME_WINDOW 1 // projected onto the shared plane, indexed in the sim window's frame
+#define CAUSTIC_FRAME_NONE   2 // nothing ever drew into the RT: consumers must contribute identity
+float _CausticFrameMode;
+
 // Open-water (lake/ocean) path flag. 0 = the original pool / small-body look, unchanged.
 // 1 = the surface stands alone with NO pool: the analytic refraction ray-march is bypassed
 // (a deep-water colour is returned instead) and the mesh god rays are suppressed. Published

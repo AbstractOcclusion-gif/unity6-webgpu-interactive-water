@@ -35,6 +35,15 @@ Texture2D _ExclusionMeshBackDepth;
 // must not read as "the mesh simply carves nothing".
 float _ExclusionMeshCount;
 
+// 1 when WaterExclusionDepthPass actually RECORDED the prepass this frame, 0 otherwise. Lowered
+// every frame by WaterUniformPublisher and raised by the pass itself, so what the shaders read is
+// "the two RTs below were written for THIS frame" rather than "a volume exists" - a distinction
+// _ExclusionMeshCount cannot make, because it counts AUTHORED volumes and says nothing about
+// whether the render feature is installed on the renderer (a manual setup step). Polarity is
+// deliberate: the unpublished default is 0, which is the pre-prepass behaviour, so a project that
+// never installs the feature behaves exactly as it did before.
+float _ExclusionPrepassValid;
+
 // Fraction of the far plane past which a linearised depth means "nothing was drawn here". The
 // prepass targets clear to far, so an untouched texel linearises to the far plane; testing at
 // slightly under it absorbs the precision of the clear without swallowing real geometry, and works

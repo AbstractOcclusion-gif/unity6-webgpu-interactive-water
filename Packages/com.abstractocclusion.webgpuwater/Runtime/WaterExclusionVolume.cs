@@ -175,30 +175,50 @@ namespace AbstractOcclusion.WebGpuWater
         /// for a Mesh volume with no mesh assigned - which is warned about, never silent).</summary>
         internal Mesh CarveMesh => shape == Shape.Mesh ? carveMesh : null;
 
-        /// <summary>True when any enabled volume carves from a mesh - the render feature's
-        /// self-gate, so a scene without one never pays for the prepass.</summary>
-        internal static bool AnyMeshVolumeActive()
+        /// <summary>True when this volume can rasterise a prepass silhouette WITHOUT building
+        /// anything: every analytic shape owns a shared unit mesh, so only a Mesh volume with
+        /// nothing assigned answers false. Kept side-effect-free because the render feature calls
+        /// it per camera - the lazy unit-mesh build belongs to PrepassMesh, on the main thread.</summary>
+        bool HasPrepassGeometry => shape != Shape.Mesh || carveMesh != null;
+
+        /// <summary>The mesh this volume rasterises into the exclusion depth prepass: its own carve
+        /// mesh for a Mesh volume, the shared unit sphere/cube for the analytic shapes. Box and
+        /// Sphere are NOT mesh-less - the wall already draws exactly this mesh every frame
+        /// (ResolveWallMesh) - so covering every shape costs a draw, not a new geometry tier.
+        /// Null only for a Mesh volume with nothing assigned.</summary>
+        internal Mesh PrepassMesh => ResolveWallMesh();
+
+        /// <summary>True when any enabled volume can rasterise a prepass silhouette - the render
+        /// feature's self-gate. Wider than the old mesh-only gate on purpose: a consumer that takes
+        /// the carve boundary from raster must not have to ask which tier the volume came from.</summary>
+        internal static bool AnyPrepassVolumeActive()
         {
             for (int i = 0; i < _active.Count; i++)
-                if (_active[i].CarveMesh != null) return true;
+                if (_active[i].HasPrepassGeometry) return true;
             return false;
         }
 
-        /// <summary>Fill <paramref name="destination"/> with the enabled volumes that carve from a
-        /// mesh. Clears first; a volume with its mesh unassigned is skipped (and warned about).</summary>
-        internal static void CollectMeshVolumes(List<WaterExclusionVolume> destination)
+        /// <summary>Fill <paramref name="destination"/> with every enabled volume that has a prepass
+        /// mesh. Clears first; a Mesh volume with nothing assigned is skipped (and warned about).
+        /// Reading PrepassMesh HERE - from the pass's RecordRenderGraph, on the main thread - is
+        /// deliberate: it forces the lazy unit-mesh build now, so the render function that runs
+        /// later only ever hits an already-built cache.</summary>
+        internal static void CollectPrepassVolumes(List<WaterExclusionVolume> destination)
         {
             destination.Clear();
             for (int i = 0; i < _active.Count; i++)
             {
                 WaterExclusionVolume volume = _active[i];
-                if (volume.CarveMesh != null) destination.Add(volume);
-                else if (volume.shape == Shape.Mesh) volume.WarnMissingMeshOnce();
+                if (volume.PrepassMesh != null) destination.Add(volume);
+                else volume.WarnMissingMeshOnce(); // only a Mesh volume can be mesh-less
             }
         }
 
         /// <summary>How many enabled volumes carve from a mesh, for the publisher's
-        /// _ExclusionMeshCount gate (0 = the consumers skip the prepass reads entirely).</summary>
+        /// _ExclusionMeshCount gate (0 = the consumers skip the prepass reads entirely). Counts MESH
+        /// volumes only, deliberately: the prepass now rasterises every shape, but the CONSUMERS
+        /// still take Box/Sphere from the analytic kernels, so widening this gate would make an
+        /// existing box scene depend on a render feature the user may never have installed.</summary>
         internal static int MeshVolumeCount
         {
             get

@@ -112,6 +112,14 @@ float SurfaceSignedGap(float3 world)
 //               rule - when two masks can miss each other, OVER-cover rather than under-cover
 //               (gather-max one texel UP, the hole fix, the 10% OBB dilation): a slightly thick
 //               edge reads as water, a gap reads as a hole. Pass 0 for an exact edge.
+// Coverage at or above which a consumer should treat the pixel's ray as STARTING IN WATER. It is
+// the curve's own midpoint, so it tracks the 0.5 crossing wherever that crossing has been moved to
+// by an over-cover - which is the whole point of taking the hard test from the WEIGHT rather than
+// from the raw gap. `surfaceGap <= 0` looks equivalent and is NOT: it flips at gapPixels 0 while
+// the curve crosses 0.5 at gapPixels == overCoverPixels, so the two part company by exactly the
+// over-cover. Lives beside the curve so a change to one cannot silently orphan the other.
+#define WATERLINE_COVERAGE_WET_MIN 0.5
+
 float WaterlineCoverage(float surfaceGap, float gapPerPixel, float overCoverPixels)
 {
     float perPixel = clamp(gapPerPixel, WATERLINE_GRADIENT_MIN,

@@ -1,5 +1,5 @@
-// WebGpuWater - mesh-exclusion depth PREPASS (RenderGraph).
-// For each active MESH-shape exclusion volume, draws its mesh front faces into
+// WebGpuWater - exclusion depth PREPASS (RenderGraph).
+// For each active exclusion volume - EVERY shape, not just Mesh - draws its mesh front faces into
 // _ExclusionMeshFrontDepth (entry) and back faces into _ExclusionMeshBackDepth (exit), depth only,
 // then hands both to the rest of the frame as globals (SetGlobalTextureAfterPass - the project's
 // RenderGraph handoff convention). Consumers LOAD them (texel fetch, no sampler) to take the DRY
@@ -8,6 +8,14 @@
 // Runs BeforeRenderingTransparents so both depths exist before the water surface and the exclusion
 // wall (transparent draws) read them this frame. Unlike the chunk twin, placement comes from the
 // DRAW MATRIX - an exclusion volume has a real transform, so the mesh needs no frame block.
+//
+// WHY EVERY SHAPE, when only Mesh volumes are read back today. A Box or Sphere is not mesh-less -
+// the wall draws its unit cube/sphere every frame - so the analytic shapes were absent from these
+// RTs by omission, not by cost. Filling them gives the carve ONE complete rasterised silhouette,
+// which is what a consumer needs before it can take the carve boundary from raster instead of
+// re-deriving it analytically. The consumer gate (_ExclusionMeshCount) is deliberately NOT widened
+// here: switching Box/Sphere onto these RTs would make an existing scene depend on this feature
+// being installed on the renderer, which is a manual step. Draws now, reads later.
 #if WEBGPUWATER_URP
 using System.Collections.Generic;
 using UnityEngine;
@@ -28,13 +36,14 @@ namespace AbstractOcclusion.WebGpuWater
 
         static readonly int ID_FrontDepth = Shader.PropertyToID("_ExclusionMeshFrontDepth");
         static readonly int ID_BackDepth  = Shader.PropertyToID("_ExclusionMeshBackDepth");
+        static readonly int ID_PrepassValid = Shader.PropertyToID("_ExclusionPrepassValid");
 
         readonly Material _material;
         readonly ProfilingSampler _frontSampler = new ProfilingSampler("WaterExclusionDepth.Front");
         readonly ProfilingSampler _backSampler  = new ProfilingSampler("WaterExclusionDepth.Back");
 
         // Reused each frame so the pass allocates no garbage.
-        static readonly List<WaterExclusionVolume> s_MeshVolumes = new List<WaterExclusionVolume>();
+        static readonly List<WaterExclusionVolume> s_PrepassVolumes = new List<WaterExclusionVolume>();
 
         internal WaterExclusionDepthPass(Material material)
         {
@@ -53,8 +62,8 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (_material == null) return;
 
-            WaterExclusionVolume.CollectMeshVolumes(s_MeshVolumes);
-            if (s_MeshVolumes.Count == 0) return;
+            WaterExclusionVolume.CollectPrepassVolumes(s_PrepassVolumes);
+            if (s_PrepassVolumes.Count == 0) return;
 
             UniversalResourceData resources = frameData.Get<UniversalResourceData>();
             TextureHandle sizeSource = resources.activeColorTexture;
@@ -65,6 +74,12 @@ namespace AbstractOcclusion.WebGpuWater
 
             RecordFacePass(renderGraph, front, FrontFaceShaderPass, ID_FrontDepth, _frontSampler);
             RecordFacePass(renderGraph, back,  BackFaceShaderPass,  ID_BackDepth,  _backSampler);
+
+            // Both targets are written for this frame, so consumers may trust them. Raised only
+            // after every early-out above, and lowered again next frame by WaterUniformPublisher, so
+            // this reads "the prepass RAN" and never "a volume exists" - the two differ exactly when
+            // this feature is missing from the renderer, which is a manual setup step.
+            Shader.SetGlobalFloat(ID_PrepassValid, 1f);
         }
 
         void RecordFacePass(RenderGraph renderGraph, TextureHandle depth, int shaderPass, int globalId,
@@ -74,7 +89,7 @@ namespace AbstractOcclusion.WebGpuWater
 
             data.material = _material;
             data.shaderPass = shaderPass;
-            data.volumes = s_MeshVolumes;
+            data.volumes = s_PrepassVolumes;
 
             builder.SetRenderAttachmentDepth(depth, AccessFlags.Write);
             builder.AllowPassCulling(false);                    // driven by our own list, not renderer visibility
@@ -86,7 +101,7 @@ namespace AbstractOcclusion.WebGpuWater
                 {
                     WaterExclusionVolume volume = d.volumes[i];
                     if (volume == null) continue;
-                    Mesh mesh = volume.CarveMesh;
+                    Mesh mesh = volume.PrepassMesh;
                     if (mesh == null) continue;
                     // The volume's own shape-to-world places and sizes the mesh, exactly as it
                     // places the unit cube a Box volume carves with.

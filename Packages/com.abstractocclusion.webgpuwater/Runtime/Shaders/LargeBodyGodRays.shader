@@ -64,6 +64,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             #include "WaterVolume.hlsl" // _SimCenter/_SimExtent (window frame) + LARGE_CAUSTIC_REFERENCE_DEPTH
             #include "WaterShared.hlsl" // IOR_*, SafeRefractedLightY (caustic light projection)
             #include "WaterExclusion.hlsl" // dry-interior volumes: marched samples inside are air
+            #include "WaterExclusionMeshSpan.hlsl" // ExclusionPrepassExitDistance: the RASTERISED carve exit
             #include "WaterFog.hlsl"    // shared water fog + downwelling helpers/globals (view-fog tint, depth fade)
             // SurfaceHeightAtXZ: the displaced surface, READ-ONLY. Included to ASK the shared
             // waterline where the water is, never to change it - the last attempt at from-air
@@ -77,6 +78,11 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             // Published by the underwater fog path; reused here so the shafts share the exact submersion
             // state and surface height the fog uses (one source of truth, no separate god-ray copy).
             float _UnderwaterSurfaceY; // world Y of the water surface above the camera
+            // 1 = the EYE sits inside a dry carve. Split off from _CameraUnderwater in round 2 of
+            // the exclusion work because "below the water HEIGHT" and "IN water" are different
+            // questions and a sunken room answers them differently. The fog and the exclusion wall
+            // have consumed this for a while; this pass had never heard of it.
+            float _CameraDryVolume;
 
             float4 _LargeGodRayColor;
             float  _LargeGodRayDensity;
@@ -112,8 +118,9 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             // The body's near-field caustic RT (window frame), published as a global. Sampled by light-
             // projection so the shafts flicker with the surface focusing, like the pool god rays.
             TEXTURE2D(_CausticTex); SAMPLER(sampler_CausticTex);
-            // Window-border fraction over which the near-field caustic fades to plain shafts (no hard edge).
-            #define CAUSTIC_WINDOW_FADE 0.15
+            // CAUSTIC_WINDOW_FADE now lives in WaterVolume.hlsl beside LARGE_CAUSTIC_REFERENCE_DEPTH:
+            // the screen-space caustic projection reads the same RT and must fade with it, so the
+            // number has to have exactly one home. Same value, so the shafts are byte-identical.
             // Shafts are a near/mid-field underwater effect; cap the march to a bounded visible distance
             // rather than the camera far plane (now horizon-sized on an ocean, so averaging over it would
             // dilute the shafts into invisibility). The fog hides anything past this anyway.
@@ -264,12 +271,32 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 // switching on the binary flag, so the scatter rises with the water taking the lens
                 // instead of popping. In AIR this is 0 and the pane weight below decides instead.
                 // (The feature also gates on an active god-ray ocean.)
-                float submergeFade = saturate((_UnderwaterSurfaceY - _WorldSpaceCameraPos.y)
+                // ...and 0 outright when the eye sits in a DRY CARVE below sea level. This term
+                // asks "is the lens wet"; a sunken room is dry air metres under the surface, so the
+                // height difference answers a question that was never being asked. Left unfixed it
+                // made regime = max(1, _LargeGodRayFromAir) = 1 in the one view the From Air knob
+                // exists for, so the knob did nothing there.
+                float submergeFade = (_CameraDryVolume > 0.5)
+                                   ? 0.0
+                                   : saturate((_UnderwaterSurfaceY - _WorldSpaceCameraPos.y)
                                               / GODRAY_SUBMERGE_FADE_METERS);
                 // The accumulation's own, much deeper fade - see GODRAY_TEMPORAL_FADE_METERS. It
                 // drives BOTH the animated jitter and the history blend, because those two are one
                 // mechanism and must arm together.
-                float temporalFade = saturate((_UnderwaterSurfaceY - _WorldSpaceCameraPos.y)
+                //
+                // MEASURED AGAINST THE REST PLANE, NOT _UnderwaterSurfaceY - and that is the fix.
+                // _UnderwaterSurfaceY is the surface height at the CAMERA's xz and it RIDES THE
+                // LOCAL SWELL (WaterVolume.Underwater.cs:253, "wave-aware at the camera's xz, so
+                // the line still rides the local swell"). Driving the history weight off it meant an
+                // eye parked near the surface had every passing wave swing this ratio - and with it
+                // the blend, SCREEN-WIDE - between 0 and 1 at wave frequency. On screen that is the
+                // shafts smoothing and sharpening in time with the swell: Bert, 2026-07-28, "at
+                // exact point where water line cross camera, the fog ray blur / deblur". The rest
+                // plane is the MEAN level, so a stationary eye gets a stationary weight.
+                //
+                // submergeFade above deliberately KEEPS the wavy surface: it answers "is the lens
+                // actually wet", which is a fact about the real displaced water, not about a mean.
+                float temporalFade = saturate((_VolumeCenter.y - _WorldSpaceCameraPos.y)
                                               / GODRAY_TEMPORAL_FADE_METERS);
                 if (_LargeGodRayDensity <= 0.0) return half4(0.0, 0.0, 0.0, 1.0);
                 // With the from-air knob at 0 this is the ORIGINAL early-out, unchanged: an
@@ -290,10 +317,22 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 // leaves the water, so a shaft stops where the water ends instead of streaking into
                 // the air; from air, it STARTS where the ray dips under, and a ray that never dips has
                 // no span at all. Never past the scene, and never past SHAFT_MAX_DISTANCE.
+                // ONE rasterised carve query per pixel, used TWICE below - to find where a
+                // dry-carve eye's ray enters the water, and to floor the regime across the surface
+                // crossing. Hoisted so the two do not each pay the texel fetches. Gated on
+                // _ExclusionCount so a scene with no volume issues no fetch at all.
+                float2 carveSpan = float2(0.0, 0.0);
+                float carveExit = 0.0;
+                bool rayLeavesCarve = (_ExclusionCount > 0.5)
+                                    && ExclusionPrepassExitDistance(input.uv, camWorld, rayDir,
+                                                                    carveSpan, carveExit);
+
                 float camGap = _UnderwaterSurfaceY - camWorld.y; // > 0 = the eye is below the surface
+                // ...below the water HEIGHT, which is NOT "in water" - a dry carve is air down there.
+                bool eyeInWater = camGap > 0.0 && _CameraDryVolume < 0.5;
                 float tEnter = 0.0;
                 float tExit = min(sceneDist, SHAFT_MAX_DISTANCE);
-                if (camGap > 0.0)
+                if (eyeInWater)
                 {
                     if (rayDir.y > 1e-4) tExit = min(tExit, camGap / rayDir.y);
                 }
@@ -303,10 +342,32 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                     // volume. Leaving here first keeps a scene with no carve from paying for the
                     // surface field at all.
                     if (_ExclusionCount < 0.5) return half4(0.0, 0.0, 0.0, 1.0);
-                    // Only a DOWNWARD ray reaches the water.
-                    if (rayDir.y > -1e-4) return half4(0.0, 0.0, 0.0, 1.0);
-                    // Solved at the CROSSING's own xz, not the camera's - see PaneWaterlineDistance.
-                    tEnter = PaneWaterlineDistance(camWorld, rayDir, tExit);
+
+                    // TWO kinds of pane, entering the water in different places.
+                    //
+                    // Eye INSIDE a dry carve (a sunken room): the water starts where the ray LEAVES
+                    // the carve, and that wall can be horizontal or even overhead - the window is
+                    // not a ceiling, so the downward-only rule below would blank the whole room.
+                    // Taken from the RASTERISED exclusion silhouette, per pixel and for every shape.
+                    // Only honoured when the exit is BELOW the displaced surface: an exit into air
+                    // is not a water entry, and that ray falls through to the waterline rule.
+                    bool entered = false;
+                    if (_CameraDryVolume > 0.5 && rayLeavesCarve
+                        && carveExit < tExit
+                        && SurfaceSignedGap(camWorld + rayDir * carveExit) <= 0.0)
+                    {
+                        tEnter = carveExit;
+                        entered = true;
+                    }
+                    if (!entered)
+                    {
+                        // Eye above the open surface: only a DOWNWARD ray reaches the water. Also the
+                        // fallback when the prepass did not run (no WaterExclusionDepthFeature on the
+                        // renderer), so an un-migrated project keeps exactly its old behaviour.
+                        if (rayDir.y > -1e-4) return half4(0.0, 0.0, 0.0, 1.0);
+                        // Solved at the CROSSING's own xz, not the camera's - see PaneWaterlineDistance.
+                        tEnter = PaneWaterlineDistance(camWorld, rayDir, tExit);
+                    }
                 }
                 if (tExit <= tEnter) return half4(0.0, 0.0, 0.0, 1.0);
 
@@ -321,9 +382,55 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 // what it was. An earlier attempt floored the submerged side at the knob instead and
                 // popped the shafts on diving in.
                 float3 waterEntry = camWorld + rayDir * tEnter;
-                float paneWeight = InsideExclusion(waterEntry) ? _LargeGodRayFromAir : 0.0;
-                float regime = max(submergeFade, paneWeight);
+                // An eye already INSIDE the carve is looking through the window by construction, so
+                // it does not have to prove it: waterEntry is then the carve EXIT, which sits ON the
+                // boundary and would test as outside, blanking the room's shafts entirely.
+                float paneWeight = (_CameraDryVolume > 0.5 || InsideExclusion(waterEntry))
+                                 ? _LargeGodRayFromAir : 0.0;
+                // THE HANDOFF, and why max() was not one. The two regimes are MUTUALLY EXCLUSIVE
+                // across the eyeInWater branch above - only ever one is non-zero - so max() never
+                // blended anything. Crossing the surface while looking into a carve therefore
+                // STEPPED: paneWeight (_LargeGodRayFromAir, a constant) above the line, and
+                // submergeFade, which starts at 0, below it. The shafts read the knob, dropped to
+                // black at the crossing, then climbed back over GODRAY_SUBMERGE_FADE_METERS.
+                //
+                // Floor the submerged side at the knob so the two meet, but do it PER PIXEL - only
+                // where a carve actually stands along this ray. That is the difference from the
+                // earlier attempt this file records ("floored the submerged side at the knob
+                // instead and popped the shafts on diving in"): that one floored EVERYWHERE, so
+                // open water inherited a pane weight it never had. The rasterised silhouette
+                // answers "is there a carve on this ray" per pixel, for free, from the query
+                // hoisted above.
+                //
+                // Bit-identical wherever it can be: no carve on the ray, or _ExclusionCount 0, or
+                // _LargeGodRayFromAir 0 (every shipped scene but the Exclusion Demo) all give
+                // paneFloor 0, and lerp(0, 1, submergeFade) IS submergeFade.
+                float paneFloor = rayLeavesCarve ? _LargeGodRayFromAir : 0.0;
+                float regime = max(lerp(paneFloor, 1.0, submergeFade), paneWeight);
                 if (regime <= 0.0) return half4(0.0, 0.0, 0.0, 1.0);
+
+                // PER-PIXEL arming for the temporal pair (jitter + history) - what the depth fade
+                // above was standing in for and could never actually express. Both halves fail on
+                // the SAME premise: a PANE pixel's value is a property of its whole marched span,
+                // not of the point behind it, so accumulating it slides a stale pane along with the
+                // camera. paneWeight already answers "is this a pane pixel" PER PIXEL and is free
+                // here - it is 0 for every submerged-field pixel by construction, because
+                // underwater the eye is in water and so never inside a dry carve. This is the
+                // "strictly doctrinal form ... PER PIXEL" the header wished for, and it needs no
+                // history channel at all: the regime is RECOMPUTED from this frame's geometry
+                // instead of stored, which is what made the B10G11R11 alpha objection moot.
+                //
+                // The depth ramp is kept as well: the history RT is written every frame regardless
+                // of this weight, so a pixel that has just flipped pane -> field must not be able to
+                // pull last frame's pane value straight back out. The ramp holds arming off until
+                // the pane is a metre of mean depth behind us.
+                // Only the from-ABOVE pane refuses accumulation. Its span is what a moving camera
+                // sees THROUGH a window in the surface, and translating the eye changes that span
+                // completely - the premise the reprojection rests on. An eye inside the room is a
+                // different case: its span is [wall -> scene] and it behaves like any submerged
+                // pixel, so refusing there would strip the whole screen of smoothing for no reason.
+                bool fromAbovePane = (_CameraDryVolume < 0.5) && (paneWeight > 0.0);
+                float temporalArm = temporalFade * (fromAbovePane ? 0.0 : 1.0);
 
                 float marchDist = tExit - tEnter;
 
@@ -345,7 +452,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 // STATIC dither instead, which the separable blur can smooth. Fading the frame term
                 // rather than switching it keeps the pattern morphing smoothly across the crossing.
                 float jitter = InterleavedGradientNoise(input.positionCS.xy
-                                                        + 5.588238 * _GodRayFrame * temporalFade);
+                                                        + 5.588238 * _GodRayFrame * temporalArm);
 
                 // Constant along a straight view ray -> hoisted: the sun glow (phase) and the per-step
                 // view-fog factor (Beer-Lambert over one step, per channel so red dies first).
@@ -428,7 +535,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 // Scaling by submergeFade removes it exactly where the premise fails and leaves the
                 // underwater calm bit-for-bit as it was; the same factor is continuous across the
                 // crossing, so the accumulation fades in rather than switching on.
-                float temporalBlend = _GodRayTemporalBlend * temporalFade;
+                float temporalBlend = _GodRayTemporalBlend * temporalArm;
                 if (temporalBlend > 0.0)
                 {
                     // SELF-CALIBRATING reprojection: project this pixel's scene point through BOTH
