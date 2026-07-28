@@ -79,7 +79,8 @@ namespace AbstractOcclusion.WebGpuWater
         // per-frame GPU random seed from the plain frame counter.
         const uint FrameSeedHashPrime = 2654435761u;
 
-        // One particle = 12 floats. MUST match FoamParticle in the compute + shader.
+        // One particle = 12 floats. MUST match FoamParticle in the compute + shader - and that is now
+        // machine-checked, see WaterWaveConstantsValidator's FoamParticle layout check.
         [StructLayout(LayoutKind.Sequential)]
         struct FoamParticle
         {
@@ -87,6 +88,12 @@ namespace AbstractOcclusion.WebGpuWater
             public Vector3 velocity;
             public float age, life, size, seed, kind, strength;
         }
+
+        /// <summary>Bytes per GPU particle. The ONE derived source for every consumer's buffer stride.</summary>
+        // Derived, never written down: WaterParticlePool used to hardcode 48 with a "MUST match" comment
+        // beside it, which is exactly the copy that goes stale. The type stays private; only the size
+        // crosses the boundary.
+        internal static readonly int ParticleStrideBytes = Marshal.SizeOf<FoamParticle>();
 
         // Compute/shader property ids.
         static readonly int ID_Particles = Shader.PropertyToID("Particles");

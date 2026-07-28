@@ -272,34 +272,11 @@ namespace AbstractOcclusion.WebGpuWater
             // Direction smoothing (audit B11): box-blur the direction VECTORS (not the angles) a
             // couple of passes, then renormalize per texel. Cheap at bake time; kills the medial-axis
             // flips and the per-Voronoi-cell facets that would otherwise steer the surf fronts.
-            var blurX = new float[n];
-            var blurZ = new float[n];
-            for (int pass = 0; pass < DirectionSmoothPasses; pass++)
-            {
-                for (int z = 0; z < res; z++)
-                {
-                    for (int x = 0; x < res; x++)
-                    {
-                        float sumX = 0f, sumZ = 0f;
-                        for (int oz = -1; oz <= 1; oz++)
-                        {
-                            int zz = Mathf.Clamp(z + oz, 0, res - 1);
-                            for (int ox = -1; ox <= 1; ox++)
-                            {
-                                int xx = Mathf.Clamp(x + ox, 0, res - 1);
-                                int j = zz * res + xx;
-                                sumX += dirX[j];
-                                sumZ += dirZ[j];
-                            }
-                        }
-                        int i = z * res + x;
-                        blurX[i] = sumX / 9f;
-                        blurZ[i] = sumZ / 9f;
-                    }
-                }
-                (dirX, blurX) = (blurX, dirX);
-                (dirZ, blurZ) = (blurZ, dirZ);
-            }
+            // One channel at a time: the kernel never reads the other component, so two independent
+            // passes are identical to the interleaved loop this replaced (and the shared helper is now
+            // the only place the kernel is written).
+            dirX = BoxBlur3x3(dirX, new float[n], res, DirectionSmoothPasses);
+            dirZ = BoxBlur3x3(dirZ, new float[n], res, DirectionSmoothPasses);
             for (int i = 0; i < n; i++)
             {
                 float len = Mathf.Sqrt(dirX[i] * dirX[i] + dirZ[i] * dirZ[i]);
@@ -354,29 +331,40 @@ namespace AbstractOcclusion.WebGpuWater
                 }
             }
 
-            var blur = new float[n];
-            for (int pass = 0; pass < DirectionSmoothPasses; pass++)
+            return BoxBlur3x3(slope, new float[n], res, DirectionSmoothPasses);
+        }
+
+        // Kernel extent for the bake-time smoothing below. ONE knob: the tap count is derived, so the
+        // kernel cannot be widened in the loop bounds and left un-normalised in the divide.
+        const int BoxBlurRadius = 1;                                                    // 3x3
+        const float BoxBlurTapCount = (2 * BoxBlurRadius + 1) * (2 * BoxBlurRadius + 1); // 9
+
+        // Clamp-edge box blur, run `passes` times, ping-ponging between src and scratch.
+        // RETURNS whichever array ended up holding the result - after an odd number of passes that is
+        // the array handed in as `scratch` - so callers must ASSIGN the return value, never keep using
+        // the array they passed as `src`. Bake-time only (shore field rebuild), so the extra pass over
+        // a second channel costs nothing that matters.
+        static float[] BoxBlur3x3(float[] src, float[] scratch, int res, int passes)
+        {
+            for (int pass = 0; pass < passes; pass++)
             {
                 for (int z = 0; z < res; z++)
                 {
                     for (int x = 0; x < res; x++)
                     {
                         float sum = 0f;
-                        for (int oz = -1; oz <= 1; oz++)
+                        for (int oz = -BoxBlurRadius; oz <= BoxBlurRadius; oz++)
                         {
                             int zz = Mathf.Clamp(z + oz, 0, res - 1);
-                            for (int ox = -1; ox <= 1; ox++)
-                            {
-                                int xx = Mathf.Clamp(x + ox, 0, res - 1);
-                                sum += slope[zz * res + xx];
-                            }
+                            for (int ox = -BoxBlurRadius; ox <= BoxBlurRadius; ox++)
+                                sum += src[zz * res + Mathf.Clamp(x + ox, 0, res - 1)];
                         }
-                        blur[z * res + x] = sum / 9f;
+                        scratch[z * res + x] = sum / BoxBlurTapCount;
                     }
                 }
-                (slope, blur) = (blur, slope);
+                (src, scratch) = (scratch, src);
             }
-            return slope;
+            return src;
         }
 
         static float SeedDistanceSq(int seed, int x, int z, int res, float[] worldX, float[] worldZ)

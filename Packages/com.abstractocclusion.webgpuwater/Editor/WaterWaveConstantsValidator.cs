@@ -53,6 +53,17 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const string SharedHlslAssetName = "WaterShared";
         const string OceanFftComputeAssetName = "OceanFft";
         const string OceanFftAssetName = "WaterOceanFft";
+        // FoamParticles.shader DRAWS the particles WaterFoamParticles.compute simulates, so the GPU
+        // struct is authored in the .compute, in the .shader, AND as a C# struct whose size becomes
+        // every consumer's buffer stride. Nothing linked the three: a field added on one side only does
+        // not fail loudly, the GPU just reinterprets whatever bytes are there and particles fly to
+        // garbage positions or vanish. Two "MUST match" comments used to be the whole guard.
+        const string FoamParticleShaderAssetName = "FoamParticles";
+        const string ShaderExtension = ".shader";
+        const string FoamParticleStructName = "FoamParticle";
+        // StructuredBuffer elements are TIGHTLY packed - no cbuffer 16-byte rounding - and every field
+        // of this struct is a float or a float3, so summing component sizes gives the real stride.
+        const int BytesPerFloatComponent = 4;
 
         // Relative tolerance for a matching value. The constants are authored to a few
         // decimal places; anything closer than this is the same number written two ways.
@@ -291,6 +302,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 !TryReadPackageAsset(CSharpAssetName, CSharpExtension, out string cSharpSource, out readError) ||
                 !TryReadPackageAsset(FoamParticlesAssetName, ComputeExtension, out string foamComputeSource, out readError) ||
                 !TryReadPackageAsset(FoamParticlesAssetName, CSharpExtension, out string foamParticlesSource, out readError) ||
+                !TryReadPackageAsset(FoamParticleShaderAssetName, ShaderExtension, out string foamShaderSource, out readError) ||
                 !TryReadPackageAsset(SplashEmitterAssetName, CSharpExtension, out string splashEmitterSource, out readError) ||
                 !TryReadPackageAsset(ExclusionHlslAssetName, HlslExtension, out string exclusionHlslSource, out readError) ||
                 !TryReadPackageAsset(ExclusionVolumeAssetName, CSharpExtension, out string exclusionVolumeSource, out readError) ||
@@ -326,6 +338,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                             OceanFftAssetName, oceanFftSource, OceanFftSizeConstantPairs);
             CollectProblems(problems, FoamParticlesAssetName, ComputeExtension, foamComputeSource,
                             FoamParticlesAssetName, foamParticlesSource, FoamThreadGroupConstantPairs);
+            CollectFoamParticleLayoutProblems(problems, foamComputeSource, foamShaderSource);
             if (problems.Count == 0) return;
 
             // Warning, not error: drift is a real authoring bug but never blocks the editor, and a
@@ -354,6 +367,80 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     problems.Add($"{hlslName} = {Format(hlslValue)} (hlsl) vs {cSharpName} = {Format(cSharpValue)} (c#)");
                 }
             }
+        }
+
+        // The FoamParticle GPU struct: the two HLSL copies must agree with each other, and their packed
+        // size must equal the C# struct's - that size is what every consumer uses as a buffer stride.
+        // Deliberately NOT a field-name comparison against the C# side: the realistic drift is a field
+        // added or removed (which changes the size) or the two shaders forking, and both are caught
+        // here without reflecting over a private nested type's layout.
+        static void CollectFoamParticleLayoutProblems(List<string> problems, string computeSource,
+                                                      string shaderSource)
+        {
+            if (!TryParseHlslStructFields(computeSource, FoamParticleStructName, out List<string> computeFields))
+            {
+                problems.Add($"struct {FoamParticleStructName}: not found in " +
+                             $"{FoamParticlesAssetName}{ComputeExtension} (renamed or removed?)");
+                return;
+            }
+            if (!TryParseHlslStructFields(shaderSource, FoamParticleStructName, out List<string> shaderFields))
+            {
+                problems.Add($"struct {FoamParticleStructName}: not found in " +
+                             $"{FoamParticleShaderAssetName}{ShaderExtension} (renamed or removed?)");
+                return;
+            }
+            if (!FieldListsMatch(computeFields, shaderFields))
+            {
+                problems.Add($"struct {FoamParticleStructName} differs between " +
+                             $"{FoamParticlesAssetName}{ComputeExtension} [{string.Join(", ", computeFields)}] " +
+                             $"and {FoamParticleShaderAssetName}{ShaderExtension} [{string.Join(", ", shaderFields)}]");
+                return;
+            }
+
+            int hlslBytes = HlslStructBytes(computeFields);
+            if (hlslBytes != WaterFoamParticles.ParticleStrideBytes)
+            {
+                problems.Add($"struct {FoamParticleStructName} packs to {hlslBytes} bytes in HLSL " +
+                             $"[{string.Join(", ", computeFields)}] but the C# struct is " +
+                             $"{WaterFoamParticles.ParticleStrideBytes} bytes - every buffer stride " +
+                             "derives from the C# size, so the GPU would misread every particle");
+            }
+        }
+
+        // Ordered "type name" list of an HLSL struct's fields, comments stripped. The ORDER is the
+        // layout, so the list is compared as a sequence, not as a set.
+        static bool TryParseHlslStructFields(string source, string structName, out List<string> fields)
+        {
+            fields = new List<string>();
+            Match block = Regex.Match(source, @"struct\s+" + Regex.Escape(structName) + @"\s*\{([^}]*)\}",
+                                      RegexOptions.Singleline);
+            if (!block.Success) return false;
+
+            string body = Regex.Replace(block.Groups[1].Value, @"//[^\n]*", string.Empty);
+            foreach (Match field in Regex.Matches(body, @"(float[234]?)\s+([A-Za-z_]\w*)\s*;"))
+                fields.Add(field.Groups[1].Value + " " + field.Groups[2].Value);
+            return fields.Count > 0;
+        }
+
+        // Tight-packed byte size of a parsed field list (see BytesPerFloatComponent).
+        static int HlslStructBytes(List<string> fields)
+        {
+            int bytes = 0;
+            foreach (string field in fields)
+            {
+                string type = field.Substring(0, field.IndexOf(' '));
+                int components = type == "float" ? 1 : type[type.Length - 1] - '0';
+                bytes += components * BytesPerFloatComponent;
+            }
+            return bytes;
+        }
+
+        static bool FieldListsMatch(List<string> a, List<string> b)
+        {
+            if (a.Count != b.Count) return false;
+            for (int i = 0; i < a.Count; i++)
+                if (a[i] != b[i]) return false;
+            return true;
         }
 
         static bool ValuesMatch(double a, double b)

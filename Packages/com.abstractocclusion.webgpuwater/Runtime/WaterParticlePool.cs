@@ -15,10 +15,10 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FlipbookFps = Shader.PropertyToID("_ParticleFlipbookFps");
         static readonly int ID_Particles = WaterShaderProps.Particles;
 
-        // One dead particle for the global fallback binding below. Only the STRIDE matters
-        // (12 floats = 48 bytes; MUST match FoamParticle in WaterFoamParticles.compute /
-        // FoamParticles.shader): the slot is all zeroes, and life = 0 marks it dead.
-        const int DeadParticleStrideBytes = 48;
+        // One dead particle for the global fallback binding below. Only the STRIDE matters: the slot is
+        // all zeroes, and life = 0 marks it dead. Derived from the C# struct rather than restated here -
+        // this used to be a hardcoded 48 with a "MUST match" comment, i.e. a fourth copy of the layout.
+        static readonly int DeadParticleStrideBytes = WaterFoamParticles.ParticleStrideBytes;
         const int DeadParticleCount = 1;
 
         static GraphicsBuffer _deadFallback;
