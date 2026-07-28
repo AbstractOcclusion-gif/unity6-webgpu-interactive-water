@@ -13,7 +13,7 @@ namespace AbstractOcclusion.WebGpuWater
     {
         static readonly int ID_FlipbookGrid = Shader.PropertyToID("_ParticleFlipbookGrid");
         static readonly int ID_FlipbookFps = Shader.PropertyToID("_ParticleFlipbookFps");
-        static readonly int ID_Particles = Shader.PropertyToID("_Particles");
+        static readonly int ID_Particles = WaterShaderProps.Particles;
 
         // One dead particle for the global fallback binding below. Only the STRIDE matters
         // (12 floats = 48 bytes; MUST match FoamParticle in WaterFoamParticles.compute /

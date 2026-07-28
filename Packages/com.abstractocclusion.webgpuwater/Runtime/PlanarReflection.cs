@@ -39,7 +39,7 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] internal bool enableReflection = true;
 
 #if WEBGPUWATER_URP
-        static readonly int ID_PlanarTex = Shader.PropertyToID("_PlanarReflectionTex");
+        static readonly int ID_PlanarTex = WaterShaderProps.PlanarReflectionTex;
 
         PlanarMirror _mirror;
 

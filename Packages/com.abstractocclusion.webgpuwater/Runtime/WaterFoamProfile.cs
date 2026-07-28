@@ -23,7 +23,7 @@ namespace AbstractOcclusion.WebGpuWater
         // and FoamDensityComposite).
         static readonly int ID_Tint = Shader.PropertyToID("_Tint");
         static readonly int ID_ParticleOpacity = Shader.PropertyToID("_ParticleOpacity");
-        static readonly int ID_ParticleTex = Shader.PropertyToID("_ParticleTex");
+        static readonly int ID_ParticleTex = WaterShaderProps.ParticleTex;
         static readonly int ID_DensityLowGain = Shader.PropertyToID("_DensityLowGain");
         static readonly int ID_DensityHighGain = Shader.PropertyToID("_DensityHighGain");
         static readonly int ID_BreakupTex = Shader.PropertyToID("_BreakupTex");

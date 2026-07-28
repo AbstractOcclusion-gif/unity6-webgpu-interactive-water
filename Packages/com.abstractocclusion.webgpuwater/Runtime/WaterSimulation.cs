@@ -32,7 +32,7 @@ namespace AbstractOcclusion.WebGpuWater
         const string KernelScrollFoam = "ScrollFoam";
 
         // Compute property ids, cached once instead of re-hashing strings every dispatch.
-        static readonly int ID_Size = Shader.PropertyToID("_Size");
+        static readonly int ID_Size = WaterShaderProps.Size;
         static readonly int ID_Delta = Shader.PropertyToID("_Delta");
         static readonly int ID_Src = Shader.PropertyToID("Src");
         static readonly int ID_Dst = Shader.PropertyToID("Dst");
@@ -86,8 +86,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_MeanResult = Shader.PropertyToID("MeanResult");
         static readonly int ID_MeanCorrectionMax = Shader.PropertyToID("_MeanCorrectionMax");
         static readonly int ID_ScrollOffset = Shader.PropertyToID("_ScrollOffset");
-        static readonly int ID_BedTex = Shader.PropertyToID("_BedTex");
-        static readonly int ID_UseBedDepth = Shader.PropertyToID("_UseBedDepth");
+        static readonly int ID_BedTex = WaterShaderProps.BedTex;
+        static readonly int ID_UseBedDepth = WaterShaderProps.UseBedDepth;
 
         /// <summary>Grid resolution of the heightfield RTs (per side). Set per quality tier.</summary>
         public int Resolution { get; }
@@ -329,32 +329,32 @@ namespace AbstractOcclusion.WebGpuWater
             static readonly int ID_ShoreFieldSizeSim = Shader.PropertyToID("_ShoreFieldSizeSim");
             static readonly int ID_ShoreDepthTexSim = Shader.PropertyToID("_ShoreDepthTexSim");
             static readonly int ID_ShoreSDFTexSim = Shader.PropertyToID("_ShoreSDFTexSim");
-            static readonly int ID_SurfActiveSim = Shader.PropertyToID("_SurfActive");
-            static readonly int ID_SurfAmplitudeSim = Shader.PropertyToID("_SurfAmplitude");
-            static readonly int ID_SurfWavelengthSim = Shader.PropertyToID("_SurfWavelength");
-            static readonly int ID_SurfPeriodSim = Shader.PropertyToID("_SurfPeriod");
-            static readonly int ID_SurfBandDepthSim = Shader.PropertyToID("_SurfBandDepth");
-            static readonly int ID_SurfSetStrengthSim = Shader.PropertyToID("_SurfSetStrength");
-            static readonly int ID_SurfLeanSim = Shader.PropertyToID("_SurfLean");
-            static readonly int ID_SurfCompressionSim = Shader.PropertyToID("_SurfCompression");
-            static readonly int ID_SurfGreensSim = Shader.PropertyToID("_SurfGreens");
-            static readonly int ID_SurfAmbientFadeSim = Shader.PropertyToID("_SurfAmbientFade");
-            static readonly int ID_SurfWaterlineFoamSim = Shader.PropertyToID("_SurfWaterlineFoam");
-            static readonly int ID_SurfCrestLengthSim = Shader.PropertyToID("_SurfCrestLength");
-            static readonly int ID_SurfCrestVariationSim = Shader.PropertyToID("_SurfCrestVariation");
-            static readonly int ID_SurfCrestPersistenceSim = Shader.PropertyToID("_SurfCrestPersistence");
-            static readonly int ID_SurfDirectionalitySim = Shader.PropertyToID("_SurfDirectionality");
-            static readonly int ID_SurfWindDirXZSim = Shader.PropertyToID("_SurfWindDirXZ");
-            static readonly int ID_ShoreShoalDepthSim = Shader.PropertyToID("_ShoreShoalDepth");
+            static readonly int ID_SurfActiveSim = WaterShaderProps.SurfActive;
+            static readonly int ID_SurfAmplitudeSim = WaterShaderProps.SurfAmplitude;
+            static readonly int ID_SurfWavelengthSim = WaterShaderProps.SurfWavelength;
+            static readonly int ID_SurfPeriodSim = WaterShaderProps.SurfPeriod;
+            static readonly int ID_SurfBandDepthSim = WaterShaderProps.SurfBandDepth;
+            static readonly int ID_SurfSetStrengthSim = WaterShaderProps.SurfSetStrength;
+            static readonly int ID_SurfLeanSim = WaterShaderProps.SurfLean;
+            static readonly int ID_SurfCompressionSim = WaterShaderProps.SurfCompression;
+            static readonly int ID_SurfGreensSim = WaterShaderProps.SurfGreens;
+            static readonly int ID_SurfAmbientFadeSim = WaterShaderProps.SurfAmbientFade;
+            static readonly int ID_SurfWaterlineFoamSim = WaterShaderProps.SurfWaterlineFoam;
+            static readonly int ID_SurfCrestLengthSim = WaterShaderProps.SurfCrestLength;
+            static readonly int ID_SurfCrestVariationSim = WaterShaderProps.SurfCrestVariation;
+            static readonly int ID_SurfCrestPersistenceSim = WaterShaderProps.SurfCrestPersistence;
+            static readonly int ID_SurfDirectionalitySim = WaterShaderProps.SurfDirectionality;
+            static readonly int ID_SurfWindDirXZSim = WaterShaderProps.SurfWindDirXZ;
+            static readonly int ID_ShoreShoalDepthSim = WaterShaderProps.ShoreShoalDepth;
             static readonly int ID_ShoreCrestFoamLutSim = Shader.PropertyToID("_ShoreCrestFoamLutSim");
             static readonly int ID_ShoreCrestFoamLutActive = Shader.PropertyToID("_ShoreCrestFoamLutActive");
             static readonly int ID_ShoreCrestFoamGain = Shader.PropertyToID("_ShoreCrestFoamGain");
-            static readonly int ID_SurfFoamRepartActive = Shader.PropertyToID("_SurfFoamRepartActive");
-            static readonly int ID_SurfFoamBoreGain = Shader.PropertyToID("_SurfFoamBoreGain");
-            static readonly int ID_SurfFoamTrailGain = Shader.PropertyToID("_SurfFoamTrailGain");
-            static readonly int ID_SurfFoamTrailLength = Shader.PropertyToID("_SurfFoamTrailLength");
-            static readonly int ID_SurfSwashAmplitudeSim = Shader.PropertyToID("_SurfSwashAmplitude");
-            static readonly int ID_ShoreSwashDepositGain = Shader.PropertyToID("_ShoreSwashDepositGain");
+            static readonly int ID_SurfFoamRepartActive = WaterShaderProps.SurfFoamRepartActive;
+            static readonly int ID_SurfFoamBoreGain = WaterShaderProps.SurfFoamBoreGain;
+            static readonly int ID_SurfFoamTrailGain = WaterShaderProps.SurfFoamTrailGain;
+            static readonly int ID_SurfFoamTrailLength = WaterShaderProps.SurfFoamTrailLength;
+            static readonly int ID_SurfSwashAmplitudeSim = WaterShaderProps.SurfSwashAmplitude;
+            static readonly int ID_ShoreSwashDepositGain = WaterShaderProps.ShoreSwashDepositGain;
 
             /// <summary>Push the surf-front uniforms + the Layer A field textures onto a compute
             /// kernel - the ONE binder every GPU consumer (ripple-sim foam injection, foam

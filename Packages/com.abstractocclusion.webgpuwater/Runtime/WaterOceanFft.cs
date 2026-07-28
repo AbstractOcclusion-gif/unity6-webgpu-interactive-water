@@ -98,9 +98,9 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FieldRes = Shader.PropertyToID("OceanFieldRes");
         static readonly int ID_FieldAmplitude = Shader.PropertyToID("OceanFieldAmplitude");
         static readonly int ID_GlobalDisplacement = Shader.PropertyToID("_OceanFftDisplacement");
-        static readonly int ID_GlobalNormal = Shader.PropertyToID("_OceanFftNormal");
-        static readonly int ID_GlobalDomainSizes = Shader.PropertyToID("_OceanFftDomainSizes");
-        static readonly int ID_GlobalCascadeCount = Shader.PropertyToID("_OceanFftCascadeCount");
+        static readonly int ID_GlobalNormal = WaterShaderProps.OceanFftNormal;
+        static readonly int ID_GlobalDomainSizes = WaterShaderProps.OceanFftDomainSizes;
+        static readonly int ID_GlobalCascadeCount = WaterShaderProps.OceanFftCascadeCount;
         static readonly int ID_GlobalVisibleAreas = Shader.PropertyToID("_OceanFftVisibleAreas");
         static readonly int ID_FoamPrev = Shader.PropertyToID("OceanFoamPrev");
         static readonly int ID_FoamNext = Shader.PropertyToID("OceanFoamNext");

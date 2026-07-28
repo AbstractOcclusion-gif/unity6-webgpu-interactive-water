@@ -90,18 +90,18 @@ namespace AbstractOcclusion.WebGpuWater
 
         // Compute/shader property ids.
         static readonly int ID_Particles = Shader.PropertyToID("Particles");
-        static readonly int ID_ParticlesShader = Shader.PropertyToID("_Particles");
+        static readonly int ID_ParticlesShader = WaterShaderProps.Particles;
         static readonly int ID_Counters = Shader.PropertyToID("Counters");
         static readonly int ID_Sim = Shader.PropertyToID("Sim");
         static readonly int ID_FoamTex = Shader.PropertyToID("FoamTex");
-        static readonly int ID_Size = Shader.PropertyToID("_Size");
+        static readonly int ID_Size = WaterShaderProps.Size;
         static readonly int ID_Capacity = Shader.PropertyToID("_Capacity");
         static readonly int ID_FrameSeed = Shader.PropertyToID("_FrameSeed");
         static readonly int ID_DeltaTime = Shader.PropertyToID("_DeltaTime");
-        static readonly int ID_ExclusionCount = Shader.PropertyToID("_ExclusionCount");
-        static readonly int ID_ExclusionWorldToLocal = Shader.PropertyToID("_ExclusionWorldToLocal");
-        static readonly int ID_ExclusionShape = Shader.PropertyToID("_ExclusionShape");
-        static readonly int ID_ExclusionEdgeParams = Shader.PropertyToID("_ExclusionEdgeParams");
+        static readonly int ID_ExclusionCount = WaterShaderProps.ExclusionCount;
+        static readonly int ID_ExclusionWorldToLocal = WaterShaderProps.ExclusionWorldToLocal;
+        static readonly int ID_ExclusionShape = WaterShaderProps.ExclusionShape;
+        static readonly int ID_ExclusionEdgeParams = WaterShaderProps.ExclusionEdgeParams;
         // Full-size persistent buffers (a global array's size locks at its first set); the
         // selection logic itself lives in WaterExclusionVolume.WriteVolumeUniforms - one
         // implementation. The kill/dissolve tests need the volumes' frames AND SHAPES (a shape-less
@@ -125,9 +125,9 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FlowDrift = Shader.PropertyToID("_FlowDrift");
         static readonly int ID_WindDrift = Shader.PropertyToID("_WindDrift");
         static readonly int ID_Drag = Shader.PropertyToID("_Drag");
-        static readonly int ID_OceanFftNormal = Shader.PropertyToID("_OceanFftNormal");
-        static readonly int ID_OceanFftDomainSizes = Shader.PropertyToID("_OceanFftDomainSizes");
-        static readonly int ID_OceanFftCascadeCount = Shader.PropertyToID("_OceanFftCascadeCount");
+        static readonly int ID_OceanFftNormal = WaterShaderProps.OceanFftNormal;
+        static readonly int ID_OceanFftDomainSizes = WaterShaderProps.OceanFftDomainSizes;
+        static readonly int ID_OceanFftCascadeCount = WaterShaderProps.OceanFftCascadeCount;
         static readonly int ID_CrestRoll = Shader.PropertyToID("_CrestRoll");
         static readonly int ID_DrawKind = Shader.PropertyToID("_DrawKind");
         static readonly int ID_SprayLifeMin = Shader.PropertyToID("_SprayLifeMin");

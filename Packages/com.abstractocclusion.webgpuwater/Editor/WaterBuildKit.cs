@@ -75,12 +75,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string PropUnderwater = "_Underwater";
         internal const string PropCull = "_Cull";
         internal const string PropBaseColor = "_BaseColor";
-        internal const string PropRealRefraction = "_RealRefraction";
+        internal const string PropRealRefraction = WaterShaderProps.RealRefractionName;
         internal const string PropGodRayColor = "_GodRayColor";
         internal const string PropGodRayDensity = "_GodRayDensity";
-        internal const string PropFoamTex = "_FoamTex";
-        internal const string PropFoamTexFrames = "_FoamTexFrames";
-        internal const string PropParticleTex = "_ParticleTex";
+        internal const string PropFoamTex = WaterShaderProps.FoamTexName;
+        internal const string PropFoamTexFrames = WaterShaderProps.FoamTexFramesName;
+        internal const string PropParticleTex = WaterShaderProps.ParticleTexName;
 
         // GPU foam particles (compute + procedural-quad shader + sprite atlas).
         internal const string ShaderFoamParticles = WaterShaderNames.FoamParticles;

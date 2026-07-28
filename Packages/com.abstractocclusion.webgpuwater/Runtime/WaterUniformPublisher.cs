@@ -49,9 +49,9 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_DepthEnabled = Shader.PropertyToID("_DepthDarkenEnabled");
         static readonly int ID_CausticDepthFade = Shader.PropertyToID("_CausticDepthFade");
         static readonly int ID_GodRayDepthFade = Shader.PropertyToID("_GodRayDepthFade");
-        static readonly int ID_BedTex = Shader.PropertyToID("_BedTex");
+        static readonly int ID_BedTex = WaterShaderProps.BedTex;
         static readonly int ID_BedValid = Shader.PropertyToID("_BedValid");
-        static readonly int ID_UseBedDepth = Shader.PropertyToID("_UseBedDepth");
+        static readonly int ID_UseBedDepth = WaterShaderProps.UseBedDepth;
         static readonly int ID_ShoreBodyGate = Shader.PropertyToID("_ShoreBodyGate");
         static readonly int ID_DeepWaterColor = Shader.PropertyToID("_DeepWaterColor");
         static readonly int ID_ShorelineScale = Shader.PropertyToID("_ShorelineDepthScale");
@@ -64,8 +64,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FoamStrength = Shader.PropertyToID("_FoamStrength");
         static readonly int ID_FoamTileSize = Shader.PropertyToID("_FoamTileSize");
         // Body-owned surface texture inputs (Textures section): bound only when assigned on the body.
-        static readonly int ID_FoamTex = Shader.PropertyToID("_FoamTex");
-        static readonly int ID_FoamTexFrames = Shader.PropertyToID("_FoamTexFrames");
+        static readonly int ID_FoamTex = WaterShaderProps.FoamTex;
+        static readonly int ID_FoamTexFrames = WaterShaderProps.FoamTexFrames;
         static readonly int ID_FoamTexFPS = Shader.PropertyToID("_FoamTexFPS");
         static readonly int ID_FoamNormalStrength = Shader.PropertyToID("_FoamNormalStrength");
         static readonly int ID_OceanWhitecapTex = Shader.PropertyToID("_OceanWhitecapTex");
@@ -123,10 +123,10 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_UnderwaterFogArmed = Shader.PropertyToID("_UnderwaterFogArmed");
         static readonly int ID_PeakedRefine = Shader.PropertyToID("_PeakedRefineSteps");
         static readonly int ID_UsePlanar = Shader.PropertyToID("_UsePlanar");
-        static readonly int ID_PlanarTex = Shader.PropertyToID("_PlanarReflectionTex");
+        static readonly int ID_PlanarTex = WaterShaderProps.PlanarReflectionTex;
         static readonly int ID_UseSSR = Shader.PropertyToID("_UseSSR");
         static readonly int ID_UseUrpProbe = Shader.PropertyToID("_UseUrpProbe");
-        static readonly int ID_RealRefraction = Shader.PropertyToID("_RealRefraction");
+        static readonly int ID_RealRefraction = WaterShaderProps.RealRefraction;
         static readonly int ID_ProceduralPool = Shader.PropertyToID("_ProceduralPool");
         static readonly int ID_ReflectionStrength = Shader.PropertyToID("_ReflectionStrength");
         static readonly int ID_EnvReflectionIntensity = Shader.PropertyToID("_EnvReflectionIntensity");
@@ -161,12 +161,12 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SSRMaxSteps = Shader.PropertyToID("_SSRMaxSteps");
         static readonly int ID_SSRThickness = Shader.PropertyToID("_SSRThickness");
         static readonly int ID_RefractionDistortion = Shader.PropertyToID("_RefractionDistortion");
-        static readonly int ID_ExclusionCount = Shader.PropertyToID("_ExclusionCount");
-        static readonly int ID_ExclusionWorldToLocal = Shader.PropertyToID("_ExclusionWorldToLocal");
-        static readonly int ID_ExclusionShape = Shader.PropertyToID("_ExclusionShape");
+        static readonly int ID_ExclusionCount = WaterShaderProps.ExclusionCount;
+        static readonly int ID_ExclusionWorldToLocal = WaterShaderProps.ExclusionWorldToLocal;
+        static readonly int ID_ExclusionShape = WaterShaderProps.ExclusionShape;
         static readonly int ID_ExclusionMeshCount = Shader.PropertyToID("_ExclusionMeshCount");
         static readonly int ID_ExclusionEdgeColor = Shader.PropertyToID("_ExclusionEdgeColor");
-        static readonly int ID_ExclusionEdgeParams = Shader.PropertyToID("_ExclusionEdgeParams");
+        static readonly int ID_ExclusionEdgeParams = WaterShaderProps.ExclusionEdgeParams;
 
         // Persistent FULL-SIZE buffers for the exclusion uniforms: Unity locks a global
         // array's size at its FIRST set, so every publish sends MaxVolumes entries and
