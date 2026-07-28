@@ -258,16 +258,21 @@ float3 OceanFftDisplacementShore(float2 worldXZ, ShoreData shore)
     return sum;
 }
 
-// Sum the surface-normal tilt (xz of the per-cascade world normal) across the active cascades. This is
-// the crux of the FFT quality win: the normal is sampled independently of mesh tessellation with trilinear
-// mip selection, so ripple detail stays crisp toward the horizon without aliasing. The mip is chosen by an
-// explicit DISTANCE LOD (not screen derivatives) so the same code is valid in the vertex programs that also
-// call this - e.g. the projected caustic grid - not just the fragment. A cubic distance fade then removes
-// each cascade past its visible range so the finest ripples don't shimmer far away.
-float2 OceanFftNormalTiltShore(float2 worldXZ, ShoreData shore)
+// Weighted sum of _OceanFftNormal across the ACTIVE cascades - the cubic distance fade, the explicit
+// distance mip LOD and the per-cascade shore attenuation, all in one place. Callers swizzle:
+//   .xz = surface-normal tilt   .y = Jacobian crest pinch   .w = whitecap foam coverage
+//
+// ONE loop for all three because the WEIGHT is the thing they must agree on. Tilt, pinch and foam are
+// the same wave read three ways: retune the fade curve or the shoal attenuation in some of them and not
+// the others and you get foam and glow over water that carries no visible wave - precisely the failure
+// OceanFftJacobianShore's own header warns about. Sharing the weight makes that drift impossible.
+// Accumulating all four channels rather than one costs a couple of MADs per cascade and NO extra
+// bandwidth: SampleLevel returns the full float4 either way, and each channel accumulates in the same
+// order it did before, so the result is bit-identical to the three loops this replaced.
+float4 OceanFftNormalSumShore(float2 worldXZ, ShoreData shore)
 {
     float camDist = distance(worldXZ, _WorldSpaceCameraPos.xz);
-    float2 tilt = float2(0.0, 0.0);
+    float4 sum = float4(0.0, 0.0, 0.0, 0.0);
     for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
     {
         float active = (c < (int)_OceanFftCascadeCount) ? 1.0 : 0.0;
@@ -277,10 +282,21 @@ float2 OceanFftNormalTiltShore(float2 worldXZ, ShoreData shore)
         float f = saturate(camDist / max(_OceanFftVisibleAreas[c], 1e-3));
         float fade = 1.0 - f * f * f;   // full near the camera, 0 past the cascade's visible range
         float lod = log2(1.0 + camDist / domain); // farther -> coarser mip (distance anti-aliasing)
-        tilt += (active * fade * OceanCascadeShoalWeight(c, shore))
-              * _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod).xz;
+        sum += (active * fade * OceanCascadeShoalWeight(c, shore))
+             * _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod);
     }
-    return tilt;
+    return sum;
+}
+
+// Sum the surface-normal tilt (xz of the per-cascade world normal) across the active cascades. This is
+// the crux of the FFT quality win: the normal is sampled independently of mesh tessellation with trilinear
+// mip selection, so ripple detail stays crisp toward the horizon without aliasing. The mip is chosen by an
+// explicit DISTANCE LOD (not screen derivatives) so the same code is valid in the vertex programs that also
+// call this - e.g. the projected caustic grid - not just the fragment. A cubic distance fade then removes
+// each cascade past its visible range so the finest ripples don't shimmer far away.
+float2 OceanFftNormalTiltShore(float2 worldXZ, ShoreData shore)
+{
+    return OceanFftNormalSumShore(worldXZ, shore).xz;
 }
 
 float2 OceanFftNormalTilt(float2 worldXZ)
@@ -300,20 +316,7 @@ float OceanFftFoam(float2 worldXZ)
     // Shore attenuation keeps whitecaps off water the depth field has already flattened (the
     // surf whitewash layer owns the foam story there instead).
     ShoreData shore = ShoreSample(worldXZ);
-    float camDist = distance(worldXZ, _WorldSpaceCameraPos.xz);
-    float foam = 0.0;
-    for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
-    {
-        float active = (c < (int)_OceanFftCascadeCount) ? 1.0 : 0.0;
-        float slice = min((float)c, _OceanFftCascadeCount - 1.0);
-        float domain = max(_OceanFftDomainSizes[c], 1e-3);
-        float2 uv = worldXZ / domain;
-        float f = saturate(camDist / max(_OceanFftVisibleAreas[c], 1e-3));
-        float fade = 1.0 - f * f * f;
-        float lod = log2(1.0 + camDist / domain);
-        foam += (active * fade * OceanCascadeShoalWeight(c, shore))
-              * _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod).w;
-    }
+    float foam = OceanFftNormalSumShore(worldXZ, shore).w;
     // Edge guard: no whitecaps on the flattened border band (foam over visibly calm water reads
     // as detached from the waves - the "patches corresponding to nothing" rule).
     return saturate(foam) * LbwEdgeWeight(worldXZ);
@@ -328,20 +331,7 @@ float OceanFftJacobianShore(float2 worldXZ, ShoreData shore)
     // Per-cascade shore attenuation matches the DISPLACEMENT's: a wave the depth field has
     // flattened must not keep emitting its full-strength pinch signal, or foam/glow appears
     // over water that visibly carries no wave ("patches corresponding to nothing").
-    float camDist = distance(worldXZ, _WorldSpaceCameraPos.xz);
-    float pinch = 0.0;
-    for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
-    {
-        float active = (c < (int)_OceanFftCascadeCount) ? 1.0 : 0.0;
-        float slice = min((float)c, _OceanFftCascadeCount - 1.0);
-        float domain = max(_OceanFftDomainSizes[c], 1e-3);
-        float2 uv = worldXZ / domain;
-        float f = saturate(camDist / max(_OceanFftVisibleAreas[c], 1e-3));
-        float fade = 1.0 - f * f * f;
-        float lod = log2(1.0 + camDist / domain);
-        pinch += (active * fade * OceanCascadeShoalWeight(c, shore))
-               * _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod).y;
-    }
+    float pinch = OceanFftNormalSumShore(worldXZ, shore).y;
     return saturate(pinch);
 }
 
