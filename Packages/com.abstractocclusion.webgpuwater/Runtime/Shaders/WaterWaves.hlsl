@@ -13,7 +13,8 @@
 #ifndef WEBGL_WATER_WAVES_INCLUDED
 #define WEBGL_WATER_WAVES_INCLUDED
 
-// Must match WaterWaveBank.MaxWaves on the C# side.
+// Must match WaterWaveBank.MaxWaves on the C# side - WaterWaveConstantsValidator guards the pair.
+// C# larger over-runs these declared arrays on SetVectorArray; C# smaller leaves waves unwritten.
 #define WATER_MAX_WAVES 16
 
 // _WaveA[i] = (directionX, directionZ, wavenumber k, angular speed omega)

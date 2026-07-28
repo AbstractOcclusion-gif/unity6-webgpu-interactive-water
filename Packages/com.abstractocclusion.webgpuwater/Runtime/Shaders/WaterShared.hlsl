@@ -46,8 +46,8 @@
 
 // FFT ocean cascade layout, shared by every consumer (WaterLargeWaves.hlsl sampling,
 // OceanFft.compute generation, WaterFoamParticles.compute crest-foam spawning) - three files used
-// to carry their own copies. MAX_CASCADES also mirrors WaterOceanFft.cs MaxCascades (C#, not
-// validator-parsed - keep lockstep by hand). A tiled cascade has no per-component wavelength at
+// to carry their own copies. MAX_CASCADES also mirrors WaterOceanFft.cs MaxCascades
+// (WaterWaveConstantsValidator guards the pair). A tiled cascade has no per-component wavelength at
 // sample time, so shore attenuation uses one REPRESENTATIVE wavelength per cascade: the dominant
 // energy of a tile sits around this fraction of its domain.
 #define OCEAN_FFT_MAX_CASCADES 4

@@ -204,21 +204,15 @@ namespace AbstractOcclusion.WebGpuWater
             ReleaseAndDestroy(ref _hiRes);
             ReleaseAndDestroy(ref _midRes);
             _cb?.Release();
-            DestroyRuntimeObject(_mat); // the footprint material leaked once per enable cycle
+            WaterObjects.DestroyRuntime(_mat); // the footprint material leaked once per enable cycle
         }
 
         static void ReleaseAndDestroy(ref RenderTexture rt)
         {
             if (rt == null) return;
             rt.Release();
-            DestroyRuntimeObject(rt);
+            WaterObjects.DestroyRuntime(rt);
             rt = null;
-        }
-
-        static void DestroyRuntimeObject(Object obj)
-        {
-            if (obj == null) return;
-            if (Application.isPlaying) Object.Destroy(obj); else Object.DestroyImmediate(obj);
         }
     }
 }

@@ -9,7 +9,7 @@ using UnityEngine.Rendering;
 namespace AbstractOcclusion.WebGpuWater
 {
     /// <summary>Draws one slice of the ocean FFT cascade array to a screen corner for verification.</summary>
-    [AddComponentMenu("WebGpuWater/Debug/Ocean FFT Debug View")]
+    [AddComponentMenu("AbstractOcclusion/WebGpuWater/Ocean FFT Debug View")]
     internal sealed class WaterOceanFftDebugView : MonoBehaviour
     {
         [SerializeField] WaterVolume oceanBody;

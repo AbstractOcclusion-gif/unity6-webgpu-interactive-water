@@ -47,10 +47,11 @@ namespace AbstractOcclusion.WebGpuWater
         // finest cascade fades first, so distant water keeps only the swell and fine ripples never alias.
         static readonly float[] DefaultVisibleAreas = { 40f, 160f, 800f, 4800f };
 
-        const int FftSize = 128;   // must equal FFT_SIZE in OceanFft.compute
+        // HLSL pair: FFT_SIZE / FFT_STAGES in OceanFft.compute, both validator-guarded.
+        const int FftSize = 128;
         const int FftStages = 7;   // log2(FftSize)
         const int ThreadGroupSize = 8;
-        const int MaxCascades = 4;
+        const int MaxCascades = 4; // HLSL pair: OCEAN_FFT_MAX_CASCADES (validator-guarded)
         const int SpectrumSeed = 1337;
         const float PreviewGain = 8f; // debug-view display gain (editor/dev builds only)
         // Ocean whitecap foam internal calibration (NOT art knobs - the coverage/strength/fade/threshold

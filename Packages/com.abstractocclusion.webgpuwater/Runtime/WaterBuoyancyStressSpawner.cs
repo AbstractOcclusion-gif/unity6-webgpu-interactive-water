@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace AbstractOcclusion.WebGpuWater
 {
-    [AddComponentMenu("AbstractOcclusion/Water/Buoyancy Stress Spawner")]
+    [AddComponentMenu("AbstractOcclusion/WebGpuWater/Buoyancy Stress Spawner")]
     [DisallowMultipleComponent]
     public sealed class WaterBuoyancyStressSpawner : MonoBehaviour
     {

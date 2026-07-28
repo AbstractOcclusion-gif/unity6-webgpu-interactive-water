@@ -10,7 +10,7 @@ using UnityEngine;
 
 namespace AbstractOcclusion.WebGpuWater
 {
-    [AddComponentMenu("AbstractOcclusion/Water/Metrics Overlay")]
+    [AddComponentMenu("AbstractOcclusion/WebGpuWater/Metrics Overlay")]
     [DisallowMultipleComponent]
     public sealed class WaterMetricsOverlay : MonoBehaviour
     {

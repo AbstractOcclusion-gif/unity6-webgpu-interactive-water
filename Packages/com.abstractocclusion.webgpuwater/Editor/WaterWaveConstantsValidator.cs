@@ -1,12 +1,15 @@
-// Editor guard against silent drift between the hand-authored copies of the
-// open-water swell + surf-front constants.
+// Editor guard against silent drift between hand-authored constants that are mirrored
+// across a shader/compute file and a C# file.
 //
-// WHY: the wave fields are authored twice - as LBW_* #defines in
-// Runtime/Shaders/WaterLargeWaves.hlsl, SURF_* #defines in WaterSurfWaves.hlsl and SHORE_*
-// #defines in WaterShore.hlsl (drive the rendered surface) and as consts in Runtime/LargeWaveField.cs (the CPU
-// buoyancy mirror). Nothing links them, so if one side is retuned and the other is
-// forgotten, floating objects silently desync from the visible crests. This validator
-// reads the source files on editor load and reports any drifted constant loudly,
+// WHY: a number of constants are authored twice with nothing linking the two copies - the
+// open-water swell + surf-front fields (LBW_* in Runtime/Shaders/WaterLargeWaves.hlsl, SURF_* in
+// WaterSurfWaves.hlsl, SHORE_* in WaterShoreMath.hlsl, all mirrored as consts in
+// Runtime/LargeWaveField.cs, the CPU buoyancy mirror), the splash-burst shaping (the GPU spray
+// compute vs the Shuriken fallback), the exclusion carve geometry, and the array/grid/thread-group
+// SIZES that must agree or a SetVectorArray over-runs a uniform array and a dispatch launches the
+// wrong thread count. Every one of these fails SILENTLY when it drifts: floating objects desync
+// from the visible crests, the two splash paths fork, a cascade is read past its end. This
+// validator reads the source files on editor load and reports any drifted constant loudly,
 // replacing the old "remember to edit both files" discipline. It is a read-only
 // watcher: it changes no runtime behaviour and no files.
 //
@@ -14,7 +17,7 @@
 // edits the package source. It therefore runs solely when the package is EMBEDDED (living in the
 // project's Packages/ folder, i.e. the development project) - see IsEmbeddedPackage. A customer
 // consuming the package from a registry, a tarball or an Asset Store import never pays the
-// multi-file read + ~40 regex passes per domain reload, and can never be shown a console error
+// multi-file read + one regex pass per guarded constant, and can never be shown a console error
 // about an internal invariant they cannot fix.
 using System.Collections.Generic;
 using System.Globalization;
@@ -37,12 +40,19 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const string HlslExtension = ".hlsl";
         const string CSharpAssetName = "LargeWaveField";
         const string CSharpExtension = ".cs";
-        const string FoamComputeAssetName = "WaterFoamParticles";
+        // Names BOTH the .compute (the GPU spray path) and the .cs driver (thread-group sizes);
+        // IsExactAsset splits them on the extension.
+        const string FoamParticlesAssetName = "WaterFoamParticles";
         const string ComputeExtension = ".compute";
         const string SplashEmitterAssetName = "WaterSplashEmitter";
         const string ExclusionHlslAssetName = "WaterExclusion";
         const string ExclusionVolumeAssetName = "WaterExclusionVolume";
         const string PrimitiveShapeHlslAssetName = "WaterPrimitiveShape";
+        const string WavesHlslAssetName = "WaterWaves";
+        const string WaveBankAssetName = "WaterWaveBank";
+        const string SharedHlslAssetName = "WaterShared";
+        const string OceanFftComputeAssetName = "OceanFft";
+        const string OceanFftAssetName = "WaterOceanFft";
 
         // Relative tolerance for a matching value. The constants are authored to a few
         // decimal places; anything closer than this is the same number written two ways.
@@ -172,15 +182,21 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             ("BURST_UP_JITTER_MAX",     "UpwardJitterMax"),
             ("BURST_RING_RADIUS_SCALE", "SpawnRingRadiusScale"),
             ("BURST_SPAWN_HEIGHT",      "SpawnHeightAboveSurface"),
+            ("BURST_SIZE_JITTER_MIN",   "SizeJitterMin"),
+            ("BURST_SIZE_JITTER_MAX",   "SizeJitterMax"),
         };
 
         // The exclusion-volume cap is authored twice: EXCLUSION_MAX_VOLUMES sizes the shader's
         // uniform array (WaterExclusion.hlsl) and WaterExclusionVolume.MaxVolumes sizes the C#
         // publish buffer. A drift would truncate or over-read the array silently.
+        // EXCLUSION_LOCAL_HALF_EXTENT is the carve BOUNDARY itself - the unit local space the
+        // world->local matrices map into, read at 20+ shader sites and mirrored by the CPU point
+        // test. Drift there and a click ripples water the GPU has carved away.
         static readonly (string Hlsl, string CSharp)[] ExclusionConstantPairs =
         {
             ("EXCLUSION_MAX_VOLUMES", "MaxVolumes"),
             ("EXCLUSION_SHAPE_MESH", "MeshShapeId"),
+            ("EXCLUSION_LOCAL_HALF_EXTENT", "LocalHalfExtent"),
         };
 
         // The shape selector is authored twice as well: PRIMITIVE_SHAPE_SPHERE picks the sphere
@@ -190,6 +206,45 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         static readonly (string Hlsl, string CSharp)[] PrimitiveShapeConstantPairs =
         {
             ("PRIMITIVE_SHAPE_SPHERE", "SphereShapeId"),
+        };
+
+        // ---- SIZES ------------------------------------------------------------------------
+        // The tables below guard array/grid/thread-group sizes rather than tuning values. These are
+        // the quietest drifts in the package: nothing looks wrong, the GPU just over-runs a uniform
+        // array, truncates a cascade or launches the wrong thread count.
+
+        // WATER_MAX_WAVES declares the shader's _WaveA/_WaveB uniform arrays; WaterWaveBank.MaxWaves
+        // sizes the CPU arrays fed to SetVectorArray. C# larger = the upload over-runs the declared
+        // array; C# smaller = the shader reads uninitialised waves.
+        static readonly (string Hlsl, string CSharp)[] WaveBankConstantPairs =
+        {
+            ("WATER_MAX_WAVES", "MaxWaves"),
+        };
+
+        // The FFT cascade count is shared by three shader consumers via WaterShared.hlsl and driven
+        // by WaterOceanFft.MaxCascades on the C# side.
+        static readonly (string Hlsl, string CSharp)[] OceanFftCascadeConstantPairs =
+        {
+            ("OCEAN_FFT_MAX_CASCADES", "MaxCascades"),
+        };
+
+        // FFT_SIZE pairs with FftSize, NOT DefaultResolution: the RESOLUTION is already checked at
+        // runtime (WaterOceanFft warns and disables the FFT ocean when they disagree), while FftSize
+        // is the compile-time copy nothing checks. FFT_STAGES is log2(FFT_SIZE) - changing the size
+        // without the stage count silently truncates the butterfly.
+        static readonly (string Hlsl, string CSharp)[] OceanFftSizeConstantPairs =
+        {
+            ("FFT_SIZE",   "FftSize"),
+            ("FFT_STAGES", "FftStages"),
+        };
+
+        // The compute declares these in [numthreads(...)]; the C# side divides its dispatch count by
+        // them. A drift launches too few threads (work silently skipped) or too many (writes past the
+        // end, caught only by whatever bounds test the kernel happens to carry).
+        static readonly (string Hlsl, string CSharp)[] FoamThreadGroupConstantPairs =
+        {
+            ("SPAWN_THREAD_GROUP_SIZE",  "SpawnThreadGroupSize"),
+            ("UPDATE_THREAD_GROUP_SIZE", "UpdateThreadGroupSize"),
         };
 
         // Captures the numeric literal, tolerating scientific notation and a trailing C# 'f'.
@@ -232,11 +287,17 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 !TryReadPackageAsset(SurfWavesHlslAssetName, HlslExtension, out string surfWavesSource, out readError) ||
                 !TryReadPackageAsset(ShoreHlslAssetName, HlslExtension, out string shoreSource, out readError) ||
                 !TryReadPackageAsset(CSharpAssetName, CSharpExtension, out string cSharpSource, out readError) ||
-                !TryReadPackageAsset(FoamComputeAssetName, ComputeExtension, out string foamComputeSource, out readError) ||
+                !TryReadPackageAsset(FoamParticlesAssetName, ComputeExtension, out string foamComputeSource, out readError) ||
+                !TryReadPackageAsset(FoamParticlesAssetName, CSharpExtension, out string foamParticlesSource, out readError) ||
                 !TryReadPackageAsset(SplashEmitterAssetName, CSharpExtension, out string splashEmitterSource, out readError) ||
                 !TryReadPackageAsset(ExclusionHlslAssetName, HlslExtension, out string exclusionHlslSource, out readError) ||
                 !TryReadPackageAsset(ExclusionVolumeAssetName, CSharpExtension, out string exclusionVolumeSource, out readError) ||
-                !TryReadPackageAsset(PrimitiveShapeHlslAssetName, HlslExtension, out string primitiveShapeSource, out readError))
+                !TryReadPackageAsset(PrimitiveShapeHlslAssetName, HlslExtension, out string primitiveShapeSource, out readError) ||
+                !TryReadPackageAsset(WavesHlslAssetName, HlslExtension, out string wavesHlslSource, out readError) ||
+                !TryReadPackageAsset(WaveBankAssetName, CSharpExtension, out string waveBankSource, out readError) ||
+                !TryReadPackageAsset(SharedHlslAssetName, HlslExtension, out string sharedHlslSource, out readError) ||
+                !TryReadPackageAsset(OceanFftComputeAssetName, ComputeExtension, out string oceanFftComputeSource, out readError) ||
+                !TryReadPackageAsset(OceanFftAssetName, CSharpExtension, out string oceanFftSource, out readError))
             {
                 Debug.LogWarning(LogPrefix + "validation skipped - " + readError);
                 return;
@@ -249,12 +310,20 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                             CSharpAssetName, cSharpSource, SurfWavesConstantPairs);
             CollectProblems(problems, ShoreHlslAssetName, HlslExtension, shoreSource,
                             CSharpAssetName, cSharpSource, ShoreConstantPairs);
-            CollectProblems(problems, FoamComputeAssetName, ComputeExtension, foamComputeSource,
+            CollectProblems(problems, FoamParticlesAssetName, ComputeExtension, foamComputeSource,
                             SplashEmitterAssetName, splashEmitterSource, SplashBurstConstantPairs);
             CollectProblems(problems, ExclusionHlslAssetName, HlslExtension, exclusionHlslSource,
                             ExclusionVolumeAssetName, exclusionVolumeSource, ExclusionConstantPairs);
             CollectProblems(problems, PrimitiveShapeHlslAssetName, HlslExtension, primitiveShapeSource,
                             ExclusionVolumeAssetName, exclusionVolumeSource, PrimitiveShapeConstantPairs);
+            CollectProblems(problems, WavesHlslAssetName, HlslExtension, wavesHlslSource,
+                            WaveBankAssetName, waveBankSource, WaveBankConstantPairs);
+            CollectProblems(problems, SharedHlslAssetName, HlslExtension, sharedHlslSource,
+                            OceanFftAssetName, oceanFftSource, OceanFftCascadeConstantPairs);
+            CollectProblems(problems, OceanFftComputeAssetName, ComputeExtension, oceanFftComputeSource,
+                            OceanFftAssetName, oceanFftSource, OceanFftSizeConstantPairs);
+            CollectProblems(problems, FoamParticlesAssetName, ComputeExtension, foamComputeSource,
+                            FoamParticlesAssetName, foamParticlesSource, FoamThreadGroupConstantPairs);
             if (problems.Count == 0) return;
 
             // Warning, not error: drift is a real authoring bug but never blocks the editor, and a
@@ -362,9 +431,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             var report = new StringBuilder();
             report.Append(LogPrefix);
-            report.AppendLine($"wave constants have drifted between the HLSL sources ({LargeWavesHlslAssetName}/{SurfWavesHlslAssetName}/{ShoreHlslAssetName}{HlslExtension}) " +
-                              $"and {CSharpAssetName}{CSharpExtension}. " +
-                              "The rendered surface and CPU buoyancy will disagree until these match:");
+            report.AppendLine("mirrored constants have drifted between their shader and C# copies. " +
+                              "Each pair below is authored twice with nothing linking the two sides, " +
+                              "so the GPU and the CPU will disagree until they match:");
             foreach (string problem in problems)
                 report.AppendLine("  - " + problem);
             return report.ToString();

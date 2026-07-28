@@ -78,7 +78,10 @@ float  OceanFieldAmplitude;          // matches the surface shader's _LargeWaveA
 
 #define OCEAN_FFT_TG        8
 // OCEAN_FFT_MAX_CASCADES comes from WaterShared.hlsl (shared with the sampling/foam sides).
-#define FFT_SIZE            128   // must equal WaterOceanFft.DefaultResolution
+// C# pair: WaterOceanFft.FftSize / FftStages (WaterWaveConstantsValidator guards both). The
+// RESOLUTION a body asks for is a separate check - WaterOceanFft warns and disables the FFT ocean
+// when it does not equal FftSize.
+#define FFT_SIZE            128
 #define FFT_STAGES          7     // log2(FFT_SIZE)
 #define OCEAN_TWO_PI        6.28318530718
 #define OCEAN_GRAVITY       9.81

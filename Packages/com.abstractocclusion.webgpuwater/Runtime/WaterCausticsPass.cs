@@ -193,17 +193,11 @@ namespace AbstractOcclusion.WebGpuWater
             if (_target != null)
             {
                 _target.Release();
-                DestroyRuntimeObject(_target);
+                WaterObjects.DestroyRuntime(_target);
             }
-            DestroyRuntimeObject(_material);
-            DestroyRuntimeObject(_largeBodyMaterial);
-            DestroyRuntimeObject(_occluderMaterial);
-        }
-
-        static void DestroyRuntimeObject(Object obj)
-        {
-            if (obj == null) return;
-            if (Application.isPlaying) Object.Destroy(obj); else Object.DestroyImmediate(obj);
+            WaterObjects.DestroyRuntime(_material);
+            WaterObjects.DestroyRuntime(_largeBodyMaterial);
+            WaterObjects.DestroyRuntime(_occluderMaterial);
         }
     }
 }

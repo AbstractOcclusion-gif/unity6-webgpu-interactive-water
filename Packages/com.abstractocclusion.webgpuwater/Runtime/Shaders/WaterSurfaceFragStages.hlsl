@@ -81,10 +81,18 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
     [loop] // uniform trip count (tier knob); explicit-LOD samples are loop-safe
     for (int k = 0; k < refineSteps; k++)
     {
+        // The walk only needs a DIRECTION, so the cheap bilinear tap is enough per step. Each
+        // replacement is re-faded because SampleRipple already returns a FADED normal: fading once
+        // here and once after the loop would square it at refineSteps = 0 only, so the sim-window
+        // border falloff changed shape with the quality tier.
         coord += info.ba * PEAKED_REFINE_STEP;
-        info = SampleWaterBilinear(coord);
+        info.ba = SampleWaterBilinear(coord).ba * fade;
     }
-    info.ba *= fade; // keep the windowed ripple faded to flat at the border (no-op when fade = 1)
+    // The loop's last read is bilinear - exactly the faceting SampleWaterBicubic exists to remove,
+    // and it left the fragment normal on a different filter from the vertex height (bicubic, via
+    // SampleRipple). One bicubic read at the refined coord fixes both; doing it per step instead
+    // would cost 16 tex2Dlod every iteration for a walk that only needs a direction.
+    if (refineSteps > 0) info.ba = SampleWaterBicubic(coord).ba * fade;
 
     // Combine the ripple normal (info.ba = normal.xz) with the wind-wave
     // tilt. A height gradient g contributes normal.xz = -g, so the two
@@ -242,8 +250,13 @@ float4 UnderwaterStage(v2f i, WaterGeomStage g, float waterClarity)
     // surface from this side, so the contact heuristic is meaningless. ----
     if (_FoamEnabled > 0.5)
     {
+        // Windowed bodies read the foam buffer at the SOURCE xz (undisplaced), exactly like the
+        // above-water side (see PondFoamLayer): sampling at the chop-displaced worldPos puts the
+        // foam silhouette metres beside the crest carrying it, so the two sides of one surface
+        // disagreed about where the foam is.
+        float3 foamSourcePos = float3(i.largeWaveSourceXZ.x, i.worldPos.y, i.largeWaveSourceXZ.y);
         float2 fcoord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
-                                             : (WorldToSim(i.worldPos).xz * 0.5 + 0.5);
+                                             : (WorldToSim(foamSourcePos).xz * 0.5 + 0.5);
         // No contact foam on this side (see above), so nothing extra to add.
         float mask = SimFoamCoverage(i.position.xz, fcoord, 0.0);
 

@@ -17,7 +17,7 @@ using UnityEngine;
 namespace AbstractOcclusion.WebGpuWater
 {
     [RequireComponent(typeof(Rigidbody))]
-    [AddComponentMenu("AbstractOcclusion/Water/Boat Controller")]
+    [AddComponentMenu("AbstractOcclusion/WebGpuWater/Boat Controller")]
     public sealed class BoatController : MonoBehaviour
     {
         const string ThrottleAxis = "Vertical";   // W/S or up/down (default Input Manager axes)

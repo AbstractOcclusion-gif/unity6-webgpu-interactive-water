@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace AbstractOcclusion.WebGpuWater
 {
-    [AddComponentMenu("AbstractOcclusion/Water/Simple Follow Camera")]
+    [AddComponentMenu("AbstractOcclusion/WebGpuWater/Simple Follow Camera")]
     [DisallowMultipleComponent]
     public sealed class SimpleFollowCamera : MonoBehaviour
     {

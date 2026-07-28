@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace AbstractOcclusion.WebGpuWater
 {
-    [AddComponentMenu("AbstractOcclusion/Water/Water Sphere Interactor")]
+    [AddComponentMenu("AbstractOcclusion/WebGpuWater/Water Sphere Interactor")]
     public sealed class WaterSphereInteractor : MonoBehaviour
     {
         // Below this per-frame displacement (world units) the object is effectively still, so there is no

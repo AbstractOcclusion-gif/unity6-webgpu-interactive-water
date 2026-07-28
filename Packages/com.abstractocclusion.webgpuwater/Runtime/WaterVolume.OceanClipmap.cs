@@ -222,12 +222,12 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 for (int i = 0; i < _clipmapLevels.Length; i++)
                 {
-                    if (_clipmapLevels[i].above != null) DestroyRuntimeObject(_clipmapLevels[i].above.gameObject);
-                    if (_clipmapLevels[i].under != null) DestroyRuntimeObject(_clipmapLevels[i].under.gameObject);
+                    if (_clipmapLevels[i].above != null) WaterObjects.DestroyRuntime(_clipmapLevels[i].above.gameObject);
+                    if (_clipmapLevels[i].under != null) WaterObjects.DestroyRuntime(_clipmapLevels[i].under.gameObject);
                 }
                 _clipmapLevels = null;
             }
-            DestroyRuntimeObject(_clipmapTemplate);
+            WaterObjects.DestroyRuntime(_clipmapTemplate);
             _clipmapTemplate = null;
         }
     }

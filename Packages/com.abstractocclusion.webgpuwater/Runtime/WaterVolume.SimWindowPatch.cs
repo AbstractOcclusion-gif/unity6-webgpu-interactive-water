@@ -104,15 +104,15 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (_patchRenderer != null)
             {
-                DestroyRuntimeObject(_patchRenderer.gameObject);
+                WaterObjects.DestroyRuntime(_patchRenderer.gameObject);
                 _patchRenderer = null;
             }
             if (_patchUnderRenderer != null)
             {
-                DestroyRuntimeObject(_patchUnderRenderer.gameObject);
+                WaterObjects.DestroyRuntime(_patchUnderRenderer.gameObject);
                 _patchUnderRenderer = null;
             }
-            DestroyRuntimeObject(_patchGrid);
+            WaterObjects.DestroyRuntime(_patchGrid);
             _patchGrid = null;
             _patchMpb = null;
             _patchUnderMpb = null;

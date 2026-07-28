@@ -46,8 +46,9 @@ namespace AbstractOcclusion.WebGpuWater
         const float MinEdgeLength = 1e-4f;
 
         // Half-extent of the shader's unit local space: EXCLUSION_LOCAL_HALF_EXTENT in
-        // WaterExclusion.hlsl. The CPU point test below must use the SAME convention as the
-        // shader's, or a click could ripple water the GPU has carved away.
+        // WaterExclusion.hlsl (WaterWaveConstantsValidator guards the pair). The CPU point test
+        // below must use the SAME convention as the shader's, or a click could ripple water the
+        // GPU has carved away.
         const float LocalHalfExtent = 0.5f;
 
         static readonly List<WaterExclusionVolume> _active = new List<WaterExclusionVolume>();
@@ -245,7 +246,7 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         // ---- water walls (the drawn carve boundary) --------------------------------------
-        // One shared mesh PER SHAPE + one shared material for every volume (per-volume state
+        // One shared mesh PER SHAPE + one shared material PER WALL SHADER (per-volume state
         // rides the MaterialPropertyBlock); DrawMesh enqueues into the normal render passes.
         // The wall does NOT write depth (WaterExclusionWall.shader is ZWrite Off and ships no
         // depth pass, on purpose - see its header): the fullscreen fog and the god rays must
@@ -263,7 +264,14 @@ namespace AbstractOcclusion.WebGpuWater
 
         static Mesh _wallCubeMesh;
         static Mesh _wallSphereMesh;
-        static Material _wallMaterial;
+        // Keyed by the RESOLVED shader. A single shared material was wrong: wallShader is a
+        // per-instance [SerializeField], so the first volume to draw handed ITS shader to every
+        // other volume in the scene. Volumes that agree on a shader still share one material.
+        static readonly Dictionary<Shader, Material> _wallMaterials = new Dictionary<Shader, Material>();
+
+        // Shader.Find is not free and LateUpdate runs every frame, so the packaged fallback is
+        // resolved once rather than on every draw of a volume with an empty slot.
+        static Shader _packagedWallShader;
         MaterialPropertyBlock _wallProps;
         static readonly int ID_WallShape = Shader.PropertyToID("_WallShape");
         static readonly int ID_WallScatterBoost = Shader.PropertyToID("_WallScatterBoost");
@@ -314,13 +322,24 @@ namespace AbstractOcclusion.WebGpuWater
         // without re-wiring. Null -> the walls just don't draw (the carve itself is unaffected).
         Material ResolveWallMaterial()
         {
-            if (_wallMaterial != null) return _wallMaterial;
-            Shader shader = wallShader != null ? wallShader : Shader.Find(WaterShaderNames.WaterExclusionWall);
+            Shader shader = ResolveWallShader();
             if (shader == null) return null;
+            // The Unity-null check covers a material destroyed under us (domain reload, Fast Enter
+            // Play Mode): a stale entry rebuilds instead of returning a dead object.
+            if (_wallMaterials.TryGetValue(shader, out Material cached) && cached != null) return cached;
+
             // HideAndDontSave: an edit-mode preview must never serialize this into the scene.
-            _wallMaterial = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
-            _wallMaterial.renderQueue = (int)RenderQueue.Transparent + WallRenderQueueOffset;
-            return _wallMaterial;
+            Material material = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
+            material.renderQueue = (int)RenderQueue.Transparent + WallRenderQueueOffset;
+            _wallMaterials[shader] = material;
+            return material;
+        }
+
+        Shader ResolveWallShader()
+        {
+            if (wallShader != null) return wallShader;
+            if (_packagedWallShader != null) return _packagedWallShader;
+            return _packagedWallShader = Shader.Find(WaterShaderNames.WaterExclusionWall);
         }
 
         /// <summary>Unit-local -> world matrix: centre + rotation + size in one transform. Built

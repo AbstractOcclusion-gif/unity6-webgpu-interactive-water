@@ -161,7 +161,7 @@ namespace AbstractOcclusion.WebGpuWater
         void DestroyChunkShell()
         {
             if (_chunkShellRenderer == null) return;
-            DestroyRuntimeObject(_chunkShellRenderer.gameObject);
+            WaterObjects.DestroyRuntime(_chunkShellRenderer.gameObject);
             _chunkShellRenderer = null;
         }
 

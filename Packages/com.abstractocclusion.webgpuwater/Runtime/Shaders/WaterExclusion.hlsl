@@ -25,6 +25,7 @@
 
 // Half-extent of the unit local space the world->local matrices map into: the box's half-edge
 // and the inscribed sphere's radius (see WaterPrimitiveShape.hlsl).
+// C# pair: WaterExclusionVolume.LocalHalfExtent (WaterWaveConstantsValidator guards the pair).
 #define EXCLUSION_LOCAL_HALF_EXTENT 0.5
 
 // Selector value a MESH volume carries. The analytic uniform arrays never see it - a mesh volume

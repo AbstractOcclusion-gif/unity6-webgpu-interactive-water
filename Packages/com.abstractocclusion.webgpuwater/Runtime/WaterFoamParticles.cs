@@ -14,7 +14,7 @@ using System.Runtime.InteropServices;
 
 namespace AbstractOcclusion.WebGpuWater
 {
-    [AddComponentMenu("AbstractOcclusion/Water/Water Foam Particles")]
+    [AddComponentMenu("AbstractOcclusion/WebGpuWater/Water Foam Particles")]
     public class WaterFoamParticles : MonoBehaviour
     {
         // Compute kernel names (must match WaterFoamParticles.compute).

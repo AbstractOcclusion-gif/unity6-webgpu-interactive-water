@@ -37,7 +37,8 @@
 #define WATER_PARTICLE_SHORE_FIELD 1
 #include "WaterParticleCommon.hlsl"
 
-// MUST equal WaterFoamParticles.SpawnThreadGroupSize / UpdateThreadGroupSize (C#).
+// MUST equal WaterFoamParticles.SpawnThreadGroupSize / UpdateThreadGroupSize (C#) -
+// WaterWaveConstantsValidator guards both pairs.
 #define SPAWN_THREAD_GROUP_SIZE  8
 #define UPDATE_THREAD_GROUP_SIZE 64
 
@@ -453,9 +454,11 @@ float SurfaceWorldY(float3 worldPos, float2 simNorm)
 }
 
 // ---------------------------------------------------------------- kernels
-// 64 threads x 4 groups = 256: clears the spray tile budget; thread 0 also resets the
-// per-frame spawn counter. MUST be dispatched with TILE_GRID*TILE_GRID/64 groups.
-[numthreads(64, 1, 1)]
+// Clears the spray tile budget; thread 0 also resets the per-frame spawn counter. The group size is
+// the shared UPDATE_THREAD_GROUP_SIZE because the C# side divides by that same constant
+// (WaterFoamParticles: TileCount / UpdateThreadGroupSize) - a literal here would silently zero only
+// part of the tile grid the day that constant is retuned.
+[numthreads(UPDATE_THREAD_GROUP_SIZE, 1, 1)]
 void BeginFrame(uint3 id : SV_DispatchThreadID)
 {
     if (id.x == 0)
