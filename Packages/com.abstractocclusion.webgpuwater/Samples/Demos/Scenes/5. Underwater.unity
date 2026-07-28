@@ -6095,6 +6095,7 @@ MonoBehaviour:
     largeCausticTimeScale: 0.5
     largeCausticRippleScale: 3
     largeCausticRippleStrength: 1
+    largeCausticProjectionSoften: 0
     oceanFoamWindThreshold: 4
     oceanFoamCoverage: 1
     oceanFoamStrength: 1

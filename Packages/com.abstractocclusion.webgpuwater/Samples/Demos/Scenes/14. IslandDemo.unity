@@ -441,12 +441,12 @@ MonoBehaviour:
   oceanWhitecapTexture: {fileID: 2800000, guid: 1ee279c16b027ad48a8eb248749ff66c, type: 3}
   oceanWhitecapGrid: {x: 1, y: 1}
   oceanWhitecapFps: 0
-  rippleQuality: 2
+  rippleQuality: 3
   bodyType: 2
   volumeExtent: {x: 500, y: 100, z: 500}
   enableLargeBodyWindow: 1
   largeBodyThreshold: 200
-  simWindowMeters: 100
+  simWindowMeters: 40
   clampWindowToShore: 0
   simWindowFocus: {fileID: 0}
   simWindowOffset: {x: 0, y: 0}
@@ -524,17 +524,18 @@ MonoBehaviour:
     horizonHazeColor: {r: 0.7, g: 0.8, b: 0.9, a: 0}
     horizonHazeDensity: 0.001
     largeGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
-    largeGodRayDensity: 0
+    largeGodRayDensity: 1
     largeGodRayFromAir: 0
     largeGodRaySteps: 24
-    largeGodRayAnisotropy: 0.6
+    largeGodRayAnisotropy: 0.137
     largeGodRayExtinction: 0
     largeGodRayCausticStrength: 4
-    largeGodRayCausticSmooth: 2
+    largeGodRayCausticSmooth: 1
     largeGodRayCausticDepthSoften: 0.25
     largeCausticTimeScale: 0.5
-    largeCausticRippleScale: 3
-    largeCausticRippleStrength: 1
+    largeCausticRippleScale: 1.5
+    largeCausticRippleStrength: 0.233
+    largeCausticProjectionSoften: 3.28
     oceanFoamWindThreshold: 2
     oceanFoamCoverage: 1
     oceanFoamStrength: 1
@@ -636,12 +637,12 @@ MonoBehaviour:
   underwaterSurfaceSettings:
     physicalFresnel: 1
     tirEdgeSoftness: 0.08
-    fresnelFloor: 0
-    reflectionStrength: 1
-    mirrorWaterBlend: 0.5
+    fresnelFloor: 0.313
+    reflectionStrength: 0.257
+    mirrorWaterBlend: 0.866
     foamSilhouetteDarken: 0.6
     foamSunGlow: 0.4
-    detailNormalStrength: 0
+    detailNormalStrength: 0.5
     meniscus: 1
     meniscusWidthPixels: 5
     meniscusStrength: 0.7
@@ -650,7 +651,7 @@ MonoBehaviour:
   _legacyEnvironmentSource: 0
   timeScale: 1
   lightDir: {x: 2, y: 2, z: -1}
-  causticResolution: 1024
+  causticResolution: 512
   _legacyObjectInteraction: 0
   _legacyObstacleStrength: 0.25
   _legacyObstacleDeadband: 0.0006
@@ -683,12 +684,12 @@ MonoBehaviour:
   refractShadows: 0
   refractShadowSoftness: 0.5
   depthAttenuation:
-    depthDarken: 1
-    depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
+    depthDarken: 0
+    depthExtinction: {r: 0, g: 0, b: 0, a: 1}
     depthDarkenStrength: 1
     causticDepthFade: 0.2
     screenSpaceCaustics: 1
-    screenCausticIntensity: 2
+    screenCausticIntensity: 0.1
     godRayDepthFade: 0.5
     linkDepthToFog: 0
   _legacyUseBedDepth: 0

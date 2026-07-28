@@ -1,6 +1,6 @@
 # WebGpuWater — Getting Started
 
-**Version 1.0.0** | Unity 2022.2+ | URP 12+ | Desktop · WebGPU/WebGL · Mobile
+**Version 1.0.0** | Unity 6 (6000.0+) | URP 17+ | Desktop · WebGPU/WebGL · Mobile
 
 Support: abstractocclusion@outlook.com
 
@@ -8,8 +8,11 @@ Support: abstractocclusion@outlook.com
 
 ## Requirements
 
-- **Unity 2022.2 or newer** (Unity 6 fully supported).
-- **URP 12+** for rendering. The base runtime assembly compiles without URP installed;
+- **Unity 6 (6000.0) or newer.** This is a hard requirement, not a preference: the runtime
+  uses `Rigidbody.linearVelocity` and the URP 17 RenderGraph pass API with no version guards,
+  so an older Unity will not compile the package.
+- **URP 17+** for rendering (declared as a package dependency, so it installs with the
+  package). The base runtime assembly compiles without URP installed;
   URP-only code (planar reflections) activates automatically via the `WEBGPUWATER_URP`
   define — no manual Scripting Define needed.
 - On your **active URP asset**, enable:

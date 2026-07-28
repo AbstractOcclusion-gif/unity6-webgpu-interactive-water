@@ -405,7 +405,24 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 // Bit-identical wherever it can be: no carve on the ray, or _ExclusionCount 0, or
                 // _LargeGodRayFromAir 0 (every shipped scene but the Exclusion Demo) all give
                 // paneFloor 0, and lerp(0, 1, submergeFade) IS submergeFade.
-                float paneFloor = rayLeavesCarve ? _LargeGodRayFromAir : 0.0;
+                //
+                // TWO GATES, because "a carve stands somewhere on this ray" is not "this ray sees
+                // water through a window". This term is a FLOOR UNDER submergeFade, not a regime of
+                // its own, and each gate closes one way it was acting like one:
+                //  - eyeInWater: IN AIR submergeFade is 0, so lerp(paneFloor, 1, 0) collapses to
+                //    paneFloor outright and handed the knob to every pixel the rasterised silhouette
+                //    covers - the carve's ABOVE-WATER body included, since that silhouette does not
+                //    stop at the waterline. Reported 2026-07-28: "our godrays veil do not stop at
+                //    water line, it propagate all along exclusion mesh above water". Above the line
+                //    the pane cull below is the sole authority, which is what it was written to be.
+                //    eyeInWater is true exactly where submergeFade > 0 for a non-dry eye, so the
+                //    crossing stays continuous: paneWeight just above, lerp(knob, 1, ~0) just below.
+                //  - the carve EXIT must lie BELOW the displaced surface: the increment-C rule,
+                //    already applied to the dry-carve eye's water entry above. A ray that leaves the
+                //    carve into AIR met no water inside it, so there is no pane weight to floor.
+                bool carveExitInWater = rayLeavesCarve
+                                      && SurfaceSignedGap(camWorld + rayDir * carveExit) <= 0.0;
+                float paneFloor = (eyeInWater && carveExitInWater) ? _LargeGodRayFromAir : 0.0;
                 float regime = max(lerp(paneFloor, 1.0, submergeFade), paneWeight);
                 if (regime <= 0.0) return half4(0.0, 0.0, 0.0, 1.0);
 
