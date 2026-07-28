@@ -305,7 +305,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
 
             // Which face of the sheet this pixel shows - a RASTER fact, per pixel, from the same
             // draw the camera made. It replaces the eye's own waterline as the owner test below.
-            bool sheetSeenFromAir = surfaceSigned > 0.0 && fromAirCorroborated;
+            //
+            // THE RAW SIGN, deliberately. Corroboration is NOT folded in here: this condition also
+            // guards the CARVE handoff below, and a carve is exactly where the prepass RT is full of
+            // holes (its fragDepth discards inside every exclusion volume, mirroring WaterSurface's
+            // carve discard). Gating the whole block therefore stopped carve pixels reaching
+            // OceanWavyPath and broke the surface/exclusion stitch - a regression, 2026-07-28.
+            // Corroboration belongs to the ONE decision it was introduced for: whether to zero the
+            // span. It is applied at that return, below the carve check.
+            bool sheetSeenFromAir = surfaceSigned > 0.0;
             // Eye depth is view-space Z; divide by the ray/forward cosine for distance along the ray.
             float3 camForward = -UNITY_MATRIX_V[2].xyz;
             float hitDist = surfaceEye / max(dot(dir, camForward), 1e-4);
@@ -358,11 +366,21 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                         WaterFogDebugBranch(WATER_FOG_BRANCH_CARVE_MARCH);
                         return;
                     }
-                    WaterFogDebugBranch(WATER_FOG_BRANCH_PREPASS_AIR);
-                    pathLen = 0.0;
-                    deepestY = _VolumeCenter.y;
-                    surfaceRefY = camSurf;
-                    return;
+                    // ONLY HERE. Suppressing the span outright needs the premise that this pixel is
+                    // genuinely water seen FROM THE AIR. A real above-water view is a large contiguous
+                    // region - the straddling-frame band this rule was written for, every pixel of
+                    // which has a from-air neighbour. A grazing SILHOUETTE of the coincident sheet
+                    // twins is one pixel tall with no sheet above or below it, and zeroing those left
+                    // the unfogged dashed line at the far waterline. Uncorroborated, fall THROUGH to
+                    // the submerged branch below and be priced like the neighbours.
+                    if (fromAirCorroborated)
+                    {
+                        WaterFogDebugBranch(WATER_FOG_BRANCH_PREPASS_AIR);
+                        pathLen = 0.0;
+                        deepestY = _VolumeCenter.y;
+                        surfaceRefY = camSurf;
+                        return;
+                    }
                 }
                 // Submerged eye, drawn surface in front: the visible water column ends AT
                 // the sheet, so the span is [eye -> hit] no matter what the analytic field says
