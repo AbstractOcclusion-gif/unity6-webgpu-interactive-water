@@ -98,9 +98,10 @@ Shader "AbstractOcclusion/WebGpuWater/Caustics"
 
                 float3 refractedLight = refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
 
-                // shadow for the rim of the pool
-                float2 t = IntersectCube(i.newPos, -refractedLight, POOL_BOX_MIN, POOL_BOX_MAX);
-                col.r *= 1.0 / (1.0 + exp(-RIM_SHADOW_SHARPNESS / (1.0 + RIM_SHADOW_SPREAD * (t.y - t.x)) * (i.newPos.y - refractedLight.y * t.y - POOL_RIM_HEIGHT)));
+                // Rim shadow. NEGATED on purpose: this shader's 'refractedLight' is the DOWNWARD
+                // propagation ray, while PoolRimShadow wants the toward-light direction (see its
+                // header in WaterShared.hlsl).
+                col.r *= PoolRimShadow(i.newPos, -refractedLight);
 
                 return col;
             }

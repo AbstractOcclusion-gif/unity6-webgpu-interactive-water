@@ -85,6 +85,23 @@ float2 IntersectCube(float3 origin, float3 ray, float3 cubeMin, float3 cubeMax)
     return float2(tNear, tFar);
 }
 
+// Soft shadow the pool RIM casts on a point ABOVE the waterline. A sigmoid rather than a step, and
+// its softness widens with the chord the ray cuts through the pool box (t.y - t.x), so a grazing sun
+// gives a broad penumbra and an overhead one a tight edge.
+//
+// toLight MUST point TOWARD the sun - the '-refract(...)' convention used by WaterCommon,
+// CausticOccluder, GodRays, WaterReceiver and WaterCausticProjection. Caustics.shader and
+// LargeBodyCaustics instead keep the DOWNWARD propagation ray in their own 'refractedLight', so those
+// callers negate at the call site. Passing the wrong one INVERTS the shadow and nothing complains -
+// which is why the two former copies of this expression looked sign-mirrored and were in fact
+// identical: each flipped the ray AND the term, and the flips cancelled.
+float PoolRimShadow(float3 p, float3 toLight)
+{
+    float2 t = IntersectCube(p, toLight, POOL_BOX_MIN, POOL_BOX_MAX);
+    return 1.0 / (1.0 + exp(-RIM_SHADOW_SHARPNESS / (1.0 + RIM_SHADOW_SPREAD * (t.y - t.x))
+                            * (p.y + toLight.y * t.y - POOL_RIM_HEIGHT)));
+}
+
 // Signed clamp away from zero for the caustic-projection divides.
 float SafeRefractedLightY(float y)
 {

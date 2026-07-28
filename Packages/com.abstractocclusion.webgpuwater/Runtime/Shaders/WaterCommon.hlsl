@@ -168,9 +168,10 @@ float GetWallShadeSplit(float3 p, float3 normal, float3 pDdx, float3 pDdy, out f
     }
     else
     {
-        // shadow for the rim of the pool
-        float2 t = IntersectCube(p, refractedLight, POOL_BOX_MIN, POOL_BOX_MAX);
-        diffuse *= 1.0 / (1.0 + exp(-RIM_SHADOW_SHARPNESS / (1.0 + RIM_SHADOW_SPREAD * (t.y - t.x)) * (p.y + refractedLight.y * t.y - POOL_RIM_HEIGHT)));
+        // Rim shadow above the waterline. This function's 'refractedLight' is already the
+        // TOWARD-LIGHT direction (note the leading minus where it is defined), which is exactly
+        // what PoolRimShadow expects - no negation here.
+        diffuse *= PoolRimShadow(p, refractedLight);
         scale += diffuse * 0.5;
     }
     return scale;
