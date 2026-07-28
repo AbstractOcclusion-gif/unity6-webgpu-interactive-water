@@ -25,6 +25,10 @@ namespace AbstractOcclusion.WebGpuWater
                 if (!_initialized) return;
             }
 
+            // Destroy a planar mirror retired inside a render callback, where destroying it was
+            // illegal (see RetirePlanarMirror). Done here because Update is not a rendering callback.
+            DrainRetiredPlanarMirror();
+
             // Input is a scene-level concern (and play-mode only): the primary body's router
             // handles mouse/keys and routes clicks to whichever body's surface the ray hits
             // (avoids two controllers fighting over one camera).

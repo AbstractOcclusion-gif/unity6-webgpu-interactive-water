@@ -104,6 +104,13 @@ namespace AbstractOcclusion.WebGpuWater
         internal const float PlanarMirrorClipPlaneOffset = 0.02f;
 
         PlanarMirror _planarMirror;
+        // A mirror retired mid-frame, waiting for a legal moment to be destroyed. RenderPlanarMirror runs
+        // from beginCameraRendering, and PlanarMirror.Dispose destroys its reflection camera GAMEOBJECT -
+        // which outside play mode goes through DestroyImmediate, and Unity forbids that inside a rendering
+        // callback ("You must use Destroy instead"), so retiring a mirror in place threw once per
+        // planar/budget flip. Handing it over here and destroying it from Update keeps the destroy out of
+        // the callback in BOTH modes. Runtime-only state; never serialized.
+        PlanarMirror _planarMirrorRetiring;
 
         /// <summary>This body's most recent planar mirror, or null when it isn't rendering planar.</summary>
         internal Texture PlanarReflectionTexture => _planarMirror?.Texture;
@@ -117,8 +124,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (!EffectiveUsePlanar)
             {
-                _planarMirror?.Dispose();
-                _planarMirror = null;
+                RetirePlanarMirror();
                 return;
             }
             _planarMirror ??= new PlanarMirror(name + "_PlanarMirror");
@@ -136,6 +142,28 @@ namespace AbstractOcclusion.WebGpuWater
             // near-field object reflections is SSR, which marches the real reflected ray.
             _planarMirror.Render(cam, SurfaceHeightAtCamera(), PlanarMirrorResolutionScale,
                                  PlanarMirrorClipPlaneOffset, PlanarReflectLayers());
+        }
+
+        // Hand the live mirror to the retire slot instead of destroying it here. _planarMirror is cleared
+        // IMMEDIATELY so PlanarReflectionTexture stops answering with an RT that is about to be released -
+        // the publisher must not bind a dead mirror for the frame before the drain.
+        void RetirePlanarMirror()
+        {
+            if (_planarMirror == null) return;
+            // At most one can ever be pending: the slot is filled only when a LIVE mirror exists, and the
+            // next live mirror is built only once EffectiveUsePlanar is true again - the branch that never
+            // retires. The Update drain therefore always runs in between.
+            _planarMirrorRetiring = _planarMirror;
+            _planarMirror = null;
+        }
+
+        // Destroy a mirror retired inside the render callback. Call ONLY from Update or OnDisable, never
+        // from beginCameraRendering - that restriction is the whole reason the slot exists.
+        void DrainRetiredPlanarMirror()
+        {
+            if (_planarMirrorRetiring == null) return;
+            _planarMirrorRetiring.Dispose();
+            _planarMirrorRetiring = null;
         }
 
         // Reflect everything the camera sees EXCEPT this body's own water surface layer, so the mirror

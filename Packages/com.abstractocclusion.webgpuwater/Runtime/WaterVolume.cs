@@ -285,6 +285,7 @@ namespace AbstractOcclusion.WebGpuWater
             DestroyChunkShell();     // per-body fog shell; shared material/mesh outlive it by design
             _planarMirror?.Dispose(); // frees this body's planar mirror camera + RT
             _planarMirror = null;
+            DrainRetiredPlanarMirror(); // OnDisable is not a render callback, so a pending retire is legal here
             RestoreSurfaceMaterial(surfaceAbove, ref _surfaceAboveInstance, ref _surfaceAboveOriginal);
             RestoreSurfaceMaterial(surfaceUnder, ref _surfaceUnderInstance, ref _surfaceUnderOriginal);
             RestoreMeshDetail();

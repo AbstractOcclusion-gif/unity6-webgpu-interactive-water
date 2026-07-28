@@ -735,6 +735,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 WaterSceneBuilder.AddSecondaryBody();
 
             DrawChunkShaderRegistration();
+            DrawRendererFeatureCheck();
         }
 
         // Chunks and exclusion volumes resolve their wall/depth shaders by NAME at runtime, so they
@@ -754,6 +755,32 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 "Adds the chunk + exclusion wall/depth shaders to Project Settings > Graphics > " +
                 "Always Included Shaders.")))
                 WaterChunkShaderRegistration.RegisterAll();
+        }
+
+        // The package's five renderer features live on the URP RENDERER asset, not on a water body, and
+        // each one self-gates - so a missing feature is SILENT: the effect is simply absent, with no
+        // warning anywhere. Surfaced here (and only while something is absent) so nobody debugs a water
+        // body for an effect that was never installed.
+        // READ-ONLY on purpose, unlike the shader registration above: appending a shader to a list is
+        // complete on its own, whereas adding a renderer feature also needs that feature's shader
+        // assigned - so an auto-add would write the user's renderer asset AND leave half-configured
+        // features that fail exactly as silently as the ones it replaced.
+        void DrawRendererFeatureCheck()
+        {
+            WaterRendererFeatureCheck.Report report = WaterRendererFeatureCheck.Inspect();
+            if (!report.AnyMissing) return;
+
+            EditorGUILayout.Space();
+            EditorGUILayout.HelpBox("These renderer features are not on the active URP renderer, so the " +
+                "effects below do nothing. Add them on the renderer asset (Add Renderer Feature) and " +
+                "assign each one's shader. Only needed if you use them:\n  - " +
+                string.Join("\n  - ", report.MissingPurposes), MessageType.Info);
+            using (new EditorGUI.DisabledScope(report.RendererAsset == null))
+            {
+                if (GUILayout.Button(new GUIContent("Select URP Renderer Asset",
+                    "Selects the active pipeline's renderer asset so the missing features can be added.")))
+                    WaterRendererFeatureCheck.Reveal(report.RendererAsset);
+            }
         }
 
         // ---- splash & crown section ------------------------------------------
