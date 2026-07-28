@@ -62,6 +62,13 @@ static int g_WaterFogDebugBranch = WATER_FOG_BRANCH_NONE;
 
 void WaterFogDebugBranch(int branch) { g_WaterFogDebugBranch = branch; }
 
+// The raw signed prepass depth this pixel's ownership test read (+ above sheet / - under sheet /
+// 0 none). Same scratch-static shape and the same reason as the branch id above: an instrument
+// must not change a shipped signature, and it must record what the span rule ACTUALLY saw.
+static float g_WaterFogDebugSheetSigned = 0.0;
+
+void WaterFogDebugSheetSigned(float signedEyeDepth) { g_WaterFogDebugSheetSigned = signedEyeDepth; }
+
 // ---- Reading thresholds ---------------------------------------------------------------------
 // At or above this the pass paints the pixel at full strength; at or below MASKED_MAX it
 // contributes literally nothing. Between them is the feather, which is where the two edges of the
@@ -109,13 +116,37 @@ float3 WaterFogDebugBranchColor()
 float3 WaterFogDebugUnpainted(float armWeight, float wetSpanLen, float pathLen)
 {
     if (g_WaterFogDebugBranch == WATER_FOG_BRANCH_PREPASS_AIR)
-        return float3(1.0, 0.45, 0.0);  // span suppressed by the from-air ownership rule
+    {
+        // SPLIT BY THE WATERLINE MASK, because "orange over open water is CORRECT" made this
+        // view blind to the case it should shout about: the from-air rule zeroing a span the
+        // MASK says must be painted. That is not a difference of opinion about ownership, it is
+        // a contradiction - the same one WaterFogDebugMaskVsSpan reports - and it is what an
+        // edge-on coincident-sheet coin toss looks like from here. RED = suppressed while the
+        // mask wanted full fog. Orange keeps its old meaning: from-air over a dry pixel.
+        if (armWeight >= FOG_DEBUG_PAINTED_MIN) return float3(1.0, 0.0, 0.0);
+        return float3(1.0, 0.45, 0.0);
+    }
     if (wetSpanLen <= FOG_DEBUG_SPAN_EPSILON)
         return float3(FOG_DEBUG_IDLE_GREY, FOG_DEBUG_IDLE_GREY, FOG_DEBUG_IDLE_GREY); // no water here
     if (pathLen    <= FOG_DEBUG_SPAN_EPSILON) return float3(0.0, 0.0, 0.5);   // carved away (correct)
     if (armWeight  <  FOG_DEBUG_MASKED_MAX)   return float3(1.0, 0.0, 1.0);   // MASKED AWAY - the hole
     if (armWeight  >= FOG_DEBUG_PAINTED_MIN)  return float3(1.0, 1.0, 1.0);   // painted at full strength
     return float3(0.0, armWeight, armWeight);                                 // the feather band
+}
+
+// WHICH SHEET TWIN WON, straight off the prepass RT, before any span rule interprets it.
+// _OceanSurfaceEyeDepth is written as LinearEyeDepth * visibleSide, where visibleSide is a
+// PER-MATERIAL constant (+1 above sheet / -1 under sheet) and the two sheets are coincident
+// geometry separated only by their cull state. Wherever they are edge-on - the far waterline -
+// which fragment survives ZTest LEqual is settled by depth precision, per pixel, and the winner
+// decides whether OceanPrepassPath suppresses this pixel's fog entirely (PREPASS_AIR -> pathLen
+// 0). This view shows that decision with nothing layered on top: isolated RED in a BLUE field is
+// the coin toss, and each of those pixels is unfogged.
+float3 WaterFogDebugSheetSide()
+{
+    if (g_WaterFogDebugSheetSigned > 0.0) return float3(1.0, 0.0, 0.0); // ABOVE sheet -> fog suppressed
+    if (g_WaterFogDebugSheetSigned < 0.0) return float3(0.0, 0.3, 1.0); // UNDER sheet -> normal span
+    return float3(0.0, 0.0, 0.0);                                       // no surface rasterised here
 }
 
 // Where ArmWeight classified this pixel against the waterline. Red is the failure case worth
@@ -195,6 +226,11 @@ bool WaterFogDebugColor(float armWeight, float classifyPushDist, float wetSpanLe
     if (mode == WATER_DEBUG_FOG_MASK_VS_SPAN)
     {
         color = WaterFogDebugMaskVsSpan(armWeight, pathLen);
+        return true;
+    }
+    if (mode == WATER_DEBUG_FOG_SHEET_SIDE)
+    {
+        color = WaterFogDebugSheetSide();
         return true;
     }
     return false;

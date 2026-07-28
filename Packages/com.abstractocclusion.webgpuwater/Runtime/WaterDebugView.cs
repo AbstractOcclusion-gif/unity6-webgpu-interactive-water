@@ -1,7 +1,7 @@
 // WebGpuWater - false-colour debug views for the water surface AND the fullscreen underwater fog.
 // Drop this on ANY object in the scene and pick a mode; it publishes _WaterDebugMode and the
 // matching shader replaces its output with the view - the surface pass for modes 1-6
-// (WaterSurfaceDebug.hlsl), the fullscreen fog for modes 7-12 (WaterFogDebug.hlsl). The two
+// (WaterSurfaceDebug.hlsl), the fullscreen fog for modes 7-13 (WaterFogDebug.hlsl). The two
 // ranges are disjoint and each side declines the other's, so exactly one of them ever paints.
 // Remove the component (or set Off) and both are back to one uniform compare per pixel.
 //
@@ -98,6 +98,16 @@ namespace AbstractOcclusion.WebGpuWater
             /// sets the mask to 1 unconditionally (it is a finite volume seen from outside), so
             /// red is EXPECTED wherever a pond ray misses the box - this view is for oceans.</summary>
             FogMaskVsSpan = 12,
+
+            /// <summary>The RAW prepass sign this pixel's span rule was decided on
+            /// (_OceanSurfaceEyeDepth): RED = the ABOVE sheet won here (fog suppressed by the
+            /// from-air ownership rule), BLUE = the UNDER sheet won, BLACK = no surface
+            /// rasterised at all. The above/under sheets are COINCIDENT twins separated only by
+            /// culling, so wherever they are edge-on - the far waterline - the winner is decided
+            /// by depth precision rather than by geometry. Isolated RED inside a BLUE field is
+            /// that coin toss, and every one of those pixels is fogless. The branch view cannot
+            /// show it: it paints the whole legitimately-from-air region the same green.</summary>
+            FogSheetSide = 13,
         }
 
         /// <summary>True while a FULLSCREEN-FOG view (modes 7+) is selected. The passes that draw

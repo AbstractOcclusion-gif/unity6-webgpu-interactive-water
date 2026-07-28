@@ -88,6 +88,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // Floor for the eye -> near-plane direction (degenerate only if the near plane sat on the
         // eye), used when pushing a dry-carve pixel out to its exit face.
         #define CLASSIFY_DIR_EPSILON 1e-5
+        // Vertical reach, in pixels, of the from-air corroboration test below. VERTICAL on purpose:
+        // the artifact it rejects is a ONE-PIXEL-TALL, many-pixel-WIDE run along the horizon, so
+        // horizontal neighbours are part of the same run and would corroborate it. Its vertical
+        // neighbours are the only ones that can tell an above-water VIEW from a grazing SILHOUETTE.
+        #define PREPASS_FROM_AIR_CORROBORATION_PIXELS 1
         // WATERLINE_CARVE_OVER_COVER_PIXELS moved to WaterWaterline.hlsl beside the curve it
         // shifts: the exclusion wall now mirrors this coverage to hand off against it, so the
         // number has to have exactly one home.
@@ -260,12 +265,47 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             float3 ray = sceneWorld - cam;
             float rayLen = max(length(ray), 1e-4);
             float3 dir = ray / rayLen;
-            float surfaceSigned = LOAD_TEXTURE2D(_OceanSurfaceEyeDepth,
-                                                 int2(uv * _ScaledScreenParams.xy)).r;
+            int2 prepassPixel = int2(uv * _ScaledScreenParams.xy);
+            float surfaceSigned = LOAD_TEXTURE2D(_OceanSurfaceEyeDepth, prepassPixel).r;
             float surfaceEye = abs(surfaceSigned);
+            // INSTRUMENT ONLY. Stamped here rather than re-loaded by the view: which of the two
+            // coincident sheet twins won this pixel is exactly the thing under suspicion, and a
+            // view that samples the RT again could disagree with the branch the pixel took.
+            WaterFogDebugSheetSigned(surfaceSigned);
+
+            // CORROBORATION, and why the raw sign is not enough on its own.
+            //
+            // The above and under sheets are COINCIDENT twins with OPPOSITE culling (see the
+            // OceanSurfaceEyeDepth pass in WaterSurface.shader). At the horizon they are edge-on,
+            // and there the two disagree about which triangles survive backface culling - so a
+            // thin run of pixels along the sheet's grazing SILHOUETTE receives only the
+            // ABOVE-facing twin. Those pixels then claimed the from-air ownership rule and had
+            // their span forced to 0, i.e. no fog at all, while every neighbour around them was
+            // priced analytically. That is the 1-px unfogged dashed line at the far waterline
+            // (2026-07-28: confirmed by fog views 12, 13 and 10 agreeing - the run reads
+            // PREPASS_AIR green against an ANALYTIC yellow field, with no sheet at all beside it).
+            //
+            // THE TEST. The rule's premise is that this pixel shows water SEEN FROM THE AIR, and
+            // that the surface shader already absorbed its column. A genuine above-water view is a
+            // large contiguous region - the straddling-frame band the rule was written for. A
+            // grazing silhouette is one pixel tall with NO sheet above or below it. So require the
+            // from-air reading to be corroborated vertically: uncorroborated, the pixel is a
+            // silhouette and falls through to the submerged branch below, which prices it exactly
+            // like its neighbours. The straddling band's INTERIOR cannot be affected - every pixel
+            // in it has a from-air neighbour by construction.
+            //
+            // LOAD, not SAMPLE: no implicit derivatives, so this is valid before any branch, and
+            // the coordinates are clamped because an out-of-range load is undefined, not zero.
+            int2 prepassPixelMax = int2(_ScaledScreenParams.xy) - int2(1, 1);
+            int prepassRowUp   = min(prepassPixel.y + PREPASS_FROM_AIR_CORROBORATION_PIXELS, prepassPixelMax.y);
+            int prepassRowDown = max(prepassPixel.y - PREPASS_FROM_AIR_CORROBORATION_PIXELS, 0);
+            float surfaceSignedUp   = LOAD_TEXTURE2D(_OceanSurfaceEyeDepth, int2(prepassPixel.x, prepassRowUp)).r;
+            float surfaceSignedDown = LOAD_TEXTURE2D(_OceanSurfaceEyeDepth, int2(prepassPixel.x, prepassRowDown)).r;
+            bool fromAirCorroborated = surfaceSignedUp > 0.0 || surfaceSignedDown > 0.0;
+
             // Which face of the sheet this pixel shows - a RASTER fact, per pixel, from the same
             // draw the camera made. It replaces the eye's own waterline as the owner test below.
-            bool sheetSeenFromAir = surfaceSigned > 0.0;
+            bool sheetSeenFromAir = surfaceSigned > 0.0 && fromAirCorroborated;
             // Eye depth is view-space Z; divide by the ray/forward cosine for distance along the ray.
             float3 camForward = -UNITY_MATRIX_V[2].xyz;
             float hitDist = surfaceEye / max(dot(dir, camForward), 1e-4);

@@ -32,6 +32,7 @@ float _WaterDebugMode;
 #define WATER_DEBUG_FOG_PATH_BRANCH  10
 #define WATER_DEBUG_FOG_GATES        11
 #define WATER_DEBUG_FOG_MASK_VS_SPAN 12
+#define WATER_DEBUG_FOG_SHEET_SIDE   13
 
 // The first fog ordinal, so each side can ignore the other's views by range instead of by
 // listing them: the surface pass must not claim a fog view, and the fog pass must not claim a
