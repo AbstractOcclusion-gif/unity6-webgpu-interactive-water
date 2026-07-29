@@ -29,6 +29,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
         [HideInInspector] _SSRThickness ("SSR Thickness", Range(0.01,1.0)) = 0.2
         [HideInInspector] _RealRefraction ("Real (Screen-Space) Refraction", Float) = 0
         [HideInInspector] _RefractionDistortion ("Refraction Distortion", Range(0,0.2)) = 0.05
+        [HideInInspector] _RefractionStrength ("Refraction Strength (1 = physical Snell bend)", Range(0,1)) = 1.0
         // Above-water look (WOW pass): physical Schlick Fresnel + GGX sun specular.
         // _FresnelFloor = artistic minimum reflectance (0 = pure physics; the legacy
         // curve behaved like a 0.25 floor, which mirrored the sky even straight down).
@@ -238,7 +239,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
                 float fresnel;
                 float3 reflectedColor = ReflectionStage(i, geom, fresnel);
-                float3 refractedColor = RefractionStage(i, geom, waterClarity);
+                float3 bodyInscatter;
+                float3 refractedColor = RefractionStage(i, geom, waterClarity, bodyInscatter);
                 float sssBoost = EvaluateCrestGlow(i, geom);
 
                 // WGSL derivative uniformity: whitecap/whitewash/swash pattern gradients,
@@ -259,7 +261,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
                 FoamLayer swashFoamLayer;
                 outColor = ShorelineStage(i, geom, outColor, refractedColor, reflectedColor,
-                                          foamWorldDdx, foamWorldDdy, swashFoamLayer);
+                                          foamWorldDdx, foamWorldDdy, bodyInscatter, swashFoamLayer);
                 outColor = FinalCompositeStage(i, geom, outColor, oceanFoamLayer, pondFoamLayer,
                                                surfFoamLayer, swashFoamLayer);
                 // Debug views LAST, so they REPLACE the finished colour rather than perturb it.

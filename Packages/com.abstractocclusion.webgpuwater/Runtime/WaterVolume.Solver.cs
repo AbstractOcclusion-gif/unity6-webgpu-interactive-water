@@ -134,7 +134,10 @@ namespace AbstractOcclusion.WebGpuWater
             // deposit foam at the hull. Zeroed when foam is off, so interactions stay copy-through.
             _water.SetWakeFoam(foam ? foamWakeStrength : 0f, foamWakeRadiusScale);
 
-            if (foam)
+            // Wetness memory rides this same pass, so the sim must still step when the foam LOOK is
+            // off but something in the scene reads wet ground. _FoamWriteMask keeps R empty in that
+            // case, so nothing draws foam that was not asked for.
+            if (foam || wetnessMemory)
             {
                 // Bi-exponential contract: thin residual lace must SURVIVE LONGER than
                 // thick fresh foam (residual >= fresh), or the blend inverts and foam
@@ -158,9 +161,28 @@ namespace AbstractOcclusion.WebGpuWater
                                 foamFromCurvature * foamActivityScale, foamAdvect,
                                 _foamTimeDebt, foamDecayRate,
                                 foamBreakStrength, foamBreakRange / VolumeExtentSafe.y,
-                                foamCrestBias, foamDeposit);
+                                foamCrestBias, foamDeposit,
+                                WetMarkSurvivalPerStep(wetnessDryTime),
+                                foam);
                 _foamTimeDebt = 0f;
             }
+        }
+
+        // Authored DRY TIME (seconds) -> the per-reference-step survival factor the kernel decays the
+        // wet mark by. "Dry" is defined as faded to exp(-3) ~ 5% of the wetted level, which is what
+        // makes the authored number match what the eye calls dry; a true exponential never reaches
+        // zero, so the definition has to be stated somewhere and this is it.
+        //
+        // NOTE this is unitless and height-independent - unlike foamMinWaveHeight beside it, there is
+        // deliberately NO divide by the volume extent. A duration does not change because the body is
+        // deeper, and that height-independence is the whole reason this replaced a metres/second rate.
+        const float WetMarkFadeTimeConstants = 3f;
+        const float MinWetMarkDryTimeSeconds = 0.05f;
+
+        static float WetMarkSurvivalPerStep(float dryTimeSeconds)
+        {
+            float seconds = Mathf.Max(dryTimeSeconds, MinWetMarkDryTimeSeconds);
+            return Mathf.Exp(-WetMarkFadeTimeConstants / (seconds * ReferenceFrameRate));
         }
 
         /// <summary>Push this frame's surf-front foam source to the ripple sim: the Layer A field

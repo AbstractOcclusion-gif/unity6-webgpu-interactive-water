@@ -62,6 +62,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FoamMask = Shader.PropertyToID("_FoamMask");
         static readonly int ID_FoamColor = Shader.PropertyToID("_FoamColor");
         static readonly int ID_FoamEnabled = Shader.PropertyToID("_FoamEnabled");
+        static readonly int ID_WetMarkActive = Shader.PropertyToID("_WetMarkActive");
+        static readonly int ID_WetDryTimeSeconds = Shader.PropertyToID("_WetDryTimeSeconds");
         static readonly int ID_FoamStrength = Shader.PropertyToID("_FoamStrength");
         static readonly int ID_FoamTileSize = Shader.PropertyToID("_FoamTileSize");
         // Body-owned surface texture inputs (Textures section): bound only when assigned on the body.
@@ -163,6 +165,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SSRMaxSteps = Shader.PropertyToID("_SSRMaxSteps");
         static readonly int ID_SSRThickness = Shader.PropertyToID("_SSRThickness");
         static readonly int ID_RefractionDistortion = Shader.PropertyToID("_RefractionDistortion");
+        static readonly int ID_RefractionStrength = Shader.PropertyToID("_RefractionStrength");
         static readonly int ID_ExclusionCount = WaterShaderProps.ExclusionCount;
         static readonly int ID_ExclusionWorldToLocal = WaterShaderProps.ExclusionWorldToLocal;
         static readonly int ID_ExclusionShape = WaterShaderProps.ExclusionShape;
@@ -522,6 +525,7 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_SSRMaxSteps, _body.SSRMaxSteps);
             sink.SetFloat(ID_SSRThickness, _body.SSRThickness);
             sink.SetFloat(ID_RefractionDistortion, _body.RefractionDistortion);
+            sink.SetFloat(ID_RefractionStrength, _body.RefractionStrength);
 
             if (_body.BedTexture != null) sink.SetTexture(ID_BedTex, _body.BedTexture);
             sink.SetFloat(ID_BedValid, _body.IsBedBaked ? 1f : 0f);
@@ -541,6 +545,14 @@ namespace AbstractOcclusion.WebGpuWater
 
             sink.SetColor(ID_FoamColor, _body.foamColor);
             sink.SetFloat(ID_FoamEnabled, _body.Foam ? 1f : 0f);
+            // The wet mark is only meaningful while the foam pass is actually stepping. With both off
+            // the buffer keeps its LAST values, and a consumer reading them would hold ground
+            // permanently wet at a waterline that has not existed for minutes.
+            sink.SetFloat(ID_WetMarkActive, (_body.Foam || _body.wetnessMemory) ? 1f : 0f);
+            // Published unconditionally, NOT gated on wetnessMemory: the surf swash dries on this
+            // clock whether or not the sim is keeping a wet mark, and a body with the memory off must
+            // still hand the beach a sane duration.
+            sink.SetFloat(ID_WetDryTimeSeconds, _body.wetnessDryTime);
             sink.SetFloat(ID_FoamStrength, _body.foamStrength);
             sink.SetFloat(ID_FoamTileSize, _body.foamPatternSize);
             sink.SetFloat(ID_FoamBorder, _body.foamBorderWidth);

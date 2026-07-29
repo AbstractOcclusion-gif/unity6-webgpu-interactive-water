@@ -54,7 +54,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
 
             // Sun globals (published by WaterUniformPublisher), same declarations as the fog pass.
             float3 _LightDir;
-            float3 _SunColor;
+            // _SunColor is declared by WaterFog.hlsl (included above) - the header that owns the in-scatter needing it.
             // "The eye is IN WATER" (published by PublishUnderwater): with the armed flag below it
             // gates the above-water fog reconstruction. Camera state -> uniform -> screen-coherent.
             // NOT "below the surface plane": an eye inside a dry carve is below sea level and still

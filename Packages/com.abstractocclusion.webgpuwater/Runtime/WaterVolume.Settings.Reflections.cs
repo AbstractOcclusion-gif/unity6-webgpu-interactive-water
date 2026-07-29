@@ -121,8 +121,14 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(8, 64)] public int ssrMaxSteps = 24;
             [Tooltip("SSR depth thickness tolerance for a hit.")]
             [Range(0.01f, 1f)] public float ssrThickness = 0.2f;
-            [Tooltip("Wave-normal distortion of the screen-space refraction (Real Refraction).")]
+            [Tooltip("Wave-normal distortion of the screen-space refraction (Real Refraction). " +
+                     "A screen-UV offset on the opaque texture, so it only exists on that path.")]
             [Range(0f, 0.2f)] public float refractionDistortion = 0.05f;
+            [Tooltip("How far the view BENDS entering the water on the ANALYTIC path (Real " +
+                     "Refraction OFF). 1 = the physical Snell ray for water; 0 = a flat window that " +
+                     "looks straight through. Lower it to calm a busy pool floor. The two refraction " +
+                     "knobs are mutually exclusive - Real Refraction picks which one is live.")]
+            [Range(0f, 1f)] public float refractionStrength = 1f;
         }
 
         // Tier-capped effective reflection toggles + look, published per body every frame by
@@ -159,5 +165,6 @@ namespace AbstractOcclusion.WebGpuWater
         internal float SSRMaxSteps => reflectionSettings.ssrMaxSteps;
         internal float SSRThickness => reflectionSettings.ssrThickness;
         internal float RefractionDistortion => reflectionSettings.refractionDistortion;
+        internal float RefractionStrength => reflectionSettings.refractionStrength;
     }
 }

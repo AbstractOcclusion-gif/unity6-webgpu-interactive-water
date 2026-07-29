@@ -18,6 +18,16 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
         _CausticStrength ("Caustic Strength", Range(0,8)) = 4
         _CausticTint ("Caustic Tint", Color) = (1,1,1,1)
         _UnderwaterTint ("Underwater Tint", Color) = (0.4, 0.9, 1.0, 1)
+        [Header(Wetness)]
+        // Master. 0 = every wetness term is skipped and this material shades exactly as it did
+        // before the feature existed - which is what keeps the pool-SHELL receivers safe.
+        _WetStrength ("Wetness", Range(0,1)) = 0
+        _WetBandHeight ("Wet Band Above Waterline (m)", Range(0,2)) = 0.15
+        _WetDarken ("Porous Darkening", Range(0,1)) = 0.7
+        _WetSmoothness ("Wet Smoothness", Range(0,1)) = 0.8
+        _WetNormalFlatten ("Wet Normal Flatten", Range(0,1)) = 0.6
+        _WetSwashStrength ("Wet From Beach Swash", Range(0,1)) = 1
+        _WetFoamStrength ("Wet From Foam", Range(0,1)) = 0.5
         [Toggle] _ShadeInnerFacesOnly ("Shade Inner Faces Only (solid pool)", Float) = 0
     }
     SubShader
@@ -49,13 +59,16 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
             #include "WaterFog.hlsl"
             #include "WaterVolume.hlsl"
             #include "WaterShared.hlsl" // IOR_*, ProjectCausticUV
+            #include "WaterFoamMask.hlsl" // SimFoamCoverage (also declares _WaterTexel for us)
+            #include "WaterShore.hlsl"    // ShoreSample / ShoreData - the baked shore substrate
+            #include "WaterSurfWaves.hlsl" // EvaluateSurfSwash + _SurfBeatTime (pure math, no samplers)
+            #include "WaterWetness.hlsl"  // THE wetness model, shared with the terrain shader
 
             TEXTURE2D(_BaseMap);    SAMPLER(sampler_BaseMap);
             TEXTURE2D(_BumpMap);    SAMPLER(sampler_BumpMap);
             TEXTURE2D(_CausticTex); SAMPLER(sampler_CausticTex);
             TEXTURE2D(_WaterTex);   SAMPLER(sampler_WaterTex);
             float3 _LightDir;   // global "toward the light", driven from the Unity sun
-            float4 _WaterTexel; // (1/w, 1/h, w, h) of _WaterTex, pushed from C#
             float _CausticOccluderActive; // 1 when caustic.g is this body's valid refracted occluder-shadow channel (see WaterCommon.hlsl)
 
             // Manual bilinear height sample: WebGPU cannot hardware-filter the float32 sim
@@ -85,6 +98,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
                 float _Smoothness;
                 float _CausticStrength;
                 float _ShadeInnerFacesOnly;
+                float _WetStrength;
+                float _WetBandHeight;
+                float _WetDarken;
+                float _WetSmoothness;
+                float _WetNormalFlatten;
+                float _WetSwashStrength;
+                float _WetFoamStrength;
             CBUFFER_END
 
             struct Attributes { float4 positionOS:POSITION; float3 normalOS:NORMAL; float4 tangentOS:TANGENT; float2 uv:TEXCOORD0; };
@@ -162,10 +182,82 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
                 // fade and fog all measure depth against THIS, instead of the old flat
                 // _VolumeCenter.y plane, so the shader never disagrees with itself about where
                 // the surface sits (and a body at any Y is handled by its own volume frame).
-                float2 wuv = poolPos.xz * 0.5 + 0.5;
-                float simH = SampleWaterHeightBilinear(wuv);
+                // THE SIM'S OWN FRAME. On a windowed (large) body the ripple sim covers a
+                // camera-following WINDOW, not the whole body, so pool xz addresses the wrong texels
+                // entirely - and because the window follows the camera, the error travels with you.
+                // Every other consumer already indexes it this way (WaterSurfaceVertStage:74, the
+                // chunk wall, the foam particles); these two shaders were the last reading pool xz.
+                //
+                // THE HEIGHT UNIT IS UNAFFECTED, which is what keeps this a three-line change:
+                // SimHalfExtent.y IS VolumeExtentSafe.y (WaterVolume.Frames.cs:120-123), so a sampled
+                // height still converts through the volume frame in both cases.
+                float3 simPos = (_SimWindowed > 0.5) ? WorldToSim(IN.positionWS) : poolPos;
+                float2 wuv = simPos.xz * 0.5 + 0.5;
+                // Outside the sim's coverage there is no ripple data at all - a clamped read there
+                // repeats the border texel across the whole world, which is the same class of bug the
+                // foam window fade exists to stop.
+                float simCovered = (max(abs(simPos.x), abs(simPos.z)) <= 1.0) ? 1.0 : 0.0;
+                float simH = SampleWaterHeightBilinear(wuv) * simCovered;
                 float surfaceY = PoolToWorld(float3(poolPos.x, simH, poolPos.z)).y;
                 bool underwater = (waterMask > 0.5 && poolPos.y < simH);
+
+                // Wetness. The hard 'underwater' bool above still gates the tint and the caustics;
+                // this is its CONTINUOUS sibling, so a surface stops being bone dry one texel above
+                // the waterline. Both are built from the same sampled simH, so the feathered weight
+                // and the hard bool cannot disagree along their shared contour - the wet line simply
+                // refuses to fall below wetFloorY, the drying high-water mark, as a trough passes.
+                float wet = 0.0;
+                if (_WetStrength > 0.0 && waterMask > 0.5)
+                {
+                    // THE WET LINE'S FLOOR. markH is the sim's high-water memory for this column
+                    // (pool height units, drying toward 0 = the still level), taken through the SAME
+                    // volume frame as surfaceY so rotation and non-uniform extents can never make the
+                    // two heights disagree. Because markH can never go below 0, this is EXACTLY the
+                    // still plane when there is no memory yet, when the foam pass is idle, or when the
+                    // buffer is the black fallback - the no-memory behaviour needs no separate path.
+                    // Read HERE, not in the prologue: it costs four taps, and every receiver material
+                    // ships with wetness off.
+                    float markH = (_WetMarkActive > 0.5 && simCovered > 0.5) ? SampleWetMarkWindowed(wuv) : 0.0;
+                    float wetFloorY = PoolToWorld(float3(poolPos.x, markH, poolPos.z)).y;
+                    float bandWet = WaterWetBand(IN.positionWS.y, surfaceY, wetFloorY, _WetBandHeight);
+
+                    // Beach swash: the SAME closed form on the SAME clock (_SurfBeatTime) the water
+                    // mesh's glaze runs on, so a rock at the waterline cannot dry out of step with
+                    // the sand around it. ShoreSample returns inert off-field / on unbaked bodies,
+                    // and EvaluateSurfSwash returns 0 there, so this collapses to nothing on a pool.
+                    ShoreData shore = ShoreSample(IN.positionWS.xz);
+                    float2 swash = (_SurfActive > 0.5)
+                        ? EvaluateSurfSwash(IN.positionWS.xz, shore.toShore, shore.slopeTan,
+                                            shore.influence, _SurfBeatTime)
+                        : float2(0.0, 0.0);
+                    // shore.depth is + in water and - on dry land, so -depth is height above the
+                    // still plane: exactly the quantity the surface's glaze calls beachRise.
+                    float swashWet = WaterWetSwash(-shore.depth, swash.y) * _WetSwashStrength;
+
+                    // Foam through the package's one coverage formula, read at the SAME pool-frame
+                    // UV as the height above so the foam can never disagree with the waterline it
+                    // is drawn against.
+                    // poolPos.xz stays POOL space here on purpose: SimFoamCoverage uses it only for
+                    // the wall-border term, which is a whole-body concept (a scrolling window has no
+                    // walls). Only the advection lookup moves to the sim frame.
+                    float foamWet = (_FoamEnabled > 0.5 && simCovered > 0.5)
+                        ? WaterWetFoam(SimFoamCoverage(poolPos.xz, wuv, 0.0)) * _WetFoamStrength
+                        : 0.0;
+
+                    wet = _WetStrength * WaterWetCombine(bandWet, swashWet, foamWet);
+                }
+
+                WaterWetLook wetLook;
+                wetLook.darken = _WetDarken;
+                wetLook.smoothness = _WetSmoothness;
+                wetLook.normalFlatten = _WetNormalFlatten;
+                // Flattens toward the GEOMETRIC normal, not the normal-mapped one - the film lies
+                // over the micro-relief, which is what the normal map encodes.
+                WaterWetSurface wetSurface = WaterApplyWetness(wetLook, wet, albedo, _Smoothness,
+                                                               N, vertexNormalWS);
+                albedo = wetSurface.albedo;
+                N = wetSurface.normal;
+                float smoothness = wetSurface.smoothness;
 
                 // Caustic map sampled ONCE up front with explicit gradients (WGSL-safe: an implicit-
                 // derivative sample inside the per-fragment waterline branch below is undefined on WebGPU).
@@ -207,9 +299,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
                 // speculates; folded in before downwelling so depth dims it too.
                 float3 viewDirWS = normalize(GetWorldSpaceViewDir(IN.positionWS));
                 float3 halfDirWS = normalize(mainLight.direction + viewDirWS);
-                float specExponent = exp2(_Smoothness * 10.0 + 1.0);
+                float specExponent = WaterSpecularExponent(smoothness);
                 float specTerm = pow(saturate(dot(N, halfDirWS)), specExponent) * ndl * lightShadow;
-                color += mainLight.color * _SpecColor.rgb * specTerm;
+                // Restore the energy the narrowing lobe would otherwise throw away - without this a
+                // wet surface gets a SMALLER highlight than a dry one, not a brighter one. Exactly
+                // 1.0 while dry, so an opted-out material is unchanged.
+                float specGain = WaterWetSpecularGain(WaterSpecularExponent(_Smoothness), specExponent);
+                color += mainLight.color * _SpecColor.rgb * (specTerm * specGain);
 
                 // Less light reaches the object the deeper it sits (downwelling), applied to
                 // the ambient + direct term. No-op above the surface / when the feature is off.
@@ -232,7 +328,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
                 // against the sampled surface Y above. Gated on the footprint so fog never
                 // tints geometry outside the body.
                 if (waterMask > 0.5)
-                    color = ApplyWaterFog(color, WaterPathLength(IN.positionWS, _WorldSpaceCameraPos, surfaceY));
+                    color = ApplyWaterFog(color, WaterPathLength(IN.positionWS, _WorldSpaceCameraPos, surfaceY),
+                                          WaterInscatterColor(normalize(_WorldSpaceCameraPos - IN.positionWS),
+                                                              _LightDir, _SunColor, 0.0));
                 return half4(color, 1);
             }
             ENDHLSL

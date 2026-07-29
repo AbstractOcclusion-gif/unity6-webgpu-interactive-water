@@ -49,6 +49,17 @@ float4 _SurfWindDirXZ;    // xy = (cos, sin) of the swell/wind heading (the wave
 // precision (front positions step). The field is EXACTLY periodic in the wrap (see
 // SurfWrapIndex), so the wrap instant is seamless by construction.
 float _SurfBeatTime;
+// THE SHARED WETNESS CLOCK, in seconds, published per body from foamSettings.wetnessDryTime. The surf
+// swash and the ripple sim's wet mark both dry on THIS number - two drying laws for one visual (a
+// beach receding on the wave period while the ground beside it dried on a seconds knob) is exactly
+// the kind of split that shows up as a seam where the two meet.
+float _WetDryTimeSeconds;
+// Matches WaterVolume.Solver's WetMarkFadeTimeConstants: "dry" means faded to exp(-3) ~ 5%. Both
+// sides must agree or the same authored number would mean two different durations.
+#define SURF_DRY_TIME_CONSTANTS 3.0
+// Used when the uniform has never been published (no live body). Mirrors the C# field default, so an
+// unpublished frame looks like a default one rather than drying instantly.
+#define SURF_DEFAULT_DRY_SECONDS 3.0
 // Dedicated surf-foam LOOK controls (decoupled from BOTH the ripple/pond foam sliders and the
 // ocean whitecap sliders - tuning either must never restyle the surf whitewash). The surf renders
 // through the ocean-whitecap pipeline (same texture + contrast law: whitewash IS whitecap foam)
@@ -134,9 +145,9 @@ float _SurfFoamTrailLength;  // trailing-deposit length multiplier (1 = legacy)
 #define SURF_EXPOSURE_FACING_LO -0.25
 #define SURF_EXPOSURE_FACING_HI 0.5
 // Swash timing: fraction of the front period spent on the quick uprush (the rest is the slower
-// backwash), and how much of the run-up height stays glistening wet through one full cycle.
+// backwash). Also the apex the wet line decays FROM - shared with the sim's swash deposit and the
+// surface's reflux/deposit envelopes, so all four agree on when the film turns around.
 #define SURF_SWASH_UPRUSH      0.30
-#define SURF_SWASH_WET_FLOOR   0.45
 // The swash film rides this far (m) proud of the sand, so the film/glaze fragments WIN the depth
 // test against the opaque beach (a flat plane under the terrain would be entirely occluded).
 #define SURF_FILM_THICKNESS    0.03
@@ -615,7 +626,9 @@ float SurfAmbientWeight(float surfMask)
 // waterline the front field's phase is time / period (s = 0), so the film's rhythm, set variation
 // and drying can all be closed-form. Returns (no out-params - see SurfFrontHeight note):
 //   .x swashLevel: metres of extra water level RIGHT NOW above the still plane (uprush/backwash)
-//   .y wetLevel:   metres up to which the sand still glistens (recent max, drying through the cycle)
+//   .y wetLevel:   metres up to which the sand still glistens - the recent run-up maximum,
+//                  decaying on the SHARED wetness clock (_WetDryTimeSeconds), not on the
+//                  wave cycle, so sand and the ground beside it dry at one rate
 // The surface shader keeps beach fragments alive up to max(.x, .y) and renders the zone above the
 // current film as the dark wet-sand glaze - wet sand with zero extra state.
 float2 EvaluateSurfSwash(float2 worldXZ, float2 toShore, float tanBeta, float influence, float time)
@@ -667,10 +680,20 @@ float2 EvaluateSurfSwash(float2 worldXZ, float2 toShore, float tanBeta, float in
     float runPrev = min(xiPrev, SURF_RUNUP_XI_CAP) * deepHeightPrev * _SurfSwashAmplitude
                   * lerp(1.0, SURF_SURGE_RUNUP_BOOST, SurfBreakerWeights(xiPrev).z)
                   * influence * exposure;
+    // Decay on the SHARED wetness clock rather than on fractions of the wave cycle. The old form
+    // faded to a hand-tuned floor over the backwash and carried a second hand-tuned term for the
+    // previous front, with the two values matched by hand so the cycle rollover did not jump.
+    //
+    // Measuring the decay against AGE IN SECONDS makes that continuity automatic: at f -> 1 this
+    // cycle has aged (1 - UPRUSH) * T, and at f -> 0 the next cycle's "previous" term starts at
+    // exactly that same age. It also joins the uprush exactly, since the exponent is 0 at the apex.
+    // Nothing is hand-matched any more, and the beach now dries in the seconds the user authored.
+    float dryTime = (_WetDryTimeSeconds > 0.0) ? _WetDryTimeSeconds : SURF_DEFAULT_DRY_SECONDS;
+    float tau = dryTime / SURF_DRY_TIME_CONSTANTS;
     float thisCycleWet = (f < SURF_SWASH_UPRUSH)
         ? swashLevel
-        : run * lerp(1.0, SURF_SWASH_WET_FLOOR, smoothstep(SURF_SWASH_UPRUSH, 1.0, f));
-    float prevCycleWet = runPrev * SURF_SWASH_WET_FLOOR * lerp(1.0, 0.25, smoothstep(0.0, 1.0, f));
+        : run * exp(-((f - SURF_SWASH_UPRUSH) * T) / tau);
+    float prevCycleWet = runPrev * exp(-((f + 1.0 - SURF_SWASH_UPRUSH) * T) / tau);
     float wetLevel = max(thisCycleWet, prevCycleWet);
     return float2(swashLevel, wetLevel);
 }

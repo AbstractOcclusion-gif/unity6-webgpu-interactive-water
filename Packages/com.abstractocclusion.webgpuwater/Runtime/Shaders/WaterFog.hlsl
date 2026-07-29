@@ -12,11 +12,23 @@ float  _WaterFogEnabled;   // 0 / 1
 float  _WaterOpacity;      // 0..1 depth-independent turbidity (lerp view toward fog colour)
 
 // Absorb 'color' over 'dist' world units of water. No-op when disabled.
-float3 ApplyWaterFog(float3 color, float dist)
+// Absorption toward the water's OWN colour over 'dist' metres of water.
+//
+// THE FIX THIS CARRIES: this used to converge to the flat _WaterFogColor while every other consumer
+// in the package - the chunk wall, the exclusion wall, the underwater fog, the particles, the pool
+// trace and the surface's own refraction, eight call sites - converged to WaterInscatterColor. That
+// broke the package's own stated invariant ("the fog colour seen from below matches the water colour
+// seen from above"), and it had a blunt practical consequence: on a body with Volume Scattering ON,
+// _ScatterColor is the knob an author reaches for, and it had NO EFFECT WHATSOEVER on the pool floor,
+// on receivers, or on terrain - those three converged to a colour nobody was editing.
+//
+// The in-scatter is passed IN rather than computed here, matching ApplyWaterVolumeClarity below, so
+// a caller that already has one (the surface) cannot end up with two subtly different values.
+float3 ApplyWaterFog(float3 color, float dist, float3 inscatter)
 {
     if (_WaterFogEnabled < 0.5) return color;
     float3 absorb = exp(-_WaterExtinction.rgb * (_WaterFogDensity * max(0.0, dist)));
-    return lerp(_WaterFogColor.rgb, color, absorb);
+    return lerp(inscatter, color, absorb);
 }
 
 // ---- Underwater view tint (physical; replaces the old hardcoded UNDERWATER_* constants) ----
@@ -73,6 +85,12 @@ float VolumeSchlickPhase(float g, float cosTheta)
 // (direct, art-directable), scaled by intensity and lit by ambient + a sun term shaped by the phase.
 // viewDirWS points from the surface TOWARD the camera and sunDir from the surface TOWARD the sun
 // (Unity _LightDir), so the phase peaks when looking toward the sun. sunBoost is the wave-crest SSS.
+// Moved here from WaterSurfaceSpecular.hlsl: the in-scatter is what needs a sun colour, and the three
+// "solid geometry seen through water" shaders (AnalyticPool / WaterReceiver / WaterTerrain) include
+// this header but not that one. Safe as a MOVE rather than a second declaration - WaterSurface.shader
+// is the only consumer of WaterSurfaceSpecular.hlsl and includes WaterFog.hlsl first in all 3 passes.
+float3 _SunColor; // Unity directional light color * intensity (global)
+
 float3 WaterInscatterColor(float3 viewDirWS, float3 sunDir, float3 sunColor, float sunBoost)
 {
     if (_ScatterEnabled < 0.5) return _WaterFogColor.rgb;

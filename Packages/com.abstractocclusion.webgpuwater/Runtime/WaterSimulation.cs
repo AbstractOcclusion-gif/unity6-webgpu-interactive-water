@@ -70,6 +70,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FoamDecayFresh = Shader.PropertyToID("_FoamDecayFresh");
         static readonly int ID_FoamDtSteps = Shader.PropertyToID("_FoamDtSteps");
         static readonly int ID_FoamDecayRate = Shader.PropertyToID("_FoamDecayRate");
+        static readonly int ID_WetDrySurvival = Shader.PropertyToID("_WetDrySurvival");
+        static readonly int ID_FoamWriteMask = Shader.PropertyToID("_FoamWriteMask");
         static readonly int ID_FoamSpread = Shader.PropertyToID("_FoamSpread");
         static readonly int ID_FoamFromSpeed = Shader.PropertyToID("_FoamFromSpeed");
         static readonly int ID_FoamFromCurv = Shader.PropertyToID("_FoamFromCurv");
@@ -180,8 +182,12 @@ namespace AbstractOcclusion.WebGpuWater
 
             _a = Create(RenderTextureFormat.ARGBFloat, "WaterSimState");
             _b = Create(RenderTextureFormat.ARGBFloat, "WaterSimState");
-            _foamA = Create(RenderTextureFormat.RFloat, "WaterFoam");
-            _foamB = Create(RenderTextureFormat.RFloat, "WaterFoam");
+            // TWO channels: R = foam amount, G = the wet mark (highest recent waterline, pool height
+            // units). rg32float is a core WebGPU storage format, like the r32float this replaced.
+            // Cleared to zero below, which is the correct inert state for BOTH: no foam, and a mark
+            // sitting exactly at the still level.
+            _foamA = Create(RenderTextureFormat.RGFloat, "WaterFoam");
+            _foamB = Create(RenderTextureFormat.RGFloat, "WaterFoam");
             Clear(_a); Clear(_b); Clear(_foamA); Clear(_foamB);
 
             _partialSums = new GraphicsBuffer(GraphicsBuffer.Target.Structured, _groups * _groups, sizeof(float));
@@ -545,7 +551,8 @@ namespace AbstractOcclusion.WebGpuWater
         public void StepFoam(float genRate, float genThreshold, float minWaveHeight, float decayFresh,
                              float decayResidual, float spread, float fromSpeed, float fromCurv,
                              float advect, float dtSteps, float decayRate,
-                             float breakStrength, float breakRange, float crestBias, float deposit)
+                             float breakStrength, float breakRange, float crestBias, float deposit,
+                             float wetDrySurvival = 1f, bool foamVisible = true)
         {
             SetGridUniforms();
             _cs.SetFloat(ID_FoamCrestBias, crestBias);
@@ -557,6 +564,11 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetFloat(ID_FoamDecayResidual, decayResidual);
             _cs.SetFloat(ID_FoamDtSteps, dtSteps);
             _cs.SetFloat(ID_FoamDecayRate, decayRate);
+            _cs.SetFloat(ID_WetDrySurvival, wetDrySurvival);
+            // 0 keeps the R channel empty while this pass runs only to maintain the wet mark. Gating
+            // at the single write site instead of zeroing gen / deposit / shore injection / wake
+            // separately is what makes it impossible to leave a foam source switched on by accident.
+            _cs.SetFloat(ID_FoamWriteMask, foamVisible ? 1f : 0f);
             _cs.SetFloat(ID_FoamSpread, spread);
             _cs.SetFloat(ID_FoamFromSpeed, fromSpeed);
             _cs.SetFloat(ID_FoamFromCurv, fromCurv);

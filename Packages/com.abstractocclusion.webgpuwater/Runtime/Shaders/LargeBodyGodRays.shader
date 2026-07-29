@@ -73,7 +73,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             #include "WaterWaterline.hlsl"
 
             float3 _LightDir;   // global, normalized direction toward the sun
-            float3 _SunColor;   // global, sun colour * intensity
+            // _SunColor is declared by WaterFog.hlsl (included above) - the header that owns the in-scatter needing it.
 
             // Published by the underwater fog path; reused here so the shafts share the exact submersion
             // state and surface height the fog uses (one source of truth, no separate god-ray copy).

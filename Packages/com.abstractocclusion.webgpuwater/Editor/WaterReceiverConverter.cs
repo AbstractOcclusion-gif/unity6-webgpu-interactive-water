@@ -29,7 +29,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const string ReceiverShaderName = WaterShaderNames.WaterReceiver;
         // Converted materials are written here (create-once, reused on re-run) so scenes keep a real asset
         // reference instead of a leaked runtime instance.
-        const string OutputFolder = "Assets/WebGpuWaterConverted";
+        internal const string OutputFolder = "Assets/WebGpuWaterConverted";
 
         // Target (WaterReceiver) property names.
         const string PropBaseColor = "_BaseColor";
@@ -130,7 +130,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // filesystem rejects (this includes '/' and '\', so a "grouped" material name can no longer
         // silently target a non-existent subfolder) and fall back for an empty/whitespace name.
         const string UnnamedMaterialFallback = "Material";
-        static string SanitizeAssetName(string rawName)
+        internal static string SanitizeAssetName(string rawName)
         {
             if (string.IsNullOrWhiteSpace(rawName)) return UnnamedMaterialFallback;
             string cleaned = string.Join("_", rawName.Split(Path.GetInvalidFileNameChars())).Trim();
@@ -190,7 +190,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             return true;
         }
 
-        static void EnsureOutputFolder()
+        internal static void EnsureOutputFolder()
         {
             if (AssetDatabase.IsValidFolder(OutputFolder)) return;
             string parent = Path.GetDirectoryName(OutputFolder).Replace('\\', '/');

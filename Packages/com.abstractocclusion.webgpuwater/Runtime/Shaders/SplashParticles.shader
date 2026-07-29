@@ -94,7 +94,7 @@ Shader "AbstractOcclusion/WebGpuWater/SplashParticles"
             float _SixWayFlipX;
             float _TransmissionStrength;
             float3 _LightDir; // globals published by the primary WaterVolume (toward the sun)
-            float3 _SunColor;
+            // _SunColor comes from WaterFog.hlsl, reached TRANSITIVELY via WaterParticleFog.hlsl - declaring it here again is a redefinition.
             sampler2D _CameraDepthTexture;
 
             struct appdata

@@ -40,6 +40,19 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0.90f, 1f)] public float foamDecayResidual = 0.993f;
             [Tooltip("Time scale of foam decay, frame-rate independent: 1 = authored speed, 2 = fades twice as fast, 0.5 = half. Tune fade SPEED here; the survival sliders above compound ~60x per second, so tiny changes there swing the look violently.")]
             [Range(0.05f, 4f)] public float foamDecayRate = 1f;
+            [Tooltip("Keep the wet-ground memory running even when Foam itself is off. The sim tracks " +
+                     "the highest recent waterline per column in the foam buffer's second channel; " +
+                     "WaterReceiver (and the terrain shader) read it so ground stays wet AFTER the wave " +
+                     "that wetted it has moved on. Leave off if nothing in the scene uses wetness - it " +
+                     "costs a sim dispatch per frame on a body that would otherwise skip it. When Foam " +
+                     "IS on the memory is maintained anyway, for free.")]
+            public bool wetnessMemory = false;
+            [Tooltip("How long wet ground takes to dry, in SECONDS - the time for a wet mark to fade " +
+                     "to roughly 5% of the level it was wetted to. Height-independent on purpose: a " +
+                     "small ripple and a big splash both dry in this time, so the number means what it " +
+                     "says. Raise for long dark tide marks that linger behind the water; lower for " +
+                     "wetness that vanishes almost with the wave.")]
+            [Range(0.1f, 30f)] public float wetnessDryTime = 3f;
             [Tooltip("Diffusion of foam toward neighbours.")]
             [Range(0f, 1f)] public float foamSpread = 0.2f;
             [Tooltip("Activity level below which NO foam forms: small waves are too weak to break, " +
@@ -109,6 +122,8 @@ namespace AbstractOcclusion.WebGpuWater
         internal float foamGenRate => foamSettings.foamGenRate;
         internal float foamDecay => foamSettings.foamDecay;
         internal float foamDecayRate => foamSettings.foamDecayRate;
+        internal bool wetnessMemory => foamSettings.wetnessMemory;
+        internal float wetnessDryTime => foamSettings.wetnessDryTime;
         internal float foamGenThreshold => foamSettings.foamGenThreshold;
         internal float foamMinWaveHeight => foamSettings.foamMinWaveHeight;
         internal float foamDecayResidual => foamSettings.foamDecayResidual;

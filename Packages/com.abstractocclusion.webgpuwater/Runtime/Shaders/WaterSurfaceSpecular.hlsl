@@ -91,7 +91,6 @@ float _SunSheenRoughness; // breadth of that sheen lobe (its roughness floor)
 float _SunGrazeBoost;     // NoL wrap for the sun lobes; 0 = physical, higher keeps
                           // the glitter alive when the sun sits at the horizon
 
-float3 _SunColor; // Unity directional light color * intensity (global)
 
 sampler2D _PlanarReflectionTex;
 float     _ReflectionDistortion;

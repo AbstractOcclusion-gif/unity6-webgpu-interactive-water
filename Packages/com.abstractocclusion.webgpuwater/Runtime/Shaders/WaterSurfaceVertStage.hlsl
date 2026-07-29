@@ -52,6 +52,8 @@
             float _PeakedRefineSteps;  // per-body (quality tier); see PEAKED_REFINE_MAX_STEPS
 
             float _RefractionDistortion;
+            // Art-directed strength of the Snell bend on the analytic refraction path. 1 = physical.
+            float _RefractionStrength;
 
             // Pool-space terrain bed height (R = bed height in pool units), baked by WaterVolume.
             sampler2D _BedTex;

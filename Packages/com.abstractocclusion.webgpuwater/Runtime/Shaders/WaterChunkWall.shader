@@ -46,7 +46,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
 
             // Published globals (WaterUniformPublisher). _LightDir comes from WaterCommon; _RealRefraction
             // is the tier flag (0 on Low).
-            float3 _SunColor;
+            // _SunColor is declared by WaterFog.hlsl (included above) - the header that owns the in-scatter needing it.
             float  _RealRefraction;
             sampler2D _CameraOpaqueTexture;
 

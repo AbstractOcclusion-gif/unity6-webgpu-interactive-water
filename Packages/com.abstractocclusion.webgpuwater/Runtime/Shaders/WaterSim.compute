@@ -181,10 +181,30 @@ Texture2D<float4> ObstacleSmoothRaw;
 RWTexture2D<float> ObstacleSmoothDst;
 float _ObstacleTemporalBlend;   // EMA weight of the fresh footprint: 1 = no smoothing, ->0 = heavier
 
-// Foam buffer (R = foam amount per column). Advected/diffused, generated from
-// surface turbulence, and decayed over time. Separate ping-pong from the height.
-Texture2D<float>    FoamSrc;   // RFloat (r32) - WebGPU-safe single channel
-RWTexture2D<float>  FoamDst;
+// Foam buffer, TWO channels (RGFloat / rg32float - both core WebGPU storage formats):
+//   R = foam amount per column. Advected/diffused, generated from surface turbulence, decayed.
+//   G = the WET MARK: the highest surface height this column has reached lately, in the same POOL
+//       height units as the state's .r, drying downward toward the still level (0).
+// WHY G LIVES HERE and not in its own target: this buffer is already a per-column ping-pong that
+// runs every frame, already carries a decaying quantity, and - crucially - is already SCROLLED with
+// the camera window (ScrollFoam). A dedicated wetness target would have had to duplicate all three.
+// The two channels are independent: nothing reads across them.
+Texture2D<float2>    FoamSrc;
+RWTexture2D<float2>  FoamDst;
+// Survival factor of the wet mark per REFERENCE STEP (1/60 s), computed C#-side from a DRY TIME in
+// seconds (WaterVolume.Solver). Same shape as the foam's own decay - pow(survival, dtSteps) - so both
+// are frame-rate independent in the same way.
+//
+// WHY A SURVIVAL FACTOR AND NOT THE LINEAR DROP THIS REPLACED: a constant drop is the honest physics
+// of a receding film, but it makes the DURATION depend on how high the water reached - a 2 cm ripple
+// dried in an eighth of a second at the same setting that left a 20 cm splash lingering. "How long
+// does ground stay wet" is the question being authored, so the knob has to be a time, and an
+// exponential is what makes that time height-independent.
+float _WetDrySurvival;
+// 1 while the foam LOOK is enabled, 0 when this kernel is running only to keep the wet mark alive.
+// One multiply at the single write site is the whole gate: it is impossible to miss a foam source
+// this way, whereas zeroing each of gen / deposit / shore-injection / wake separately is not.
+float _FoamWriteMask;
 float _FoamGenRate;       // how fast turbulence creates foam
 float _FoamGenThreshold;  // activity level below which NO foam forms (small waves don't break)
 float _FoamMinWaveHeight; // POOL-unit wave height below which NO foam forms (kills ripple noise)
@@ -367,7 +387,10 @@ void SphereInteract(uint3 id : SV_DispatchThreadID)
     float wakeDisc  = saturate(1.0 - dist / max(_SphereRadius * _WakeFoamRadiusScale, 1e-4));
     float wakeStamp = _SphereWeight * _WakeFoamStrength
                     * saturate(wakeSpeed * WAKE_FOAM_SPEED_GAIN) * wakeDisc;
-    FoamDst[p] = saturate(FoamSrc.Load(int3(p, 0)) + wakeStamp);
+    float2 foamPrev = FoamSrc.Load(int3(p, 0));
+    // R only: the wake deposits FOAM. The wet mark is owned solely by the Foam kernel, so an
+    // interactor pass can never rewrite the waterline history behind its back.
+    FoamDst[p] = float2(saturate(foamPrev.r + wakeStamp), foamPrev.g);
 }
 
 // Solid-mask coverage at sim texel p, matching the obstacle map's flip convention and clamped so an
@@ -527,17 +550,17 @@ void Foam(uint3 id : SV_DispatchThreadID)
 
     // Manual bilinear: WebGPU r32 storage textures aren't filterable, so we lerp
     // four Load() fetches instead of sampling.
-    float f00 = FoamSrc.Load(int3(ClampC(s0 + int2(0, 0)), 0));
-    float f10 = FoamSrc.Load(int3(ClampC(s0 + int2(1, 0)), 0));
-    float f01 = FoamSrc.Load(int3(ClampC(s0 + int2(0, 1)), 0));
-    float f11 = FoamSrc.Load(int3(ClampC(s0 + int2(1, 1)), 0));
+    float f00 = FoamSrc.Load(int3(ClampC(s0 + int2(0, 0)), 0)).r;
+    float f10 = FoamSrc.Load(int3(ClampC(s0 + int2(1, 0)), 0)).r;
+    float f01 = FoamSrc.Load(int3(ClampC(s0 + int2(0, 1)), 0)).r;
+    float f11 = FoamSrc.Load(int3(ClampC(s0 + int2(1, 1)), 0)).r;
     float advected = lerp(lerp(f00, f10, t.x), lerp(f01, f11, t.x), t.y);
 
     // small isotropic diffusion keeps foam edges from getting too stringy
-    float fL = FoamSrc.Load(int3(ClampC(p + int2(-1, 0)), 0));
-    float fR = FoamSrc.Load(int3(ClampC(p + int2( 1, 0)), 0));
-    float fD = FoamSrc.Load(int3(ClampC(p + int2( 0,-1)), 0));
-    float fU = FoamSrc.Load(int3(ClampC(p + int2( 0, 1)), 0));
+    float fL = FoamSrc.Load(int3(ClampC(p + int2(-1, 0)), 0)).r;
+    float fR = FoamSrc.Load(int3(ClampC(p + int2( 1, 0)), 0)).r;
+    float fD = FoamSrc.Load(int3(ClampC(p + int2( 0,-1)), 0)).r;
+    float fU = FoamSrc.Load(int3(ClampC(p + int2( 0, 1)), 0)).r;
     float foam = lerp(advected, (fL + fR + fD + fU) * 0.25, _FoamSpread);
 
     // generation from turbulence: speed + negative curvature (crests / chop) + shear.
@@ -694,7 +717,23 @@ void Foam(uint3 id : SV_DispatchThreadID)
     float survival = FoamDecayBlend(foam, FOAM_FRESH_THRESHOLD, _FoamDecayResidual, _FoamDecayFresh);
     foam *= pow(survival, _FoamDtSteps * _FoamDecayRate);
 
-    FoamDst[p] = saturate(foam);
+    // --- Wet mark (G): how high the water has BEEN here, not how high it is now -------------------
+    // Foam answers "is there foam on this column". This answers "what is the highest waterline this
+    // column has seen lately", which is the only thing that can keep ground wet AFTER the wave that
+    // wetted it has moved on. Without it the wet line chases the trough and the ground dries the
+    // same frame the crest leaves.
+    //
+    // LINEAR drop, not the bi-exponential survival the foam uses: "the waterline dries N centimetres
+    // per second" is a quantity a human can author, where a per-step survival factor is not. It is
+    // also the physically right shape - a drying film recedes at a roughly constant rate, it does not
+    // halve. Clamped at 0 because at and below the still level the column is submerged and there is
+    // nothing left to dry.
+    // No clamp needed: an exponential of a non-negative mark stays non-negative, and the max() below
+    // re-floors it at the live surface anyway.
+    float driedMark = FoamSrc.Load(int3(p, 0)).g * pow(_WetDrySurvival, _FoamDtSteps);
+    float wetMark = max(info.r, driedMark);
+
+    FoamDst[p] = float2(saturate(foam) * _FoamWriteMask, wetMark);
 }
 
 // NOTE on structure: WGSL's uniformity analysis (WebGPU) is more conservative than the
@@ -782,5 +821,5 @@ void ScrollFoam(uint3 id : SV_DispatchThreadID)
 {
     int2 p = int2(id.xy);
     int2 src = p - _ScrollOffset;
-    FoamDst[p] = InGrid(src) ? FoamSrc.Load(int3(src, 0)) : 0.0;
+    FoamDst[p] = InGrid(src) ? FoamSrc.Load(int3(src, 0)) : (float2)0.0;
 }

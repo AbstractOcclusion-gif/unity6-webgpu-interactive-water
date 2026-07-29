@@ -60,6 +60,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         bool _showFoamWhitecaps = false;
         bool _showFoamShore = false;
         bool _showFoamShading = false;
+        bool _showWetness = false;
 
         bool _showWaterFog = false;
         bool _showScatter = false;
@@ -135,6 +136,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             Sync(ref _showFoamWhitecaps, nameof(_showFoamWhitecaps), load);
             Sync(ref _showFoamShore, nameof(_showFoamShore), load);
             Sync(ref _showFoamShading, nameof(_showFoamShading), load);
+            Sync(ref _showWetness, nameof(_showWetness), load);
 
             Sync(ref _showWaterFog, nameof(_showWaterFog), load);
             Sync(ref _showScatter, nameof(_showScatter), load);
@@ -212,6 +214,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     DrawReflectionsSection();
                     DrawUnderwaterSurfaceSection();
                     DrawFoamSection();
+                    DrawWetnessSection();
                     break;
 
                 case InspectorTab.Volume:

@@ -52,7 +52,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // Needed so the underwater in-scatter can use the same lit WaterInscatterColor as the surface, for a
         // continuous colour crossing the waterline.
         float3 _LightDir;
-        float3 _SunColor;
+        // _SunColor is declared by WaterFog.hlsl (included above) - the header that owns the in-scatter needing it.
 
         // Per-pixel wavy-waterline crossing search (U2). The camera->scene ray meets the DISPLACED surface
         // at a height that follows crests/troughs, so we bracket the FIRST sign change of

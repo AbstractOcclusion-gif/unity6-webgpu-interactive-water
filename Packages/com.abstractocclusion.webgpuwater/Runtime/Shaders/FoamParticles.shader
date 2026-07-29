@@ -89,7 +89,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             float _DrawKind;
             // _LargeBody (1 = open water, picks the large-body glue below) comes from
             // WaterVolume.hlsl - already included; do not redeclare.
-            float3 _SunColor; // Unity directional light color * intensity (global, from WaterVolume)
+            // _SunColor comes from WaterFog.hlsl, reached TRANSITIVELY via WaterParticleFog.hlsl - declaring it here again is a redefinition.
             float4 _Tint;
             float _ParticleOpacity;
             float _VelocityStretch;

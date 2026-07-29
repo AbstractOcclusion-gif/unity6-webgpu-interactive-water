@@ -25,22 +25,36 @@ float4 _WaterTexel;        // (1/width, 1/height, width, height) of _WaterTex, p
 // pass reads (WaterUniformPublisher.WriteBodyUniforms).
 sampler2D _FoamMask;
 float _FoamEnabled, _FoamStrength, _FoamBorderWidth;
+// 1 while the sim is actually stepping the foam pass, so the wet mark in G is being maintained
+// this frame. With the pass idle the buffer still holds its LAST values, and a consumer reading
+// them would pin ground wet at a waterline that stopped existing minutes ago.
+float _WetMarkActive;
 
-// Manual bilinear sample of the float foam mask - same fix as SampleWaterBilinear:
-// WebGPU cannot hardware-filter float32, so a plain tex2D point-samples there and
-// the foam edges go blocky in builds only. The foam RT matches the sim resolution,
-// so _WaterTexel applies. tex2Dlod keeps it valid in any control flow.
-float SampleFoamMaskBilinear(float2 uv)
+// Manual bilinear sample of the foam buffer - same fix as SampleWaterBilinear: WebGPU cannot
+// hardware-filter float32, so a plain tex2D point-samples there and the edges go blocky in builds
+// only. The foam RT matches the sim resolution, so _WaterTexel applies. tex2Dlod keeps it valid in
+// any control flow.
+//
+// Returns BOTH channels (r = foam coverage, g = the wet mark in pool height units) from ONE set of
+// four taps. The two consumers below share this rather than each running its own filter: two copies
+// of a filter over one texture drift, and a wet line that disagreed with the foam drawn on top of it
+// would show as a seam along the waterline - the exact failure this package keeps hitting.
+float2 SampleFoamBufferBilinear(float2 uv)
 {
     float2 texel = _WaterTexel.xy;
     float2 st = uv * _WaterTexel.zw - 0.5;
     float2 f = frac(st);
     float2 baseUV = (floor(st) + 0.5) * texel;
-    float c00 = tex2Dlod(_FoamMask, float4(baseUV, 0, 0)).r;
-    float c10 = tex2Dlod(_FoamMask, float4(baseUV + float2(texel.x, 0.0), 0, 0)).r;
-    float c01 = tex2Dlod(_FoamMask, float4(baseUV + float2(0.0, texel.y), 0, 0)).r;
-    float c11 = tex2Dlod(_FoamMask, float4(baseUV + texel, 0, 0)).r;
+    float2 c00 = tex2Dlod(_FoamMask, float4(baseUV, 0, 0)).rg;
+    float2 c10 = tex2Dlod(_FoamMask, float4(baseUV + float2(texel.x, 0.0), 0, 0)).rg;
+    float2 c01 = tex2Dlod(_FoamMask, float4(baseUV + float2(0.0, texel.y), 0, 0)).rg;
+    float2 c11 = tex2Dlod(_FoamMask, float4(baseUV + texel, 0, 0)).rg;
     return lerp(lerp(c00, c10, f.x), lerp(c01, c11, f.x), f.y);
+}
+
+float SampleFoamMaskBilinear(float2 uv)
+{
+    return SampleFoamBufferBilinear(uv).r;
 }
 
 // Window-edge fade for foam-mask reads (mirrors SampleRipple's out-of-window guard).
@@ -69,6 +83,23 @@ float SampleFoamMaskWindowed(float2 uv)
     float fade = FoamWindowFade(uv);
     if (fade <= 0.0) return 0.0;
     return SampleFoamMaskBilinear(uv) * fade;
+}
+
+// The WET MARK read (G): the highest waterline this column has reached lately, in POOL height units,
+// so a consumer converts it with the SAME PoolToWorld it uses for the live surface - two heights in
+// one currency can never disagree about where the water was.
+//
+// Zero is the correct inert answer, and it is what an unbaked / never-dispatched / cleared buffer
+// already returns: pool height 0 IS the still level, so a consumer taking max(live, mark) silently
+// falls back to "wet up to the still plane" with no gate and no branch.
+float SampleWetMarkWindowed(float2 uv)
+{
+    float fade = FoamWindowFade(uv);
+    if (fade <= 0.0) return 0.0;
+    // NOT scaled by the window fade, unlike the foam: fading a HEIGHT toward 0 would drag the wet
+    // line down to the still level near the window border and print a drying ring around the camera.
+    // The fade is a validity test here, not a weight.
+    return SampleFoamBufferBilinear(uv).g;
 }
 
 // THE coverage formula - 0 = open water, 1 = fully foamed. Every consumer goes through here.

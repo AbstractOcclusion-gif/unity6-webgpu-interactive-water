@@ -411,17 +411,27 @@ float ChunkRefractionSpan(float3 poolPos, float3 refractedRayWS)
 
 // Refraction: analytic pool trace or real screen-space refraction, fogged by
 // the traversed water and pulled toward the body in-scatter by the clarity curve.
-float3 RefractionStage(v2f i, WaterGeomStage g, float waterClarity)
+// bodyInscatter is handed OUT rather than left local: ShorelineStage needs the same value for the
+// deep-water tint, and recomputing it there would let the two stages' phase terms drift apart - a
+// drifting in-scatter prints a seam exactly at the depth boundary where the two meet.
+float3 RefractionStage(v2f i, WaterGeomStage g, float waterClarity, out float3 bodyInscatterOut)
 {
     float3 normal = g.normal;
     float3 incomingRay = g.incomingRay;
     float3 refractedRay = refract(incomingRay, normal, IOR_AIR / IOR_WATER);
+    // Art-directed bend on the ANALYTIC path: 0 = a flat window (look straight through), 1 = the
+    // physical Snell ray. Lerping toward the incoming ray is safe by construction - air->water never
+    // gives total internal reflection, so refract() always returns a unit vector, and the two are at
+    // most the ~48.6 deg critical angle apart, so their lerp can never reach zero and normalize()
+    // can never hand the pool trace below a degenerate direction. Default 1 = physically unchanged.
+    refractedRay = normalize(lerp(incomingRay, refractedRay, _RefractionStrength));
     // The water's lit body colour (picked scatter colour + sun/ambient), or the flat fog
     // colour when scattering is off. Used as the in-scatter target for EVERY path below (deep
     // water, scene refraction, pool, turbidity) so the scatter actually shows. The crest glow
     // is NOT folded in here - as a volume target it only shows where the water behind the
     // crest is deep (sky/far behind), so it is added emissively after compositing instead.
     float3 bodyInscatter = WaterInscatterColor(-incomingRay, _LightDir, _SunColor, 0.0);
+    bodyInscatterOut = bodyInscatter;
 
     // No constant tint: for open/deep water GetSurfaceRayColor -> DeepWaterColor already lights the
     // physical body colour via WaterInscatterColor, and the absorption below pulls the rest toward it,
@@ -823,7 +833,7 @@ float3 ApplyShallowClarity(float3 outColor, float3 refractedColor, ShoreData sho
 // under the same uniform gates as before, so discard behaviour is unchanged.
 float3 ShorelineStage(v2f i, WaterGeomStage g, float3 outColor, float3 refractedColor,
                       float3 reflectedColor, float2 foamWorldDdx, float2 foamWorldDdy,
-                      out FoamLayer swashFoamLayer)
+                      float3 bodyInscatter, out FoamLayer swashFoamLayer)
 {
     float3 normal = g.normal;
     ShoreData shoreFrag = g.shore;
@@ -890,7 +900,20 @@ float3 ShorelineStage(v2f i, WaterGeomStage g, float3 outColor, float3 refracted
         // are byte-identical.
         float shore = 1.0 - exp(-_ShorelineDepthScale * colDepth);
         float tint = (_DepthClarityStrength > 0.0) ? (1.0 - WaterDepthClarity(colDepth)) : shore;
-        outColor = lerp(outColor, _DeepWaterColor.rgb, saturate(tint * _ShorelineStrength));
+        // DEEP WATER MUST NOT CONVERGE TO AN UNLIT CONSTANT. This used to lerp toward
+        // _DeepWaterColor directly, so as the column deepened the surface approached a fixed dark
+        // colour that ignored sun, ambient and view angle entirely - which is why deep ocean read as
+        // a black hole beside shallower water over terrain, at the same eye level.
+        //
+        // _DeepWaterColor is now a MULTIPLIER on the body's own in-scatter, which is what its name
+        // always implied: it carries the hue shift AND the darkening, but applied to a colour that is
+        // actually lit. Deep water therefore goes deep BLUE - a dimmer, more saturated version of the
+        // water's real colour - and still responds to the sun the way the shallows do.
+        //
+        // AUTHORING CHANGE: the value is a multiplier now, not an absolute colour, so scenes tuned
+        // against the old behaviour read far too dark until it is raised toward the 0..1 range.
+        float3 deepTarget = bodyInscatter * _DeepWaterColor.rgb;
+        outColor = lerp(outColor, deepTarget, saturate(tint * _ShorelineStrength));
         // Wet-sand glaze: fragments above the CURRENT film but under the drying wet line
         // show the darkened scene through a thin glossy sheet - wet sand with zero state.
         float beachRise = -colDepth;                    // metres above the still level

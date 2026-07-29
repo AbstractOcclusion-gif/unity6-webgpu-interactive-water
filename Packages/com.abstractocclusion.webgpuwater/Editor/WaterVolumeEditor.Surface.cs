@@ -76,12 +76,23 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 DrawFields(
                     WaterVolumePropertyPaths.ScreenSpaceReflection,
                     WaterVolumePropertyPaths.PlanarReflection,
-                    "reflectionSettings.reflectUrpProbe",
-                    WaterVolumePropertyPaths.RealRefraction);
+                    "reflectionSettings.reflectUrpProbe");
                 // Greyed unless planar is on: it is the planar mirror's culling mask and does
                 // nothing to SSR or the environment base.
                 DrawFieldsIf(Prop(WaterVolumePropertyPaths.PlanarReflection).boolValue,
                     "reflectionSettings.planarExcludeLayers");
+
+                // Refraction gets its own heading rather than one line buried in the SSR foldout,
+                // where nobody looking for "how do I tune refraction" would ever find it. The two
+                // knobs are mutually exclusive by construction - Real Refraction selects the path,
+                // and only that path's knob does anything - so each is greyed on its dead side.
+                WaterEditorUI.SubHeading("Refraction");
+                DrawFields(WaterVolumePropertyPaths.RealRefraction);
+                bool realRefraction = Prop(WaterVolumePropertyPaths.RealRefraction).boolValue;
+                DrawFieldsIf(!realRefraction, "reflectionSettings.refractionStrength");
+                DrawFieldsIf(realRefraction, "reflectionSettings.refractionDistortion");
+
+                WaterEditorUI.SubHeading("Underwater shadows");
                 DrawFields("refractShadows");
                 if (Prop("refractShadows").boolValue)
                     DrawFields("refractShadowSoftness");
@@ -122,8 +133,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     DrawFields(
                         "reflectionSettings.ssrStepSize",
                         "reflectionSettings.ssrMaxSteps",
-                        "reflectionSettings.ssrThickness",
-                        "reflectionSettings.refractionDistortion"));
+                        "reflectionSettings.ssrThickness"));
             });
         }
 
@@ -218,6 +228,31 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                         "foamSettings.foamDecayRate");
                 },
                 contentEnabled: foamEnabled.boolValue);
+            });
+        }
+
+        // Wetness is its OWN section, not a foam sub-block. It only STORES its mark in the foam
+        // buffer; conceptually it is "how long does ground stay wet", which is a different question
+        // from "where is there foam" - and burying the one control that lets it run without foam
+        // inside the foam section is how a feature gets reported as broken.
+        //
+        // ONE CLOCK: Dry Time drives the sim's wet mark AND the surf swash wet line. Before, the beach
+        // receded on the wave period while the ground beside it dried on this slider, and the two
+        // disagreed wherever they met.
+        void DrawWetnessSection()
+        {
+            _showWetness = WaterEditorUI.Section("Wetness", _showWetness, () =>
+            {
+                EditorGUILayout.HelpBox(
+                    "How long ground stays wet after the water leaves. Dry Time drives BOTH the " +
+                    "ripple sim's wet mark and the beach swash line, so terrain, props and sand all " +
+                    "dry together.\n\n" +
+                    "Per-surface strength lives on the MATERIAL: raise Wetness on a WaterReceiver or " +
+                    "WaterTerrain material. Wetness Memory keeps the sim pass running when Foam is " +
+                    "off - with Foam on, the mark is maintained for free.", MessageType.None);
+                DrawFields(
+                    "foamSettings.wetnessMemory",
+                    "foamSettings.wetnessDryTime");
             });
         }
 
