@@ -25,6 +25,7 @@ MonoBehaviour:
   highMeshDetail: 0
   highCausticInterval: 1
   highReadbackInterval: 1
+  highOceanFftInterval: 1
   highMaxFoamParticles: 65536
   highUnderwaterFog: 2
   mediumSimResolution: 128
@@ -39,12 +40,13 @@ MonoBehaviour:
   mediumMeshDetail: 0
   mediumCausticInterval: 1
   mediumReadbackInterval: 1
+  mediumOceanFftInterval: 1
   mediumMaxFoamParticles: 65536
   mediumUnderwaterFog: 2
   lowSimResolution: 128
   lowCausticResolution: 256
   lowGodRaySteps: 6
-  lowGodRays: 1
+  lowGodRays: 0
   lowRichReflections: 0
   lowMaxWaveCount: 8
   lowRefineSteps: 2
@@ -53,5 +55,6 @@ MonoBehaviour:
   lowMeshDetail: 50
   lowCausticInterval: 2
   lowReadbackInterval: 3
+  lowOceanFftInterval: 2
   lowMaxFoamParticles: 1024
   lowUnderwaterFog: 1

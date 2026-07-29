@@ -334,7 +334,7 @@ MonoBehaviour:
   bedDepthSettings:
     useBedDepth: 1
     bedTerrain: {fileID: 1402246630}
-    bedResolution: 1024
+    bedResolution: 256
     deepWaterColor: {r: 0.02, g: 0.1, b: 0.15, a: 1}
     bedFadeDepth: 8
     bedTintStrength: 0.149
@@ -362,6 +362,7 @@ MonoBehaviour:
     surfLean: 0.4
     surfAmbientFade: 0.72
     surfSwashAmplitude: 1.1
+    surfSwashMaxSlopeDegrees: 35
     surfFoamGain: 1.37
     surfWaterlineFoam: 0.47
     surfSmallWaveFoam: 0.95
@@ -441,7 +442,7 @@ MonoBehaviour:
   oceanWhitecapTexture: {fileID: 2800000, guid: 1ee279c16b027ad48a8eb248749ff66c, type: 3}
   oceanWhitecapGrid: {x: 1, y: 1}
   oceanWhitecapFps: 0
-  rippleQuality: 3
+  rippleQuality: 0
   bodyType: 2
   volumeExtent: {x: 500, y: 100, z: 500}
   enableLargeBodyWindow: 1
@@ -525,8 +526,8 @@ MonoBehaviour:
     horizonFadeDistance: 9000
     horizonHazeColor: {r: 0.7, g: 0.8, b: 0.9, a: 0}
     horizonHazeDensity: 0.001
-    largeGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
-    largeGodRayDensity: 1
+    largeGodRayColor: {r: 0.6172801, g: 0.8636605, b: 0.93207544, a: 1}
+    largeGodRayDensity: 2
     largeGodRayFromAir: 0
     largeGodRaySteps: 24
     largeGodRayAnisotropy: 0.137
@@ -578,9 +579,9 @@ MonoBehaviour:
   godRayRenderer: {fileID: 0}
   isPrimary: 1
   autoLinkReceivers: 1
-  quality: {fileID: 11400000, guid: 9d725521a0e492e49a009888cfe28ca6, type: 2}
-  enableCulling: 0
-  activationDistance: 100
+  quality: {fileID: 11400000, guid: d8574713c868143418d4679d0fc51663, type: 2}
+  enableCulling: 1
+  activationDistance: 1000
   reflectionSettings:
     useScreenSpaceReflection: 0
     usePlanarReflection: 1
@@ -665,8 +666,8 @@ MonoBehaviour:
   waterFogSettings:
     waterFog: 1
     fogColor: {r: 0, g: 0.0721, b: 0.1741, a: 1}
-    fogExtinction: {r: 0.2981131, g: 0.15300529, b: 0.14793159, a: 1}
-    fogDensity: 0.2
+    fogExtinction: {r: 0.04905659, g: 0.015457451, b: 0.015457451, a: 1}
+    fogDensity: 0.6
     waterOpacity: 0
   _legacyWaterFog: 0
   _legacyFogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
@@ -689,7 +690,7 @@ MonoBehaviour:
   refractShadows: 1
   refractShadowSoftness: 0.5
   depthAttenuation:
-    depthDarken: 1
+    depthDarken: 0
     depthExtinction: {r: 0.3886792, g: 0.10487003, b: 0.10487003, a: 1}
     depthDarkenStrength: 1
     causticDepthFade: 0.2
@@ -1364,7 +1365,7 @@ Transform:
   m_GameObject: {fileID: 961739749}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0.2594933, z: 0, w: 0.9657449}
-  m_LocalPosition: {x: 176.65, y: 11.4, z: 386.37}
+  m_LocalPosition: {x: 176.65, y: 11.67, z: 386.37}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -11495,6 +11496,54 @@ ParticleSystem:
         m_PostInfinity: 2
         m_RotationOrder: 4
     vectorLabel1_3: W
+--- !u!1 &2066872039
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 2066872041}
+  - component: {fileID: 2066872042}
+  m_Layer: 0
+  m_Name: GameObject
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &2066872041
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2066872039}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 593.77924, y: 6.84867, z: 503.78992}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &2066872042
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2066872039}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e84a7a8b00051da429c4750bf9298136, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterCostProbe
+  fogKey: 102
+  godRayKey: 103
+  visibilityKey: 104
+  nullFogKey: 110
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
@@ -11507,3 +11556,4 @@ SceneRoots:
   - {fileID: 1619587496}
   - {fileID: 1402246631}
   - {fileID: 705694884}
+  - {fileID: 2066872041}

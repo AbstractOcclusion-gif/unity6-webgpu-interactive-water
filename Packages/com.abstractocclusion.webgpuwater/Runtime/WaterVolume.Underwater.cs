@@ -28,6 +28,15 @@ namespace AbstractOcclusion.WebGpuWater
         /// overlay never enqueues work it would only discard.</summary>
         internal static bool CameraSubmerged { get; private set; }
 
+        /// <summary>True when this body's quality tier selected the Simple underwater fog - the
+        /// closed-form flat waterline, no per-pixel wavy march. Exposed because the fog PASS has to
+        /// know: on Simple the shader short-circuits to OceanFlatPath before it ever tests
+        /// _OceanSurfaceDepthValid, so the rendered-surface eye-depth prepass has no reader and must
+        /// not be recorded. Mirrors the _UnderwaterFogSimple global published by PublishUnderwater
+        /// from the SAME field, so the CPU gate and the shader branch cannot disagree.</summary>
+        internal bool UnderwaterFogSimple
+            => _underwaterFogMode == WaterQuality.UnderwaterMode.Simple;
+
         // Screen-space caustic projection runs PER BODY: any active body with a caustic RT and its
         // Screen-Space Caustics opt-in on gets its own fullscreen projection (drawn with THAT body's
         // _CausticTex + volume frame), so a SECONDARY chunk's foreign floors receive the CHUNK's caustics

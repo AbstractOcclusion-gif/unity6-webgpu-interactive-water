@@ -173,6 +173,30 @@ namespace AbstractOcclusion.WebGpuWater
 #endif
         }
 
+        // ---- Runtime tier state, writable for diagnostics (WaterCostProbe) ----------------
+        // Both wrap fields ApplyQuality already owns and NOTHING serialises, which is the whole
+        // reason the probe is allowed to write them: no code path here can bake a value into saved
+        // scene data (the trap ApplyQuality records for causticResolution). Every consumer reads
+        // these per frame - UpdateUnderwaterState re-derives the fog gates and republishes
+        // _UnderwaterFogSimple, and LargeGodRayDensity re-gates the ocean shafts - so a change lands
+        // on the very next frame with no restart and no extra plumbing.
+
+        /// <summary>The tier's underwater fog cost mode for this body. Off = the fullscreen pass
+        /// never enqueues; Simple = closed-form flat waterline; Full = the per-pixel wavy march.</summary>
+        internal WaterQuality.UnderwaterMode UnderwaterFogMode
+        {
+            get => _underwaterFogMode;
+            set => _underwaterFogMode = value;
+        }
+
+        /// <summary>Whether the tier permits god-ray shafts on this body - pool box AND ocean
+        /// clipmap. See <see cref="LargeGodRayDensity"/>: the ocean path had never consulted this.</summary>
+        internal bool GodRaysAllowed
+        {
+            get => _godRaysAllowed;
+            set => _godRaysAllowed = value;
+        }
+
         // Scale the interactive-sim grid to the body's footprint at the chosen ripple quality so
         // world-metres-per-texel stays roughly constant, keeping ripples crisp on larger planes. Rounded
         // up to the compute thread-group size (the sim requires a multiple), then clamped to the

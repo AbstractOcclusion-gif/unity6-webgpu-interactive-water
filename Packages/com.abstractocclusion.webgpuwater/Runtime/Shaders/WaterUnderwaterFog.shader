@@ -130,6 +130,16 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // SurfaceHeightAtXZ / SurfaceSignedGap moved VERBATIM to WaterWaterline.hlsl: the
         // exclusion wall clips at the same displaced waterline this pass integrates against.
 
+        // ---- NOT COMPILED IN THE SIMPLE VARIANT (WATER_FOG_SIMPLE) --------------------------
+        // Everything from here to OceanFlatPath is the per-pixel wavy-crossing machinery. It used to
+        // be skipped by a UNIFORM BRANCH on _UnderwaterFogSimple, which is not the same thing: the
+        // code stayed in the module, and a fragment shader's register allocation is sized to its
+        // WORST path. A 40-step march whose every step calls SurfaceHeightAtXZ (~6 texture fetches:
+        // 2x ShoreSample + 4x OceanFftDisplacementShore) plus a 12-iteration bisection was therefore
+        // setting the occupancy of every Simple-tier pixel too, on a FULLSCREEN pass, twice per frame
+        // (absorb + inscatter). Fencing it with the preprocessor is what actually removes it.
+        // Simple keeps exactly one path: OceanFlatPath, below.
+#ifndef WATER_FOG_SIMPLE
         // Refine a bracketed surface crossing [a(gapA), b(opposite sign)] to a world point on the surface.
         // 'gapA' is the signed gap at 'a' (passed in so it is not re-evaluated); bisection keeps the
         // sub-interval that still straddles the sign change. Constant iteration count -> constant cost.
@@ -496,6 +506,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             surfaceRefY = sceneUnder ? sceneSurf : camSurf; // surface above the submerged endpoint
             wetStart = rayStartsWet ? cam : hit;            // wet span runs [start -> far end] along the ray
         }
+#endif // !WATER_FOG_SIMPLE
 
         // Simple-mode ocean path (tier budget path): the closed-form in-water span against the FLAT
         // waterline at _UnderwaterSurfaceY - the CPU-published, wave-aware surface height at the
@@ -525,6 +536,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             }
         }
 
+#ifndef WATER_FOG_SIMPLE
         // Pull a pond segment's ENTRY down to the wavy surface when it starts in AIR: the pool box top is
         // the flat rest plane (pool y = 0), so a wave trough sitting below it would otherwise fog the air
         // in the trough. Returns the surface crossing when the entry is above water; else keeps the entry.
@@ -535,6 +547,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             if (SurfaceSignedGap(exitWorld) > 0.0) return exitWorld;  // whole segment in air: no water (len 0)
             return RefineSurfaceCrossing(enterWorld, gapEnter, exitWorld);
         }
+#endif // !WATER_FOG_SIMPLE
 
         // World-space length of the in-water part of the camera->scene ray, the deepest submerged point's
         // world Y (for downwelling), and the displaced surface height above it (the depth reference).
@@ -546,17 +559,20 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
 
             if (_UnderwaterUnbounded > 0.5)
             {
-                // Ocean: the below-surface span. All three gates are uniforms, so the branch is
-                // coherent across the screen - Simple tiers never pay for the wavy march, and when
-                // the rendered-surface prepass ran, nobody does (the crossing is a texture load).
-                if (_UnderwaterFogSimple > 0.5)
-                    OceanFlatPath(sceneWorld, cam, pathLen, deepestY, surfaceRefY, wetStart);
-                else if (_OceanSurfaceDepthValid > 0.5)
+                // Ocean: the below-surface span. Simple is a COMPILE-TIME fork, not a uniform
+                // branch, so the variant has no call site into the march at all and the crossing
+                // machinery above is absent from its module. The remaining runtime gate
+                // (_OceanSurfaceDepthValid) is still a uniform, so it stays screen-coherent.
+#ifdef WATER_FOG_SIMPLE
+                OceanFlatPath(sceneWorld, cam, pathLen, deepestY, surfaceRefY, wetStart);
+#else
+                if (_OceanSurfaceDepthValid > 0.5)
                     OceanPrepassPath(uv, sceneWorld, cam, rayStartsWet, pathLen, deepestY,
                                      surfaceRefY, wetStart);
                 else
                     OceanWavyPath(sceneWorld, cam, rayStartsWet, pathLen, deepestY, surfaceRefY,
                                   wetStart);
+#endif
                 return;
             }
 
@@ -588,14 +604,19 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // wavy downwelling reference - _VolumeCenter.y is the same rest plane the box top maps to.
             float3 enterWorld = PoolToWorld(originPool + rayPool * tEnter);
             float3 exitWorld = PoolToWorld(originPool + rayPool * tExit);
-            if (_UnderwaterFogSimple < 0.5)
-                enterWorld = ClampEntryToSurface(enterWorld, exitWorld);
+#ifdef WATER_FOG_SIMPLE
+            // The pool top (pool y = 0) IS the flat waterline, so there is nothing to clamp to and
+            // _VolumeCenter.y is the same rest plane the box top maps to.
+            pathLen = length(exitWorld - enterWorld);
+            deepestY = min(enterWorld.y, exitWorld.y);
+            surfaceRefY = _VolumeCenter.y;
+#else
+            enterWorld = ClampEntryToSurface(enterWorld, exitWorld);
 
             pathLen = length(exitWorld - enterWorld);
             deepestY = min(enterWorld.y, exitWorld.y);
-            surfaceRefY = (_UnderwaterFogSimple > 0.5)
-                        ? _VolumeCenter.y                    // flat rest plane (matches the box top)
-                        : SurfaceHeightAtXZ(enterWorld.xz);  // wavy surface above the entry, for downwelling
+            surfaceRefY = SurfaceHeightAtXZ(enterWorld.xz); // wavy surface above the entry, for downwelling
+#endif
             wetStart = enterWorld;
         }
 
@@ -689,8 +710,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             classifyPushDist = 0.0;
             if (_UnderwaterUnbounded < 0.5) return 1.0;
             float3 classifyPoint = WaterlineClassifyPoint(uv, classifyPushDist);
-            classifyGap = (_UnderwaterFogSimple > 0.5) ? classifyPoint.y - _UnderwaterSurfaceY
-                                                       : SurfaceSignedGap(classifyPoint);
+#ifdef WATER_FOG_SIMPLE
+            classifyGap = classifyPoint.y - _UnderwaterSurfaceY;
+#else
+            classifyGap = SurfaceSignedGap(classifyPoint);
+#endif
             float overCoverPixels = (_CameraDryVolume > 0.5) ? WATERLINE_CARVE_OVER_COVER_PIXELS
                                                              : 0.0;
             return WaterlineCoverage(classifyGap, fwidth(classifyGap), overCoverPixels);
@@ -841,9 +865,25 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             #pragma vertex Vert
             #pragma fragment FragAbsorb
             #pragma target 4.0
+            // multi_compile, NOT shader_feature: this material is created at runtime by
+            // CoreUtils.CreateEngineMaterial, so build-time variant stripping would have no material
+            // keyword state to inspect and could strip the variant we need. Two keywords x three
+            // passes is a trivial variant count.
+            // WATER_FOG_SIMPLE : compile out the wavy-crossing machinery (see the fence above).
+            // WATER_FOG_NULL : DIAGNOSTIC. Keeps the pass, the two fullscreen draws, the
+            // attachments and every RenderGraph dependency byte-identical while making both
+            // fragments return their blend identity. It is the A/B that separates "the fog SHADER is
+            // expensive" from "the fog PASS is expensive" - a distinction no amount of source
+            // reading can settle, and one that decides whether the fix is this keyword split or a
+            // structural change (merging the pass, or marching at reduced resolution).
+            #pragma multi_compile_fragment _ WATER_FOG_SIMPLE
+            #pragma multi_compile_fragment _ WATER_FOG_NULL
 
             half4 FragAbsorb(Varyings input) : SV_Target
             {
+#ifdef WATER_FOG_NULL
+                return half4(1.0, 1.0, 1.0, 1.0); // Blend Zero SrcColor identity: dst *= 1
+#else
                 float3 depthAttenuation;
                 float sunVisibilityUnused; // absorption is sun-independent; only the in-scatter shadows
                 float armWeight;
@@ -861,6 +901,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 float3 absorb = lerp(float3(1.0, 1.0, 1.0), pathTransmittance * depthAttenuation,
                                      armWeight);
                 return half4(absorb + FogDither(input.positionCS.xy), 1.0);
+#endif
             }
             ENDHLSL
         }
@@ -875,9 +916,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             #pragma vertex Vert
             #pragma fragment FragInscatter
             #pragma target 4.0
+            #pragma multi_compile_fragment _ WATER_FOG_SIMPLE
+            #pragma multi_compile_fragment _ WATER_FOG_NULL
 
             half4 FragInscatter(Varyings input) : SV_Target
             {
+#ifdef WATER_FOG_NULL
+                return half4(0.0, 0.0, 0.0, 1.0); // Blend One One identity: dst += 0
+#else
                 float3 depthAttenuation;
                 float sunVisibility;
                 float armWeight;
@@ -904,6 +950,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 // Per-pixel arm fade: additive term scales straight to 0, mirroring the absorb pass.
                 inscatter *= armWeight;
                 return half4(inscatter * depthAttenuation + FogDither(input.positionCS.xy), 1.0);
+#endif
             }
             ENDHLSL
         }
@@ -926,6 +973,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             #pragma vertex Vert
             #pragma fragment FragWaterline
             #pragma target 4.0
+            // No WATER_FOG_NULL here: the meniscus is a straddle-frame effect, not part of the
+            // sustained underwater cost the diagnostic is aimed at.
+            #pragma multi_compile_fragment _ WATER_FOG_SIMPLE
 
             float _WaterlineWidthPx;  // meniscus band thickness, screen pixels
             float _WaterlineStrength; // meniscus opacity at the crossing
@@ -963,9 +1013,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                     float3 nearPool = WorldToPool(nearWorld);
                     if (max(abs(nearPool.x), abs(nearPool.z)) > 1.0) discard;
                 }
-                float gap = (_UnderwaterFogSimple > 0.5)
-                          ? nearWorld.y - _UnderwaterSurfaceY
-                          : SurfaceSignedGap(nearWorld);
+#ifdef WATER_FOG_SIMPLE
+                float gap = nearWorld.y - _UnderwaterSurfaceY;
+#else
+                float gap = SurfaceSignedGap(nearWorld);
+#endif
                 // Metres of gap per screen pixel at this pixel (derivatives in uniform control
                 // flow, WGSL-safe): dividing by it turns the world gap into a pixel distance
                 // from the line, making the band thickness a true pixel count.

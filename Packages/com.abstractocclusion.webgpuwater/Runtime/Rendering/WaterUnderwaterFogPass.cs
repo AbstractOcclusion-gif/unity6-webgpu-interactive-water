@@ -71,7 +71,17 @@ namespace AbstractOcclusion.WebGpuWater
             // so a stale 1 after the ocean disappears would leave the fog reading a dead RT).
             bool prepassRecorded = false;
             WaterVolume primary = WaterVolume.Primary;
-            if (primary != null && primary.IsOceanClipmap)
+            // NOT ON THE SIMPLE TIER - it has no reader there. UnderwaterSegment tests
+            // _UnderwaterFogSimple BEFORE _OceanSurfaceDepthValid (WaterUnderwaterFog.shader), so a
+            // Simple frame takes OceanFlatPath and _OceanSurfaceEyeDepth is sampled NOWHERE: its
+            // only consumer in the package is OceanPrepassPath. Recording it anyway re-drew every
+            // ocean surface renderer a second time - base + under + near-field patch + patch under +
+            // two per clipmap level, each through the full displacement vertex stage - into a
+            // camera-sized R32F plus its own Depth32, and threw the result away. It also forced a
+            // mid-frame render-target switch, which costs far more on the WebGPU backend than
+            // native. Leaving the validity global at 0 is the state a pond or a non-ocean primary
+            // already ships every frame, so this adds no new case for the shader to handle.
+            if (primary != null && primary.IsOceanClipmap && !primary.UnderwaterFogSimple)
             {
                 s_SurfaceRenderers.Clear();
                 primary.CollectOceanSurfaceRenderers(s_SurfaceRenderers);

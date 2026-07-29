@@ -124,6 +124,12 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_UnderwaterSurfaceY = Shader.PropertyToID("_UnderwaterSurfaceY");
         static readonly int ID_UnderwaterUnbounded = Shader.PropertyToID("_UnderwaterUnbounded");
         static readonly int ID_UnderwaterFogSimple = Shader.PropertyToID("_UnderwaterFogSimple");
+        // The SAME fact as ID_UnderwaterFogSimple, as a shader keyword. Both are set from one place
+        // below so they cannot drift: the float stays because other shaders read it
+        // (WaterExclusionWall, fog debug view 13), the keyword exists so the fullscreen fog's Simple
+        // variant is COMPILED without the wavy-crossing machinery instead of merely branching past
+        // it at runtime.
+        const string KW_UnderwaterFogSimple = "WATER_FOG_SIMPLE";
         static readonly int ID_UnderwaterFogArmed = Shader.PropertyToID("_UnderwaterFogArmed");
         static readonly int ID_PeakedRefine = Shader.PropertyToID("_PeakedRefineSteps");
         static readonly int ID_UsePlanar = Shader.PropertyToID("_UsePlanar");
@@ -347,6 +353,12 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalFloat(ID_UnderwaterSurfaceY, surfaceY);
             Shader.SetGlobalFloat(ID_UnderwaterUnbounded, unbounded);
             Shader.SetGlobalFloat(ID_UnderwaterFogSimple, fogSimple);
+            // A uniform branch skips the march at runtime, but the code is still in the module and a
+            // fragment shader's register allocation is sized to its worst path - so the 40-step
+            // crossing march (~6 texture fetches per step) was setting the occupancy of every
+            // Simple-tier pixel on a fullscreen pass, twice a frame. The keyword removes it.
+            if (fogSimple > 0.5f) Shader.EnableKeyword(KW_UnderwaterFogSimple);
+            else Shader.DisableKeyword(KW_UnderwaterFogSimple);
             Shader.SetGlobalFloat(ID_UnderwaterFogArmed, fogArmed);
         }
 

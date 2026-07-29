@@ -348,8 +348,21 @@ namespace AbstractOcclusion.WebGpuWater
         // Ocean god rays for the shader: density gated to 0 for non-ocean bodies (pools/lakes never get
         // shafts from this pass); the rest pass through (inert while density is 0).
         internal Color LargeGodRayColor => largeGodRayColor;
-        internal float LargeGodRayDensity => IsOceanClipmap ? largeGodRayDensity : 0f;
-        internal float LargeGodRaySteps => largeGodRaySteps;
+        // THE TIER GATE, and it had been missing here entirely. _godRaysAllowed was read in exactly
+        // ONE place (WaterVolume.Update.cs, for godRayRenderer) and only when !_windowed - but
+        // IsOceanClipmap REQUIRES _windowed, so an ocean body never reached it and a tier that turns
+        // god rays off could not switch the ocean shafts off at all. Folding it in HERE fixes both
+        // halves at once, because this one property is what LargeBodyAtmosphereGate tests to decide
+        // whether to enqueue the raymarch pass AND what WriteBodyUniforms publishes as the density -
+        // so the pass stops being recorded and the uniform reads 0 from a single line.
+        internal float LargeGodRayDensity
+            => (IsOceanClipmap && _godRaysAllowed) ? largeGodRayDensity : 0f;
+        // THE TIER IS A CEILING, NOT AN OVERRIDE. This used to return the authored field raw, so the
+        // tier's step count never reached the ocean shader and Low marched the authored 24 exactly
+        // like High (the pool shafts never had this bug - they read _godRaySteps directly, because
+        // there is no authored per-body step count on that path). Min() keeps the author's intent
+        // wherever the budget allows it: at High, authored 24 under a 32-step ceiling is still 24.
+        internal float LargeGodRaySteps => Mathf.Min(largeGodRaySteps, _godRaySteps);
         internal float LargeGodRayAnisotropy => largeGodRayAnisotropy;
         internal float LargeGodRayExtinction => largeGodRayExtinction;
         internal float LargeGodRayCausticStrength => IsOceanClipmap ? largeGodRayCausticStrength : 0f;
