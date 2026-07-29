@@ -35,7 +35,10 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("Per-channel extinction; red highest so it absorbs first. HDR: push a channel " +
                      "above 1 for very heavy absorption (fully opaque water on short paths).")]
             [ColorUsage(false, true)] public Color fogExtinction = new Color(0.45f, 0.15f, 0.08f);
-            [Tooltip("Overall fog multiplier. Higher = thicker; crank it (with extinction) for pea-soup water.")]
+            [Tooltip("Overall fog multiplier. It MULTIPLIES the extinction above, so only the two " +
+                     "together mean anything - their product is the per-metre absorption, which the " +
+                     "readout under these fields turns into a distance. For pea-soup water push the " +
+                     "extinction colour (HDR, unbounded) rather than this.")]
             [Range(0f, MaxFogDensity)] public float fogDensity = 2f;
             [Tooltip("Art-directed turbidity independent of depth: lerp the view THROUGH the surface " +
                      "toward the fog colour. 0 = clear, 1 = fully non-transparent water. Reflections " +

@@ -490,6 +490,12 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 // extinction along a ray survives the normalisation below). With fog off every
                 // weight is 1 and this equals the step count - byte-identical to the old average.
                 float viewFogWeightSum = 0.0;
+                // First moment of those SAME weights, for the temporal anchor at the end of the pass.
+                // The value this pixel carries is the zeroth moment of this distribution, so the depth
+                // it belongs to is the first. Dry excluded samples add weight here exactly as they add
+                // to the divisor below - keeping both moments on ONE distribution matters more than
+                // trimming that tail, and it is what makes the anchor consistent with the brightness.
+                float viewFogWeightedDist = 0.0;
                 [loop]
                 for (int s = 0; s < steps; s++)
                 {
@@ -517,7 +523,9 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                     // scatter; the view-fog transmittance still advances along the ray.
                     if (!InsideExclusion(p))
                         accum += shadow * depthFade * viewFog * (1.0 + caustic * _LargeGodRayCausticStrength);
-                    viewFogWeightSum += (viewFog.r + viewFog.g + viewFog.b) / 3.0;
+                    float sampleWeight = (viewFog.r + viewFog.g + viewFog.b) / 3.0;
+                    viewFogWeightSum += sampleWeight;
+                    viewFogWeightedDist += sampleWeight * t;
                     viewFog *= viewFogStep;
                 }
                 // SELF-NORMALIZING average: divide by the summed transmittance weights, not the raw
@@ -562,15 +570,44 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                     // (The earlier absolute-uv form with a UNITY_UV_STARTS_AT_TOP flip guessed the
                     // convention wrong here, and with feedback the mismap DISSOLVED the shafts into
                     // a dim haze over a few frames. Never reproject absolutely; always delta.)
-                    float4 currClip = mul(_GodRayCurrVP, float4(sceneWorld, 1.0));
-                    float4 prevClip = mul(_GodRayPrevVP, float4(sceneWorld, 1.0));
+                    // ANCHOR - deliberately NOT sceneWorld. Drawn water is TRANSPARENT, so just below
+                    // the waterline the depth buffer behind this pixel holds the SKYBOX at the far
+                    // plane, while the value is an integral over a span the WATERLINE terminated a few
+                    // metres away (tExit, above). A point at infinity barely moves under camera
+                    // TRANSLATION, so the history came back from the wrong place and the shafts dragged
+                    // whenever the camera moved underwater - the file's own premise, "the value at a
+                    // pixel really is a property of the point behind it", is false for a waterline-
+                    // clipped ray. The transmittance-weighted MEAN distance is the depth the value
+                    // actually belongs to (the span end alone would overshoot: shaft contribution is
+                    // front-loaded by transmittance), and it costs one accumulator because those
+                    // weights already exist for the brightness normalisation above. Falls back to the
+                    // span end if the march extinguished completely.
+                    float anchorDist = (viewFogWeightSum > 1e-4)
+                                     ? viewFogWeightedDist / viewFogWeightSum
+                                     : tExit;
+                    float3 anchorWorld = camWorld + rayDir * anchorDist;
+                    float4 currClip = mul(_GodRayCurrVP, float4(anchorWorld, 1.0));
+                    float4 prevClip = mul(_GodRayPrevVP, float4(anchorWorld, 1.0));
                     if (currClip.w > 1e-4 && prevClip.w > 1e-4)
                     {
                         // Both matrices are built with GetGPUProjectionMatrix(renderIntoTexture:
-                        // true), which bakes the platform y-flip into clip space - so the ndc
-                        // delta maps to uv with a plain 0.5 scale on every backend.
+                        // true), which bakes the platform y-flip into clip space. That flip is
+                        // uv.y = -ndc.y * 0.5 + 0.5 - an OFFSET AND A NEGATION. Differencing two
+                        // projections cancels the offset, which is exactly what the delta form was
+                        // added for, but the negation SURVIVES subtraction: "any constant convention
+                        // mismatch cancels exactly" is true for offsets and false for signs, so the
+                        // guard above is structurally blind to this one.
+                        // Nothing here could have caught it either - a static camera has delta = 0
+                        // and reprojects onto itself for ANY sign, and translation testing is mostly
+                        // horizontal, where x was already right. PITCH is the first motion that puts
+                        // real signal into delta.y: it read as the shafts sliding the wrong way at
+                        // roughly double rate while yaw stayed clean, which is the signature of a
+                        // y-only sign error and nothing else.
                         float2 delta = prevClip.xy / prevClip.w - currClip.xy / currClip.w;
-                        float2 prevUV = input.uv + delta * 0.5;
+                        // ndc delta -> uv delta. If a future backend ever needs the other convention
+                        // this ONE constant is the whole switch - do not scatter flips downstream.
+                        const float2 ndcDeltaToUv = float2(0.5, -0.5);
+                        float2 prevUV = input.uv + delta * ndcDeltaToUv;
                         if (prevUV.x > 0.0 && prevUV.x < 1.0 && prevUV.y > 0.0 && prevUV.y < 1.0)
                         {
                             float3 history = SAMPLE_TEXTURE2D_LOD(_LargeGodRayHistory,

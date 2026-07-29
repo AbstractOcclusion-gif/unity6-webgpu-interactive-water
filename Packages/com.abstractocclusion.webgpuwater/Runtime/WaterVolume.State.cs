@@ -122,9 +122,13 @@ namespace AbstractOcclusion.WebGpuWater
                 { RippleQuality.Ultra,  new RippleQualitySetting(24f, 256, 384) },
             };
 
-        // Upper bound on fog density; high enough that (with extinction) water can read fully
-        // opaque even on short view paths.
-        const float MaxFogDensity = 50f;
+        // Upper bound on fog density. Was 50, where the top ~85% of the slider was indistinguishable
+        // pea soup and the band artists actually use had ~6% of the travel: density MULTIPLIES the
+        // per-channel extinction, so at the shipped red extinction of 0.45 even density 10 already
+        // puts half-brightness at 15 cm, and density 50 kills red inside a millimetre. The highest
+        // value authored across every shipped demo body is 7.2, so 10 keeps real headroom. Denser
+        // water comes from the extinction colour, which is HDR and deliberately unbounded.
+        const float MaxFogDensity = 10f;
 
         // Startup pool seeding: a few random ripples so the surface isn't dead-flat on load.
         const int SeedRippleCount = 20;

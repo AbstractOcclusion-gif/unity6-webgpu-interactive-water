@@ -151,6 +151,14 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
                                                      : _DetailNormalStrength;
     if (detailNormalStrength > 0.0)
     {
+        // Wind ripple is not an even film: it concentrates on the STEEP faces of the waves carrying
+        // it and thins out in the flat troughs. length(normal.xz) IS the sine of the local tilt (the
+        // normal is unit here), read AFTER the large-body wave normal is folded in above, so ocean
+        // swell and pond wind waves both drive it. Uniform-safe by construction: a multiply on the
+        // strength, never a branch around the taps' implicit derivatives.
+        float slopeSine = length(normal.xz);
+        float steepness = saturate(slopeSine / DETAIL_CREST_REFERENCE_SLOPE);
+        detailNormalStrength *= 1.0 + _DetailNormalCrestBoost * steepness;
         float2 detailTilt = DetailNormalTilt(i.largeWaveSourceXZ, viewDistWorld);
         normal = normalize(normal + float3(detailTilt.x, 0.0, detailTilt.y)
                                     * detailNormalStrength);

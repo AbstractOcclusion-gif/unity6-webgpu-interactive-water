@@ -148,6 +148,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_DetailNormalStrength = Shader.PropertyToID("_DetailNormalStrength");
         static readonly int ID_DetailNormalScale = Shader.PropertyToID("_DetailNormalScale");
         static readonly int ID_DetailNormalSpeed = Shader.PropertyToID("_DetailNormalSpeed");
+        static readonly int ID_DetailNormalCrestBoost = Shader.PropertyToID("_DetailNormalCrestBoost");
+        static readonly int ID_WindDirection = Shader.PropertyToID("_WindDirection");
         static readonly int ID_UnderFresnelPhysical = Shader.PropertyToID("_UnderFresnelPhysical");
         static readonly int ID_UnderTirSoftness = Shader.PropertyToID("_UnderTirSoftness");
         static readonly int ID_UnderFresnelFloor = Shader.PropertyToID("_UnderFresnelFloor");
@@ -502,6 +504,10 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_DetailNormalStrength, _body.DetailNormalStrength);
             sink.SetFloat(ID_DetailNormalScale, _body.DetailNormalScale);
             sink.SetFloat(ID_DetailNormalSpeed, _body.DetailNormalSpeed);
+            sink.SetFloat(ID_DetailNormalCrestBoost, _body.DetailNormalCrestBoost);
+            // One wind for the surface. Published unconditionally (like the fog coefficients) so the
+            // detail layer never reads a stale or zero heading on a body with Wind Waves switched off.
+            sink.SetVector(ID_WindDirection, _body.WindDirectionXZ);
 
             // Underside (seen-from-below) look: its own fresnel/mirror family (Underwater Surface
             // block), so the below-water view no longer rides the above-water constants.

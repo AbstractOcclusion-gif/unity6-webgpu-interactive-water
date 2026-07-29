@@ -71,7 +71,8 @@ namespace AbstractOcclusion.WebGpuWater
         // No texture -> strength 0, same convention as DetailNormalStrength above: the shader's
         // uniform gate then skips the detail taps on the underside too.
         internal float UnderwaterDetailNormalStrength
-            => detailNormalSettings.texture != null ? underwaterSurfaceSettings.detailNormalStrength : 0f;
+            => detailNormalSettings.texture != null
+                 ? underwaterSurfaceSettings.detailNormalStrength * DetailNormalWindFactor : 0f;
         internal bool MeniscusEnabled => underwaterSurfaceSettings.meniscus;
         internal float MeniscusWidthPixels => underwaterSurfaceSettings.meniscusWidthPixels;
         internal float MeniscusStrength => underwaterSurfaceSettings.meniscusStrength;

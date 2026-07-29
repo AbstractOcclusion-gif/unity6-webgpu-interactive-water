@@ -18,11 +18,40 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             _showWaterFog = WaterEditorUI.SectionWithToggle(
                 "Water Fog (Beer-Lambert)", _showWaterFog, Prop(WaterVolumePropertyPaths.WaterFog), () =>
+            {
                 DrawFields(
                     WaterVolumePropertyPaths.FogColor,
                     WaterVolumePropertyPaths.FogExtinction,
                     WaterVolumePropertyPaths.FogDensity,
-                    "waterFogSettings.waterOpacity"));
+                    "waterFogSettings.waterOpacity");
+                EditorGUILayout.HelpBox(
+                    WaterFogReachSummary(Prop(WaterVolumePropertyPaths.FogExtinction).colorValue,
+                                         Prop(WaterVolumePropertyPaths.FogDensity).floatValue),
+                    MessageType.None);
+            });
+        }
+
+        // Extinction and density multiply, so neither number means anything on its own and no slider
+        // position can be read as "how murky is this". What an author actually wants is a DISTANCE:
+        // ln(2) / (extinction * density) is where that channel reaches half brightness. Red goes
+        // first at every shipped preset, which is the whole reason deep water reads blue. Recomputed
+        // from the serialized values every repaint, so it tracks whichever of the two knobs moved.
+        static string WaterFogReachSummary(Color extinction, float density)
+        {
+            return "Half-brightness distance:   R " + HalfBrightnessDistanceLabel(extinction.r * density)
+                 + "    G " + HalfBrightnessDistanceLabel(extinction.g * density)
+                 + "    B " + HalfBrightnessDistanceLabel(extinction.b * density);
+        }
+
+        const float NaturalLogOfTwo = 0.6931472f;
+        const float FogReachClearMetres = 999f; // beyond this the channel is effectively unattenuated
+        const string FogReachClearLabel = "clear";
+        static string HalfBrightnessDistanceLabel(float coefficientPerMetre)
+        {
+            if (coefficientPerMetre <= 0f) return FogReachClearLabel;
+            float metres = NaturalLogOfTwo / coefficientPerMetre;
+            if (metres > FogReachClearMetres) return FogReachClearLabel;
+            return metres.ToString(metres < 10f ? "0.00" : "0.#") + " m";
         }
 
         void DrawVolumeScatterSection()

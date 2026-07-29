@@ -37,7 +37,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     Prop(WaterVolumePropertyPaths.DetailNormalTexture).objectReferenceValue != null;
                 WaterEditorUI.SubHeading("Detail normals (micro ripples)");
                 DrawFields(WaterVolumePropertyPaths.DetailNormalTexture);
-                DrawFieldsIf(hasDetailNormal, "detailNormalSettings.strength");
+                DrawFieldsIf(hasDetailNormal,
+                    "detailNormalSettings.strength",
+                    "detailNormalSettings.windResponse",
+                    "detailNormalSettings.crestBoost");
 
                 WaterEditorUI.SubHeading("Surface foam pattern");
                 EditorGUILayout.HelpBox("Empty keeps the water material's own foam texture. Assign here to " +

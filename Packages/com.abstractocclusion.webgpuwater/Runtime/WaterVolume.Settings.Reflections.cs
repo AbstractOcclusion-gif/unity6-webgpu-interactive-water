@@ -36,14 +36,43 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(1f, 100f)] public float tileMeters = 18f;
             [Tooltip("Scroll speed of the crossing layers, metres per second.")]
             [Range(0f, 2f)] public float scrollSpeed = 0.25f;
+            [Tooltip("How much the wind drives this layer. The crossing directions ALWAYS rotate with " +
+                     "Wind Heading; this scales the AMPLITUDE response to Wind Speed, so calm water " +
+                     "flattens and a blow roughens it. 0 = amplitude ignores wind (legacy).")]
+            [Range(0f, 1f)] public float windResponse = 1f;
+            [Tooltip("Extra micro-ripple on the STEEP faces of the larger waves, where wind-driven " +
+                     "capillary ripple actually concentrates, instead of an even film everywhere. " +
+                     "0 = uniform over the whole surface (legacy).")]
+            [Range(0f, 2f)] public float crestBoost = 0.5f;
         }
 
         internal Texture2D DetailNormalTexture => detailNormalSettings.texture;
+        // Amplitude response to wind speed, shared by the top and the underside so ONE wind drives
+        // both. sqrt, not linear: the authored range reaches 10 m/s, where a linear law would more
+        // than triple the ripple while sqrt lands at 1.8x - clearly windier, still readable. Measured
+        // against the same LargeWaveReferenceWind breeze the ocean swell amplitude uses, so a body at
+        // the default wind is unchanged and one dial means the same thing across both wave systems.
+        internal float DetailNormalWindFactor
+            => Mathf.Lerp(1f, Mathf.Sqrt(windSpeed / LargeWaveReferenceWind),
+                          detailNormalSettings.windResponse);
         // No texture -> strength 0: the shader's uniform gate then skips all four detail taps.
         internal float DetailNormalStrength
-            => detailNormalSettings.texture != null ? detailNormalSettings.strength : 0f;
+            => detailNormalSettings.texture != null
+                 ? detailNormalSettings.strength * DetailNormalWindFactor : 0f;
         internal float DetailNormalScale => detailNormalSettings.tileMeters;
         internal float DetailNormalSpeed => detailNormalSettings.scrollSpeed;
+        internal float DetailNormalCrestBoost => detailNormalSettings.crestBoost;
+        // (cos, sin) of the wind heading in the XZ plane - the SAME convention
+        // WaterWaveBank.Generate builds its component directions from (WaterWaveBank.cs:116-117),
+        // so the micro-ripple layer and the wind-wave bank cannot drift onto two different winds.
+        internal Vector4 WindDirectionXZ
+        {
+            get
+            {
+                float windRadians = windFromDegrees * Mathf.Deg2Rad;
+                return new Vector4(Mathf.Cos(windRadians), Mathf.Sin(windRadians), 0f, 0f);
+            }
+        }
 
         /// <summary>How this body reflects (mode) and what it reflects (base environment). Migrated off the
         /// flat WaterVolume fields into this block (Phase 2); the same-named accessors keep every reader
