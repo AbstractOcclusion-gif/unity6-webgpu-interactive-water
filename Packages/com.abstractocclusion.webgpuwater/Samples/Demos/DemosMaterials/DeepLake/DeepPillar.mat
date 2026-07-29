@@ -38,9 +38,9 @@ Material:
     - _CausticStrength: 4
     - _ShadeInnerFacesOnly: 0
     - _Smoothness: 0.5
-    - _WetBandHeight: 0.12
+    - _WetBandHeight: 0.04
     - _WetDarken: 0.611
-    - _WetFoamStrength: 0.5
+    - _WetFoamStrength: 0.861
     - _WetNormalFlatten: 0.793
     - _WetSmoothness: 1
     - _WetStrength: 1

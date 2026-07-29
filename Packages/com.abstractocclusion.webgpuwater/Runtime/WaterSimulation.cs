@@ -323,6 +323,7 @@ namespace AbstractOcclusion.WebGpuWater
             // FOAM-5: persistent swash deposit - the stranded backwash foam line laid into the
             // foam BUFFER so it lingers across waves and fades by the normal decay.
             public float SwashAmplitude;   // _SurfSwashAmplitude - EvaluateSurfSwash needs it in the compute
+            public float SwashMaxSlopeTan; // same reason: the compute's swash must honour the same cap
             public float SwashDepositGain; // deposit injection gain (0 = off, no injection)
 
             static readonly int ID_ShoreFoamActive = Shader.PropertyToID("_ShoreFoamActive");
@@ -360,6 +361,7 @@ namespace AbstractOcclusion.WebGpuWater
             static readonly int ID_SurfFoamTrailGain = WaterShaderProps.SurfFoamTrailGain;
             static readonly int ID_SurfFoamTrailLength = WaterShaderProps.SurfFoamTrailLength;
             static readonly int ID_SurfSwashAmplitudeSim = WaterShaderProps.SurfSwashAmplitude;
+            static readonly int ID_SurfSwashMaxSlopeTanSim = WaterShaderProps.SurfSwashMaxSlopeTan;
             static readonly int ID_ShoreSwashDepositGain = WaterShaderProps.ShoreSwashDepositGain;
 
             /// <summary>Push the surf-front uniforms + the Layer A field textures onto a compute
@@ -415,6 +417,7 @@ namespace AbstractOcclusion.WebGpuWater
                 // FOAM-5: swash run-up amplitude (the compute's EvaluateSurfSwash needs it) + the
                 // persistent swash-deposit injection gain.
                 cs.SetFloat(ID_SurfSwashAmplitudeSim, SwashAmplitude);
+                cs.SetFloat(ID_SurfSwashMaxSlopeTanSim, SwashMaxSlopeTan);
                 cs.SetFloat(ID_ShoreSwashDepositGain, SwashDepositGain);
                 // Zero on purpose: the sim's Foam kernel injects its OWN waterline term
                 // (_ShoreWaterlineFoamGain); letting the analytic lace through too would double

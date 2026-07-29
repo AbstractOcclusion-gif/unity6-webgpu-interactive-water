@@ -28,6 +28,11 @@ float _SurfCompression;   // front-spacing compression toward the waterline (cre
 float _SurfGreens;        // Green's-law growth cap for the fronts (1 = no growth)
 float _SurfAmbientFade;   // 0..1 how much the ambient swell/FFT fades where fronts own the surface
 float _SurfSwashAmplitude;// MULTIPLIER on the physical Hunt run-up (1 = physics; 0 = swash off)
+float _SurfSwashMaxSlopeTan; // tan of the steepest beach that still holds a swash film
+// Fraction of the max slope where the swash starts thinning out. A HARD cut would print a contour
+// line straight across the terrain wherever the bed slope crosses the threshold - the one artifact
+// this cap must not trade for the one it removes.
+#define SURF_SWASH_SLOPE_FEATHER 0.6
 float _SurfWaterlineFoam; // standing lace hugging the waterline (fills the last metres to the sand)
 float _SurfSmallWaveFoam; // FOAM-7: foam on the CREST + TAIL of gentle waves that never break
                           // (overCap < 1), which the breaking-gated whitewash leaves bare. 0 = off
@@ -633,6 +638,20 @@ float SurfAmbientWeight(float surfMask)
 // current film as the dark wet-sand glaze - wet sand with zero extra state.
 float2 EvaluateSurfSwash(float2 worldXZ, float2 toShore, float tanBeta, float influence, float time)
 {
+    // Steepness cap. Swash is a BEACH process: a thin film runs up a slope only while the slope is
+    // gentle enough to hold it. The Hunt/Iribarren run-up below GROWS with tanBeta - correct for a
+    // beach, where a steeper face really does surge further, and exactly wrong past the point where
+    // the "beach" is a cliff and the water simply hits it and falls. The physical model cannot know
+    // where that is, so the ceiling is authored.
+    // Folded into `influence` rather than applied at the return: influence already multiplies BOTH
+    // `run` and `runPrev` below, so the current film AND the drying wet line inherit the cap from
+    // one multiply and can never disagree about where the beach ends.
+    // The divide is guarded and the ramp is built from a saturate rather than smoothstep's two
+    // edges, so a max of 0 degenerates cleanly to "no swash" instead of to undefined behaviour.
+    float slopeFalloff = max(_SurfSwashMaxSlopeTan * (1.0 - SURF_SWASH_SLOPE_FEATHER), 1e-4);
+    float slopeT = saturate((_SurfSwashMaxSlopeTan - tanBeta) / slopeFalloff);
+    influence *= smoothstep(0.0, 1.0, slopeT);
+
     if (_SurfActive < 0.5 || influence <= SURF_MIN_INFLUENCE || _SurfSwashAmplitude <= 0.0)
         return float2(0.0, 0.0);
 

@@ -249,6 +249,7 @@ namespace AbstractOcclusion.WebGpuWater
                 state.TrailLength = surfFoamTrailLength;
                 // FOAM-5: persistent swash deposit (lingers in the buffer, decays over real time).
                 state.SwashAmplitude = surfSwashAmplitude;
+                state.SwashMaxSlopeTan = surfSwashMaxSlopeTan;
                 state.SwashDepositGain = surfSwashDepositGain;
             }
             return state;

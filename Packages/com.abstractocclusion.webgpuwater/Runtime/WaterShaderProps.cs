@@ -66,6 +66,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal const string SurfPeriodName = "_SurfPeriod";
         internal const string SurfSetStrengthName = "_SurfSetStrength";
         internal const string SurfSwashAmplitudeName = "_SurfSwashAmplitude";
+        internal const string SurfSwashMaxSlopeTanName = "_SurfSwashMaxSlopeTan";
         internal const string SurfWaterlineFoamName = "_SurfWaterlineFoam";
         internal const string SurfWavelengthName = "_SurfWavelength";
         internal const string SurfWindDirXZName = "_SurfWindDirXZ";
@@ -90,6 +91,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal static readonly int SurfPeriod = Shader.PropertyToID(SurfPeriodName);
         internal static readonly int SurfSetStrength = Shader.PropertyToID(SurfSetStrengthName);
         internal static readonly int SurfSwashAmplitude = Shader.PropertyToID(SurfSwashAmplitudeName);
+        internal static readonly int SurfSwashMaxSlopeTan = Shader.PropertyToID(SurfSwashMaxSlopeTanName);
         internal static readonly int SurfWaterlineFoam = Shader.PropertyToID(SurfWaterlineFoamName);
         internal static readonly int SurfWavelength = Shader.PropertyToID(SurfWavelengthName);
         internal static readonly int SurfWindDirXZ = Shader.PropertyToID(SurfWindDirXZName);

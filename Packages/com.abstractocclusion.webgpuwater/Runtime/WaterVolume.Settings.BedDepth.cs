@@ -114,6 +114,12 @@ namespace AbstractOcclusion.WebGpuWater
                      "set height, from the baked beach slope). 1 = physics; 0 = classic hard " +
                      "waterline. Pre-SURF-PHYS scenes tuned in metres should reset this to 1.")]
             [Range(0f, 3f)] public float surfSwashAmplitude = 1f;
+            [Tooltip("Beach slope (degrees) above which swash stops. Swash is a BEACH process - a " +
+                     "film running up a slope gentle enough to hold it - and the physical run-up " +
+                     "below GROWS with slope, so on a cliff the model surges instead of stopping. " +
+                     "Faded in over the approach to this angle, never a hard line. 89 = uncapped, " +
+                     "0 = no swash anywhere.")]
+            [Range(0f, 89f)] public float surfSwashMaxSlopeDegrees = 35f;
             [Tooltip("Whitewash + breaker foam injected into the interactive foam sim near shore.")]
             [Range(0f, 4f)] public float surfFoamGain = 1.2f;
             [Tooltip("Standing foam lace hugging the waterline, independent of the front rhythm.")]
@@ -255,6 +261,13 @@ namespace AbstractOcclusion.WebGpuWater
         internal float surfLean => bedDepthSettings.surfLean;
         internal float surfAmbientFade => bedDepthSettings.surfAmbientFade;
         internal float surfSwashAmplitude => bedDepthSettings.surfSwashAmplitude;
+        // Authored in DEGREES (the only readable unit for a slope) but consumed as a tangent, so the
+        // shader and the compute never pay a trig call per pixel or per cell. Clamped rather than
+        // left to reach tan(90) = infinity.
+        internal float surfSwashMaxSlopeTan
+            => Mathf.Min(Mathf.Tan(bedDepthSettings.surfSwashMaxSlopeDegrees * Mathf.Deg2Rad),
+                         SurfSwashMaxSlopeTanCeiling);
+        const float SurfSwashMaxSlopeTanCeiling = 1000f;
         internal float surfFoamGain => bedDepthSettings.surfFoamGain;
         internal float surfWaterlineFoam => bedDepthSettings.surfWaterlineFoam;
         internal float surfSmallWaveFoam => bedDepthSettings.surfSmallWaveFoam;

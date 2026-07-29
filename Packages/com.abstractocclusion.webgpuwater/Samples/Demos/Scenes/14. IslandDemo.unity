@@ -476,8 +476,8 @@ MonoBehaviour:
     foamDecay: 0.96
     foamDecayResidual: 0.993
     foamDecayRate: 1
-    wetnessMemory: 0
-    wetnessDryTime: 3
+    wetnessMemory: 1
+    wetnessDryTime: 18
     foamSpread: 0.2
     foamGenThreshold: 0.15
     foamMinWaveHeight: 0.01
@@ -515,7 +515,7 @@ MonoBehaviour:
     openWater: 1
     largeWaveAmplitude: 0.5
     largeWaveChoppiness: 0.1
-    swellHeight: 0.3
+    swellHeight: 1
     swellWavelength: 80
     unboundedOcean: 1
     edgeFeatherMeters: 10
@@ -538,9 +538,9 @@ MonoBehaviour:
     largeCausticRippleScale: 1.5
     largeCausticRippleStrength: 0.233
     largeCausticProjectionSoften: 3.28
-    oceanFoamWindThreshold: 4
-    oceanFoamCoverage: 1
-    oceanFoamStrength: 1
+    oceanFoamWindThreshold: 2.5
+    oceanFoamCoverage: 0.9
+    oceanFoamStrength: 0.76
     oceanFoamFadeRate: 0.5
     oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
     oceanFoamTileSize: 8
@@ -613,6 +613,8 @@ MonoBehaviour:
     strength: 0.1
     tileMeters: 9
     scrollSpeed: 0.25
+    windResponse: 1
+    crestBoost: 0.5
   _legacyFoam: 0
   _legacyFoamGenRate: 0.6
   _legacyFoamDecay: 0.96

@@ -126,7 +126,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                         "bedDepthSettings.surfCrestVariation",
                         "bedDepthSettings.surfCrestPersistence");
                     WaterEditorUI.SubHeading("Swash");
-                    DrawFields("bedDepthSettings.surfSwashAmplitude");
+                    DrawFields("bedDepthSettings.surfSwashAmplitude",
+                               "bedDepthSettings.surfSwashMaxSlopeDegrees");
                 });
 
                 EditorGUILayout.HelpBox(SurfFoamPointerHelp, MessageType.None);

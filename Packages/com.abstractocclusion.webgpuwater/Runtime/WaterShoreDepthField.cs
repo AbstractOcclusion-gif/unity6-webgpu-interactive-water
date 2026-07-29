@@ -55,6 +55,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SurfGreens = WaterShaderProps.SurfGreens;
         static readonly int ID_SurfAmbientFade = WaterShaderProps.SurfAmbientFade;
         static readonly int ID_SurfSwashAmplitude = WaterShaderProps.SurfSwashAmplitude;
+        static readonly int ID_SurfSwashMaxSlopeTan = WaterShaderProps.SurfSwashMaxSlopeTan;
         static readonly int ID_SurfWaterlineFoam = WaterShaderProps.SurfWaterlineFoam;
         static readonly int ID_SurfSmallWaveFoam = Shader.PropertyToID("_SurfSmallWaveFoam");
         static readonly int ID_SurfCrestLength = WaterShaderProps.SurfCrestLength;
@@ -476,6 +477,10 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalFloat(ID_SurfGreens, _body.shoreGreens);
             Shader.SetGlobalFloat(ID_SurfAmbientFade, _body.surfAmbientFade);
             Shader.SetGlobalFloat(ID_SurfSwashAmplitude, _body.surfSwashAmplitude);
+            // MUST be published on BOTH paths: EvaluateSurfSwash also runs in WaterSim.compute for
+            // the persistent swash deposit, and a cap the render honoured but the sim did not would
+            // strand foam lines up a cliff the water no longer washes. See WaterSimulation.cs.
+            Shader.SetGlobalFloat(ID_SurfSwashMaxSlopeTan, _body.surfSwashMaxSlopeTan);
             Shader.SetGlobalFloat(ID_SurfWaterlineFoam, _body.surfWaterlineFoam);
             // FOAM-7: small-wave crest+tail foam (surface render; 0 = byte-identical).
             Shader.SetGlobalFloat(ID_SurfSmallWaveFoam, _body.surfSmallWaveFoam);
