@@ -247,7 +247,10 @@ float4 UnderwaterStage(v2f i, WaterGeomStage g, float waterClarity)
 
     // The underside mirror strength is its OWN knob (it used to ride the above-water
     // _ReflectionStrength): 0 = fully refracted, a glass-clear ceiling.
-    float tUnder = (1.0 - fresnel) * length(refractedRay);
+    // length(refractedRay) is provably 1.0 by this point: refract() returns a unit vector or zero, and
+    // the total-internal-reflection zero was already replaced by the unit reflectedRay above. The sqrt
+    // was dead the moment that guard was added.
+    float tUnder = 1.0 - fresnel;
     tUnder = lerp(1.0, tUnder, _UnderReflectionStrength); // strength 0 = fully refracted
     float3 underColor = lerp(reflectedColor, refractedColor, tUnder);
 
@@ -577,6 +580,46 @@ FoamLayer OceanWhitecapLayer(v2f i, WaterGeomStage g, float2 foamWorldDdx,
 }
 
 // Interactive/pond foam: advected sim buffer + wall border + contact foam.
+// Pond-foam COVERAGE, split out of PondFoamLayer so it can be evaluated WITHOUT the geometry
+// stage. It reads only v2f interpolants, the advected foam buffer and the depth texture - no
+// WaterGeomStage field - which is what lets the overlay pass reject a fragment before paying for
+// EvaluateSurfaceGeometry. Factored rather than copied: WaterFoamMask.hlsl's header records that
+// per-consumer copies of the coverage formula drifted once already.
+// Every tap here is explicit-LOD, so it is legal in any control flow.
+float PondFoamCoverage(v2f i)
+{
+    // Windowed bodies read the foam buffer in the window frame too - at the
+    // SOURCE xz (undisplaced), like the whitecap path. Sampling at the displaced
+    // worldPos misses foam under horizontally-displaced geometry: the hero wave's
+    // crest is thrown metres forward by lean + curl, so its fragments were reading
+    // the buffer ahead of where the lip foam was injected (empty crest head). FFT
+    // chop caused the same error at a smaller, invisible scale.
+    float3 foamSourcePos = float3(i.largeWaveSourceXZ.x, i.worldPos.y, i.largeWaveSourceXZ.y);
+    float2 fcoord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
+                                         : (WorldToSim(foamSourcePos).xz * 0.5 + 0.5);
+    // The advected buffer read and the shoreline wall border are SimFoamCoverage's job
+    // (below); only the contact term is specific to this side.
+    //
+    // contact foam where geometry pierces the waterline. BOUNDED bodies only (the same
+    // _SimWindowed gate SimFoamCoverage applies to its wall border): on a windowed
+    // ocean/large body the screen-depth
+    // contact test is unreliable (it fought the shore/SWE work) and there are no walls,
+    // so it is skipped entirely. Needs the depth texture; the behind-guard only adds
+    // foam where the scene is genuinely just BEHIND the surface (fixes "all water
+    // foamed" builds).
+    float contact = 0.0;
+    if (_SimWindowed < 0.5)
+    {
+        float2 suv = ScreenUV(i.screenPos);
+        float sceneEye = LinearEyeDepth(RawSceneDepth(suv));
+        float surfEye  = EyeDepthOf(i.worldPos);
+        float behind   = sceneEye - surfEye; // > 0 when scene sits below the surface
+        contact = behind > 0.0 ? (1.0 - saturate(behind / max(_FoamContactDepth, 1e-4))) : 0.0;
+    }
+
+    return SimFoamCoverage(i.position.xz, fcoord, contact);
+}
+
 FoamLayer PondFoamLayer(v2f i, WaterGeomStage g)
 {
     float3 normal = g.normal;
@@ -613,30 +656,7 @@ FoamLayer PondFoamLayer(v2f i, WaterGeomStage g)
         // crest is thrown metres forward by lean + curl, so its fragments were reading
         // the buffer ahead of where the lip foam was injected (empty crest head). FFT
         // chop caused the same error at a smaller, invisible scale.
-        float3 foamSourcePos = float3(i.largeWaveSourceXZ.x, i.worldPos.y, i.largeWaveSourceXZ.y);
-        float2 fcoord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
-                                             : (WorldToSim(foamSourcePos).xz * 0.5 + 0.5);
-        // The advected buffer read and the shoreline wall border are SimFoamCoverage's job
-        // (below); only the contact term is specific to this side.
-        //
-        // contact foam where geometry pierces the waterline. BOUNDED bodies only (the same
-        // _SimWindowed gate SimFoamCoverage applies to its wall border): on a windowed
-        // ocean/large body the screen-depth
-        // contact test is unreliable (it fought the shore/SWE work) and there are no walls,
-        // so it is skipped entirely. Needs the depth texture; the behind-guard only adds
-        // foam where the scene is genuinely just BEHIND the surface (fixes "all water
-        // foamed" builds).
-        float contact = 0.0;
-        if (_SimWindowed < 0.5)
-        {
-            float2 suv = ScreenUV(i.screenPos);
-            float sceneEye = LinearEyeDepth(RawSceneDepth(suv));
-            float surfEye  = EyeDepthOf(i.worldPos);
-            float behind   = sceneEye - surfEye; // > 0 when scene sits below the surface
-            contact = behind > 0.0 ? (1.0 - saturate(behind / max(_FoamContactDepth, 1e-4))) : 0.0;
-        }
-
-        float mask = SimFoamCoverage(i.position.xz, fcoord, contact);
+        float mask = PondFoamCoverage(i);
 
         // WORLD-space pattern UV (like the ocean whitecap): scale set by the
         // body's Foam Pattern Size, independent of extent, anchored under a

@@ -70,7 +70,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FoamDecayFresh = Shader.PropertyToID("_FoamDecayFresh");
         static readonly int ID_FoamDtSteps = Shader.PropertyToID("_FoamDtSteps");
         static readonly int ID_FoamDecayRate = Shader.PropertyToID("_FoamDecayRate");
-        static readonly int ID_WetDrySurvival = Shader.PropertyToID("_WetDrySurvival");
+        static readonly int ID_WetDryDecay = Shader.PropertyToID("_WetDryDecay");
         static readonly int ID_FoamWriteMask = Shader.PropertyToID("_FoamWriteMask");
         static readonly int ID_FoamSpread = Shader.PropertyToID("_FoamSpread");
         static readonly int ID_FoamFromSpeed = Shader.PropertyToID("_FoamFromSpeed");
@@ -567,7 +567,9 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetFloat(ID_FoamDecayResidual, decayResidual);
             _cs.SetFloat(ID_FoamDtSteps, dtSteps);
             _cs.SetFloat(ID_FoamDecayRate, decayRate);
-            _cs.SetFloat(ID_WetDrySurvival, wetDrySurvival);
+            // Folded here, not in the kernel: pow() of two uniforms is one constant, and evaluating it
+            // per texel cost a transcendental on every one of the grid's threads for nothing.
+            _cs.SetFloat(ID_WetDryDecay, Mathf.Pow(wetDrySurvival, dtSteps));
             // 0 keeps the R channel empty while this pass runs only to maintain the wet mark. Gating
             // at the single write site instead of zeroing gen / deposit / shore injection / wake
             // separately is what makes it impossible to leave a foam source switched on by accident.

@@ -269,11 +269,21 @@ namespace AbstractOcclusion.WebGpuWater
             return _body.sky;
         }
 
+        // Resolved ONCE PER FRAME. The scene skybox is scene-global and cannot change mid-frame, but
+        // WriteBodyUniforms runs ~22x per frame on a default ocean (body + both patches + every clipmap
+        // level x2), so this was ~66 native material queries per frame all returning the same object.
+        static Cubemap _skyboxCube;
+        static int _skyboxCubeFrame = -1;
+
         static Cubemap SceneSkyboxCubemap()
         {
+            if (_skyboxCubeFrame == Time.frameCount) return _skyboxCube;
+            _skyboxCubeFrame = Time.frameCount;
             Material skybox = RenderSettings.skybox;
-            if (skybox == null || !skybox.HasProperty(ID_SkyboxCubemapTex)) return null;
-            return skybox.GetTexture(ID_SkyboxCubemapTex) as Cubemap;
+            _skyboxCube = (skybox == null || !skybox.HasProperty(ID_SkyboxCubemapTex))
+                        ? null
+                        : skybox.GetTexture(ID_SkyboxCubemapTex) as Cubemap;
+            return _skyboxCube;
         }
 
         /// <summary>Overwrite the block with the body's per-renderer uniforms.</summary>

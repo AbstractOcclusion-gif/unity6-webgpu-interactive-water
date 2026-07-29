@@ -31,18 +31,25 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>Set by the spawner once the grid is built.</summary>
         public void SetFloaterCount(int count) => _floaterCount = count;
 
+        // The recorders and the panel are DEVELOPMENT-ONLY. Guarding the method BODIES rather than the
+        // class keeps the component type present in a release build, so a demo GameObject that carries
+        // this overlay does not come back as a missing script.
         void OnEnable()
         {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             // The buoyancy batch marker lives in the Scripts category (see WaterVolume.Query.cs). Physics is
             // best-effort: the marker name varies by version, so the line is hidden when the recorder is invalid.
             _queryRecorder = ProfilerRecorder.StartNew(ProfilerCategory.Scripts, WaterVolume.SampleHeightsMarkerName);
             _physicsRecorder = ProfilerRecorder.StartNew(ProfilerCategory.Physics, "Physics.Simulate");
+#endif
         }
 
         void OnDisable()
         {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             _queryRecorder.Dispose();
             _physicsRecorder.Dispose();
+#endif
         }
 
         void Update()
@@ -53,11 +60,16 @@ namespace AbstractOcclusion.WebGpuWater
 
         void OnGUI()
         {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             EnsureStyle();
             BuildText();
+            // ONE ToString. The height measure and the Box draw were each allocating their own copy of the
+            // same string on EVERY OnGUI pass - and OnGUI runs at least twice a frame (Layout + Repaint).
+            string panel = _text.ToString();
             var rect = new Rect(PanelMargin, PanelMargin, PanelWidth,
-                                _panelStyle.CalcHeight(new GUIContent(_text.ToString()), PanelWidth));
-            GUI.Box(rect, _text.ToString(), _panelStyle);
+                                _panelStyle.CalcHeight(new GUIContent(panel), PanelWidth));
+            GUI.Box(rect, panel, _panelStyle);
+#endif
         }
 
         void BuildText()

@@ -113,6 +113,29 @@ namespace AbstractOcclusion.WebGpuWater
                                                DefaultOceanFftInterval, DefaultMaxFoamParticles,
                                                DefaultUnderwaterMode);
 
+        /// <summary>The asset a body uses when none is assigned. A default-constructed instance
+        /// carries this class's serialized defaults, and every high* default IS the matching
+        /// Default* constant (see the block above - they are named once so they cannot drift), so
+        /// on an unconstrained desktop Resolve() returns a tier field-for-field identical to
+        /// Default. What the instance ADDS is selection = Auto, i.e. the device probe: a WebGPU /
+        /// mobile / no-async-readback build now lands on Low instead of silently shipping the full
+        /// desktop configuration. Reusing the real defaults rather than a second hardcoded tier is
+        /// deliberate - a duplicated tier is exactly the kind of copy that drifts.</summary>
+        static WaterQuality _fallback;
+        internal static WaterQuality Fallback
+        {
+            get
+            {
+                if (_fallback == null)
+                {
+                    _fallback = CreateInstance<WaterQuality>();
+                    _fallback.hideFlags = HideFlags.HideAndDontSave;
+                    _fallback.name = "WaterQuality (probed fallback)";
+                }
+                return _fallback;
+            }
+        }
+
         [Tooltip("Auto picks a tier from a capability probe (WebGPU/mobile -> Low). The Force* " +
                  "options pin a specific tier, e.g. to preview Low in a desktop editor.")]
         public Selection selection = Selection.Auto;

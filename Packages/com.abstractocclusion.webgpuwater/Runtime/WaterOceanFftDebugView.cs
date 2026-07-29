@@ -35,6 +35,10 @@ namespace AbstractOcclusion.WebGpuWater
             RenderTexture src = oceanBody.OceanFftTexture;
             if (src == null) return;
 
+            // OnGUI fires at least twice per frame (Layout + Repaint) and only Repaint draws, so the
+            // full cascade-slice CopyTexture belongs behind that test.
+            if (Event.current.type != EventType.Repaint) return;
+
             int slice = Mathf.Clamp(cascadeSlice, 0, Mathf.Max(0, src.volumeDepth - 1));
             EnsurePreview(src);
             Graphics.CopyTexture(src, slice, 0, _preview, 0, 0);

@@ -53,15 +53,14 @@ namespace AbstractOcclusion.WebGpuWater
         // LOD levels; each level scales the template to its cell size and SNAPS its centre to that level's
         // own world lattice, so its vertices never slide under the world-space waves as the camera follows
         // (the "swim" the old radial mesh suffered). The _IsClipmap flag + per-level morph uniforms ride
-        // each level's property block, so nothing leaks onto the pool-grid renderers. An underside twin
+        // ONE shared block re-stamped per level (see _clipmapBlock), so nothing leaks onto the pool-grid
+        // renderers. An underside twin
         // per level (opposite cull, same material family as the bounded under-surface) reaches the horizon
         // for the submerged view; its centre hole is filled by the near-field under-patch.
         struct ClipmapLevel
         {
             public MeshRenderer above;
             public MeshRenderer under;                 // null when the body has no under-surface material
-            public MaterialPropertyBlock aboveBlock;
-            public MaterialPropertyBlock underBlock;
             public float cellSize;                     // world metres per grid cell at this level
             public float depthBias;                    // view-space nudge toward the camera; finer levels win an overlap
             public float morphStart;                   // cheb cell distance where the edge geomorph begins (>= M/2 = off)
@@ -69,6 +68,12 @@ namespace AbstractOcclusion.WebGpuWater
         }
         ClipmapLevel[] _clipmapLevels;
         Mesh _clipmapTemplate;                         // shared uniform square-annulus grid backing every level
+        // ONE property block for every level. SetPropertyBlock COPIES into the renderer, so all 20
+        // renderers of a default ocean (9 levels x above/under, plus the near patches) can share one
+        // instance: the ~138 body uniforms go in ONCE per frame and only the four per-level floats are
+        // re-stamped between draws. Writing them per level meant ~2,840 native property writes a frame
+        // to publish 138 byte-identical values twenty times over.
+        MaterialPropertyBlock _clipmapBlock;
         static readonly int ID_IsClipmap = Shader.PropertyToID("_IsClipmap");
         static readonly int ID_ClipmapMorphStart = Shader.PropertyToID("_ClipmapMorphStart");
         static readonly int ID_ClipmapMorphScale = Shader.PropertyToID("_ClipmapMorphScale");
@@ -79,6 +84,10 @@ namespace AbstractOcclusion.WebGpuWater
         void ApplyClipmapBlock()
         {
             if (_clipmapLevels == null) return;
+            // Body uniforms ONCE for the whole clipmap. WriteBodyProps clears the block first, so last
+            // frame's per-level floats cannot survive into this one.
+            _clipmapBlock ??= new MaterialPropertyBlock();
+            WriteBodyProps(_clipmapBlock);
             for (int i = 0; i < _clipmapLevels.Length; i++)
                 PositionClipmapLevel(_clipmapLevels[i]);
         }
@@ -91,20 +100,22 @@ namespace AbstractOcclusion.WebGpuWater
         {
             Vector3 center = ClipmapLevelSnappedCenter(level.cellSize);
             Vector3 scale = new Vector3(level.cellSize, 1f, level.cellSize); // template verts are in cell units
-            PlaceClipmapRenderer(level.above, level.aboveBlock, center, scale, level);
-            PlaceClipmapRenderer(level.under, level.underBlock, center, scale, level);
+            PlaceClipmapRenderer(level.above, center, scale, level);
+            PlaceClipmapRenderer(level.under, center, scale, level);
         }
 
-        void PlaceClipmapRenderer(MeshRenderer renderer, MaterialPropertyBlock block,
-                                  Vector3 center, Vector3 scale, ClipmapLevel level)
+        // The body uniforms are already in _clipmapBlock (ApplyClipmapBlock wrote them once this frame);
+        // only the four per-level floats are re-stamped here. SetPropertyBlock copies, so the next level
+        // overwriting them cannot reach a renderer that has already been handed the block. ApplyClipmapBlock
+        // is the sole path in, so _clipmapBlock is non-null by construction.
+        void PlaceClipmapRenderer(MeshRenderer renderer, Vector3 center, Vector3 scale, ClipmapLevel level)
         {
             if (renderer == null) return;
-            WriteBodyProps(block);
-            block.SetFloat(ID_IsClipmap, 1f);
-            block.SetFloat(ID_PatchDepthBias, level.depthBias);
-            block.SetFloat(ID_ClipmapMorphStart, level.morphStart);
-            block.SetFloat(ID_ClipmapMorphScale, level.morphScale);
-            renderer.SetPropertyBlock(block);
+            _clipmapBlock.SetFloat(ID_IsClipmap, 1f);
+            _clipmapBlock.SetFloat(ID_PatchDepthBias, level.depthBias);
+            _clipmapBlock.SetFloat(ID_ClipmapMorphStart, level.morphStart);
+            _clipmapBlock.SetFloat(ID_ClipmapMorphScale, level.morphScale);
+            renderer.SetPropertyBlock(_clipmapBlock);
 
             Transform t = renderer.transform;
             t.SetPositionAndRotation(center, VolumeRotation);
@@ -178,13 +189,9 @@ namespace AbstractOcclusion.WebGpuWater
                     morphStart = outermost ? ClipmapGridRes : (ClipmapGridRes / 2f - morphBandCells),
                     morphScale = 1f / morphBandCells,
                     above = CreateSurfaceRenderer(ClipmapObjectName, _clipmapTemplate, surfaceAbove.sharedMaterial),
-                    aboveBlock = new MaterialPropertyBlock(),
                 };
                 if (buildUnder)
-                {
                     entry.under = CreateSurfaceRenderer(ClipmapUnderObjectName, _clipmapTemplate, surfaceUnder.sharedMaterial);
-                    entry.underBlock = new MaterialPropertyBlock();
-                }
                 _clipmapLevels[level] = entry;
             }
         }

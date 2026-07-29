@@ -124,7 +124,10 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 data.camera = cameraData.camera;
                 data.block = _scratchBlock;
-                builder.SetRenderAttachment(resources.activeColorTexture, 0, AccessFlags.Write);
+                // ReadWrite (not Write): the sprites and the pond-foam overlay are alpha-blended, so the
+                // rendered scene must be LOADED, not discarded. Write alone left the screen black on a
+                // load-action-honouring backend - the same trap LargeBodyAtmospherePass.cs already records.
+                builder.SetRenderAttachment(resources.activeColorTexture, 0, AccessFlags.ReadWrite);
                 // Depth READ: the sprites keep their hardware ZTest against the scene (and the
                 // soft-fade depth sample rides the global _CameraDepthTexture).
                 if (resources.activeDepthTexture.IsValid())

@@ -102,8 +102,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTerrain"
             #pragma vertex vert
             #pragma fragment frag
             #pragma target 4.0
-            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
-            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS_SCREEN
+            // ONE 4-way set, exactly as URP's own Lit.shader declares it. URP sets these keywords
+            // mutually exclusively, so two independent pragmas were compiling a 3x2 cross product in
+            // which both *_SCREEN combinations are unreachable states.
+            // _fragment on all of them: every consumer of these keywords lives in frag, so the
+            // unscoped forms were also compiling a separate, byte-identical vertex program per combination.
+            #pragma multi_compile_fragment _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
             #pragma multi_compile_fragment _ _SHADOWS_SOFT _SHADOWS_SOFT_LOW _SHADOWS_SOFT_MEDIUM _SHADOWS_SOFT_HIGH
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"

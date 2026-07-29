@@ -125,9 +125,16 @@ namespace AbstractOcclusion.WebGpuWater
         // (_simRes stays at its default), so existing scenes are unaffected.
         void ApplyQuality()
         {
-            if (quality == null) return; // keep the inspector defaults / Default-tier cost knobs
+            // No asset assigned no longer means "assume desktop". WaterQuality.Fallback probes the
+            // device exactly as an Auto asset would; on an unconstrained desktop that resolves
+            // field-for-field to Tier.Default, so nothing changes there - but a WebGPU / mobile /
+            // no-async-readback build now gets Low instead of the full desktop configuration, which
+            // is what makes every tier knob below actually reachable on the web target.
+            // (A desktop under MidGraphicsMemoryMB now resolves to Medium rather than High. That is
+            // the probe doing its job, but it IS a behaviour change on low-VRAM machines.)
+            WaterQuality source = quality != null ? quality : WaterQuality.Fallback;
 
-            WaterQuality.Tier tier = quality.Resolve();
+            WaterQuality.Tier tier = source.Resolve();
             _simRes = tier.SimResolution;
             // Runtime field, NOT the serialized causticResolution: ApplyQuality also runs in edit
             // mode (TryInitialize under [ExecuteAlways]), and writing the serialized field baked the

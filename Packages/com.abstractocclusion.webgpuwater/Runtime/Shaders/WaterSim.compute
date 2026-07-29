@@ -200,7 +200,10 @@ RWTexture2D<float2>  FoamDst;
 // dried in an eighth of a second at the same setting that left a 20 cm splash lingering. "How long
 // does ground stay wet" is the question being authored, so the knob has to be a time, and an
 // exponential is what makes that time height-independent.
-float _WetDrySurvival;
+// Wet-mark survival for THIS step - i.e. pow(survivalPerReferenceStep, _FoamDtSteps) already folded
+// on the CPU (WaterSimulation.StepFoam). Both operands were uniforms, so the pow used to run once per
+// texel to produce a single constant.
+float _WetDryDecay;
 // 1 while the foam LOOK is enabled, 0 when this kernel is running only to keep the wet mark alive.
 // One multiply at the single write site is the whole gate: it is impossible to miss a foam source
 // this way, whereas zeroing each of gen / deposit / shore-injection / wake separately is not.
@@ -730,7 +733,7 @@ void Foam(uint3 id : SV_DispatchThreadID)
     // nothing left to dry.
     // No clamp needed: an exponential of a non-negative mark stays non-negative, and the max() below
     // re-floors it at the live surface anyway.
-    float driedMark = FoamSrc.Load(int3(p, 0)).g * pow(_WetDrySurvival, _FoamDtSteps);
+    float driedMark = FoamSrc.Load(int3(p, 0)).g * _WetDryDecay;
     float wetMark = max(info.r, driedMark);
 
     FoamDst[p] = float2(saturate(foam) * _FoamWriteMask, wetMark);

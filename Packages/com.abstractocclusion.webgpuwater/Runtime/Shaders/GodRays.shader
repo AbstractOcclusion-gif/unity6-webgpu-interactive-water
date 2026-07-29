@@ -51,7 +51,9 @@ Shader "AbstractOcclusion/WebGpuWater/GodRays"
             // _SHADOWS_SOFT is intentionally NOT compiled here: the march already averages
             // many samples along the ray, so multi-tap soft shadows per step cost several
             // extra shadowmap fetches per pixel for no visible gain in a volumetric.
-            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
+            // _fragment: the only consumer is in frag, so the unscoped form compiled one identical
+            // vertex program per shadow keyword for nothing.
+            #pragma multi_compile_fragment _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"

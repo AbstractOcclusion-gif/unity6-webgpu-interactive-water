@@ -110,7 +110,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // stays lit, i.e. the old behaviour). _MAIN_LIGHT_SHADOWS_SCREEN is deliberately absent:
             // WaterSurfaceShadow.hlsl only handles the shadow-map keywords, so the SCREEN variant would
             // compile byte-identical to the no-keyword one (unknown keywords are ignored at set time).
-            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
+            // _fragment: the only consumer is in frag, so the unscoped form compiled one identical
+            // vertex program per shadow keyword for nothing.
+            #pragma multi_compile_fragment _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
             // Reflection mode (planar / SSR / URP-probe base / real refraction) is UNIFORM-driven,
             // published per body every frame via the MaterialPropertyBlock (WaterUniformPublisher),
             // so it updates live in the editor and needs no shader variants.
@@ -419,6 +421,21 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 // queue-time foam - drawing here too would lay it twice. Uniform branch,
                 // the exact complement of Pass 0's skip gate (same published globals).
                 if (_CameraUnderwater > 0.5) discard;
+
+                // Foam off on this body: the C# collector (QualifiesForFoamOverlay) already checks
+                // body.Foam, so this only fires on a stale uniform - but it is a uniform branch and
+                // it costs nothing.
+                if (_FoamEnabled < 0.5) discard;
+
+                // COVERAGE FIRST. Below FOAM_MASK_EPSILON, PondFoamLayer leaves alpha at its 0.0
+                // initialiser and the clip at the bottom rejects the fragment anyway - so reject it
+                // HERE instead, before the ~52 dependent texture fetches of EvaluateSurfaceGeometry.
+                // Strictly a subset of what already gets clipped, so nothing that survives today
+                // changes. Coverage takes no WaterGeomStage input, which is what makes the hoist
+                // legal; the alpha does (the normal nudges the pattern UV), so alpha canNOT be
+                // tested early. This pass runs with AllowPassCulling(false) over every collected
+                // above-surface renderer, so the fragments rejected here are not frustum-bounded.
+                clip(PondFoamCoverage(i) - FOAM_MASK_EPSILON);
 
                 WaterGeomStage geom = EvaluateSurfaceGeometry(i);
                 FoamLayer foam = PondFoamLayer(i, geom);

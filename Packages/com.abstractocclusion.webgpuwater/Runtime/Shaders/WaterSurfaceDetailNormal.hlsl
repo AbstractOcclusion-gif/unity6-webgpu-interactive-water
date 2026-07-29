@@ -51,8 +51,11 @@ float2 DetailNormalTilt(float2 worldXZ, float viewDist)
     // non-orthogonal pair: the ANGLE BETWEEN them is what stops the two scrolls reading as a grid,
     // and a rotation preserves it exactly. Guarded so an unpublished uniform cannot collapse both
     // directions to zero and freeze the scroll.
+    // No normalize: WindDirectionXZ publishes (cos, sin) and is already unit by construction. The
+    // guard stays, because an UNPUBLISHED uniform is the one way this can be non-unit - and that is
+    // exactly the case it was written for.
     float2 wind = (dot(_WindDirection.xy, _WindDirection.xy) > 1e-6)
-                ? normalize(_WindDirection.xy) : float2(1.0, 0.0);
+                ? _WindDirection.xy : float2(1.0, 0.0);
     float2 dir0 = float2(DETAIL_NORMAL_DIR0.x * wind.x - DETAIL_NORMAL_DIR0.y * wind.y,
                          DETAIL_NORMAL_DIR0.x * wind.y + DETAIL_NORMAL_DIR0.y * wind.x);
     float2 dir1 = float2(DETAIL_NORMAL_DIR1.x * wind.x - DETAIL_NORMAL_DIR1.y * wind.y,

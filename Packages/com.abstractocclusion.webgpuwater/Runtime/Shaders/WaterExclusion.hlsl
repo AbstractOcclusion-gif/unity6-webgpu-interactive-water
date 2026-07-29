@@ -245,6 +245,10 @@ float ExclusionPullToEntry(float3 origin, float3 dir, float tAt)
 float ExclusionSunVisibility(float3 p, float3 dirToSun, float waterLevel)
 {
     int count = (int)_ExclusionCount;
+    // No volumes: nothing can occlude, and the loop below would fall straight through to return 1.0.
+    // Worth an explicit early-out because this runs PER MARCHED SAMPLE in both god-ray shaders, so a
+    // scene with no carve was paying the refract() setup up to 64 times per pixel for that same 1.0.
+    if (count < 1) return 1.0;
 
     // Refracted underwater leg setup. Above-water samples (or a horizon/below-horizon sun)
     // degrade to a single air-direction ray: tSurf covers the whole ray, no second leg.

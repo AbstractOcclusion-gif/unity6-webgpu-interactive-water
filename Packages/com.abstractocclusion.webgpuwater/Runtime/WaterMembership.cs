@@ -14,14 +14,12 @@ namespace AbstractOcclusion.WebGpuWater
     public class WaterMembership : MonoBehaviour
     {
         Renderer _renderer;
-        MaterialPropertyBlock _mpb;
 
         // Lazy init (not Awake): with ExecuteAlways the first edit-mode tick can arrive
         // before Awake after a domain reload.
         void EnsureInitialized()
         {
             if (_renderer == null) _renderer = GetComponent<Renderer>();
-            if (_mpb == null) _mpb = new MaterialPropertyBlock();
         }
 
         // LateUpdate so the containing body has finished this frame's sim/caustic pass
@@ -40,8 +38,10 @@ namespace AbstractOcclusion.WebGpuWater
                 return;
             }
 
-            body.WriteBodyProps(_mpb);
-            _renderer.SetPropertyBlock(_mpb);
+            // The body builds this block at most once a frame and hands the SAME instance to every
+            // member; SetPropertyBlock copies it into the renderer, so sharing is safe. Writing our
+            // own was ~138 native property writes per object per frame for identical values.
+            _renderer.SetPropertyBlock(body.MembershipBlock);
         }
     }
 }

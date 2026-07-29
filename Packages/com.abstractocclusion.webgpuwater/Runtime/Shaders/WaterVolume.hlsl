@@ -68,7 +68,11 @@ float3 VolumeExtentSafe()
 float3x3 VolumeRot()
 {
     float3x3 r = (float3x3)_VolumeRot;
-    return abs(determinant(r)) < 0.5 ? float3x3(1,0,0, 0,1,0, 0,0,1) : r;
+    // dot(r[0], r[0]) rather than determinant(r): C# only ever publishes Matrix4x4.Rotate(quaternion)
+    // (orthonormal, rows unit -> 1.0) or nothing at all (zero matrix -> 0.0), so the cheap test
+    // separates exactly the same two cases for 3 mul + 2 add instead of 9 mul + 5 add. This is reached
+    // ~3x per SurfaceHeightAtXZ, which the fog and god-ray marches call up to 54 times per pixel.
+    return dot(r[0], r[0]) < 0.5 ? float3x3(1,0,0, 0,1,0, 0,0,1) : r;
 }
 
 float3 PoolToWorld(float3 poolPos)

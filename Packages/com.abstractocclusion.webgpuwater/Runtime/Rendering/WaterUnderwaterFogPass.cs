@@ -48,7 +48,7 @@ namespace AbstractOcclusion.WebGpuWater
             renderPassEvent = InjectionPoint;
         }
 
-        sealed class PassData { public Material material; public int shaderPass; }
+        sealed class PassData { public Material material; }
 
         sealed class PrepassData
         {
@@ -90,8 +90,7 @@ namespace AbstractOcclusion.WebGpuWater
             // independently (a straddling near plane arms the line before the eye submerges).
             if (WaterVolume.UnderwaterFogActive)
             {
-                RecordFogPass(renderGraph, resources, cameraColor, AbsorbShaderPass, "WaterUnderwaterFog.Absorb");
-                RecordFogPass(renderGraph, resources, cameraColor, InscatterShaderPass, "WaterUnderwaterFog.Inscatter");
+                RecordFogPass(renderGraph, resources, cameraColor, "WaterUnderwaterFog");
             }
             // The meniscus darkens the finished frame along the crossing - the exact band a fog
             // debug view exists to show - so it stands down while one is selected. The absorb and
@@ -184,19 +183,28 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         void RecordFogPass(RenderGraph renderGraph, UniversalResourceData resources,
-                           TextureHandle cameraColor, int shaderPass, string passName)
+                           TextureHandle cameraColor, string passName)
         {
             using var builder = renderGraph.AddRasterRenderPass<PassData>(passName, out PassData data, _sampler);
 
             data.material = _material;
-            data.shaderPass = shaderPass;
             // ReadWrite loads the existing scene so the hardware blend composites onto it.
             builder.SetRenderAttachment(cameraColor, 0, AccessFlags.ReadWrite);
             if (resources.cameraDepthTexture.IsValid())
                 builder.UseTexture(resources.cameraDepthTexture, AccessFlags.Read);
             builder.UseAllGlobalTextures(true); // published fog globals (shore field, FFT displacement, ...)
+            // Two draws, ONE raster pass. Absorb multiplies the destination (Blend Zero SrcColor) and
+            // inscatter adds to it (Blend One One) - both composite through the fixed-function blender,
+            // and NEITHER shader samples the colour target, so this is ordinary blend accumulation in
+            // submission order, not a read-after-write on the attachment. (Where a self-read IS needed,
+            // RecordWaterlinePass copies to a transient first - deliberately, for exactly that reason.)
+            // Same shape as WaterCausticProjectionPass, which already accumulates N fullscreen draws
+            // with this very pair of blend modes into one ReadWrite colour attachment.
             builder.SetRenderFunc((PassData d, RasterGraphContext ctx) =>
-                CoreUtils.DrawFullScreen(ctx.cmd, d.material, null, d.shaderPass));
+            {
+                CoreUtils.DrawFullScreen(ctx.cmd, d.material, null, AbsorbShaderPass);
+                CoreUtils.DrawFullScreen(ctx.cmd, d.material, null, InscatterShaderPass);
+            });
         }
     }
 }

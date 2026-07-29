@@ -55,7 +55,9 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             // screen-space variant is intentionally omitted: it is keyed to opaque-surface depth
             // and would be wrong for arbitrary volumetric samples. Without a shadowmap the pass
             // degrades gracefully to unshadowed shafts.
-            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
+            // _fragment: the only consumer is in frag, so the unscoped form compiled one identical
+            // vertex program per shadow keyword for nothing.
+            #pragma multi_compile_fragment _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"

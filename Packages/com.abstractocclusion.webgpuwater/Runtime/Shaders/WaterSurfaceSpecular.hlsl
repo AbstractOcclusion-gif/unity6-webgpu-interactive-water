@@ -364,7 +364,10 @@ float3 SampleSkyEnvironmentAniso(float3 worldRay, float roughness)
         float3 tapRay = (dot(tapVec, tapVec) < DEGENERATE_DIR_EPSILON)
                       ? worldRay : normalize(tapVec);
         tapRay.y = max(tapRay.y, REFLECTION_MIN_UP_Y);
-        color += SampleSkyEnvironmentRough(normalize(tapRay), roughness) * ANISO_TAP_WEIGHTS[tap];
+        // No normalize here: the sample is texCUBElod, and cube addressing divides by the major axis,
+        // so the direction's magnitude cannot reach the result. (The normalize above it IS load-bearing:
+        // the .y clamp below assumes a unit vector.)
+        color += SampleSkyEnvironmentRough(tapRay, roughness) * ANISO_TAP_WEIGHTS[tap];
     }
     return color;
 }

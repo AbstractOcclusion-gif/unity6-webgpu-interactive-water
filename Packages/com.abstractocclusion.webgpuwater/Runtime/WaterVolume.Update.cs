@@ -143,6 +143,30 @@ namespace AbstractOcclusion.WebGpuWater
             Publisher.WriteBodyProps(mpb);
         }
 
+        // ONE block shared by every WaterMembership object inside this body, rebuilt at most once a
+        // frame. SetPropertyBlock COPIES into the renderer, so handing the same instance to N members
+        // is safe; each member used to run its own WriteBodyProps (a clear plus ~138 native property
+        // writes) for byte-identical values, so fifty wet objects cost ~6,900 writes a frame.
+        // Deliberately NOT _mpb: that one also carries SetChunkSurfaceProps / ApplyChunkShellBlock
+        // additions, which members have never received and which would change a chunk body's look.
+        MaterialPropertyBlock _membershipBlock;
+        int _membershipBlockFrame = -1;
+
+        /// <summary>This body's per-renderer uniforms, built at most once per frame and shared by
+        /// every <see cref="WaterMembership"/> object inside it. Do NOT mutate the returned block:
+        /// it is handed to every member, so per-object look must live in the material.</summary>
+        internal MaterialPropertyBlock MembershipBlock
+        {
+            get
+            {
+                if (_membershipBlockFrame == Time.frameCount) return _membershipBlock;
+                _membershipBlockFrame = Time.frameCount;
+                _membershipBlock ??= new MaterialPropertyBlock();
+                WriteBodyProps(_membershipBlock);
+                return _membershipBlock;
+            }
+        }
+
         void ApplyBlockTo(Renderer r) { if (r != null) r.SetPropertyBlock(_mpb); }
 
         // World-space AABB of this body's volume (pool box x,z in [-1,1], y in [-1,0]) plus a
