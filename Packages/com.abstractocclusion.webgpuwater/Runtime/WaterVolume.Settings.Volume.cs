@@ -134,6 +134,15 @@ namespace AbstractOcclusion.WebGpuWater
                  "darkness follows the sun's Shadow Strength, matching URP's shadow-map path.")]
         [Range(0f, 1f)] [SerializeField] internal float refractShadowSoftness = 0.5f;
 
+        [Tooltip("Which layers cast the refracted underwater shadow (with Refract Shadows ON). A " +
+                 "submerged object on an excluded layer casts NO underwater shadow at all: once the " +
+                 "refracted path is active the caustic channel is the only shadow source, so an " +
+                 "excluded object does not fall back to URP's shadow map. Everything by default.")]
+        [SerializeField] internal LayerMask refractShadowLayers = AllLayers;
+
+        // A LayerMask serialises as an int bitfield, so ~0 = every layer = the pre-filter behaviour.
+        const int AllLayers = ~0;
+
         [Header("Depth attenuation (downwelling)")]
         [SerializeField] DepthAttenuationSettings depthAttenuation = new DepthAttenuationSettings();
 

@@ -57,7 +57,16 @@ namespace AbstractOcclusion.WebGpuWater
                 // The analytic wind waves are driven by the shared clock, so they keep moving
                 // even on a budget-paused (but visible) body; only the GPU sim is gated.
                 _waveTime += dt;
-                if (_simulate) Step(dt);
+                if (_simulate)
+                {
+                    // Apply every drop / wake interactor queued since the last frame in ONE full-grid
+                    // pass each, instead of one pass per stamp. Deliberately OUTSIDE Step: Step returns
+                    // early whenever no whole solver step is owed, which at high frame rates is most
+                    // frames, and the stamps must still land every frame the way an immediate dispatch
+                    // did. Also before Step so the flush precedes the sim window's scroll.
+                    _water?.FlushInjections();
+                    Step(dt);
+                }
             }
 
             Publisher.PublishSharedGlobals(); // sun, ambient, tiles (the wave clock is per body)
@@ -82,9 +91,12 @@ namespace AbstractOcclusion.WebGpuWater
                 // fade). Drift and max buildup pass straight through.
                 var foam = new WaterOceanFft.FoamParams(OceanFoamWindThreshold, OceanFoamCoverage,
                                                         OceanFoamStrength, OceanFoamFadeRate,
-                                                        1f - OceanFoamDeposit, OceanFoamDrift, OceanFoamMaxBuildup);
-                _oceanFft?.Dispatch(_waveTime, windSpeed, LargeWaveHeadingRad, LargeWaveAmplitudeEffective,
-                                    SwellWavelength, SwellHeight, camXZ, foam);
+                                                        1f - OceanFoamDeposit, OceanFoamDrift, OceanFoamMaxBuildup,
+                                                        OceanFoamCrestAnisotropy, OceanFoamCrestGate,
+                                                        OceanFoamFaceBias, OceanFoamCascadeMix);
+                _oceanFft?.Dispatch(_waveTime, windSpeed, LargeWaveHeadingRad, OceanWindTurbulence,
+                                    LargeWaveAmplitudeEffective, SwellWavelength, SwellHeight,
+                                    camXZ, foam);
             }
             if (_simulate && Time.frameCount % _causticInterval == 0)
                 RenderCausticsForThisBody();

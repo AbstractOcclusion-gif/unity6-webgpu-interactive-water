@@ -542,8 +542,35 @@ FoamLayer OceanWhitecapLayer(v2f i, WaterGeomStage g, float2 foamWorldDdx,
         float foamCamDist = distance(i.largeWaveSourceXZ, _WorldSpaceCameraPos.xz);
         oceanFoamPattern = SampleOceanWhitecapPattern(oceanFoamSampleXZ, foamCamDist,
                                                       foamWorldDdx, foamWorldDdy);
+        // WHO OWNS THE OUTLINE. FoamDissolve thresholds the PATTERN, with coverage only sliding the
+        // threshold - so the foam's outline is literally the texture's iso-contours. Our whitecap
+        // artwork is cellular, so it printed round caps no matter what the wave field was doing
+        // underneath. Ceto splits these two jobs with Ceto_TextureWaveFoam
+        // (Assets/Ceto/Shaders/OceanUnderWater.cginc:26 - foam.x = lerp(foam.x, foam.x * foamTexture,
+        // Ceto_TextureWaveFoam)): its foam SHAPE comes from the multi-scale Jacobian field and the
+        // texture only breaks it up. The other end of this lerp is the COVERAGE FRACTION itself,
+        // which is where the crest-aligned structure lives (see OceanFoamAnisotropy).
+        //
+        // AND IT FADES WITH DISTANCE, which fixes a real far-field defect: a tiled pattern loses its
+        // VARIANCE as it mips, so far out the dissolve is thresholding a near-uniform grey. The caps
+        // stop being discrete, the result is a flat wash that reads far too BRIGHT, and - because the
+        // texture is what gates the result - the foam knobs stop visibly doing anything out there.
+        // Past the fade the foam IS the coverage fraction, which is the correct antialiasing of a
+        // sub-pixel mask (its expected value) and is driven purely by the wave field, so every knob
+        // keeps working all the way to the horizon.
+        #define OCEAN_FOAM_TEXTURE_FADE_START 120.0  // metres where the pattern starts handing over
+        #define OCEAN_FOAM_TEXTURE_FADE_RANGE 400.0  // ...and over which it fully does
+        float oceanFoamTexWeight = _OceanFoamTextureInfluence
+            * (1.0 - saturate((foamCamDist - OCEAN_FOAM_TEXTURE_FADE_START)
+                              / OCEAN_FOAM_TEXTURE_FADE_RANGE));
         // Shared KWS contrast/dissolve law (FoamDissolve above); no erosion term.
-        oceanFoam = FoamDissolve(oceanFoamPattern.r, coverage, _OceanFoamFeather, 0.0);
+        float oceanFoamDissolved = FoamDissolve(oceanFoamPattern.r, coverage, _OceanFoamFeather, 0.0);
+        // The far end of this blend is the dissolve's EXPECTED value, NOT the raw coverage. Coverage
+        // is the area the foam COULD occupy; the dissolve only keeps the part of it that clears the
+        // pattern threshold, so blending toward coverage made distant foam brighter than the near
+        // foam it is supposed to match - which is exactly what it looked like.
+        oceanFoam = lerp(FoamDissolveExpected(coverage, _OceanFoamFeather, 0.0),
+                         oceanFoamDissolved, oceanFoamTexWeight);
     }
 
     float oceanFoamAlpha = 0.0;
@@ -569,6 +596,18 @@ FoamLayer OceanWhitecapLayer(v2f i, WaterGeomStage g, float2 foamWorldDdx,
         // instead of reading as a flat wash; whiten toward the peaks so dense foam stays bright.
         float oceanWrap = FoamWrappedDiffuse(oceanFoamNormal, _LightDir);
         float3 oceanTint = _OceanFoamColor.rgb * lerp(oceanFoamPattern, float3(1.0, 1.0, 1.0), oceanFoam);
+        // Ceto's foam absorption (Assets/Ceto/Shaders/OceanUnderWater.cginc:44 -
+        // Ceto_FoamTint * amount * exp(-Ceto_AbsCof.rgb * (1 - amount))). Thin foam is mostly WATER
+        // with bubbles in it, so it should take the water's own colour and only go white once it is
+        // dense; painting it flat white at every density is what makes foam read as decals stuck on
+        // the surface. Driven by _WaterExtinction - the SAME coefficient the fog and the depth
+        // transmittance run on - so foam and sea keep agreeing when the water type is retuned; a
+        // separately-picked foam colour drifts away from the water it is floating on. The amount
+        // factor Ceto folds in here is already carried by oceanFoamAlpha below, so only the
+        // absorption term is applied. 0 = the flat tint, byte-identical.
+        oceanTint *= lerp(float3(1.0, 1.0, 1.0),
+                          exp(-_WaterExtinction.rgb * (1.0 - saturate(oceanFoam))),
+                          _OceanFoamDepthTint);
         oceanFoamLook = FoamLitColor(oceanTint, _SunColor, oceanWrap);
         oceanFoamAlpha = oceanFoam * _OceanFoamColor.a;
     }
@@ -1058,6 +1097,27 @@ float3 ShorelineStage(v2f i, WaterGeomStage g, float3 outColor, float3 refracted
     return outColor;
 }
 
+// How much of what the opaque texture holds at a screen UV is actually SKY.
+//
+// The horizon haze below reads its target colour out of _CameraOpaqueTexture, on the premise that
+// the horizon row of that texture is the rendered sky band. That premise only holds over EMPTY
+// ocean: the opaque texture holds every opaque object, so a hull, its rigging, or a coastline
+// sitting on the horizon row BECOMES the colour the whole far ocean fades into. A boat riding up
+// and down a big sea sweeps its own sails across that row, which is what made the haze flash.
+//
+// Sky is the only thing left at the far plane (the skybox does not write depth, so those pixels keep
+// the cleared far value), so eye depth is a reliable sky test. Weighted, not a binary reject: a tap
+// straddling the silhouette of a mast must fade, not pop - which is the failure this whole pass is
+// about.
+#define HORIZON_SKY_DEPTH_NEAR 0.90   // fraction of the far plane where a tap starts counting as sky
+#define HORIZON_SKY_DEPTH_FAR  0.99   // ...and where it fully does
+float HorizonSkyWeight(float2 uv)
+{
+    float eyeDepth = LinearEyeDepth(RawSceneDepth(uv));
+    return smoothstep(HORIZON_SKY_DEPTH_NEAR * _ProjectionParams.z,
+                      HORIZON_SKY_DEPTH_FAR * _ProjectionParams.z, eyeDepth);
+}
+
 // Final composite: the exclusive foam blend over everything, then horizon haze
 // and the Layer A debug overlays.
 float3 FinalCompositeStage(v2f i, WaterGeomStage g, float3 outColor,
@@ -1124,6 +1184,10 @@ float3 FinalCompositeStage(v2f i, WaterGeomStage g, float3 outColor,
         // Forward+ - zeros, far water faded to BLACK - the same per-object-binding failure
         // as unity_SpecCube0, see SampleSkyEnvironmentGrad.)
         #define HORIZON_AZIMUTH_MIN 1e-4   // below this the view ray is straight down; no azimuth
+        // Floor on the renormalising divisor when every horizon tap is rejected as non-sky: the
+        // colour it produces is discarded anyway (skyConfidence is 0 there), this only keeps the
+        // divide finite.
+        #define HORIZON_SKY_MIN_WEIGHT 1e-3
         float3 skyAtHorizon;
         if (_RealRefraction > 0.5)
         {
@@ -1148,28 +1212,80 @@ float3 FinalCompositeStage(v2f i, WaterGeomStage g, float3 outColor,
             // when you look down, which is the only time it clamps + streaks. The horizontal screen
             // edges must NOT trigger the centre blend, or a near-horizontal view gets vertical colour
             // BANDS down the LEFT/RIGHT of the water (min-of-both-axes bug). So measure Y alone.
-            float edgeMinY = min(horizonUVraw.y, 1.0 - horizonUVraw.y); // >0 = horizon vertically in frame
-            float toCentre = 1.0 - smoothstep(0.0, HORIZON_EDGE_BLEND, edgeMinY);
-            // Degenerate azimuth (straight down) or horizon behind the camera: fully the centre band.
-            if (azimuthLen <= HORIZON_AZIMUTH_MIN || horizonClip.w <= SCREEN_UV_MIN_W) toCentre = 1.0;
+            // horizonUVraw is a PROJECTED coordinate: it goes hyperbolic as the horizon direction
+            // approaches the camera plane (ScreenUV divides by w), and its SIGN inverts past it. Used
+            // raw as a blend parameter - which it was - the 12%-of-screen soft band collapses to zero
+            // ANGULAR width exactly where the camera is pitching through that pose, so the crossfade
+            // degenerated into a step: the pop when the boat pitches on a big sea, or the fly cam
+            // looks down from high up. Clamp it to a bounded range so the edge test keeps a finite
+            // transition, and let the w term below carry the fade through that regime.
+            #define HORIZON_UV_GUARD 1.0
+            float2 horizonUV = clamp(horizonUVraw, -HORIZON_UV_GUARD, 1.0 + HORIZON_UV_GUARD);
+            float edgeMinY = min(horizonUV.y, 1.0 - horizonUV.y); // >0 = horizon vertically in frame
+
+            // horizonDir is a UNIT vector, so horizonClip.w is exactly the cosine of the angle between
+            // it and the camera's forward axis - BOUNDED in [-1,1] and smooth in camera pitch, unlike
+            // the projected UV. That makes it the right parameter for "is this projection usable":
+            // 1 = the horizon is straight ahead, 0 = it lies in the camera plane (projection blows
+            // up), negative = behind the camera.
+            #define HORIZON_FORWARD_MIN  0.05  // below this the projection is unusable
+            #define HORIZON_FORWARD_FADE 0.25  // ...above this it is trustworthy
+            #define HORIZON_AZIMUTH_FADE 0.05  // view ray this close to straight down has no azimuth
+            // Every reason to keep the per-azimuth sample, as a PRODUCT of smooth terms - all three
+            // must hold. The hard "if (... ) toCentre = 1.0" this replaces was a binary flip with no
+            // blend: the same step-instead-of-blend shape that caused the god-ray and waterline pops.
+            float keepPerAzimuth =
+                  smoothstep(HORIZON_AZIMUTH_MIN, HORIZON_AZIMUTH_FADE, azimuthLen)
+                * smoothstep(HORIZON_FORWARD_MIN, HORIZON_FORWARD_FADE, horizonClip.w)
+                * smoothstep(0.0, HORIZON_EDGE_BLEND, edgeMinY);
+            float toCentre = 1.0 - keepPerAzimuth;
             // Horizontally BLUR the per-azimuth sample: each water column samples ONE horizon point,
             // so a single skybox texel would STRETCH straight down the column as a vertical line. The
             // haze wants the broad horizon COLOUR, not its texels, so average a few taps across x
             // (5-tap, weights sum to 1). Widen HORIZON_BLUR_STEP if the skybox texels read coarse.
             // centreBand is x-fixed (uniform), so it needs no blur.
             #define HORIZON_BLUR_STEP 0.006  // UV x-offset per blur tap
-            float2 huv = saturate(horizonUVraw);
+            float2 huv = saturate(horizonUV);
             float2 hb1 = float2(HORIZON_BLUR_STEP, 0.0);
             float2 hb2 = float2(2.0 * HORIZON_BLUR_STEP, 0.0);
+            float2 t0 = huv;
+            float2 t1 = saturate(huv + hb1);
+            float2 t2 = saturate(huv - hb1);
+            float2 t3 = saturate(huv + hb2);
+            float2 t4 = saturate(huv - hb2);
+            // Each blur weight is scaled by whether that tap is SKY, then the sum is renormalised, so
+            // a tap that landed on the hull or the rigging contributes nothing instead of dragging the
+            // far ocean toward its colour.
+            float s0 = HorizonSkyWeight(t0) * 0.34;
+            float s1 = HorizonSkyWeight(t1) * 0.24;
+            float s2 = HorizonSkyWeight(t2) * 0.24;
+            float s3 = HorizonSkyWeight(t3) * 0.09;
+            float s4 = HorizonSkyWeight(t4) * 0.09;
+            float skySum = s0 + s1 + s2 + s3 + s4;   // 1 when every tap is sky, 0 when none is
             float3 perAzimuth =
-                  tex2Dlod(_CameraOpaqueTexture, float4(huv, 0, 0)).rgb * 0.34
-                + tex2Dlod(_CameraOpaqueTexture, float4(saturate(huv + hb1), 0, 0)).rgb * 0.24
-                + tex2Dlod(_CameraOpaqueTexture, float4(saturate(huv - hb1), 0, 0)).rgb * 0.24
-                + tex2Dlod(_CameraOpaqueTexture, float4(saturate(huv + hb2), 0, 0)).rgb * 0.09
-                + tex2Dlod(_CameraOpaqueTexture, float4(saturate(huv - hb2), 0, 0)).rgb * 0.09;
-            float3 centreBand = tex2Dlod(_CameraOpaqueTexture,
-                                         float4(0.5, saturate(horizonUVraw.y), 0.0, 0.0)).rgb;
-            skyAtHorizon = lerp(perAzimuth, centreBand, toCentre);
+                  (tex2Dlod(_CameraOpaqueTexture, float4(t0, 0, 0)).rgb * s0
+                 + tex2Dlod(_CameraOpaqueTexture, float4(t1, 0, 0)).rgb * s1
+                 + tex2Dlod(_CameraOpaqueTexture, float4(t2, 0, 0)).rgb * s2
+                 + tex2Dlod(_CameraOpaqueTexture, float4(t3, 0, 0)).rgb * s3
+                 + tex2Dlod(_CameraOpaqueTexture, float4(t4, 0, 0)).rgb * s4)
+                / max(skySum, HORIZON_SKY_MIN_WEIGHT);
+            float2 centreUV = float2(0.5, saturate(horizonUV.y));
+            float centreSky = HorizonSkyWeight(centreUV);
+            float3 centreBand = tex2Dlod(_CameraOpaqueTexture, float4(centreUV, 0, 0)).rgb;
+
+            // Two independent reasons to stop trusting the per-azimuth sample - the projection is
+            // unusable, or its taps are not sky. Take whichever is stronger; both are smooth, so the
+            // handover is too.
+            float useCentre = max(toCentre, 1.0 - skySum);
+            float3 opaqueSky = lerp(perAzimuth, centreBand, useCentre);
+            // How much of the sample finally chosen is really sky. When the horizon row carries
+            // geometry all the way across - a hull filling the frame, a coastline - there IS no
+            // rendered sky to match, and the honest answer is the environment cube rather than the
+            // colour of a sail. Last resort, and WEIGHTED: the cube does not match the rendered
+            // skybox exactly, and a hard switch between the two prints a visible band (tried
+            // 2026-07-22, rejected - see the horizon-haze notes).
+            float skyConfidence = lerp(skySum, centreSky, useCentre);
+            skyAtHorizon = lerp(SampleEnvironment(incomingRay), opaqueSky, skyConfidence);
         }
         else
         {

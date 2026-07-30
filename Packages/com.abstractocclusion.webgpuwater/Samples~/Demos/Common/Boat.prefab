@@ -26,13 +26,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 3456765701327585525}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalRotation: {x: 0.7071068, y: 0, z: 0, w: 0.7071068}
   m_LocalPosition: {x: 0, y: 1, z: 0.056}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 3153054209135187227}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 90, y: 0, z: 0}
 --- !u!114 &5445292582749062255
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -45,6 +45,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 915077c3dcbfd574299c2b79a0e61be4, type: 3}
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterExclusionVolume
+  shape: 0
+  carveMesh: {fileID: 0}
+  meshProxy: 0
   size: {x: 0.7, y: 2, z: 0.7}
   drawWaterWalls: 1
   wallScatterBoost: 1.2
@@ -52,6 +55,9 @@ MonoBehaviour:
   edgeColor: {r: 0, g: 0, b: 0, a: 1}
   edgeIntensity: 0.55
   edgeSpread: 0.12
+  affectParticles: 1
+  particleFadeBand: 0.06
+  particleDissolveSpeed: 1
 --- !u!114 &5517351355668026436
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -65,7 +71,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterSphereInteractor
   centerOffset: {x: 0, y: -0.8, z: 0.4}
-  radius: 0
+  radius: 0.2
   strength: 0.03
   maxStepDistance: 5
   wakeFadeSpeed: 8
@@ -354,7 +360,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &8010267788428602012
 Transform:
   m_ObjectHideFlags: 0
@@ -385,7 +391,7 @@ MeshRenderer:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 7257071806122945113}
-  m_Enabled: 0
+  m_Enabled: 1
   m_CastShadows: 1
   m_ReceiveShadows: 1
   m_DynamicOccludee: 1
@@ -437,11 +443,11 @@ PrefabInstance:
     m_Modifications:
     - target: {fileID: -8679921383154817045, guid: 3ef06c926d4222f469fd82e238c1fc5c, type: 3}
       propertyPath: m_LocalScale.x
-      value: 0.5
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 3ef06c926d4222f469fd82e238c1fc5c, type: 3}
       propertyPath: m_LocalScale.y
-      value: 6
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 3ef06c926d4222f469fd82e238c1fc5c, type: 3}
       propertyPath: m_LocalPosition.x

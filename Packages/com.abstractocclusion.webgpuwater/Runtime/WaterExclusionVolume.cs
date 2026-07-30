@@ -132,6 +132,16 @@ namespace AbstractOcclusion.WebGpuWater
         const float DefaultEdgeIntensity = 0.55f;
         const float DefaultEdgeSpread = 0.12f;
 
+        // ---- sun shadow (this volume's own occlusion of the sunlight) --------------------
+
+        [Tooltip("Let this volume BLOCK the sun, so the water beyond it reads shadowed: god-ray " +
+                 "shafts stop at it and the fog's in-scatter darkens along its shadow column. ON " +
+                 "suits a SEALED carve that really does block the light - a hull, a diving bell, a " +
+                 "walled room. Turn OFF for a carve the light passes straight through - parted " +
+                 "water, an open trench, a roofless room - where that shaft reads as an artifact. " +
+                 "Does not change the carve itself: the water stays cut either way.")]
+        public bool castsSunShadow = true;
+
         // ---- particle handling (foam/spray sprites, splash crown + droplets) -------------
 
         [Tooltip("Cull foam, spray and splash particles inside this volume. Turn OFF for a " +
@@ -166,10 +176,13 @@ namespace AbstractOcclusion.WebGpuWater
 
         /// <summary>GPU encoding of the shape: x = the PRIMITIVE_SHAPE_* selector the analytic
         /// kernels use (a mesh volume sends its PROXY here), y = 1 for a Mesh volume so the
-        /// camera-ray consumers know to carve from the depth prepass instead, zw reserved for
-        /// future per-shape parameters (a capsule's radius, a wedge's angle).</summary>
-        internal Vector4 ShapeUniform =>
-            new Vector4((float)AnalyticShape, shape == Shape.Mesh ? 1f : 0f, 0f, 0f);
+        /// camera-ray consumers know to carve from the depth prepass instead, z = 1 when the volume
+        /// does NOT block the sun (<see cref="castsSunShadow"/>), w reserved for a future per-shape
+        /// parameter (a capsule's radius, a wedge's angle). The sun flag is stored INVERTED so a
+        /// zero slot still casts the shadow every pre-flag scene authored - the same polarity rule
+        /// x and y already follow.</summary>
+        internal Vector4 ShapeUniform => new Vector4(
+            (float)AnalyticShape, shape == Shape.Mesh ? 1f : 0f, castsSunShadow ? 0f : 1f, 0f);
 
         /// <summary>The closed mesh a Mesh-shape volume carves, or null for any other shape (and
         /// for a Mesh volume with no mesh assigned - which is warned about, never silent).</summary>

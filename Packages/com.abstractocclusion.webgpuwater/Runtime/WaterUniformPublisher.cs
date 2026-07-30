@@ -97,6 +97,9 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_OceanFoamColor = Shader.PropertyToID("_OceanFoamColor");
         static readonly int ID_OceanFoamTileSize = Shader.PropertyToID("_OceanFoamTileSize");
         static readonly int ID_OceanFoamFeather = Shader.PropertyToID("_OceanFoamFeather");
+        static readonly int ID_OceanFoamStreakStretch = Shader.PropertyToID("_OceanFoamStreakStretch");
+        static readonly int ID_OceanFoamTextureInfluence = Shader.PropertyToID("_OceanFoamTextureInfluence");
+        static readonly int ID_OceanFoamDepthTint = Shader.PropertyToID("_OceanFoamDepthTint");
         static readonly int ID_LbwGeomFoamFloor = Shader.PropertyToID("_LbwGeomFoamFloor");
         static readonly int ID_LargeWaveAmp = Shader.PropertyToID("_LargeWaveAmplitude");
         static readonly int ID_LargeWaveWind = Shader.PropertyToID("_LargeWaveWindHeading");
@@ -428,6 +431,9 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetColor(ID_OceanFoamColor, _body.OceanFoamColor);
             sink.SetFloat(ID_OceanFoamTileSize, _body.OceanFoamTileSize);
             sink.SetFloat(ID_OceanFoamFeather, _body.OceanFoamFeather);
+            sink.SetFloat(ID_OceanFoamStreakStretch, _body.OceanFoamStreakStretch);
+            sink.SetFloat(ID_OceanFoamTextureInfluence, _body.OceanFoamTextureInfluence);
+            sink.SetFloat(ID_OceanFoamDepthTint, _body.OceanFoamDepthTint);
             // Ambient geometry-foam floor: an ocean-surface CHUNK has no FFT accumulator and no
             // surf band, so the analytic Jacobian/steepness foam is its ONLY whitecap source -
             // enabled there and nowhere else (FFT oceans + every existing scene publish 0 and

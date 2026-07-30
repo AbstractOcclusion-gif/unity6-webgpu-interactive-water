@@ -110,7 +110,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         public void Initialize(WaterContext context)
             => OceanFft = new WaterOceanFft(_owner.oceanFftCompute, WaterOceanFft.DefaultResolution,
-                                            WaterOceanFft.DefaultCascadeCount, WaterOceanFft.DefaultDomainSizes);
+                                            WaterOceanFft.DefaultCascadeCount, WaterOceanFft.DefaultCascadeBands);
 
         public void Dispose()
         {

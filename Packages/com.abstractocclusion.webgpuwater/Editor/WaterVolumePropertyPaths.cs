@@ -45,6 +45,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string LargeWaveChoppiness = "ocean.largeWaveChoppiness";
         internal const string SwellHeight = "ocean.swellHeight";
         internal const string SwellWavelength = "ocean.swellWavelength";
+        internal const string OceanWindTurbulence = "ocean.oceanWindTurbulence";
         internal const string HorizonHazeDensity = "ocean.horizonHazeDensity";
 
         // Wind-wave block.

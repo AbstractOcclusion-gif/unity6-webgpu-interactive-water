@@ -63,6 +63,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
             #include "WaterFog.hlsl"
             #include "WaterVolume.hlsl"
             #include "WaterShared.hlsl" // IOR_*, ProjectCausticUV
+            #include "WaterCausticMap.hlsl" // ResolveCausticMap - frame-aware caustic uv/footprint
             #include "WaterFoamMask.hlsl" // SimFoamCoverage (also declares _WaterTexel for us)
             #include "WaterShore.hlsl"    // ShoreSample / ShoreData - the baked shore substrate
             #include "WaterSurfWaves.hlsl" // EvaluateSurfSwash + _SurfBeatTime (pure math, no samplers)
@@ -266,12 +267,16 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
                 // Caustic map sampled ONCE up front with explicit gradients (WGSL-safe: an implicit-
                 // derivative sample inside the per-fragment waterline branch below is undefined on WebGPU).
                 // Green = this body's refracted occluder shadow (1 = lit); red = the caustic pattern.
-                float3 refractedLight = -refract(-_LightDir, float3(0,1,0), IOR_AIR / IOR_WATER);
-                // Pool-space refracted ray: ProjectCausticUV's xz/y ratio is only valid in pool space, so
-                // convert here - otherwise the projection is wrong on non-uniform (deep) bodies. Uniform
-                // extents preserve the ratio, so those are byte-identical.
-                float2 cuv = ProjectCausticUV(poolPos, WorldDirToPool(refractedLight));
-                float4 causticSample = SAMPLE_TEXTURE2D_GRAD(_CausticTex, sampler_CausticTex, cuv, ddx(cuv), ddy(cuv));
+                // FRAME-AWARE caustic map (shared with WaterTerrain / the screen-space projection):
+                // a receiver can sit under an OCEAN, whose caustic RT is written in the sim WINDOW's
+                // frame rather than the pool box. On a POOL body the resolver returns the identical
+                // uv, gradScale 1 and footprint 1 wherever 'underwater' can be true (it requires
+                // waterMask > 0.5, hence FootprintMaskPool == 1) - pool look unchanged by construction.
+                WaterCausticMap causticMap = ResolveCausticMap(IN.positionWS, poolPos, _LightDir);
+                float2 cuv = causticMap.uv;
+                float4 causticSample = SAMPLE_TEXTURE2D_GRAD(_CausticTex, sampler_CausticTex, cuv,
+                                                             ddx(cuv) * causticMap.gradScale,
+                                                             ddy(cuv) * causticMap.gradScale);
 
                 float4 shadowCoord = TransformWorldToShadowCoord(IN.positionWS);
                 Light mainLight = GetMainLight(shadowCoord);
@@ -324,7 +329,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
                     float causticFade = DepthFadeScalar(IN.positionWS.y, surfaceY, _CausticDepthFade);
                     // Same refracted occluder shadow the direct light used above, so the shadow and the
                     // caustic ripples stay registered.
-                    color += albedo * _CausticTint.rgb * (caustic * _CausticStrength * causticFade * lightShadow);
+                    color += albedo * _CausticTint.rgb * (caustic * _CausticStrength * causticFade
+                                                         * lightShadow * causticMap.footprint);
                     color *= _UnderwaterTint.rgb;
                 }
 

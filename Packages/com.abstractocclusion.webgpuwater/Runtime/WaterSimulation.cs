@@ -1,6 +1,7 @@
 // WebGpuWater - GPU heightfield simulation driver (Unity 6 / URP port)
 // Owns two RGBAFloat ping-pong RenderTextures and dispatches the compute kernels.
 // Port of water.js by Evan Wallace (MIT).
+using System.Runtime.InteropServices;   // StructLayout / Marshal.SizeOf for the GPU-matched queue structs
 using UnityEngine;
 
 namespace AbstractOcclusion.WebGpuWater
@@ -36,16 +37,11 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_Delta = Shader.PropertyToID("_Delta");
         static readonly int ID_Src = Shader.PropertyToID("Src");
         static readonly int ID_Dst = Shader.PropertyToID("Dst");
-        static readonly int ID_Center = Shader.PropertyToID("_Center");
-        static readonly int ID_Radius = Shader.PropertyToID("_Radius");
-        static readonly int ID_Strength = Shader.PropertyToID("_Strength");
+        static readonly int ID_DropQueue = Shader.PropertyToID("DropQueue");
+        static readonly int ID_DropQueueCount = Shader.PropertyToID("_DropQueueCount");
+        static readonly int ID_SphereQueue = Shader.PropertyToID("SphereQueue");
+        static readonly int ID_SphereQueueCount = Shader.PropertyToID("_SphereQueueCount");
         static readonly int ID_DropAxisScale = Shader.PropertyToID("_DropAxisScale");
-        static readonly int ID_SphereCenter = Shader.PropertyToID("_SphereCenter");
-        static readonly int ID_SphereRadius = Shader.PropertyToID("_SphereRadius");
-        static readonly int ID_SphereVelXZ = Shader.PropertyToID("_SphereVelXZ");
-        static readonly int ID_SphereVelY = Shader.PropertyToID("_SphereVelY");
-        static readonly int ID_SphereWeight = Shader.PropertyToID("_SphereWeight");
-        static readonly int ID_SphereStrength = Shader.PropertyToID("_SphereStrength");
         static readonly int ID_SphereAxisScale = Shader.PropertyToID("_SphereAxisScale");
         static readonly int ID_WaveAxisWeight = Shader.PropertyToID("_WaveAxisWeight");
         static readonly int ID_ObstaclePrev = Shader.PropertyToID("ObstaclePrev");
@@ -133,6 +129,46 @@ namespace AbstractOcclusion.WebGpuWater
         // the old float-mip mean silently point-sampled in WebGPU builds).
         GraphicsBuffer _partialSums; // one float per 8x8 thread group
         GraphicsBuffer _meanResult;  // single float: the exact mean
+
+        // ---- Queued injection (see AddDrop) ----------------------------------------------------
+        // Stamps accumulate here during the frame and are applied by FlushInjections in ONE full-grid
+        // pass per kind. The capacity only bounds how many stamps share a pass - AddDrop /
+        // AddSphereInteraction flush early rather than discard, so overflowing costs a pass, never a
+        // splash. 64 is far above the real per-frame count (WaterInteractable caps itself at 4 drops
+        // each) and still a trivial buffer.
+        internal const int MaxQueuedInjections = 64;
+
+        // Blittable, GPU-matched layouts: field ORDER and types must mirror WaterDropInjection /
+        // WaterSphereInjection in WaterSim.compute exactly - a structured buffer is raw bytes, and a
+        // mismatch reads garbage rather than failing.
+        [StructLayout(LayoutKind.Sequential)]
+        struct DropInjection
+        {
+            public Vector2 Center;
+            public float Radius;
+            public float Strength;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct SphereInjection
+        {
+            public Vector2 Center;
+            public Vector2 VelXZ;
+            public float Radius;
+            public float VelY;
+            public float Weight;
+            public float Strength;
+        }
+
+        // Taken from the struct, not written as a literal, so adding a field cannot silently desync
+        // the stride from the layout above.
+        static readonly int DropInjectionStride = Marshal.SizeOf<DropInjection>();
+        static readonly int SphereInjectionStride = Marshal.SizeOf<SphereInjection>();
+
+        readonly DropInjection[] _dropQueue = new DropInjection[MaxQueuedInjections];
+        readonly SphereInjection[] _sphereQueue = new SphereInjection[MaxQueuedInjections];
+        int _dropCount, _sphereCount;
+        ComputeBuffer _dropBuffer, _sphereBuffer;   // allocated on first use; a scene with no ripples pays nothing
 
         /// <summary>The texture holding the current simulation state.</summary>
         public RenderTexture Texture => _a;
@@ -227,6 +263,8 @@ namespace AbstractOcclusion.WebGpuWater
             ReleaseAndDestroy(ref _foamB);
             _partialSums?.Dispose(); _partialSums = null;
             _meanResult?.Dispose(); _meanResult = null;
+            _dropBuffer?.Dispose(); _dropBuffer = null;
+            _sphereBuffer?.Dispose(); _sphereBuffer = null;
         }
 
         // Release frees the GPU surface immediately; Destroy frees the wrapper object, which
@@ -460,14 +498,24 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetTexture(kernel, ID_ObstacleSolid, _solidTex != null ? _solidTex : Texture2D.blackTexture);
         }
 
+        /// <summary>QUEUE an analytic cosine drop. Every drop queued this frame is applied in ONE
+        /// full-grid pass by <see cref="FlushInjections"/> instead of one pass each - a moving object
+        /// emitting four drops a frame used to read and write the whole field four times just to stamp
+        /// a wake. This is coalescing, not deferral: the flush runs at the same point in the frame an
+        /// immediate dispatch landed (before the sim window scrolls and before the solver steps), so
+        /// the queued centres are still in the field coordinates they were measured in.</summary>
         public void AddDrop(float x, float y, float radius, float strength)
         {
             radius = Mathf.Max(radius, MinDropTexelRadius / Resolution);
-            _cs.SetVector(ID_Center, new Vector4(x, y, 0, 0));
-            _cs.SetFloat(ID_Radius, radius);
-            _cs.SetFloat(ID_Strength, strength);
-            _cs.SetVector(ID_DropAxisScale, _dropAxisScale);
-            Dispatch(_kDrop);
+            // Never drop input: a frame busy enough to fill the queue flushes what it has and keeps
+            // going, which costs one extra pass on that frame instead of silently losing splashes.
+            if (_dropCount >= MaxQueuedInjections) FlushDrops();
+            _dropQueue[_dropCount++] = new DropInjection
+            {
+                Center = new Vector2(x, y),
+                Radius = radius,
+                Strength = strength,
+            };
         }
 
         /// <summary>Inject a moving sphere's velocity-dipole into the field (Crest-style wake). Unlike
@@ -477,18 +525,54 @@ namespace AbstractOcclusion.WebGpuWater
         /// like a drop, <paramref name="radius"/> as a half-extent fraction, <paramref name="velXZ"/> the
         /// horizontal motion this step and <paramref name="velY"/> the vertical motion (pool-height units),
         /// <paramref name="weight"/> the submersion x user weight, <paramref name="strength"/> the master
-        /// gain. No-op look when weight is 0. Dispatched only when a sphere interactor is present, so a
-        /// scene without one is byte-identical.</summary>
+        /// gain. No-op look when weight is 0. QUEUED like a drop (see <see cref="AddDrop"/>) and applied
+        /// by <see cref="FlushInjections"/>, so a hull carrying several interactors costs ONE full-grid
+        /// pass rather than one each. A scene with no interactor never dispatches at all.</summary>
         public void AddSphereInteraction(Vector2 center, float radius, Vector2 velXZ, float velY,
                                          float weight, float strength)
         {
             radius = Mathf.Max(radius, MinDropTexelRadius / Resolution);
-            _cs.SetVector(ID_SphereCenter, new Vector4(center.x, center.y, 0f, 0f));
-            _cs.SetFloat(ID_SphereRadius, radius);
-            _cs.SetVector(ID_SphereVelXZ, new Vector4(velXZ.x, velXZ.y, 0f, 0f));
-            _cs.SetFloat(ID_SphereVelY, velY);
-            _cs.SetFloat(ID_SphereWeight, weight);
-            _cs.SetFloat(ID_SphereStrength, strength);
+            if (_sphereCount >= MaxQueuedInjections) FlushSpheres();
+            _sphereQueue[_sphereCount++] = new SphereInjection
+            {
+                Center = center,
+                VelXZ = velXZ,
+                Radius = radius,
+                VelY = velY,
+                Weight = weight,
+                Strength = strength,
+            };
+        }
+
+        /// <summary>Apply everything queued since the last frame: ONE full-grid pass per KIND of stamp,
+        /// not one per stamp. Call once per frame from the body's update, BEFORE the sim window scrolls -
+        /// the queued centres are in the field coordinates they were measured in, and scrolling first
+        /// would slide them off by one window step.</summary>
+        public void FlushInjections()
+        {
+            FlushDrops();
+            FlushSpheres();
+        }
+
+        void FlushDrops()
+        {
+            if (_dropCount == 0) return;
+            _dropBuffer ??= new ComputeBuffer(MaxQueuedInjections, DropInjectionStride);
+            _dropBuffer.SetData(_dropQueue, 0, 0, _dropCount);
+            _cs.SetBuffer(_kDrop, ID_DropQueue, _dropBuffer);
+            _cs.SetInt(ID_DropQueueCount, _dropCount);
+            _cs.SetVector(ID_DropAxisScale, _dropAxisScale);
+            Dispatch(_kDrop);
+            _dropCount = 0;
+        }
+
+        void FlushSpheres()
+        {
+            if (_sphereCount == 0) return;
+            _sphereBuffer ??= new ComputeBuffer(MaxQueuedInjections, SphereInjectionStride);
+            _sphereBuffer.SetData(_sphereQueue, 0, 0, _sphereCount);
+            _cs.SetBuffer(_kSphereInteract, ID_SphereQueue, _sphereBuffer);
+            _cs.SetInt(ID_SphereQueueCount, _sphereCount);
             _cs.SetVector(ID_SphereAxisScale, _dropAxisScale);
             // Wake foam (move #3): the kernel also stamps foam at the hull. It reads FoamSrc and writes
             // FoamDst for every texel (copy-through outside the stamp), so the foam buffer ping-pongs in
@@ -500,6 +584,7 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetTexture(_kSphereInteract, ID_FoamDst, _foamB);
             Dispatch(_kSphereInteract);
             (_foamA, _foamB) = (_foamB, _foamA);
+            _sphereCount = 0;
         }
 
         /// <summary>Forces the surface by the change in submerged footprint

@@ -59,20 +59,16 @@ Shader "AbstractOcclusion/WebGpuWater/WaterCausticProjection"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
         #include "WaterVolume.hlsl" // WorldToPool / WorldDirToPool / PoolToWorld / FootprintMaskPool (+ volume frame)
         #include "WaterShared.hlsl" // ProjectCausticUV, OccluderLitFromGreen, IOR_*
+        #include "WaterCausticMap.hlsl" // THE frame-aware caustic map: uv / footprint / grad scale
         #include "WaterFog.hlsl"    // DepthFadeScalar + _CausticDepthFade (published global)
 
         // Caustic map + green occluder-shadow channel (published globals; UseAllGlobalTextures binds them).
-        // Hard ceiling on the projection mip bias: past this the pattern averages to a flat wash.
-        #define CAUSTIC_PROJECTION_LOD_MAX 4.0
         TEXTURE2D(_CausticTex); SAMPLER(sampler_CausticTex);
         // Sim state, for the wavy surface height that decides above/below water (same source the surfaces use).
         TEXTURE2D(_WaterTex);   SAMPLER(sampler_WaterTex);
         float4 _WaterTexel;           // (1/w, 1/h, w, h) of _WaterTex
         float3 _LightDir;             // global "toward the light", driven from the Unity sun
         float _CausticOccluderActive; // 1 when caustic.g is this body's valid refracted occluder-shadow channel
-        // Mip bias for THIS pass only (see WaterVolume.LargeCausticProjectionLod). The god rays sample the
-        // same RT at their own LOD and are untouched - the beam banding must reach their march sharp.
-        float _LargeCausticProjectionLod;
 
         CBUFFER_START(UnityPerMaterial)
             float _CausticStrength;
@@ -120,57 +116,20 @@ Shader "AbstractOcclusion/WebGpuWater/WaterCausticProjection"
             poolPos = WorldToPool(worldPos);
             bool isSky = (rawDepth == UNITY_RAW_FAR_CLIP_VALUE);
 
-            // WHICH FRAME THE RT WAS WRITTEN IN. WaterVolume.RenderCausticsForThisBody picks between two
-            // generators and this shader only ever undid the POOL one - so an ocean sampled a window-frame
-            // RT through a pool-frame map. Both the origin (_VolumeCenter vs _SimCenter) and the scale
-            // (_VolumeExtent vs _SimExtent) were wrong, and since _SimCenter tracks the camera the pattern
-            // SLID across the floor as you moved. The mode is published from that same decision.
-            int causticFrame = (int)(_CausticFrameMode + 0.5);
-            bool windowFrame = (causticFrame == CAUSTIC_FRAME_WINDOW);
-
-            // POOL frame, unchanged: ProjectCausticUV's xz/y ratio is only valid in pool space, so a WORLD
-            // direction mis-projects on non-uniform (deep) bodies. Uniform extents are byte-identical.
-            float3 refractedLight = -refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
-            float2 poolCuv = ProjectCausticUV(poolPos, WorldDirToPool(refractedLight));
-
-            // WINDOW frame: LargeBodyGodRays' LargeBodyCausticAt expression, reproduced exactly - same
-            // refracted-sun form (NOT negated, unlike the pool ray above), same reference plane, same
-            // normalisation - because that is the map proven to register with what LargeBodyCaustics.shader
-            // wrote. The plane is the GENERATOR's (_SimCenter.y - LARGE_CAUSTIC_REFERENCE_DEPTH, see that
-            // shader's vert), NOT the eye's waterline, which is a different plane.
-            float3 refractedSun = refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
-            float causticRefPlaneY = _SimCenter.y - LARGE_CAUSTIC_REFERENCE_DEPTH;
-            float2 projXZ = worldPos.xz + refractedSun.xz
-                          * ((causticRefPlaneY - worldPos.y) / SafeRefractedLightY(refractedSun.y));
-            float2 windowNorm = (projXZ - _SimCenter.xz) / max(_SimExtent.xz, 1e-3);
-
-            // ONE sample, selected without a branch: the GRAD sample must stay in uniform control flow
-            // (an implicit-derivative sample inside a per-fragment branch is undefined on WebGPU/WGSL).
-            float2 cuv = windowFrame ? (windowNorm * 0.5 + 0.5) : poolCuv;
-            // Widen the sampling footprint instead of switching to an explicit LOD: scaling both
-            // derivatives by 2^bias raises the mip exactly as adding the bias would, but KEEPS the screen
-            // footprint's shape, so a grazing view still filters along the direction it is stretched in -
-            // which an isotropic LOD sample would throw away, at the very angle that aliases worst.
-            // Window frame only: pool RTs carry no mip chain (WaterCausticsPass) and their samplers were
-            // tuned against LOD 0. The scale is a uniform, so control flow stays coherent.
-            float projectionLod = clamp(_LargeCausticProjectionLod, 0.0, CAUSTIC_PROJECTION_LOD_MAX);
-            float footprintScale = windowFrame ? exp2(projectionLod) : 1.0;
+            // WHICH FRAME THE RT WAS WRITTEN IN, plus the matching footprint and sampling scale.
+            // The resolver is SHARED with WaterReceiver / WaterTerrain (WaterCausticMap.hlsl): this
+            // pass used to be the only shader that undid the right projection, which is exactly how
+            // the terrain shader ended up reading an ocean's window-frame RT through a pool map.
+            WaterCausticMap map = ResolveCausticMap(worldPos, poolPos, _LightDir);
+            float2 cuv = map.uv;
             causticSample = SAMPLE_TEXTURE2D_GRAD(_CausticTex, sampler_CausticTex, cuv,
-                                                  ddx(cuv) * footprintScale, ddy(cuv) * footprintScale);
+                                                  ddx(cuv) * map.gradScale, ddy(cuv) * map.gradScale);
 
-            // Footprint and waterline, each answered in the frame that owns it. The mode is a uniform, so
-            // this branch is coherent across the whole draw and costs nothing per pixel.
-            float inside;
+            // Waterline, answered in the frame that owns it. NOT part of the shared resolver: every
+            // consumer already computes its own surface height - only the caustic MAP was frame-blind.
             bool belowSurface;
-            if (windowFrame)
+            if ((int)(_CausticFrameMode + 0.5) == CAUSTIC_FRAME_WINDOW)
             {
-                // The RT holds data only inside the drawn window (cleared transparent outside), so the
-                // window IS the footprint - the pool box is an arbitrary rectangle on an unbounded ocean.
-                // Faded at the border with the shared constant the shafts use, so caustics and shafts die
-                // out together instead of the caustics popping at the edge.
-                float2 edge = 1.0 - abs(windowNorm);
-                inside = (edge.x <= 0.0 || edge.y <= 0.0)
-                       ? 0.0 : saturate(min(edge.x, edge.y) / CAUSTIC_WINDOW_FADE);
                 // The generator authored the pattern against the window's rest plane, so the depth fade
                 // measures from that same plane. A _WaterTex lookup here would be wrong twice over: wrong
                 // frame (the sim is indexed by WorldToSim on a windowed body, not pool xz) and wrong
@@ -181,7 +140,6 @@ Shader "AbstractOcclusion/WebGpuWater/WaterCausticProjection"
             }
             else
             {
-                inside = FootprintMaskPool(poolPos);
                 float2 wuv = poolPos.xz * 0.5 + 0.5;
                 float simH = SampleWaterHeightBilinear(wuv);
                 surfaceY = PoolToWorld(float3(poolPos.x, simH, poolPos.z)).y;
@@ -190,13 +148,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterCausticProjection"
                 belowSurface = poolPos.y < simH;
             }
 
-            // CAUSTIC_FRAME_NONE - a windowed body that is not an ocean clipmap. Nothing ever draws into
-            // its RT and it is never cleared, so its contents are undefined; mask to 0 and both passes
-            // contribute their identity (add 0 / multiply 1) instead of projecting uninitialised memory.
-            // Carrying 'inside' through instead of a bare 1.0 is what gives the window its edge fade;
-            // on a pool FootprintMaskPool is already exactly 0 or 1, so the result is byte-identical.
-            bool frameHasData = (causticFrame != CAUSTIC_FRAME_NONE);
-            underwaterMask = (!isSky && frameHasData && belowSurface) ? inside : 0.0;
+            // map.footprint already carries the window edge fade AND is forced to 0 for
+            // CAUSTIC_FRAME_NONE (a windowed non-ocean body whose RT is never written, let alone
+            // cleared), so both passes contribute their identity there instead of projecting
+            // uninitialised memory - the same two guards this block spelled out separately before.
+            underwaterMask = (!isSky && belowSurface) ? map.footprint : 0.0;
 
             // Occluder lit factor, computed ONCE here so both passes shade the identical shadow:
             // four extra explicit-LOD taps = the shared distance-grown PCF penumbra (WaterShared);

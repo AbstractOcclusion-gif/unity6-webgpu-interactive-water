@@ -26,11 +26,18 @@ namespace AbstractOcclusion.WebGpuWater
             internal readonly float SlowFadeFraction; // dense-foam decay as a fraction of FadeRate (deposit persistence)
             internal readonly float DriftFraction;    // downwind roll speed as a fraction of wind speed
             internal readonly float Max;              // accumulation ceiling (how dense deposits can pile up)
+            internal readonly float CrestAnisotropy;  // 0 = area fold (determinant), 1 = single-axis fold
+            internal readonly float CrestGate;        // 0 = fold anywhere, 1 = only on the crest line
+            internal readonly float FaceBias;         // 0 = both faces, 1 = leading (downwind) face only
+            internal readonly float CascadeMix;       // 0 = damped per-cascade fold weights, 1 = all cascades
             internal FoamParams(float windThreshold, float coverage, float strength, float fadeRate,
-                                float slowFadeFraction, float driftFraction, float max)
+                                float slowFadeFraction, float driftFraction, float max,
+                                float crestAnisotropy, float crestGate, float faceBias, float cascadeMix)
             {
                 WindThreshold = windThreshold; Coverage = coverage; Strength = strength; FadeRate = fadeRate;
                 SlowFadeFraction = slowFadeFraction; DriftFraction = driftFraction; Max = max;
+                CrestAnisotropy = crestAnisotropy; CrestGate = crestGate; FaceBias = faceBias;
+                CascadeMix = cascadeMix;
             }
         }
 
@@ -38,9 +45,25 @@ namespace AbstractOcclusion.WebGpuWater
         // this compile-time constant (FFT_SIZE) and stays well under the WebGPU threadgroup limits.
         internal const int DefaultResolution = 128;
         internal const int DefaultCascadeCount = 4;
-        // Per-cascade domain size in metres, ASCENDING (KWS uses 5/20/100/600). Ascending order lets each
-        // cascade own the disjoint wavelength band (prevDomain, thisDomain], so summing never double-counts.
-        internal static readonly float[] DefaultDomainSizes = { 5f, 20f, 100f, 600f };
+        // Longest wavelength each cascade CARRIES, in metres, ASCENDING (KWS uses 5/20/100/600). Ascending
+        // order lets each cascade own the disjoint band (previous band top, this band top], so summing
+        // cascades never double-counts a frequency.
+        internal static readonly float[] DefaultCascadeBands = { 5f, 20f, 100f, 600f };
+        // THE FFT TILE IS NOT THE BAND. A cascade whose tile equals its band top can only hold ONE period
+        // of its longest wave, and a k^-4 spectrum puts most of the band's energy exactly there - so the
+        // cascade degenerates into a handful of sinusoids repeating at the tile pitch (measured: cascades
+        // 1-3 had 38/62/98 live spectral bins out of 16384, and 6/48/21 EFFECTIVE modes). Making the tile
+        // several times longer refines the k-lattice inside the SAME band: ~16x more live bins at the same
+        // resolution, same dispatch count, same cost. This is Crest's WAVE_SAMPLE_FACTOR rule (its bands
+        // top out at a quarter of the patch, 4-8 periods per tile).
+        //
+        // The energy is held constant by OceanCascadeDensityScale in the compute, so this is a variety
+        // knob, NOT a height knob - measured 0.89x-1.14x total RMS across wind 3/6/10 and swell 0/1.
+        // Raising it costs the SHORT end: cascade 0's texel is tile/128, so at 4 the FFT stops carrying
+        // waves below ~0.31 m (those belong to the detail normal map and the interactive sim anyway).
+        // HLSL pair: OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION in WaterShared.hlsl is 0.25 DIVIDED BY THIS -
+        // change one without the other and shore attenuation silently retunes.
+        internal const float CascadeTileOversample = 4f;
         // Per-cascade height multiplier (KWS 0.5/0.5/0.6/0.9): larger scales carry more of the swell energy.
         static readonly float[] DefaultHeightScales = { 0.5f, 0.5f, 0.6f, 0.9f };
         // Per-cascade view distance (metres) beyond which its detail fades out (KWS 40/160/800/4800): the
@@ -85,8 +108,14 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_HeightScales = Shader.PropertyToID("OceanHeightScales");
         static readonly int ID_BandMin = Shader.PropertyToID("OceanBandMin");
         static readonly int ID_BandMax = Shader.PropertyToID("OceanBandMax");
+        static readonly int ID_VisibleAreas = Shader.PropertyToID("OceanVisibleAreas");
         static readonly int ID_WindDir = Shader.PropertyToID("OceanWindDir");
         static readonly int ID_WindSpeed = Shader.PropertyToID("OceanWindSpeed");
+        static readonly int ID_WindTurbulence = Shader.PropertyToID("OceanWindTurbulence");
+        static readonly int ID_FoamAnisotropy = Shader.PropertyToID("OceanFoamAnisotropy");
+        static readonly int ID_FoamCrestGate = Shader.PropertyToID("OceanFoamCrestGate");
+        static readonly int ID_FoamFaceBias = Shader.PropertyToID("OceanFoamFaceBias");
+        static readonly int ID_FoamCascadeMix = Shader.PropertyToID("OceanFoamCascadeMix");
         static readonly int ID_SwellWavelength = Shader.PropertyToID("OceanSwellWavelength");
         static readonly int ID_SwellHeight = Shader.PropertyToID("OceanSwellHeight");
         static readonly int ID_Time = Shader.PropertyToID("OceanFftTime");
@@ -134,6 +163,9 @@ namespace AbstractOcclusion.WebGpuWater
         bool _ready;
         bool _spectrumBuilt;
         float _lastWindSpeed, _lastWindHeading, _lastSwellWavelength, _lastSwellHeight;
+        // Sentinel, not 0: turbulence 0 is a legal authored value, so a plain 0 would let the very first
+        // Dispatch skip the rebuild if the body also happened to author 0.
+        float _lastWindTurbulence = float.NaN;
 
         // Async buoyancy readback: throttle/error-streak/unsupported state lives on the shared
         // channel (the same machinery WaterSurfaceSampler uses); the landed buffer stays here.
@@ -167,17 +199,18 @@ namespace AbstractOcclusion.WebGpuWater
         internal Vector4 DomainSizes => _domainSizes;
         internal int CascadeCount => _cascades;
 
-        internal WaterOceanFft(ComputeShader compute, int resolution, int cascades, float[] domainSizes)
+        internal WaterOceanFft(ComputeShader compute, int resolution, int cascades, float[] cascadeBands)
         {
             _cs = compute ? compute : throw new System.ArgumentNullException(nameof(compute));
             _resolution = Mathf.Max(ThreadGroupSize, resolution);
             _cascades = Mathf.Clamp(cascades, 1, MaxCascades);
             _groups = Mathf.CeilToInt(_resolution / (float)ThreadGroupSize);
-            _domainSizes = DomainSizesToVector(domainSizes);
+            // Bands first, tiles derived: the band is the physics, the tile is only how finely the band
+            // is sampled (see CascadeTileOversample).
+            _bandMax = ArrayToVector(cascadeBands, 1f);
+            _bandMin = new Vector4(0f, _bandMax.x, _bandMax.y, _bandMax.z);
+            _domainSizes = _bandMax * CascadeTileOversample;
             _heightScales = ArrayToVector(DefaultHeightScales, 1f);
-            // Each cascade owns wavelengths (prevDomain, thisDomain]; assumes ascending domain sizes.
-            _bandMin = new Vector4(0f, _domainSizes.x, _domainSizes.y, _domainSizes.z);
-            _bandMax = _domainSizes;
             _visibleAreas = ArrayToVector(DefaultVisibleAreas, 1f);
 
             // Fail cleanly (not by throwing) on wrong/old compute or a size mismatch: disable only the FFT
@@ -214,8 +247,6 @@ namespace AbstractOcclusion.WebGpuWater
             && _cs.HasKernel(KernelFftHorizontal) && _cs.HasKernel(KernelFftVertical)
             && _cs.HasKernel(KernelComputeNormal) && _cs.HasKernel(KernelBakeHeightField)
             && _cs.HasKernel(KernelVisualizePreview);
-
-        static Vector4 DomainSizesToVector(float[] sizes) => ArrayToVector(sizes, 1f);
 
         static Vector4 ArrayToVector(float[] values, float fallback)
         {
@@ -401,14 +432,16 @@ namespace AbstractOcclusion.WebGpuWater
 
         // Per-frame: (re)build H0 on a wind change, evolve, inverse-FFT to a spatial displacement cascade,
         // preview, and publish the displacement array as a global for the surface shader (from increment 2).
-        internal void Dispatch(float waveTime, float windSpeed, float windHeadingRad, float amplitude,
-                               float swellWavelength, float swellHeight, Vector2 cameraXZ, FoamParams foam)
+        internal void Dispatch(float waveTime, float windSpeed, float windHeadingRad, float windTurbulence,
+                               float amplitude, float swellWavelength, float swellHeight,
+                               Vector2 cameraXZ, FoamParams foam)
         {
             if (!_ready) return;
-            SetSharedUniforms(windSpeed, windHeadingRad, swellWavelength, swellHeight);
+            SetSharedUniforms(windSpeed, windHeadingRad, windTurbulence, swellWavelength, swellHeight);
 
             // H0 is static: rebuild only when a spectrum input (wind or swell) actually changes.
             if (!_spectrumBuilt || windSpeed != _lastWindSpeed || windHeadingRad != _lastWindHeading
+                || windTurbulence != _lastWindTurbulence
                 || swellWavelength != _lastSwellWavelength || swellHeight != _lastSwellHeight)
             {
                 _cs.SetTexture(_kInit, ID_H0, _h0);
@@ -416,6 +449,7 @@ namespace AbstractOcclusion.WebGpuWater
                 _spectrumBuilt = true;
                 _lastWindSpeed = windSpeed;
                 _lastWindHeading = windHeadingRad;
+                _lastWindTurbulence = windTurbulence;
                 _lastSwellWavelength = swellWavelength;
                 _lastSwellHeight = swellHeight;
             }
@@ -443,6 +477,13 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetFloat(ID_FoamHistoryValid, historyValid);
             _cs.SetFloat(ID_FoamMinWind, foam.WindThreshold);
             _cs.SetFloat(ID_FoamCoverage, foam.Coverage);
+            // Fold directionality rides with the coverage it recalibrates - see OceanCascadeTurbulence's
+            // neighbour in the compute. 0 = the shipped determinant fold, bit-identical.
+            _cs.SetFloat(ID_FoamAnisotropy, foam.CrestAnisotropy);
+            // WHERE on the wave a cap is born, as opposed to WHETHER the surface folds there.
+            _cs.SetFloat(ID_FoamCrestGate, foam.CrestGate);
+            _cs.SetFloat(ID_FoamFaceBias, foam.FaceBias);
+            _cs.SetFloat(ID_FoamCascadeMix, foam.CascadeMix);
             _cs.SetFloat(ID_FoamStrength, foam.Strength);
             _cs.SetFloat(ID_FoamFadeRate, foam.FadeRate);
             _cs.SetFloat(ID_FoamSlowFade, foam.SlowFadeFraction);
@@ -567,7 +608,8 @@ namespace AbstractOcclusion.WebGpuWater
             return true;
         }
 
-        void SetSharedUniforms(float windSpeed, float windHeadingRad, float swellWavelength, float swellHeight)
+        void SetSharedUniforms(float windSpeed, float windHeadingRad, float windTurbulence,
+                               float swellWavelength, float swellHeight)
         {
             _cs.SetInt(ID_Resolution, _resolution);
             _cs.SetInt(ID_Cascades, _cascades);
@@ -576,8 +618,12 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetVector(ID_HeightScales, _heightScales);
             _cs.SetVector(ID_BandMin, _bandMin);
             _cs.SetVector(ID_BandMax, _bandMax);
+            // The buoyancy bake fades cascades with distance exactly like the render does, so a floater
+            // never rides a wave the surface has already faded out.
+            _cs.SetVector(ID_VisibleAreas, _visibleAreas);
             _cs.SetVector(ID_WindDir, new Vector4(Mathf.Cos(windHeadingRad), Mathf.Sin(windHeadingRad), 0f, 0f));
             _cs.SetFloat(ID_WindSpeed, Mathf.Max(0f, windSpeed));
+            _cs.SetFloat(ID_WindTurbulence, Mathf.Clamp01(windTurbulence));
             _cs.SetFloat(ID_SwellWavelength, Mathf.Max(1e-3f, swellWavelength));
             _cs.SetFloat(ID_SwellHeight, Mathf.Max(0f, swellHeight));
         }

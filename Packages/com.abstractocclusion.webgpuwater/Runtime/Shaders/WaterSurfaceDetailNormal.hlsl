@@ -33,10 +33,12 @@
 sampler2D _DetailNormalTex; // tiling water normals; default "bump" = flat = feature inert
 float _DetailNormalStrength, _DetailNormalScale, _DetailNormalSpeed;
 // ONE wind for the whole surface: (cos, sin) of the heading in XZ, the same convention
-// WaterWaveBank.Generate builds its component directions from. Declared here beside the family that
-// reads it - this package has every consumer declare its own published globals. Identity (1, 0) at
-// heading 0, which every shipped body uses, so the rotation below is a no-op until wind is turned.
-float4 _WindDirection;
+// WaterWaveBank.Generate builds its component directions from. Identity (1, 0) at heading 0, which
+// every shipped body uses, so the rotation below is a no-op until wind is turned.
+// DECLARED IN WaterSurfaceFoamSampling.hlsl, not here: the whitecap streak frame needs it too and
+// that header is included FIRST in this pass (WaterSurface.shader), so one declaration has to serve
+// both - HLSL has no way to declare the same uniform twice in one compilation unit. Both headers are
+// used only by WaterSurface.shader, so there is no other include order to satisfy.
 float _DetailNormalCrestBoost; // applied by the CALLER (it needs the composed surface normal)
 
 // ---- Crest-style detail normal: two CROSSING, SCROLLING samples of a tiling normal

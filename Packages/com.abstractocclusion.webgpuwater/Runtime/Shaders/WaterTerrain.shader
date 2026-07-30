@@ -115,6 +115,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTerrain"
             #include "WaterFog.hlsl"
             #include "WaterVolume.hlsl"
             #include "WaterShared.hlsl"          // IOR_*, ProjectCausticUV, occluder PCF
+            #include "WaterCausticMap.hlsl"      // ResolveCausticMap - frame-aware caustic uv/footprint
             #include "WaterFoamMask.hlsl"        // SimFoamCoverage, SampleWetMarkWindowed, _WetMarkActive
             #include "WaterShore.hlsl"           // ShoreSample / ShoreData / _ShoreWaterLevel
             #include "WaterSurfWaves.hlsl"       // EvaluateSurfSwash + _SurfBeatTime
@@ -325,9 +326,18 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTerrain"
                 // ---- Lighting ------------------------------------------------------------------
                 bool underwater = (insideBody > 0.5 && poolPos.y < simH);
 
-                float3 refractedLight = -refract(-_LightDir, float3(0,1,0), IOR_AIR / IOR_WATER);
-                float2 cuv = ProjectCausticUV(poolPos, WorldDirToPool(refractedLight));
-                float4 causticSample = SAMPLE_TEXTURE2D_GRAD(_CausticTex, sampler_CausticTex, cuv, ddx(cuv), ddy(cuv));
+                // FRAME-AWARE caustic map. A Unity Terrain under an OCEAN belongs to a body whose
+                // caustic RT is written in the sim WINDOW's frame, not the pool box: reading it
+                // through ProjectCausticUV stretched a ~40 m pattern across the whole footprint and
+                // made it churn as the window followed the camera. On a POOL body the resolver
+                // returns the identical uv, gradScale 1 and footprint 1 wherever 'underwater' can be
+                // true (it requires insideBody > 0.5, i.e. FootprintMaskPool == 1) - so the pool look
+                // is unchanged by construction.
+                WaterCausticMap causticMap = ResolveCausticMap(IN.positionWS, poolPos, _LightDir);
+                float2 cuv = causticMap.uv;
+                float4 causticSample = SAMPLE_TEXTURE2D_GRAD(_CausticTex, sampler_CausticTex, cuv,
+                                                             ddx(cuv) * causticMap.gradScale,
+                                                             ddy(cuv) * causticMap.gradScale);
 
                 float4 shadowCoord = TransformWorldToShadowCoord(IN.positionWS);
                 Light mainLight = GetMainLight(shadowCoord);
@@ -367,7 +377,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTerrain"
                 {
                     float causticFade = DepthFadeScalar(IN.positionWS.y, surfaceY, _CausticDepthFade);
                     color += albedo * _CausticTint.rgb
-                           * (causticSample.r * _CausticStrength * causticFade * lightShadow);
+                           * (causticSample.r * _CausticStrength * causticFade * lightShadow
+                              * causticMap.footprint);
                     color *= _UnderwaterTint.rgb;
                 }
 

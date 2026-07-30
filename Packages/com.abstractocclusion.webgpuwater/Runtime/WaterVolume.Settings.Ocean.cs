@@ -42,6 +42,11 @@ namespace AbstractOcclusion.WebGpuWater
             [Min(0f)] public float swellHeight = 0f;
             [Tooltip("Wavelength (metres) of the longest swell component. Bigger = longer, slower rolls.")]
             [Min(1f)] public float swellWavelength = DefaultSwellWavelength;
+            [Tooltip("How much of the FFT ocean's energy travels ACROSS and AGAINST the wind instead of " +
+                     "with it. 0 = a perfectly ordered sea marching downwind; 1 = fully isotropic, no net " +
+                     "travel direction at all. Wave HEIGHT does not change with this - only the direction " +
+                     "the energy is spread over.")]
+            [Range(0f, 1f)] public float oceanWindTurbulence = DefaultOceanWindTurbulence;
             [Tooltip("Extend this open-water body's surface to the HORIZON with a camera-following clipmap " +
                      "mesh (an OCEAN, not a bounded lake). Requires Open Water ON and the large-body sim " +
                      "window (near-field ripples fade to flat past it). OFF = the surface stays the bounded " +
@@ -152,6 +157,45 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("How softly the foam texture dissolves in as coverage rises. 0 = hard edges; higher = a " +
                      "gentle feathered fade from water to foam.")]
             [Range(0f, 1f)] public float oceanFoamFeather = DefaultOceanFoamFeather;
+            [Tooltip("Smears the foam TEXTURE along the drift (downwind) axis, so deposited foam reads " +
+                     "as a trail instead of a patch. DETAIL ONLY - a texture frame cannot change which " +
+                     "parts of the sea are foamy; for the overall SHAPE use Crest Gate / Face Bias / " +
+                     "Crest Anisotropy. 1 = isotropic (unchanged), 3-4 = strongly drawn out.")]
+            [Range(1f, OceanFoamStreakStretchMax)] public float oceanFoamStreakStretch = DefaultOceanFoamStreakStretch;
+            [Tooltip("Who decides the SHAPE of a whitecap. At 1 the outline is the foam texture's own " +
+                     "contours, so a cellular texture prints round blobs whatever the waves do. Lower " +
+                     "it and the outline comes from the WAVE FIELD - pair with Crest Anisotropy for " +
+                     "foam that runs in lines along the crests. 0 = the fold owns the shape entirely. " +
+                     "This also fades out by itself with distance, because a tiled pattern loses its " +
+                     "contrast as it mips and far-field foam would otherwise wash out bright and stop " +
+                     "responding to these knobs.")]
+            [Range(0f, 1f)] public float oceanFoamTextureInfluence = DefaultOceanFoamTextureInfluence;
+            [Tooltip("How DIRECTIONAL wave breaking is. 0 reads the fold as an area change, which " +
+                     "spreads foam into round patches and can miss a crest entirely when it stretches " +
+                     "sideways as it compresses. 1 reads the strongest single-axis compression, so foam " +
+                     "follows the crest LINE. Raising this finds more folds, so Coverage may want to " +
+                     "come down a little to keep the same overall amount of foam.")]
+            [Range(0f, 1f)] public float oceanFoamCrestAnisotropy = DefaultOceanFoamCrestAnisotropy;
+            [Tooltip("Pushes foam GENERATION up onto the crest line. 0 = a cap can be born anywhere " +
+                     "the surface folds, which scatters them through the wave field; 1 = only where " +
+                     "the water is higher than everything around it. This is what turns whitecaps " +
+                     "into lines running ALONG the waves instead of round patches.")]
+            [Range(0f, 1f)] public float oceanFoamCrestGate = DefaultOceanFoamCrestGate;
+            [Tooltip("Throws the foam FORWARD off the crest: 0 spreads it evenly over both faces, 1 " +
+                     "puts it on the leading (downwind) face only. Breaks the symmetry that makes a " +
+                     "whitecap look like a cap sitting on a bump.")]
+            [Range(0f, 1f)] public float oceanFoamFaceBias = DefaultOceanFoamFaceBias;
+            [Tooltip("Tints thin foam with the WATER'S own colour instead of painting it flat white, " +
+                     "using the same extinction the fog and depth transmittance run on - so foam and " +
+                     "sea keep agreeing when the water type is retuned. Dense foam still goes white. " +
+                     "0 = flat tint (unchanged).")]
+            [Range(0f, 1f)] public float oceanFoamDepthTint = DefaultOceanFoamDepthTint;
+            [Tooltip("How many wave SCALES are allowed to make foam. 0 keeps the shipped damping, where " +
+                     "the smallest ripples make none and two other scales are held back to stop the " +
+                     "near water turning into foam soup; 1 lets every scale fold, the way Ceto sums all " +
+                     "of its grids - more small-scale lace and filament inside each cap. Turn it down " +
+                     "if close water starts reading as a uniform froth.")]
+            [Range(0f, 1f)] public float oceanFoamCascadeMix = DefaultOceanFoamCascadeMix;
             [Tooltip("How much foam is left behind (deposited) after a crest passes. Higher = dense whitecaps " +
                      "linger and streak into trails; 0 = foam fades as fast as it forms. This is the main " +
                      "'deposit' control.")]
@@ -172,6 +216,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal float largeWaveChoppiness => ocean.largeWaveChoppiness;
         internal float swellHeight => ocean.swellHeight;
         internal float swellWavelength => ocean.swellWavelength;
+        internal float oceanWindTurbulence => ocean.oceanWindTurbulence;
         internal bool unboundedOcean => ocean.unboundedOcean;
         internal float edgeFeatherMeters => ocean.edgeFeatherMeters;
         internal int clipmapGridResolution => ocean.clipmapGridResolution;
@@ -193,6 +238,13 @@ namespace AbstractOcclusion.WebGpuWater
         internal Color oceanFoamColor => ocean.oceanFoamColor;
         internal float oceanFoamTileSize => ocean.oceanFoamTileSize;
         internal float oceanFoamFeather => ocean.oceanFoamFeather;
+        internal float oceanFoamStreakStretch => ocean.oceanFoamStreakStretch;
+        internal float oceanFoamTextureInfluence => ocean.oceanFoamTextureInfluence;
+        internal float oceanFoamCrestAnisotropy => ocean.oceanFoamCrestAnisotropy;
+        internal float oceanFoamCrestGate => ocean.oceanFoamCrestGate;
+        internal float oceanFoamFaceBias => ocean.oceanFoamFaceBias;
+        internal float oceanFoamDepthTint => ocean.oceanFoamDepthTint;
+        internal float oceanFoamCascadeMix => ocean.oceanFoamCascadeMix;
         internal float oceanFoamDeposit => ocean.oceanFoamDeposit;
         internal float oceanFoamDrift => ocean.oceanFoamDrift;
         internal float oceanFoamMaxBuildup => ocean.oceanFoamMaxBuildup;
@@ -237,7 +289,6 @@ namespace AbstractOcclusion.WebGpuWater
         const float EdgeFeatherMetersMax = 50f;
         // Ocean whitecap foam defaults - subtle + wind-gated so the current look is unchanged until dialed.
         const float DefaultOceanFoamWindThreshold = 4f; // KWS FOAM_MIN_WIND: no whitecaps below ~4 m/s
-        const float DefaultOceanFoamCoverage = 1f;      // fold threshold; 1 == the original saturate(1 - jacobian)
         const float DefaultOceanFoamStrength = 1f;      // accumulation gain per unit fold
         const float DefaultOceanFoamFadeRate = 0.5f;    // exponential decay per second (lower = foam lingers)
         const float OceanFoamCoverageMax = 2f;          // beyond ~2 the whole surface foams; clamp the knob
@@ -246,6 +297,26 @@ namespace AbstractOcclusion.WebGpuWater
         const float DefaultOceanFoamTileSize = 8f;      // metres per foam-pattern tile on the surface
         const float OceanFoamTileSizeMin = 0.5f;        // guard the divide + keep the pattern from collapsing
         const float DefaultOceanFoamFeather = 0.25f;    // dissolve softness of the foam texture black point
+        // Both whitecap-SHAPE knobs default to the shipped look, so no authored ocean changes until
+        // they are dialled up: stretch 1 = isotropic sampling, anisotropy 0 = the determinant fold.
+        // WHITECAP SHAPE DEFAULTS. These used to default to the pre-2026-07-30 look (all off) purely
+        // to avoid migrating authored scenes; with Bert re-tuning his three ocean demos by hand, they
+        // now ship at the values that actually make a whitecap read as a breaking wave rather than a
+        // round patch of texture. Each is still a plain 0..1 knob - dial any of them back to the
+        // "off" value in the comment to recover the old behaviour exactly.
+        const float DefaultOceanFoamStreakStretch = 3.5f;   // off = 1
+        const float DefaultOceanFoamTextureInfluence = 0.35f;  // off = 1 (texture owns the outline)
+        const float OceanFoamStreakStretchMax = 8f;     // past this the cells smear into unbroken lines
+        const float DefaultOceanFoamCrestAnisotropy = 1f;   // off = 0 (area fold / determinant)
+        const float DefaultOceanFoamCrestGate = 0.8f;   // off = 0 (foam anywhere the surface folds)
+        const float DefaultOceanFoamFaceBias = 0.6f;    // off = 0 (symmetric about the crest)
+        const float DefaultOceanFoamDepthTint = 0.45f;  // off = 0 (flat painted foam colour)
+        // Ceto-like by default: every cascade's fold counts. off = 0 (the KWS/Crest per-cascade damping).
+        const float DefaultOceanFoamCascadeMix = 1f;
+        // Coverage comes DOWN with the anisotropy default: the smallest-eigenvalue fold FINDS crest
+        // folds the determinant used to cancel out, so the same authored number now yields more foam.
+        // Off = 1, which is the original saturate(1 - jacobian).
+        const float DefaultOceanFoamCoverage = 0.75f;
         // Deposit knobs (promoted from OceanFft.compute #defines so they're art-tweakable). Defaults lean
         // toward MORE deposit than the old constants (slow-fade 0.25 -> deposit 0.85 = slow-fade 0.15).
         const float DefaultOceanFoamDeposit = 0.85f;    // dense-foam persistence; slowFadeFraction = 1 - this
@@ -262,6 +333,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal float LargeWaveEdgeFeatherEffective => (openWater && !unboundedOcean) ? edgeFeatherMeters : 0f;
         internal float SwellHeight => swellHeight;
         internal float SwellWavelength => swellWavelength;
+        internal float OceanWindTurbulence => oceanWindTurbulence;
         internal float OceanFoamWindThreshold => oceanFoamWindThreshold;
         internal float OceanFoamCoverage => oceanFoamCoverage;
         internal float OceanFoamStrength => oceanFoamStrength;
@@ -269,10 +341,20 @@ namespace AbstractOcclusion.WebGpuWater
         internal Color OceanFoamColor => oceanFoamColor;
         internal float OceanFoamTileSize => oceanFoamTileSize;
         internal float OceanFoamFeather => oceanFoamFeather;
+        internal float OceanFoamStreakStretch => oceanFoamStreakStretch;
+        internal float OceanFoamTextureInfluence => oceanFoamTextureInfluence;
+        internal float OceanFoamCrestAnisotropy => oceanFoamCrestAnisotropy;
+        internal float OceanFoamCrestGate => oceanFoamCrestGate;
+        internal float OceanFoamFaceBias => oceanFoamFaceBias;
+        internal float OceanFoamDepthTint => oceanFoamDepthTint;
+        internal float OceanFoamCascadeMix => oceanFoamCascadeMix;
         internal float OceanFoamDeposit => oceanFoamDeposit;
         internal float OceanFoamDrift => oceanFoamDrift;
         internal float OceanFoamMaxBuildup => oceanFoamMaxBuildup;
         const float DefaultSwellWavelength = 140f;
+        // KWS's shipped WindTurbulence (KWS_Ocean.cs:16). At this value the downwind:upwind ENERGY ratio
+        // is 6.7:1 - a sea that clearly marches while still crossing enough to read as natural.
+        const float DefaultOceanWindTurbulence = 0.25f;
         // Default horizon haze target: pale sky-blue, but alpha 0 so out of the box the far ocean
         // dissolves into the REAL reflected sky (seamless). The rgb only matters once alpha is raised.
         static readonly Color DefaultHorizonHazeColor = new Color(0.7f, 0.8f, 0.9f, 0f);

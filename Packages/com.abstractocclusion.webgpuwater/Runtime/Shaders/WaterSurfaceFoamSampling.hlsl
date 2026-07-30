@@ -291,6 +291,49 @@ void EvaluateFoam(float2 fuv, float2 fuvDdx, float2 fuvDdy,
          * (_FoamNormalStrength * mask);
 }
 
+// Wind heading as a direction, shared with the detail-normal family (declared HERE because this
+// header is included first in the pass - see the note in WaterSurfaceDetailNormal.hlsl).
+float4 _WindDirection;
+// Whitecap STREAK stretch: how many times longer the foam TEXTURE reads along the DRIFT (downwind)
+// axis than across it. 1 = the original isotropic sampling, byte-identical.
+float _OceanFoamStreakStretch;
+// How much the foam TEXTURE owns the foam's OUTLINE (Ceto's Ceto_TextureWaveFoam). 1 = the shipped
+// behaviour, where the dissolve threshold is applied to the texture so the shape IS the texture's
+// iso-contours. Lower hands the outline back to the coverage field. Consumed at the dissolve call
+// site in WaterSurfaceFragStages.hlsl, declared here beside the rest of the whitecap family.
+float _OceanFoamTextureInfluence;
+// Ceto-style foam absorption: how much thin foam takes the WATER'S colour instead of the flat tint.
+// Consumed where the whitecap look is built (WaterSurfaceFragStages.hlsl). 0 = flat tint, unchanged.
+float _OceanFoamDepthTint;
+
+// Map a world XZ vector into the WIND-ALIGNED, stretched frame the whitecap pattern is sampled in.
+//
+// Real whitecaps read as STREAKS, not patches: foam is born along the breaking crest and is then
+// dragged downwind, so the field is elongated along the wind. Our foam artwork is an isotropic
+// cellular pattern, and it was sampled with a plain worldXZ / tileSize - isotropic in, isotropic out,
+// which is why caps came out round. Sampling that SAME texture through a stretched wind-aligned frame
+// turns its cells into filaments, so the look comes out of the texture already shipped.
+//
+// The map is LINEAR, so the caller can push the screen-space derivatives through it unchanged and the
+// tex2Dgrad footprint stays exact. Across-wind is untouched, so the tile size keeps meaning "metres
+// across the streaks" and only the along-wind span is rescaled.
+float2 WhitecapStreakFrame(float2 v)
+{
+    float2 wind = (dot(_WindDirection.xy, _WindDirection.xy) > 1e-6)
+                ? normalize(_WindDirection.xy) : float2(1.0, 0.0);
+    // ALONG THE WIND, deliberately - this is the DEPOSIT's axis. Foam already laid down is rolled
+    // downwind by advection (OceanFoamDriftFraction), so smearing the texture the same way is what
+    // makes a trail read as a trail.
+    // Crest-aligned STRIPES are a different job and are NOT done here: a texture frame can only
+    // stretch DETAIL, it can never change which parts of the sea are foamy. That outline belongs to
+    // the coverage field - see OceanFoamAnisotropy (which folds count) and _OceanFoamTextureInfluence
+    // (who owns the outline) at the dissolve site.
+    // Divide the along-wind axis so a longer world span maps into the same texture span; across-wind
+    // is untouched, so the tile size keeps meaning "metres across the streak".
+    return float2(dot(v, wind) / max(_OceanFoamStreakStretch, 1e-3),
+                  dot(v, float2(-wind.y, wind.x)));
+}
+
 // Ocean whitecap pattern with distance anti-tiling. Combines the base foam tile with a rotated,
 // differently-scaled second octave that fades in with distance, so the texture's repeat stops
 // reading as a grid toward the horizon. min() of the two octaves as they blend keeps foam only
@@ -341,7 +384,12 @@ float3 SampleOceanWhitecapPatternTiled(float2 worldXZ, float camDist, float tile
 float3 SampleOceanWhitecapPattern(float2 worldXZ, float camDist,
                                   float2 worldDdx, float2 worldDdy)
 {
-    return SampleOceanWhitecapPatternTiled(worldXZ, camDist, _OceanFoamTileSize, worldDdx, worldDdy);
+    // The streak frame is applied HERE, in the deep-ocean wrapper only. The Tiled entry point is
+    // shared with the surf whitewash and the swash, whose foam aligns to the SHORE, not the wind -
+    // stretching those along the wind would be wrong. Pre-transforming the inputs also means the
+    // shared pipeline (tile divide, rotated anti-tiling octave, flipbook) needs no new parameter.
+    return SampleOceanWhitecapPatternTiled(WhitecapStreakFrame(worldXZ), camDist, _OceanFoamTileSize,
+                                           WhitecapStreakFrame(worldDdx), WhitecapStreakFrame(worldDdy));
 }
 
 // Relief tilt (xy) of the whitecap, derived PROCEDURALLY from the albedo tile by finite
@@ -404,13 +452,61 @@ float3 ApplyFoamTiltToNormal(float3 normal, float2 tilt)
 // sqrt(coverage) so mid coverage reaches further into the pattern.
 // extraThreshold RAISES the cut (age/reflux erosion): aged foam rots into holes,
 // then filaments, then nothing. Pass 0 for layers without an erosion term.
-float FoamDissolve(float patternValue, float coverage, float feather, float extraThreshold)
+// Threshold + contrast for the dissolve. Factored out so the dissolve and its EXPECTED value below
+// read from ONE definition - if they ever disagreed, near and far foam would drift apart in exactly
+// the way FoamDissolveExpected exists to prevent.
+void FoamDissolveTerms(float coverage, float extraThreshold, out float threshold, out float contrast)
 {
     float coverageSat = saturate(coverage);
-    float contrast = lerp(OCEAN_WHITECAP_CONTRAST, OCEAN_WHITECAP_CONTRAST_DENSE, coverageSat);
+    contrast = lerp(OCEAN_WHITECAP_CONTRAST, OCEAN_WHITECAP_CONTRAST_DENSE, coverageSat);
+    threshold = 1.0 - sqrt(coverageSat) + extraThreshold;
+}
+
+float FoamDissolve(float patternValue, float coverage, float feather, float extraThreshold)
+{
+    float threshold, contrast;
+    FoamDissolveTerms(coverage, extraThreshold, threshold, contrast);
     float sharpened = pow(saturate(patternValue), contrast);
-    float threshold = 1.0 - sqrt(coverageSat) + extraThreshold;
     return smoothstep(threshold, threshold + max(feather, 1e-3), sharpened);
+}
+
+// The dissolve's EXPECTED value, for use once the pattern can no longer be resolved (distance, mips).
+//
+// The far field has to show the same AVERAGE amount of foam as the near field. Handing it the raw
+// COVERAGE does not: the dissolve keeps only the fraction of the pattern that clears its threshold,
+// which is always less than the coverage, so distant foam comes out brighter than the near foam it is
+// meant to match.
+//
+// The fraction that clears the threshold is 1 - CDF(pattern value at the band), so this needs the
+// pattern's HISTOGRAM. An earlier version assumed the histogram was UNIFORM over 0..1. It is not, and
+// the error was not small: measured against the shipped OceanWhitecap.png, the uniform model
+// overestimated the foam by 2.7x at coverage 0.2 and 6.3x at 0.05 - i.e. exactly in the sparse-foam
+// range an open ocean runs at, which is why distant water carried MORE foam than close water.
+//
+// The real histogram is tightly clustered - mean 0.501, standard deviation 0.189, deciles running
+// 0.26 -> 0.75 - so a GAUSSIAN model of it is both accurate and cheap. Evaluate its complementary CDF
+// at the pattern value corresponding to the MIDDLE of the dissolve's feather band (the smoothstep's
+// 50% point), using a smoothstep as the CDF surrogate: max absolute error 0.057 across coverage
+// 0.02..1 and feather 0.05..1, against 0.2+ for the uniform model.
+//
+// Feather therefore reaches the far field, which it must: it is the same band the near-field
+// smoothstep uses, so raising it dims distant foam exactly as it softens near foam.
+//
+// ⚠️ MEAN and STDDEV are calibrated to the SHIPPED whitecap texture. A user who swaps in a foam
+// pattern with a very different histogram (much flatter, or much more contrasty) will see the near
+// and far fields disagree again - remeasure and update these two numbers, they are the only
+// texture-specific constants in the foam path.
+#define OCEAN_FOAM_PATTERN_MEAN     0.501
+#define OCEAN_FOAM_PATTERN_STDDEV   0.189
+#define OCEAN_FOAM_PATTERN_CDF_SPAN 2.45   // +/- sigma over which the smoothstep approximates the normal CDF
+float FoamDissolveExpected(float coverage, float feather, float extraThreshold)
+{
+    float threshold, contrast;
+    FoamDissolveTerms(coverage, extraThreshold, threshold, contrast);
+    // Pattern value at the 50% point of the dissolve band, undoing the contrast sharpen.
+    float midBand = pow(saturate(threshold + 0.5 * max(feather, 1e-3)), 1.0 / max(contrast, 1e-3));
+    float z = (midBand - OCEAN_FOAM_PATTERN_MEAN) / OCEAN_FOAM_PATTERN_STDDEV;
+    return smoothstep(-OCEAN_FOAM_PATTERN_CDF_SPAN, OCEAN_FOAM_PATTERN_CDF_SPAN, -z);
 }
 
 #endif // WATER_SURFACE_FOAM_SAMPLING_INCLUDED

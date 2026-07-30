@@ -49,9 +49,25 @@
 // to carry their own copies. MAX_CASCADES also mirrors WaterOceanFft.cs MaxCascades
 // (WaterWaveConstantsValidator guards the pair). A tiled cascade has no per-component wavelength at
 // sample time, so shore attenuation uses one REPRESENTATIVE wavelength per cascade: the dominant
-// energy of a tile sits around this fraction of its domain.
+// energy of a tile sits around a QUARTER OF THE CASCADE'S BAND TOP.
+//
+// The band top is no longer the tile: WaterOceanFft.CascadeTileOversample makes each FFT tile 4x longer
+// than the longest wave it carries (see the header there for why). So the fraction OF THE DOMAIN that
+// lands on the same metres is 0.25 / 4. Written out rather than divided so it stays a literal the
+// shader compiler folds, and so changing the oversample forces a look at this line.
 #define OCEAN_FFT_MAX_CASCADES 4
-#define OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION 0.25
+#define OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION 0.0625
+
+// ONE definition of the per-cascade distance fade: full near the camera, 0 past the cascade's visible
+// range, cubic so the taper is gentle where it matters. Shared by the fragment normal/foam sum, the
+// VERTEX displacement and the CPU buoyancy height bake. They MUST agree - a cascade that is faded out
+// of the shading but still displacing the mesh aliases on the far clipmap cells, and one that is faded
+// out of the render but not the bake floats objects on a surface that is not the one drawn.
+float OceanCascadeDistanceFade(float camDist, float visibleArea)
+{
+    float f = saturate(camDist / max(visibleArea, 1e-3));
+    return 1.0 - f * f * f;
+}
 
 // Rim-shadow sigmoid shaping (softens the pool-wall shadow edge in the caustic/wall passes).
 #define RIM_SHADOW_SHARPNESS 200.0

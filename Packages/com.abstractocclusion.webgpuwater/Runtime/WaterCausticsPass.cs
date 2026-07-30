@@ -140,6 +140,10 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 WaterInteractable it = list[i];
                 if (it == null || it.Renderer == null) continue;
+                // Author-side filter (refractShadowLayers): an excluded layer casts no refracted
+                // shadow at all. Tested first - it is a bitfield test, while every check below
+                // fetches renderer bounds.
+                if (!LayerInMask(it.Renderer.gameObject.layer, _owner.refractShadowLayers)) continue;
                 // Same containment rule the interactable itself uses for drops/waterline, so an
                 // object is stamped into exactly ONE body's RT - its own.
                 if (WaterVolume.BodyContaining(it.Renderer.bounds.center) != _owner) continue;
@@ -153,6 +157,9 @@ namespace AbstractOcclusion.WebGpuWater
                 _cb.DrawRenderer(it.Renderer, _occluderMaterial, 0, 0);
             }
         }
+
+        // A LayerMask is a bitfield indexed by layer number, so membership is a shift and a test.
+        static bool LayerInMask(int layer, LayerMask mask) => (mask.value & (1 << layer)) != 0;
 
         // Ocean version: project the near-field WINDOW sim into the caustic RT via the large-body
         // (world-frame) caustic. The window centre/extent are set on the material explicitly so the

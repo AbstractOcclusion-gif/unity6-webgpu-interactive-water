@@ -37,9 +37,10 @@
 float    _ExclusionCount; // active volumes (float so it binds like _WaveCount); 0 disables
 float4x4 _ExclusionWorldToLocal[EXCLUSION_MAX_VOLUMES];
 // Per-volume SHAPE in the SAME slot order: x = PRIMITIVE_SHAPE_* selector (box / sphere),
-// y = 1 for a MESH volume, zw reserved for future shape parameters (a capsule's radius, a
-// wedge's angle). A volume that never sets it reads 0 = box, which is the shape every
-// pre-shape scene authored.
+// y = 1 for a MESH volume, z = 1 when the volume does NOT block the sun, w reserved for a
+// future shape parameter (a capsule's radius, a wedge's angle). Every lane is polarised the
+// same way: a volume that never sets it reads 0 = box, not a mesh, sun-blocking - exactly what
+// every pre-flag scene authored.
 //
 // A MESH volume sends its analytic PROXY in x and raises the flag in y, which splits this
 // header cleanly in two. The kernels that answer along the CAMERA RAY - InsideExclusion,
@@ -54,6 +55,15 @@ float4   _ExclusionShape[EXCLUSION_MAX_VOLUMES];
 bool ExclusionIsMesh(int i)
 {
     return _ExclusionShape[i].y >= 0.5;
+}
+
+// True when slot i BLOCKS the sun, so its shadow reaches the god-ray shafts and the fog's
+// in-scatter (WaterExclusionVolume.castsSunShadow; stored inverted - see the header). ONLY the
+// two sun-visibility traces read this: the CARVE is unconditional, or the water would come back
+// inside the volume.
+bool ExclusionCastsSunShadow(int i)
+{
+    return _ExclusionShape[i].z < 0.5;
 }
 // Per-volume carve-boundary edge look + particle handling (WaterExclusionVolume fields,
 // published alongside the matrices in the SAME slot order): color rgb = tint the edges
@@ -268,6 +278,7 @@ float ExclusionSunVisibility(float3 p, float3 dirToSun, float waterLevel)
     [loop]
     for (int i = 0; i < count; i++)
     {
+        if (!ExclusionCastsSunShadow(i)) continue; // authored light-transmitting (see the header)
         float shape = _ExclusionShape[i].x;
 
         // Leg 1: sample -> surface along the (refracted) travel direction, clipped at tSurf.
@@ -654,6 +665,7 @@ float ExclusionSpanSunVisibility(float3 wetStart, float3 segDir, float spanLen, 
     [loop]
     for (int i = 0; i < count; i++)
     {
+        if (!ExclusionCastsSunShadow(i)) continue; // authored light-transmitting (see the header)
         // The shape is a uniform, so this branch stays uniform across the wave: each volume
         // pays for ITS swept solid only, never for both.
         if (PrimitiveIsSphere(_ExclusionShape[i].x))

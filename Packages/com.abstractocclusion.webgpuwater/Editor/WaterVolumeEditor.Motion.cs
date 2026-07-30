@@ -72,7 +72,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                         WaterVolumePropertyPaths.LargeWaveAmplitude,
                         WaterVolumePropertyPaths.LargeWaveChoppiness,
                         WaterVolumePropertyPaths.SwellHeight,
-                        WaterVolumePropertyPaths.SwellWavelength);
+                        WaterVolumePropertyPaths.SwellWavelength,
+                        WaterVolumePropertyPaths.OceanWindTurbulence);
                     // Topology, not feel: both are decided once when the body is authored.
                     _showOceanSwellAdvanced = WaterEditorUI.SubSection("Advanced", _showOceanSwellAdvanced, () =>
                         DrawFields(

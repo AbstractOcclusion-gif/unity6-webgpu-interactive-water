@@ -98,10 +98,38 @@ float  _MeanCorrectionMax; // Conserve: max |mean| subtracted per step (pool uni
 // the offset with the sign that keeps world features fixed (see WaterSimulation.Scroll).
 int2 _ScrollOffset;
 
-// Drop
-float2 _Center;   // in [-1, 1]
-float  _Radius;
-float  _Strength;
+// ---- Queued injection -------------------------------------------------------------------------
+// Drops and wake interactors used to cost ONE FULL-GRID PING-PONG EACH. A moving object emits up to
+// WaterInteractable.MaxDropsPerFrame drops per frame, so stamping a boat's wake read and wrote the
+// entire field four times over - several times the cost of the sim step it was decorating, and four
+// serial pipeline barriers. Both stamps are purely ADDITIVE, so every one queued this frame can be
+// applied inside a SINGLE pass: the maths per stamp is untouched, only the number of times the grid
+// is walked. Sanitize / saturate stay INSIDE the loops so per-stamp clamping order is preserved.
+//
+// The loop bound is the COUNT uniform, not the buffer size, so there is no capacity constant to keep
+// in sync on this side - C# owns the queue length (WaterSimulation.MaxQueuedInjections).
+struct WaterDropInjection
+{
+    float2 center;   // sim space [-1, 1]
+    float  radius;   // half-extent fraction
+    float  strength;
+};
+
+struct WaterSphereInjection
+{
+    float2 center;   // sim space [-1, 1]
+    float2 velXZ;    // horizontal motion this step, sim-normalised (front/back dipole axis)
+    float  radius;   // half-extent fraction
+    float  velY;     // vertical motion this step, pool-height units (bobbing term)
+    float  weight;   // submersion x user weight (0 = no effect)
+    float  strength; // master gain on the injected acceleration
+};
+
+StructuredBuffer<WaterDropInjection>   DropQueue;
+StructuredBuffer<WaterSphereInjection> SphereQueue;
+uint _DropQueueCount;
+uint _SphereQueueCount;
+
 // Per-axis squash of the drop stamp so a drop reads ROUND in WORLD on a rectangular pool. The
 // sim grid is square over pool space, so without this a circular pool-space stamp is stretched
 // to the extent ratio in world. Default (1,1) = square (unchanged). Set from C# per body.
@@ -112,14 +140,9 @@ float2 _DropAxisScale;
 // dipole: pushed AHEAD of travel, pulled BEHIND, plus a symmetric vertical term for bobbing.
 // The wave solver then integrates that velocity into height, so a continuous path lays a
 // Kelvin V-wake instead of the isotropic rings a height splat (Drop) produces. All coords are
-// pool/sim-normalised: centre matches _Center's [-1,1] convention, radius/velocity are in the
+// pool/sim-normalised: the centre matches the drop's [-1,1] convention, radius/velocity are in the
 // same normalised space so the field stays round-in-world on rectangular pools via _SphereAxisScale.
-float2 _SphereCenter;    // sphere centre, sim space [-1, 1] (matches _Center)
-float  _SphereRadius;    // radius as a half-extent fraction (matches Drop's normalised radius)
-float2 _SphereVelXZ;     // horizontal motion this step, sim-normalised (front/back dipole axis)
-float  _SphereVelY;      // vertical motion this step, pool-height units (bobbing term)
-float  _SphereWeight;    // submersion x user weight (0 = no effect)
-float  _SphereStrength;  // master gain on the injected acceleration
+// Per-interactor values live in SphereQueue above; only the shared squash is a uniform.
 float2 _SphereAxisScale; // per-axis world-round squash (mirrors _DropAxisScale)
 
 // Dipole tightness: the falloff peaks near ~0.7/a, so a ~ TIGHTNESS/radius places the deposited
@@ -329,12 +352,19 @@ void Drop(uint3 id : SV_DispatchThreadID)
     float2 coord = (p + 0.5) * _Delta;
     float4 info = Read(p);
 
-    // Squash the pool-space delta per axis so the falloff is a circle in WORLD, not in the
-    // (square) sim grid - otherwise a drop on a rectangular pool stamps an ellipse.
-    float2 d = (_Center * 0.5 + 0.5 - coord) * _DropAxisScale;
-    float drop = max(0.0, 1.0 - length(d) / _Radius);
-    drop = 0.5 - cos(drop * PI) * 0.5;
-    info.r += drop * _Strength;
+    for (uint i = 0; i < _DropQueueCount; i++)
+    {
+        WaterDropInjection q = DropQueue[i];
+        // Squash the pool-space delta per axis so the falloff is a circle in WORLD, not in the
+        // (square) sim grid - otherwise a drop on a rectangular pool stamps an ellipse.
+        float2 d = (q.center * 0.5 + 0.5 - coord) * _DropAxisScale;
+        float drop = max(0.0, 1.0 - length(d) / q.radius);
+        drop = 0.5 - cos(drop * PI) * 0.5;
+        info.r += drop * q.strength;
+        // Clamped PER STAMP, exactly as one dispatch per drop used to be, so a stack of drops
+        // saturates the same way it always did rather than summing past the ceiling first.
+        info = Sanitize(info);
+    }
 
     Dst[p] = Sanitize(info);
 }
@@ -348,52 +378,57 @@ void SphereInteract(uint3 id : SV_DispatchThreadID)
 {
     int2 p = int2(id.xy);
     float4 info = Read(p);
-
-    // Offset from the sphere centre in the SAME normalised [0,1] space as Drop, squashed per axis so
-    // the interaction is round in WORLD on a rectangular pool.
     float2 coord = (p + 0.5) * _Delta;
-    float2 centre = _SphereCenter * 0.5 + 0.5;
-    float2 d = (coord - centre) * _SphereAxisScale;
-    float dist = length(d);
+    // Read the foam ONCE and carry it: this kernel ping-pongs the whole field, so every texel writes
+    // its (possibly unchanged) state to Dst and FoamDst whether any interactor reached it or not.
+    float2 foam = FoamSrc.Load(int3(p, 0));
 
-    // Copy-through outside the region of influence: this kernel ping-pongs the whole field, so every
-    // texel must write its (possibly unchanged) state to Dst - and now the foam buffer too (move #3).
-    if (dist > _SphereRadius * SPHERE_CULL_RADII) { FoamDst[p] = FoamSrc.Load(int3(p, 0)); Dst[p] = info; return; }
-
-    float sdf = dist - _SphereRadius;                 // signed distance to the sphere in the plane
-    float2 nrm = dist > 1e-5 ? d / dist : float2(0.0, 0.0); // outward normal
-
-    float a = 1.0 / max(_SphereRadius, 1e-4);         // scale falloff to the sphere size
-
-    // Vertical (bobbing) term: symmetric about the sphere, driven by vertical motion. Signed sdf keeps
-    // Crest's inside/outside sign flip.
-    float verticalForce = -_SphereVelY * InteractionFalloff(SPHERE_FALLOFF_VERT * a, sdf);
-
-    // Horizontal (wake) term: +push ahead of motion, -pull behind -> a dipole that, smeared along a
-    // path, becomes the V-wake. Gated to the outside plus the inner nested sphere (Crest's model).
-    float horizontalForce = 0.0;
-    if (sdf > 0.0 || sdf < -_SphereRadius * SPHERE_INNER_OFFSET)
+    for (uint i = 0; i < _SphereQueueCount; i++)
     {
-        float forceSign = sign(sdf);
-        horizontalForce = forceSign * dot(nrm, _SphereVelXZ)
-                                    * InteractionFalloff(SPHERE_FALLOFF_HORIZ * a, abs(sdf));
-        if (sdf < 0.0) horizontalForce *= SPHERE_INNER_MULT;
+        WaterSphereInjection q = SphereQueue[i];
+        // Offset from the sphere centre in the SAME normalised [0,1] space as Drop, squashed per axis
+        // so the interaction is round in WORLD on a rectangular pool.
+        float2 d = (coord - (q.center * 0.5 + 0.5)) * _SphereAxisScale;
+        float dist = length(d);
+        if (dist > q.radius * SPHERE_CULL_RADII) continue;   // this texel is outside THIS interactor
+
+        float sdf = dist - q.radius;                      // signed distance to the sphere in the plane
+        float2 nrm = dist > 1e-5 ? d / dist : float2(0.0, 0.0); // outward normal
+
+        float a = 1.0 / max(q.radius, 1e-4);              // scale falloff to the sphere size
+
+        // Vertical (bobbing) term: symmetric about the sphere, driven by vertical motion. Signed sdf
+        // keeps Crest's inside/outside sign flip.
+        float verticalForce = -q.velY * InteractionFalloff(SPHERE_FALLOFF_VERT * a, sdf);
+
+        // Horizontal (wake) term: +push ahead of motion, -pull behind -> a dipole that, smeared along
+        // a path, becomes the V-wake. Gated to the outside plus the inner nested sphere (Crest's model).
+        float horizontalForce = 0.0;
+        if (sdf > 0.0 || sdf < -q.radius * SPHERE_INNER_OFFSET)
+        {
+            float forceSign = sign(sdf);
+            horizontalForce = forceSign * dot(nrm, q.velXZ)
+                                        * InteractionFalloff(SPHERE_FALLOFF_HORIZ * a, abs(sdf));
+            if (sdf < 0.0) horizontalForce *= SPHERE_INNER_MULT;
+        }
+
+        info.g += q.weight * (verticalForce + horizontalForce) * q.strength;
+        info = Sanitize(info);   // per-stamp, as one dispatch per interactor used to be
+
+        // Wake foam (move #3): stamp foam at the hull, scaled by the interactor's speed and submersion,
+        // over a soft disc a little wider than the sphere. StepFoam advects + decays it into the trail.
+        // _WakeFoamStrength 0 leaves the stamp at zero, so this stays a pure copy-through.
+        float wakeSpeed = length(q.velXZ);
+        float wakeDisc  = saturate(1.0 - dist / max(q.radius * _WakeFoamRadiusScale, 1e-4));
+        float wakeStamp = q.weight * _WakeFoamStrength
+                        * saturate(wakeSpeed * WAKE_FOAM_SPEED_GAIN) * wakeDisc;
+        // R only: the wake deposits FOAM. The wet mark is owned solely by the Foam kernel, so an
+        // interactor pass can never rewrite the waterline history behind its back.
+        foam.r = saturate(foam.r + wakeStamp);
     }
 
-    info.g += _SphereWeight * (verticalForce + horizontalForce) * _SphereStrength;
     Dst[p] = Sanitize(info);
-
-    // Wake foam (move #3): stamp foam at the hull, scaled by the interactor's speed and submersion,
-    // over a soft disc a little wider than the sphere. StepFoam advects + decays it into the trail.
-    // _WakeFoamStrength 0 leaves the stamp at zero, so this is a pure copy-through (byte-identical).
-    float wakeSpeed = length(_SphereVelXZ);
-    float wakeDisc  = saturate(1.0 - dist / max(_SphereRadius * _WakeFoamRadiusScale, 1e-4));
-    float wakeStamp = _SphereWeight * _WakeFoamStrength
-                    * saturate(wakeSpeed * WAKE_FOAM_SPEED_GAIN) * wakeDisc;
-    float2 foamPrev = FoamSrc.Load(int3(p, 0));
-    // R only: the wake deposits FOAM. The wet mark is owned solely by the Foam kernel, so an
-    // interactor pass can never rewrite the waterline history behind its back.
-    FoamDst[p] = float2(saturate(foamPrev.r + wakeStamp), foamPrev.g);
+    FoamDst[p] = foam;
 }
 
 // Solid-mask coverage at sim texel p, matching the obstacle map's flip convention and clamped so an

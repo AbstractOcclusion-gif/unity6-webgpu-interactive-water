@@ -98,7 +98,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 WaterEditorUI.SubHeading("Underwater shadows");
                 DrawFields("refractShadows");
                 if (Prop("refractShadows").boolValue)
-                    DrawFields("refractShadowSoftness");
+                    DrawFields("refractShadowSoftness", "refractShadowLayers");
                 if (!Prop("refractShadows").boolValue)
                     EditorGUILayout.HelpBox(
                         "Refract Underwater Shadows is OFF: every material (incl. Standard Lit) shows one " +
@@ -273,6 +273,13 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "ocean.oceanFoamColor",
                     "ocean.oceanFoamTileSize",
                     "ocean.oceanFoamFeather",
+                    "ocean.oceanFoamStreakStretch",
+                    "ocean.oceanFoamCrestAnisotropy",
+                    "ocean.oceanFoamCrestGate",
+                    "ocean.oceanFoamFaceBias",
+                    "ocean.oceanFoamTextureInfluence",
+                    "ocean.oceanFoamDepthTint",
+                    "ocean.oceanFoamCascadeMix",
                     "ocean.oceanFoamDeposit",
                     "ocean.oceanFoamDrift",
                     "ocean.oceanFoamMaxBuildup"),
