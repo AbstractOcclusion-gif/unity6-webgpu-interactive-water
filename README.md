@@ -26,7 +26,8 @@ Chrome / Edge, Safari 26+, or the latest Firefox).
 
 An interactive pool of water you can poke and ripple, drop real objects into, and
 watch them float — with real-time caustics, reflections and shadows, running on
-the GPU inside Unity.
+the GPU inside Unity. The same component now also scales out to a **spectral ocean with a
+breaking shoreline** — see [Beyond the pool](#beyond-the-pool--ocean-shore-chunks-and-dry-regions).
 
 ## Runs on a budget tablet — live in the browser
 
@@ -70,6 +71,59 @@ A few of the showcase scenes:
     <td width="50%" valign="top" align="center">
       <img src="docs/multilevel-multipool.png" alt="Multi-level multi-pool demo — several independent water bodies at different heights, each with its own surface level, ripples and caustics" width="100%"><br>
       <sub><b>7. Multi-level pools</b> — several independent bodies sitting at different heights, each with its own surface <code>Y</code>, ripples and caustics.</sub>
+    </td>
+  </tr>
+</table>
+
+## Beyond the pool — ocean, shore, chunks and dry regions
+
+The pool solver is still the heart of it, but a `WaterVolume` is no longer confined to a
+contained box. Large bodies switch on a **spectral FFT ocean** drawn through a clipmap surface
+with a camera-following interactive sim window; a **shore pipeline** steepens and breaks those
+waves over a rising bed into whitewater and beach swash; **exclusion volumes** carve dry regions
+out of the surface; and a **chunk** turns the same body into a finite volume of water floating
+in dry air. Same component, same materials, same buoyancy — the scale and the footprint changed.
+
+> These are the newest systems in the project and the roughest — treat the ocean, shore, chunk and
+> exclusion paths as a maturing preview next to the long-settled pool path.
+
+**▶ [Live WebGPU ocean demo](https://abstractocclusionshowreel.web.app/projects/webgpu-ocean.html)**
+
+<table>
+  <tr>
+    <td width="50%" valign="top" align="center">
+      <img src="docs/ocean.png" alt="Open ocean — wind-driven spectral swell with scattered whitecaps fading into a hazing horizon" width="100%"><br>
+      <sub><b>Open sea</b> — a spectral (FFT) swell with wind-driven whitecaps, sparkle and a hazing horizon.</sub>
+    </td>
+    <td width="50%" valign="top" align="center">
+      <img src="docs/shore.png" alt="Shore — waves steepening over a rising seabed and breaking into whitewater foam that washes up a beach slope" width="100%"><br>
+      <sub><b>Surf zone</b> — the bed rises, waves steepen and break, and whitewater washes up the beach.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top" align="center">
+      <img src="docs/ocean-underwater.png" alt="Underwater ocean — god-ray shafts and caustics fading into blue depth fog above the seabed" width="100%"><br>
+      <sub><b>Below the surface</b> — refracted god rays and caustics fading into depth fog, with a wavy waterline overhead.</sub>
+    </td>
+    <td width="50%" valign="top" align="center">
+      <img src="docs/ocean-splash.png" alt="Ocean splash — an impact throwing up a column of splash particles and droplet spray ringed by whitewater foam" width="100%"><br>
+      <sub><b>Impact</b> — GPU splash and droplet-spray particles throwing a column up, settling back into foam.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top" align="center">
+      <img src="docs/exclusion-zone.png" alt="Exclusion volume seen from above — the ocean surface is discarded inside a box region, leaving a dry pit with shaded water walls stepping down the cut" width="100%"><br>
+      <sub><b>Exclusion volume</b> — the surface is discarded inside the region, leaving a dry pit in open water.</sub>
+    </td>
+    <td width="50%" valign="top" align="center">
+      <img src="docs/exclusion-wall.png" alt="Exclusion wall seen from inside the dry region — the cut face reads as a solid slab of water rather than a hole, with crates suspended in the body beyond" width="100%"><br>
+      <sub><b>Water walls</b> — the cut face is shaded as a real slab of water, so the carve never reads as a hole.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2" valign="top" align="center">
+      <img src="docs/chunk.png" alt="Water chunk — a self-contained rounded body of water floating in dry air above the sea, with its own wavy top surface, a meniscus at the waterline and a submerged cube visible through the shell" width="70%"><br>
+      <sub><b>Chunk</b> — the inverse of an exclusion volume: a finite body of water floating in dry air, with its own fill level, meniscus at the waterline, refraction and god-ray shafts marched through the submerged column.</sub>
     </td>
   </tr>
 </table>
@@ -118,9 +172,30 @@ arbitrary objects, real lights and real shadows.
   from depth, so deep water no longer spikes.
 - **Multiple water bodies** — several independent lakes coexist via per-body
   `MaterialPropertyBlock`s; a floating object is lit by whichever body it's actually in.
-- **Showcase scenes** — eight example scenes (classic pool, deep lake, terrain lake,
-  multi-lake, underwater, open water, reflections trio, object pool), shipped as an importable
-  Package Manager sample.
+- **Open-ocean scale** — large bodies run a spectral **FFT** wave field drawn through a clipmap
+  surface, with the interactive ripple sim following the camera in a scrolling window so wakes and
+  pokes stay crisp near the viewer and feather out at the window border.
+- **Breaking shore surf** — a bed-depth field steepens and breaks the incoming swell over rising
+  ground, generating whitewater, a bore/trail whitewash and a swash line that washes up the beach.
+- **A full underwater pass** — depth fog with per-channel extinction (optionally seeded from
+  **Jerlov** ocean water types), a wavy per-pixel waterline, god-ray shafts and screen-space
+  caustics painted onto any submerged surface.
+- **Dry-region exclusion volumes** — mark a region where the surface must not render: a hull
+  interior, a room below sea level, a diving bell. Carved from an analytic box or sphere, or from
+  the real silhouette of an arbitrary mesh via a depth prepass, with shaded **water walls** closing
+  the cut. Purely visual — buoyancy, physics and the ripple sim are untouched, so a hull still
+  floats and still cuts a wake.
+- **Water chunks** — the inverse: the same body as a self-contained finite volume of water in dry
+  air (box, sphere or arbitrary closed mesh), with a fill level, a meniscus at the waterline, and
+  its own refraction, reflectivity and god rays.
+- **GPU splash & spray** — a pooled particle system for impact splashes, crown sheets and droplet
+  spray, fed by object entry, wake turbulence and breaking crests.
+- **Quality tiers** — a runtime device probe picks a tier and scales the sim grid, fog march, god
+  rays and particle budget, so the same scene runs on desktop and in a mobile browser.
+- **Showcase scenes** — eighteen example scenes (classic pool, deep lake, terrain lake, multi-lake,
+  underwater, open water, reflections trio, object pool, multi-level pools, WebGPU pool, splashes
+  and foam, ocean, buoyancy stress test, island, boat, chunk and exclusion demos), shipped as an
+  importable Package Manager sample.
 
 ## Features
 
@@ -140,6 +215,13 @@ arbitrary objects, real lights and real shadows.
   analytic pool, god rays, foam particles, surface + edge foam) and can turn your own scene
   objects into floating or interactable props, generating the sky cubemap, light and materials
   for you.
+- **Spectral FFT ocean** — large-body wave field + clipmap surface + camera-following sim window.
+- **Shore & surf** — bed-depth driven steepening, breaking, whitewash and beach swash.
+- **Underwater volume** — depth fog, wavy waterline, god rays, screen-space caustics.
+- **Exclusion volumes & water walls** — box / sphere / arbitrary-mesh dry regions.
+- **Chunks** — finite bodies of water floating in dry air, with a fill level.
+- **Splash & spray particles** — pooled GPU particles from impacts, wakes and crests.
+- **Quality tiers** — device-probed tiers scaling sim, fog, god rays and particle budget.
 
 ## Requirements
 
@@ -172,9 +254,11 @@ the same window under **Utilities**.
 
 ## Demo scenes
 
-The eight example scenes ship as a Package Manager **sample**. In **Package Manager ▸
+The eighteen example scenes ship as a Package Manager **sample**. In **Package Manager ▸
 AbstractOcclusion.WebGpuWater ▸ Samples**, import **Demo Scenes** to drop them — along with the
-generated meshes, sky and materials they depend on — into `Assets/Samples/…`.
+generated meshes, sky and materials they depend on — into `Assets/Samples/…`. They run from the
+original pool through the lakes and reflection scenes up to the ocean, island, boat, chunk and
+exclusion demos.
 
 ## Controls
 
@@ -248,16 +332,15 @@ WebGPU/mobile (where readback is unreliable, objects sink rather than float). Se
 
 ## Known limitations
 
-**Scoped to small and mid-size water bodies.** It's a **contained, heightfield** water — built
-for pools, ponds and small-to-mid lakes. It simulates vertical displacement only (no breaking
-waves). The interactive ripple sim is a fixed-resolution grid over the body, so past roughly
-**~20 m** of extent the interactive ripples get coarse and the analytic wind waves stop reading
-realistically at that scale. **Large lakes and oceans are out of scope for this version and are
-planned as their own dedicated system** — a spectral/FFT ocean with its own wave foam, fog and
-Unity-terrain handling, likely on a separate branch (the camera-following sim window,
-[`docs/large-water-sim-window-plan.md`](docs/large-water-sim-window-plan.md), keeps mid-size water
-crisp but does not turn a pool solver into an ocean). Fully opaque, very large water also needs a
-different shading model than the transparent pool path.
+**Two scales in one component, and the big one is younger.** Small and mid-size bodies run the
+**contained heightfield** solver — pools, ponds, lakes — and that path is the settled, well-tested
+one. Large bodies switch on the **spectral FFT ocean** with its clipmap surface, shore pipeline and
+camera-following sim window; that path is much newer and carries more rough edges (it is the
+[experimental ocean demo](https://abstractocclusionshowreel.web.app/projects/webgpu-ocean.html),
+not the advertised pool). The interactive ripple grid is fixed-resolution over the *window* rather
+than the whole body, so wakes and pokes stay crisp near the camera and feather out at the window
+border instead of tiling. Fully opaque, very large water still wants a different shading model than
+the transparent pool path.
 
 **Unity Terrain support is experimental.** The bed-depth bake approximates a shoreline depth
 gradient from a Terrain heightmap, but full terrain integration (splat/detail blending, robust
