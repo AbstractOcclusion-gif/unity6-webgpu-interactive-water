@@ -90,7 +90,14 @@ namespace AbstractOcclusion.WebGpuWater
             // mid-frame render-target switch, which costs far more on the WebGPU backend than
             // native. Leaving the validity global at 0 is the state a pond or a non-ocean primary
             // already ships every frame, so this adds no new case for the shader to handle.
-            if (primary != null && primary.IsOceanClipmap && !primary.UnderwaterFogSimple)
+            // Also gated on the fog actually RUNNING this frame: this pass is enqueued for
+            // WaterlineActive alone too (a straddling near plane arms the line before the fog),
+            // and on those frames the fog draws - the prepass's ONLY consumer - are skipped
+            // below, so the ~20 displaced-mesh draws and the camera-sized R32F target were
+            // recorded and thrown away on the exact crossing frames where a hitch shows most.
+            // Validity stays 0, the state a pond or non-ocean primary already ships every frame.
+            if (WaterVolume.UnderwaterFogActive
+                && primary != null && primary.IsOceanClipmap && !primary.UnderwaterFogSimple)
             {
                 s_SurfaceRenderers.Clear();
                 primary.CollectOceanSurfaceRenderers(s_SurfaceRenderers);
@@ -126,24 +133,38 @@ namespace AbstractOcclusion.WebGpuWater
         void RecordWaterlinePass(RenderGraph renderGraph, UniversalResourceData resources,
                                  TextureHandle cameraColor)
         {
-            TextureDesc copyDesc = renderGraph.GetTextureDesc(cameraColor);
-            copyDesc.name = "_WaterlineSceneTex";
-            copyDesc.clearBuffer = false;
-            TextureHandle sceneCopy = renderGraph.CreateTexture(copyDesc);
-            renderGraph.AddCopyPass(cameraColor, sceneCopy, passName: "WaterUnderwaterFog.WaterlineCopy");
+            // The scene copy feeds ONLY the lens-tension warp: the shader samples
+            // _WaterlineSceneTex exclusively inside its `_WaterlineWarp > 0` branch, so at
+            // warp 0 the camera-sized copy was dead work on every straddle frame. Gated on the
+            // SAME knob that uniform is published from (the primary's MeniscusWarp,
+            // PublishWaterline); black is bound in its place so no backend ever sees a stale
+            // transient on the sampler.
+            WaterVolume warpSource = WaterVolume.Primary;
+            bool warpActive = warpSource != null && warpSource.MeniscusWarp > 0f;
+            TextureHandle sceneCopy = default;
+            if (warpActive)
+            {
+                TextureDesc copyDesc = renderGraph.GetTextureDesc(cameraColor);
+                copyDesc.name = "_WaterlineSceneTex";
+                copyDesc.clearBuffer = false;
+                sceneCopy = renderGraph.CreateTexture(copyDesc);
+                renderGraph.AddCopyPass(cameraColor, sceneCopy, passName: "WaterUnderwaterFog.WaterlineCopy");
+            }
 
             using var builder = renderGraph.AddRasterRenderPass<WaterlinePassData>(
                 "WaterUnderwaterFog.Waterline", out WaterlinePassData data, _sampler);
             data.material = _material;
             data.sceneCopy = sceneCopy;
+            data.warpActive = warpActive;
             builder.SetRenderAttachment(cameraColor, 0, AccessFlags.ReadWrite);
-            builder.UseTexture(sceneCopy, AccessFlags.Read);
+            if (warpActive) builder.UseTexture(sceneCopy, AccessFlags.Read);
             if (resources.cameraDepthTexture.IsValid())
                 builder.UseTexture(resources.cameraDepthTexture, AccessFlags.Read);
             builder.UseAllGlobalTextures(true);
             builder.SetRenderFunc((WaterlinePassData d, RasterGraphContext ctx) =>
             {
-                d.material.SetTexture(ID_WaterlineSceneTex, d.sceneCopy);
+                if (d.warpActive) d.material.SetTexture(ID_WaterlineSceneTex, d.sceneCopy);
+                else d.material.SetTexture(ID_WaterlineSceneTex, Texture2D.blackTexture);
                 CoreUtils.DrawFullScreen(ctx.cmd, d.material, null, WaterlineShaderPass);
             });
         }
@@ -152,6 +173,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             public Material material;
             public TextureHandle sceneCopy;
+            public bool warpActive;
         }
 
         // Draw every live ocean-surface renderer's mesh with its OWN matrix, material and property

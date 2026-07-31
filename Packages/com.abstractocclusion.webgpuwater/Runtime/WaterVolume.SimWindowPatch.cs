@@ -9,9 +9,13 @@ namespace AbstractOcclusion.WebGpuWater
     public partial class WaterVolume
     {
         // Camera-following high-detail surface over the sim window (windowed bodies, play mode).
-        // Its grid is built at the SIM resolution so the near field is sampled ~one vertex per
-        // texel - the far plane's fixed grid stretched over a large volume samples the ripple
-        // heightfield too sparsely and aliases into false, bobbing ripples.
+        // Its grid follows the SIM resolution up to MaxPatchGridResolution, so the near field is
+        // sampled densely - the far plane's fixed grid stretched over a large volume samples the
+        // ripple heightfield too sparsely and aliases into false, bobbing ripples. Above the cap
+        // the vertex density stops following the sim: a bicubic-filtered read does not need one
+        // vertex per texel, and an uncapped grid at the High tier (sim 512) cost 513^2 vertices
+        // x 2 twins x ~22 fetches through the displacement vertex stage every frame - and the
+        // eye-depth prepass and foam overlay re-draw the same mesh on fog-armed frames.
         Renderer _patchRenderer;
         Mesh _patchGrid;
         MaterialPropertyBlock _patchMpb;
@@ -23,6 +27,11 @@ namespace AbstractOcclusion.WebGpuWater
                                                     // overlap (beats the coplanar far plane AND the coarser ocean
                                                     // clipmap). World metres, so it can't draw over opaque at distance.
         const string PatchObjectName = "Sim Window Patch";
+        // Vertex ceiling for the patch grid (see the class note above). Mid tier has always
+        // shipped this density (257^2 vertices); higher tiers keep their full TEXEL detail in
+        // the per-pixel normal/refine reads - only the geometric displacement mesh stops
+        // scaling quadratically with the sim.
+        const int MaxPatchGridResolution = 256;
         // Underside twin of the near-field patch: the SAME dense grid drawn with the under-water
         // material, so the submerged near field is sampled as finely as the above one and the two line
         // up vertex-for-vertex at the waterline (a coarse underside would show through the fine top).
@@ -64,7 +73,8 @@ namespace AbstractOcclusion.WebGpuWater
             t.localScale = SimHalfExtent;
         }
 
-        // Build the windowed near-field patch: a grid at the sim resolution, remapped by the
+        // Build the windowed near-field patch: a grid at the sim resolution (capped - see
+        // MaxPatchGridResolution), remapped by the
         // shader into the window's pool sub-region. Reuses THIS body's surface material instance
         // (so it inherits reflections/fog) with _IsPatch riding its property block. Play mode
         // only - it depends on the per-body material instance created in ApplyReflections.
@@ -73,7 +83,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (!Application.isPlaying || !_windowed) return;
             if (_patchRenderer != null || surfaceAbove == null || surfaceAbove.sharedMaterial == null) return;
 
-            _patchGrid = WaterMeshBuilder.BuildGrid(Mathf.Max(1, _simRes));
+            _patchGrid = WaterMeshBuilder.BuildGrid(Mathf.Clamp(_simRes, 1, MaxPatchGridResolution));
             _patchGrid.hideFlags = HideFlags.HideAndDontSave;
             _patchRenderer = CreateSurfaceRenderer(PatchObjectName, _patchGrid, surfaceAbove.sharedMaterial);
 

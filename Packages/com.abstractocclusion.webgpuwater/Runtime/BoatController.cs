@@ -31,7 +31,7 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] float enginePower = 9f;
         [SerializeField, Range(0f, 1f)] float reverseCoefficient = 0.35f;
         [Tooltip("Local point the propeller pushes from (near the stern, below the waterline).")]
-        [SerializeField] Vector3 sternOffset = new Vector3(0f, -0.25f, -2.2f);
+        [SerializeField] internal Vector3 sternOffset = new Vector3(0f, -0.25f, -2.2f);
 
         [Header("Steering")]
         [SerializeField] float turnAcceleration = 2.5f;      // rad/s^2 at full lock and cruising speed
@@ -46,10 +46,10 @@ namespace AbstractOcclusion.WebGpuWater
         [Header("Water contact")]
         [Tooltip("Height (m) the propeller can rise above the surface before thrust fully fades. Thrust is " +
                  "full while it's submerged and eases out as a wave lifts the stern clear - never cut dead.")]
-        [SerializeField] float propellerDepth = 0.5f;
+        [SerializeField] internal float propellerDepth = 0.5f;
         [Tooltip("Height (m) the hull centre can rise above the surface before drag/steering fully fade " +
                  "(so an airborne boat isn't dragged by water it isn't touching).")]
-        [SerializeField] float hullDepth = 0.6f;
+        [SerializeField] internal float hullDepth = 0.6f;
 
         [Header("Input response")]
         [SerializeField] float throttleResponse = 2f;

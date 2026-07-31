@@ -282,11 +282,27 @@ namespace AbstractOcclusion.WebGpuWater
             get
             {
                 int multiplier = (int)causticDetail;
-                if (multiplier <= 1) return 0;                  // 1x = keep the body's own mesh, byte-identical
                 if (!IsWindowed && discSurface) return 0;       // see the disc note above
+                if (multiplier <= 1)
+                    // 1x = keep the body's own mesh, byte-identical - EXCEPT on a windowed body
+                    // whose tier sim resolution exceeds the lattice cap: there "match" meant the
+                    // sim-window patch grid (513^2 vertices at the High tier's sim 512) x 5
+                    // projections x ~28 fetches per vertex, every frame, for a pattern the RT
+                    // reconstructs piecewise-linearly between vertices anyway (see the epsilon
+                    // note in LargeBodyCaustics.shader). The lattice is capped and the sim keeps
+                    // its full resolution; at or below the cap this still returns 0 and the pass
+                    // stays byte-identical. Windowed-only: a pool's own (possibly authored,
+                    // possibly non-square) mesh is never swapped out by a cost cap.
+                    return (IsWindowed && SimResolution > MaxMatchSimLatticeResolution)
+                        ? Mathf.Min(MaxMatchSimLatticeResolution, EffectiveCausticResolution)
+                        : 0;
                 return Mathf.Min(SimResolution * multiplier, EffectiveCausticResolution);
             }
         }
+        // Vertex-budget ceiling for the DEFAULT (MatchSim) caustic lattice on windowed bodies:
+        // keeps the caustic generator at Mid-tier vertex cost on every tier. Double stays an
+        // explicit author opt-in above it.
+        const int MaxMatchSimLatticeResolution = 256;
 
         // Direction TOWARD the light: the assigned sun wins, the serialized vector is the manual
         // fallback. Derived (not written back to the field): the old per-frame write-back silently

@@ -73,7 +73,9 @@ namespace AbstractOcclusion.WebGpuWater
         void OnDisable() { _active.Remove(this); }
 
         // Mouse-like drop emission. LateUpdate so physics (FixedUpdate) and the volume's
-        // sim step have settled; AddRipple dispatches immediately and is safe any time.
+        // sim step have settled; AddRipple QUEUES the drop - WaterVolume flushes the queue in
+        // one batched dispatch just before the next sim step (FlushInjections) - so it is safe
+        // to call any time.
         void LateUpdate()
         {
             if (Renderer == null) return;

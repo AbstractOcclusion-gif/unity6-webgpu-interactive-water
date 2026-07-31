@@ -19,6 +19,10 @@ namespace AbstractOcclusion.WebGpuWater
 
         LargeBodyAtmospherePass _pass;
         Material _material;
+        // Pad above the wave envelope for the provably-dry camera reject in AddRenderPasses -
+        // covers camera travel between this record-time test and the frame actually rendering
+        // (FogArmBandMeters plays the same role at the fog's arming site).
+        const float DryCameraPadMeters = 0.5f;
 
         public override void Create()
         {
@@ -41,6 +45,24 @@ namespace AbstractOcclusion.WebGpuWater
             if (WaterPassCameraGate.SkipCameraFullscreen(renderingData.cameraData.cameraType)) return;
             if (_pass == null) return;                                // shader unassigned / not created
             if (!LargeBodyAtmosphereGate.HasActiveGodRayOcean) return; // ocean-only, and only when shafts are on
+            // CPU mirror of the raymarch's own conservative reject (LargeBodyGodRays.shader:
+            // "above the highest point the displaced surface can reach ... nothing below can
+            // draw"). With the camera provably dry and the from-air veil off, every march pixel
+            // early-outs and the composite multiplies the scene by 1 - yet the frame still paid
+            // the half-res march target, its history copy, and a full-res composite whose
+            // coverage mask costs ~6 surface fetches per pixel, on every ABOVE-water ocean
+            // frame. Skip enqueueing instead. The envelope is the SAME derivation the fog's arm
+            // gate uses (SurfaceHeightEnvelope), so the two reject heights cannot drift.
+            // Temporal history is safe: the skip zone sits strictly ABOVE the envelope, so a
+            // descending camera re-runs the pass (re-warming its history) through the whole
+            // envelope band before any shaft can become visible.
+            WaterVolume primary = WaterVolume.Primary;
+            Camera atmosphereCamera = renderingData.cameraData.camera;
+            if (primary != null && atmosphereCamera != null
+                && primary.LargeGodRayFromAir <= 0f
+                && atmosphereCamera.transform.position.y
+                   > primary.VolumeCenter.y + primary.SurfaceHeightEnvelope() + DryCameraPadMeters)
+                return;
             // A fullscreen-fog debug view owns the frame: these shafts inject one slot AFTER the
             // fog and add WATER-TINTED light concentrated near the waterline, which tinted every
             // false-colour view green exactly where the boundary under investigation sits. An

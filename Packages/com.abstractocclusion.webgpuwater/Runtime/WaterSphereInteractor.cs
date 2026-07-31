@@ -17,7 +17,7 @@ namespace AbstractOcclusion.WebGpuWater
     public sealed class WaterSphereInteractor : MonoBehaviour
     {
         // Below this per-frame displacement (world units) the object is effectively still, so there is no
-        // wake to inject and we skip the GPU dispatch entirely.
+        // wake to inject and nothing is queued (stamps batch into one dispatch via FlushInjections).
         const float MinStepDistance = 1e-4f;
         const float AutoRadiusFloor = 0.05f;
         const float FallbackRadius = 0.5f;

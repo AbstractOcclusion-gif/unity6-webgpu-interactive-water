@@ -168,8 +168,15 @@ namespace AbstractOcclusion.WebGpuWater
         // the wave's SOURCE point, so buoyancy samples the height under the crest the eye sees.
         const int InversionIterations = 4;
 
-        // Matches LbwHash() / SurfHash() in the shaders: frac(sin(n * 12.9898) * 43758.5453).
-        static float Hash(float n) => Fract(Mathf.Sin(n * 12.9898f) * 43758.5453f);
+        // Matches LbwHash() / SurfHash() in the shaders. The sine-hash pair and the phase-stream
+        // offset are validator-guarded (WaterWaveConstantsValidator): the CPU buoyancy mirror
+        // desyncs from the rendered waves SILENTLY if either side drifts - this file's own history
+        // records an unnamed twin of the stream offset once drifting to 2.0f.
+        internal const float HashSineFrequency = 12.9898f;    // KEEP: LBW_/SURF_HASH_SINE_FREQ
+        internal const float HashSineScale = 43758.5453f;     // KEEP: LBW_/SURF_HASH_SINE_SCALE
+        // Decorrelates the phase hash stream from the heading hash stream fed the same wave index.
+        internal const float PhaseHashStreamOffset = 16f;     // KEEP: LBW_PHASE_HASH_STREAM_OFFSET
+        static float Hash(float n) => Fract(Mathf.Sin(n * HashSineFrequency) * HashSineScale);
         static float Fract(float x) => x - Mathf.Floor(x);
 
         // HLSL-semantics smoothstep (edge0, edge1, x) - Unity's Mathf.SmoothStep argument order is
@@ -464,7 +471,7 @@ namespace AbstractOcclusion.WebGpuWater
                 float heading = windHeadingRadians + headingJitter;
                 float directionX = Mathf.Cos(heading);
                 float directionZ = Mathf.Sin(heading);
-                float phaseOffset = Hash(fn + phaseSeed + 16f) * TwoPi;
+                float phaseOffset = Hash(fn + phaseSeed + PhaseHashStreamOffset) * TwoPi;
 
                 // Shore transform (mirrors the shader): shoaling response drives refraction toward
                 // shore and the phase-compression share of this component. Same ramp constants as

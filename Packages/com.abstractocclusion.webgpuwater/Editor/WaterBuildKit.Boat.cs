@@ -28,6 +28,64 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         const string BoatHullName = "Hull";
 
+        // Axis the hull MODEL was authored facing (its bow). The build yaws the VISUAL CHILD so
+        // the boat root's +Z is the bow - BoatController is transform.forward by design (thrust,
+        // keel drag, stern offset all ride the root frame), so the frame is corrected ONCE at
+        // build time instead of threading a custom axis through the drive math (three places to
+        // get a sign wrong). Irrelevant for the primitive hull (authored +Z already).
+        internal enum BoatModelForward { PositiveZ, NegativeZ, PositiveX, NegativeX }
+
+        // Yaw that maps the model's authored bow axis onto +Z. Applied to the child BEFORE the
+        // collider / buoyancy-width / dry-interior fit reads the renderer bounds, so every
+        // fitted size lives in the corrected frame - rotating after the build would orphan
+        // them all (length/width swap on the collider and the exclusion box).
+        static Quaternion ModelForwardRotation(BoatModelForward forward)
+        {
+            switch (forward)
+            {
+                case BoatModelForward.NegativeZ: return Quaternion.Euler(0f, 180f, 0f);
+                case BoatModelForward.PositiveX: return Quaternion.Euler(0f, -90f, 0f);
+                case BoatModelForward.NegativeX: return Quaternion.Euler(0f, 90f, 0f);
+                default:                         return Quaternion.identity;
+            }
+        }
+
+        // ---- custom-hull controller fit ---------------------------------------
+        // The controller's water-contact geometry defaults are the 5 m primitive dinghy's numbers,
+        // and a custom model's root origin is the MODEL'S PIVOT - so unfitted defaults put the
+        // propeller anywhere, and (the real killer) hullDepth stayed 0.6 m while the fitted box's
+        // centre of mass (superstructure included) rode higher above the waterline than that:
+        // Wetness(COM) hit 0 and FixedUpdate returned BEFORE ApplySteering, so a custom boat
+        // could not turn at all. Fractions of the fitted box, never absolutes:
+        const float SternInsetFraction = 0.05f;      // stern point pulled inside the box by this much of the length
+        const float SternDepthFraction = 0.25f;      // stern point this fraction of the height below box centre
+        const float PropellerDepthFraction = 0.5f;   // thrust fade band scales with hull height
+        const float BallastCenterOfMassDrop = 0.25f; // COM lowered by this fraction of the height (ballast):
+                                                     // stabilises a top-heavy fitted box (Crest's ocean liner
+                                                     // ships its COM far below deck for the same reason) AND
+                                                     // drops the hull-wetness probe toward the waterline.
+
+        // Fit BoatController's water-contact points to the FITTED hull box. Custom models only:
+        // the primitive hull keeps its proven authored defaults, byte-identical. Feel constants
+        // (turn/drag/authority) are deliberately untouched - geometry is derivable, feel is
+        // authored. The Max floors reuse the component's own defaults so the primitive tuning
+        // remains the minimum, never duplicated here as literals.
+        static void FitControllerToHull(BoatController controller, Rigidbody rigidbody,
+                                        Vector3 hullCenterLocal, Vector3 hullSize)
+        {
+            controller.sternOffset = hullCenterLocal + new Vector3(
+                0f,
+                -hullSize.y * SternDepthFraction,
+                -(hullSize.z * (0.5f - SternInsetFraction)));
+            controller.propellerDepth = Mathf.Max(controller.propellerDepth,
+                                                  hullSize.y * PropellerDepthFraction);
+            // Generous: the wetness probe reads the collider-derived COM, which floats up to about
+            // half the box height above the waterline - the fade band must cover that.
+            controller.hullDepth = Mathf.Max(controller.hullDepth, hullSize.y);
+            rigidbody.centerOfMass = hullCenterLocal
+                                   + Vector3.down * (hullSize.y * BallastCenterOfMassDrop);
+        }
+
         // ---- dry interior (water exclusion) -----------------------------------
         const string BoatDryInteriorName = "Dry Interior";
         // Primitive hull: the dry box is the hull box inset by a wall thickness per face, so the
@@ -49,7 +107,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         /// withDryInterior adds a "Dry Interior" WaterExclusionVolume child fitted to the same
         /// box the collider uses, so the water surface never renders inside the hull.
         /// Undo-registered; the caller owns the undo group.</summary>
-        internal static GameObject CreateBoat(GameObject hullModel, bool withSplash, bool withDryInterior)
+        internal static GameObject CreateBoat(GameObject hullModel, bool withSplash, bool withDryInterior,
+                                              BoatModelForward modelForward = BoatModelForward.PositiveZ)
         {
             var boat = NewUndoableGameObject(BoatName);
             boat.transform.position = PropSpawnPosition();
@@ -59,6 +118,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             if (hullModel != null)
             {
                 GameObject visual = InstantiateVisual(hullModel, boat.transform);
+                // Bow onto +Z FIRST - the bounds fit below must read the corrected frame.
+                visual.transform.localRotation = ModelForwardRotation(modelForward);
                 if (!TryGetCombinedRendererBounds(visual, out Bounds worldBounds))
                 {
                     // A model with no renderers can't size the collider; fall back to the
@@ -94,7 +155,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             buoyancy.surfaceRelativeDrag = true;
             buoyancy.ignoreInteractiveRipples = true; // don't let the boat's own wake ripples propel it
 
-            boat.AddComponent<BoatController>();
+            var controller = boat.AddComponent<BoatController>();
+            if (hullModel != null) FitControllerToHull(controller, rigidbody, hullCenterLocal, hullSize);
             boat.AddComponent<WaterMembership>();
             boat.AddComponent<WaterInteractable>(); // wake ripples
             if (withSplash) boat.AddComponent<WaterSplash>();
@@ -124,7 +186,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         }
 
         // Instantiate the hull visual under the boat root (prefab-linked when the source is a
-        // prefab asset, plain clone otherwise) at local identity - the ROOT owns placement.
+        // prefab asset, plain clone otherwise) at local identity - the ROOT owns placement; the
+        // caller may then yaw the child (model-forward correction) BEFORE anything reads bounds.
         static GameObject InstantiateVisual(GameObject source, Transform parent)
         {
             var visual = PrefabUtility.InstantiatePrefab(source) as GameObject;

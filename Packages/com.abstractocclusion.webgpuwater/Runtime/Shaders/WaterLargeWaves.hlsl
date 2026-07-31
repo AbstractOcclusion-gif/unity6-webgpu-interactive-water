@@ -90,9 +90,15 @@ float LbwEdgeWeight(float2 worldXZ)
 
 // Cheap per-component hash in [0,1). Used to SCATTER each wave's direction and phase so crests do
 // not line up into regular parallel ridges (the "corduroy" look of a coherent wave sum).
+// The constants are validator-guarded against the CPU mirror (LargeWaveField.Hash) - buoyancy
+// desyncs from the rendered crests silently if either side drifts.
+#define LBW_HASH_SINE_FREQ 12.9898
+#define LBW_HASH_SINE_SCALE 43758.5453
+// Decorrelates the phase hash stream from the heading hash stream fed the same wave index.
+#define LBW_PHASE_HASH_STREAM_OFFSET 16.0
 float LbwHash(float n)
 {
-    return frac(sin(n * 12.9898) * 43758.5453);
+    return frac(sin(n * LBW_HASH_SINE_FREQ) * LBW_HASH_SINE_SCALE);
 }
 
 // Everything the surface needs from the wave field at one WORLD-space xz, from a SINGLE pass over
@@ -129,7 +135,7 @@ void LbwAccumulateBand(float2 worldXZ, int count, float baseWavelength, float wa
         float headingJitter = (LbwHash(fn + phaseSeed) * 2.0 - 1.0) * dirSpread;
         float heading = _LargeWaveWindHeading + headingJitter;
         float2 dir = float2(cos(heading), sin(heading));
-        float phaseOffset = LbwHash(fn + phaseSeed + 16.0) * LBW_TWO_PI;
+        float phaseOffset = LbwHash(fn + phaseSeed + LBW_PHASE_HASH_STREAM_OFFSET) * LBW_TWO_PI;
 
         // Shoaling response of THIS component: 1 in deep water, falling toward 0 as the column
         // depth drops below half its wavelength. Drives attenuation, refraction and compression

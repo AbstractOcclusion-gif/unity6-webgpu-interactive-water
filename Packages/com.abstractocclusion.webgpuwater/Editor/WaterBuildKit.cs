@@ -15,10 +15,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 {
     internal static partial class WaterBuildKit
     {
-        // User-facing product name and log prefix. ONE definition each: these were inlined per call
-        // site in four different spellings ("[WebGpuWater]", "WebGpuWater:", "[WebGpuWater]",
-        // "WaterVolume:"), which is how the pre-rebrand name survived into dialog titles and the
-        // generated-asset folder long after the namespaces were renamed.
+        // User-facing product name and log prefix. Define them ONCE here: inlining per call site
+        // (four different spellings at one point) is how the pre-rebrand name survived into dialog
+        // titles and the generated-asset folder long after the namespaces were renamed.
+        // HONESTY NOTE (2026-07-31 audit): ~37 call sites across this assembly still inline the
+        // literal instead of routing through these consts. New code must use them; migrating the
+        // legacy sites is open (docs/WebGpuWater_Standards_Audit_2026-07-31.md).
         internal const string ProductName = "WebGPU Water";
         internal const string LogPrefix = "[WebGpuWater] ";
 

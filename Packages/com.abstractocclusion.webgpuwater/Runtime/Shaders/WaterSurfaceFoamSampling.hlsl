@@ -365,8 +365,10 @@ float2 WhitecapStreakFrame(float2 v)
 
 // Ocean whitecap pattern with distance anti-tiling. Combines the base foam tile with a rotated,
 // differently-scaled second octave that fades in with distance, so the texture's repeat stops
-// reading as a grid toward the horizon. min() of the two octaves as they blend keeps foam only
-// where BOTH agree, which also breaks the round patches into more whitecap-like shapes. Returns
+// reading as a grid toward the horizon. The octaves merge through WhitecapOctaveBlend (see its
+// header) - a variance-preserving weighted blend, NOT min(): min() kept foam only where both
+// octaves agreed, which collapsed the pattern histogram and read as ~10x sparser foam past the
+// blend distance (fixed 2026-07-31; do not reintroduce). Returns
 // the pattern rgb; .r drives the coverage dissolve.
 // tileSize is a PARAMETER so the surf whitewash can reuse this exact pipeline with its
 // own dedicated tiling (decoupled from the ocean whitecap knob); the no-arg wrappers

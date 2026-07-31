@@ -9,12 +9,33 @@ namespace AbstractOcclusion.WebGpuWater
 {
     public partial class WaterVolume
     {
+        // ---- Injection boundary guard -------------------------------------------------------
+        // A NaN slips PAST every window/footprint test below: comparisons with NaN are all
+        // false, so "outside [-1,1] -> return" never rejects it, and ONE non-finite texel
+        // ping-pongs into the whole heightfield - a physics blow-up upstream kills the water
+        // with no message. Non-finite input is a caller bug: warn ONCE per session so the
+        // console names it, then drop every such call (fail fast without 60-per-second spam).
+        static bool s_warnedNonFiniteInjection;
+        static void WarnNonFiniteInjection()
+        {
+            if (s_warnedNonFiniteInjection) return;
+            s_warnedNonFiniteInjection = true;
+            Debug.LogWarning("WaterVolume: rejected a ripple/wake injection carrying NaN or " +
+                             "Infinity (position, step, radius or strength). Fix the caller; " +
+                             "further occurrences are dropped silently this session.");
+        }
+        static bool AllFinite(float a, float b, float c, float d)
+            => float.IsFinite(a) && float.IsFinite(b) && float.IsFinite(c) && float.IsFinite(d);
+        static bool AllFinite(Vector3 v)
+            => float.IsFinite(v.x) && float.IsFinite(v.y) && float.IsFinite(v.z);
+
         /// <summary>Inject a ripple at a WORLD position (x,z). Converted into the pool
         /// footprint via the volume frame; out-of-footprint calls are ignored. Radius is
         /// in world units (kept round via the average horizontal extent).</summary>
         public void AddRipple(float worldX, float worldZ, float radius, float strength)
         {
             if (_water == null) return;
+            if (!AllFinite(worldX, worldZ, radius, strength)) { WarnNonFiniteInjection(); return; }
 
             // Windowed bodies inject into the sim WINDOW frame; ripples outside it are dropped.
             if (_windowed)
@@ -41,6 +62,9 @@ namespace AbstractOcclusion.WebGpuWater
         public void AddSphereInteraction(Vector3 worldPos, Vector3 worldStep, float radius, float strength)
         {
             if (_water == null) return;
+            if (!AllFinite(worldPos) || !AllFinite(worldStep) ||
+                !float.IsFinite(radius) || !float.IsFinite(strength))
+            { WarnNonFiniteInjection(); return; }
 
             // Submersion weight from the ANALYTIC waterline (rest + wind + swell, never the live ripples),
             // so the object's own wake can't feed back into how hard it pushes.

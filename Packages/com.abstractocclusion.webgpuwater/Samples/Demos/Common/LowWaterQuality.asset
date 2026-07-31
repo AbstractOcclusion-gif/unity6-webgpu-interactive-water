@@ -15,7 +15,7 @@ MonoBehaviour:
   selection: 1
   highSimResolution: 512
   highCausticResolution: 1024
-  highGodRaySteps: 64
+  highGodRaySteps: 32
   highGodRays: 1
   highRichReflections: 1
   highMaxWaveCount: 16

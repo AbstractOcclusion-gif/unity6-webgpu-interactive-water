@@ -231,10 +231,13 @@ float _SurfFoamTrailLength;  // trailing-deposit length multiplier (1 = legacy)
 #define SURF_PLUNGE_BREAKER_WIDEN  0.6  // lip profile exponent at full plunge (< 1 widens the lobe)
 
 // Matches LbwHash in WaterLargeWaves.hlsl / Hash in LargeWaveField.cs (same constants, so the CPU
-// mirror stays byte-for-byte).
+// mirror stays byte-for-byte) - validator-guarded against that mirror, so the match is a console
+// warning instead of hand-discipline.
+#define SURF_HASH_SINE_FREQ 12.9898
+#define SURF_HASH_SINE_SCALE 43758.5453
 float SurfHash(float n)
 {
-    return frac(sin(n * 12.9898) * 43758.5453);
+    return frac(sin(n * SURF_HASH_SINE_FREQ) * SURF_HASH_SINE_SCALE);
 }
 
 // Wrap a front index onto the master beat: every per-front quantity (hash, set envelope,

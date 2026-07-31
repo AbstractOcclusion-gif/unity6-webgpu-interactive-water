@@ -122,6 +122,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         // Boat creator (primitive hull by default; drop a model prefab in for a custom hull).
         [SerializeField] GameObject _boatHullModel;
+        [SerializeField] WaterBuildKit.BoatModelForward _boatModelForward = WaterBuildKit.BoatModelForward.PositiveZ;
         [SerializeField] bool _boatChaseCamera = true;
         [SerializeField] bool _boatDryInterior = true;
 
@@ -568,6 +569,15 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                                                         "ROOT stays at scale (1,1,1) with a collider auto-fitted to the " +
                                                         "model's bounds, so nothing gets stretched."),
                 _boatHullModel, typeof(GameObject), allowSceneObjects: false);
+            using (new EditorGUI.DisabledScope(_boatHullModel == null))
+                _boatModelForward = (WaterBuildKit.BoatModelForward)EditorGUILayout.EnumPopup(
+                    new GUIContent("Model forward", "Axis the hull model was authored facing (its bow). The build " +
+                                                    "rotates the visual child so the boat's forward IS the bow - " +
+                                                    "thrust, steering, the fitted collider and the dry interior all " +
+                                                    "follow. The longest horizontal side of a hull is its length; " +
+                                                    "if the boat drives sideways or backwards, rebuild with the " +
+                                                    "matching axis."),
+                    _boatModelForward);
             _boatChaseCamera = EditorGUILayout.Toggle(
                 new GUIContent("Chase camera", "Swap the scene camera's controller for a yaw-only follow camera " +
                                                "locked to the boat (orbit/fly are disabled, not removed)."),
@@ -582,7 +592,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             {
                 Undo.SetCurrentGroupName("Create Boat");
                 int undoGroup = Undo.GetCurrentGroup();
-                GameObject boat = CreateBoat(_boatHullModel, withSplash: _splash, withDryInterior: _boatDryInterior);
+                GameObject boat = CreateBoat(_boatHullModel, withSplash: _splash, withDryInterior: _boatDryInterior,
+                                             modelForward: _boatModelForward);
                 if (boat == null) return;
                 if (_boatChaseCamera) FocusSceneOnBoat(boat);
                 Selection.activeObject = boat;

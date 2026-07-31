@@ -93,27 +93,6 @@ bool InsideExclusion(float3 worldPos)
     return false;
 }
 
-// Deepest NORMALISED interior depth of a point across the active volumes: 0 = outside
-// every volume (or exactly on a surface), rising toward EXCLUSION_LOCAL_HALF_EXTENT at a
-// volume's centre, in unit-local coords - so a thin shell near the boundary stays thin
-// whatever the authored size. Lets a consumer FADE by intrusion depth instead of the binary
-// InsideExclusion - the foam particles use it so a dry volume sweeping into sprites (a
-// moving boat hull) dissolves them instead of one-frame popping them.
-float ExclusionInteriorDepth(float3 worldPos)
-{
-    int count = (int)_ExclusionCount;
-    float depth = 0.0;
-    [loop]
-    for (int i = 0; i < count; i++)
-    {
-        float3 local = mul(_ExclusionWorldToLocal[i], float4(worldPos, 1.0)).xyz;
-        // < 0 when outside this volume, so max() below simply ignores it.
-        depth = max(depth, PrimitiveInteriorDepth(_ExclusionShape[i].x, local,
-                                                  EXCLUSION_LOCAL_HALF_EXTENT));
-    }
-    return depth;
-}
-
 // ---- Particle culling (foam/spray sprites, splash crown + droplets) ------------------
 // The particle consumers respect the per-volume handling in _ExclusionEdgeParams: a
 // volume with params.y = 0 does not touch particles at all. Callers gate every use on
@@ -164,7 +143,7 @@ float ExclusionParticleAttenuation(float3 worldPos)
 
 // Deepest interior depth of worldPos across the particle-affecting volumes plus that
 // volume's dissolve-speed multiplier: x = depth (0 = outside them all, unit-local coords,
-// the ExclusionInteriorDepth convention), y = params.w of the deepest volume (1 when
+// the PrimitiveInteriorDepth unit-local convention), y = params.w of the deepest volume (1 when
 // outside). The compute Update kernel scales its age-boost dissolve by y.
 float2 ExclusionParticleInteriorDepth(float3 worldPos)
 {

@@ -44,11 +44,18 @@ namespace AbstractOcclusion.WebGpuWater
             WaterVolume body = WaterVolume.BodyContaining(center);
             if (body == null) { _wasUnder = false; return; }
 
-            // No height yet (first frames before the readback lands, or out of footprint):
-            // keep last frame's state rather than assume a surface at world y = 0, which
-            // would swallow the first entry splash of any body placed off the origin.
-            if (!body.TryGetWaterHeight(center.x, center.z, out float surfaceY) &&
-                !body.TryGetAnalyticWaterline(center.x, center.z, out surfaceY))
+            // ANALYTIC waterline only (rest plane + wind waves + ocean swell), valid from
+            // frame 0. Deliberately NOT TryGetWaterHeight: that is a rippled READBACK query,
+            // so a splash component re-stamped the surface sampler's demand window every
+            // physics tick and held the full sim-field GPU->CPU transfer open for its whole
+            // lifetime (sim RT as RGBAFloat - 4 MiB per frame at the High tier) to answer a
+            // binary under/over test the analytic surface answers as well: interactive
+            // ripples are centimetre-scale against a collider-sized entry band, and a wake
+            // ripple re-triggering its own maker's splash is exactly the feedback loop
+            // TryGetAnalyticWaterline exists to break. Out of footprint: keep last frame's
+            // state rather than assume a surface at world y = 0, which would swallow the
+            // first entry splash of any body placed off the origin.
+            if (!body.TryGetAnalyticWaterline(center.x, center.z, out float surfaceY))
                 return;
 
             float halfY = _col != null ? _col.bounds.extents.y : FallbackHalfExtent;

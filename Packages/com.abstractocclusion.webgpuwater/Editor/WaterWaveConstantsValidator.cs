@@ -53,6 +53,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const string SharedHlslAssetName = "WaterShared";
         const string OceanFftComputeAssetName = "OceanFft";
         const string OceanFftAssetName = "WaterOceanFft";
+        // The scene-lights family (2026-07-31): WATER_SCENE_LIGHT_MAX sizes the HLSL uniform
+        // arrays, MaxSceneLights sizes the C# staging arrays and the publisher's cap. Drift =
+        // a SetVectorArray over-run or lamps silently dropped. Was a KEEP-IN-SYNC comment.
+        const string FogHlslAssetName = "WaterFog";
+        const string UniformPublisherAssetName = "WaterUniformPublisher";
         // FoamParticles.shader DRAWS the particles WaterFoamParticles.compute simulates, so the GPU
         // struct is authored in the .compute, in the .shader, AND as a C# struct whose size becomes
         // every consumer's buffer stride. Nothing linked the three: a field added on one side only does
@@ -74,8 +79,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // hlslDefine -> csharpConst. Every LBW_* #define in WaterLargeWaves.hlsl that has a
         // const counterpart in LargeWaveField.cs. SwellBaseAmplitude is intentionally absent:
         // its shader side is a positional literal (1.0) in EvaluateLargeBodyWaveShore, not a #define,
-        // so there is nothing stable to parse. LbwHash's inline magic numbers are likewise
-        // inline literals in both files, not consts, and are out of scope for this guard.
+        // so there is nothing stable to parse. LbwHash's sine-hash constants and the phase-hash
+        // stream offset WERE inline literals out of scope here; they are now hoisted
+        // (LBW_HASH_SINE_* / LBW_PHASE_HASH_STREAM_OFFSET, 2026-07-31) and guarded below.
+        static readonly (string Hlsl, string CSharp)[] SceneLightConstantPairs =
+        {
+            ("WATER_SCENE_LIGHT_MAX", "MaxSceneLights"),
+        };
+
         static readonly (string Hlsl, string CSharp)[] LargeWavesConstantPairs =
         {
             ("LBW_WAVE_COUNT",               "WaveCount"),
@@ -93,6 +104,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             ("LBW_GRAVITY",                  "Gravity"),
             ("LBW_TWO_PI",                   "TwoPi"),
             ("LBW_INVERSION_ITERATIONS",     "InversionIterations"),
+            // Sine-hash + phase-stream offset: formerly inline in LbwHash/Hash on both sides
+            // (see the note above) - hoisted so the mirror is machine-checked.
+            ("LBW_HASH_SINE_FREQ",           "HashSineFrequency"),
+            ("LBW_HASH_SINE_SCALE",          "HashSineScale"),
+            ("LBW_PHASE_HASH_STREAM_OFFSET", "PhaseHashStreamOffset"),
         };
 
         // Height-affecting SURF_* #defines in WaterSurfWaves.hlsl mirrored as consts in
@@ -102,6 +118,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         static readonly (string Hlsl, string CSharp)[] SurfWavesConstantPairs =
         {
             ("SURF_MIN_DEPTH",              "SurfMinDepth"),
+            // SurfHash's sine-hash pair - same C# truth as the LBW_ pair (one CPU mirror serves both).
+            ("SURF_HASH_SINE_FREQ",         "HashSineFrequency"),
+            ("SURF_HASH_SINE_SCALE",        "HashSineScale"),
             // Master-beat wrap + the two beat-periodic segmentation drifts (BEAT-1: the old
             // single SURF_CREST_SEED_DRIFT split into per-octave drifts, each an exact multiple
             // of 2pi/SURF_BEAT_WRAP_FRONTS). WaterVolume's clock reads the wrap through
@@ -311,7 +330,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 !TryReadPackageAsset(WaveBankAssetName, CSharpExtension, out string waveBankSource, out readError) ||
                 !TryReadPackageAsset(SharedHlslAssetName, HlslExtension, out string sharedHlslSource, out readError) ||
                 !TryReadPackageAsset(OceanFftComputeAssetName, ComputeExtension, out string oceanFftComputeSource, out readError) ||
-                !TryReadPackageAsset(OceanFftAssetName, CSharpExtension, out string oceanFftSource, out readError))
+                !TryReadPackageAsset(OceanFftAssetName, CSharpExtension, out string oceanFftSource, out readError) ||
+                !TryReadPackageAsset(FogHlslAssetName, HlslExtension, out string fogHlslSource, out readError) ||
+                !TryReadPackageAsset(UniformPublisherAssetName, CSharpExtension, out string uniformPublisherSource, out readError))
             {
                 Debug.LogWarning(LogPrefix + "validation skipped - " + readError);
                 return;
@@ -338,6 +359,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                             OceanFftAssetName, oceanFftSource, OceanFftSizeConstantPairs);
             CollectProblems(problems, FoamParticlesAssetName, ComputeExtension, foamComputeSource,
                             FoamParticlesAssetName, foamParticlesSource, FoamThreadGroupConstantPairs);
+            CollectProblems(problems, FogHlslAssetName, HlslExtension, fogHlslSource,
+                            UniformPublisherAssetName, uniformPublisherSource, SceneLightConstantPairs);
             CollectFoamParticleLayoutProblems(problems, foamComputeSource, foamShaderSource);
             if (problems.Count == 0) return;
 

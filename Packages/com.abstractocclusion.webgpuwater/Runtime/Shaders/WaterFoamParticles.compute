@@ -74,7 +74,7 @@ static const float FRAME_FADE_AGE_BOOST = 3.0;
 // Exclusion-volume fade (same idiom as the window-edge band): a dry volume sweeping INTO
 // live sprites - a moving boat hull plowing through its own bow spray - must not hard-pop
 // them out in one frame. Inside a volume the particle ages faster instead, ramping with
-// the normalised interior depth (ExclusionInteriorDepth): a face graze dissolves over a
+// the normalised interior depth (ExclusionParticleInteriorDepth): a face graze dissolves over a
 // few tenths of a second, the deep interior still vanishes near-instantly so nothing
 // lingers floating in a dry room.
 static const float EXCLUSION_FADE_SHELL = 0.2;      // unit-box depth over which the boost ramps

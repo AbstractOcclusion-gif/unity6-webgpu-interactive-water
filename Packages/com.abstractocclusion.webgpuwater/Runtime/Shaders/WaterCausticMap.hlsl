@@ -53,11 +53,16 @@ WaterCausticMap ResolveCausticMap(float3 worldPos, float3 poolPos, float3 lightD
     float3 refractedLight = -refract(-lightDirTowardSun, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
     float2 poolCuv = ProjectCausticUV(poolPos, WorldDirToPool(refractedLight));
 
-    // WINDOW frame: LargeBodyGodRays' LargeBodyCausticAt expression, reproduced exactly - same
-    // refracted-sun form (NOT negated, unlike the pool ray above), same reference plane, same
-    // normalisation - because that is the map proven to register with what LargeBodyCaustics.shader
-    // wrote. The plane is the GENERATOR's (_SimCenter.y - LARGE_CAUSTIC_REFERENCE_DEPTH, see that
-    // shader's vert), NOT the eye's waterline, which is a different plane.
+    // WINDOW frame: LargeBodyGodRays' LargeBodyCausticAt expression - same refracted-sun form
+    // (NOT negated, unlike the pool ray above), same normalisation - because that is the map
+    // proven to register with what LargeBodyCaustics.shader wrote. The REFERENCE PLANE is where
+    // the two consumer families deliberately part ways: floor projection (this file) uses the
+    // GENERATOR's frame (_SimCenter.y - LARGE_CAUSTIC_REFERENCE_DEPTH, see that shader's vert)
+    // so the pattern stays registered to the written map, while the god-ray march uses the LIVE
+    // camera-surface plane (camSurfY - ..., see its own comment there) so the shimmer tracks the
+    // swell instead of pumping against a stale scalar. The projection expression itself is still
+    // hand-mirrored in both files - drift there IS the visible-seam class; the dedupe is tracked
+    // (docs/WebGpuWater_Standards_Audit_2026-07-31.md, S3).
     float3 refractedSun = refract(-lightDirTowardSun, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);
     float causticRefPlaneY = _SimCenter.y - LARGE_CAUSTIC_REFERENCE_DEPTH;
     float2 projXZ = worldPos.xz + refractedSun.xz

@@ -582,15 +582,20 @@ float3 ReflectionStage(v2f i, WaterGeomStage g, out float fresnel)
     float3 skyRay = reflectedRay;
     skyRay.y = max(skyRay.y, REFLECTION_MIN_UP_Y);
     skyRay = normalize(skyRay);
-    float3 reflectedColor = SampleSkyEnvironmentAniso(skyRay, surfaceRoughness);
+    float3 reflectedColor;
 
     // ---- Reflection: analytic -> planar -> SSR (SSR wins where it hits). The toggles
     // are uniform-driven (published per body via the property block), so they are live. ----
     // The mirror covers exactly the screen and is MIRROR-wrapped (PlanarMirror.cs), so every
     // sample has real data and the sky needs no blending back in. Blending it at the border was
-    // tried and drew a visible seam around the frame instead.
+    // tried and drew a visible seam around the frame instead. And BECAUSE planar replaces the
+    // sky mirror outright, the two are a real if/else: sampling the sky first and overwriting
+    // it paid the aniso cube taps on every planar pixel for a value that was always discarded.
+    // Both samplers are explicit-LOD, so the branch is derivative-safe.
     if (_UsePlanar > 0.5)
         reflectedColor = SamplePlanarReflection(i.screenPos, normal, surfaceRoughness);
+    else
+        reflectedColor = SampleSkyEnvironmentAniso(skyRay, surfaceRoughness);
     if (_UseSSR > 0.5)
     {
         float ssrHit;
@@ -692,13 +697,28 @@ float3 RefractionStage(v2f i, WaterGeomStage g, float waterClarity, out float3 b
     {
         float2 ruv = ScreenUV(i.screenPos);
         ruv += normal.xz * _RefractionDistortion;
+        // Screen-space leak guard: the distorted UV can land on the pixels of an ABOVE-water
+        // object (a boat hull beside this water pixel), painting a refracted ghost of it around
+        // the waterline. Anything nearer the camera than this surface fragment cannot be seen
+        // THROUGH the surface, so reject the offset and fall back to the undistorted UV - the
+        // scene truly behind this pixel (the opaque copy there cannot hold an above-water
+        // object, or it would have occluded this water fragment). The offset's depth was
+        // already fetched for the fog span below, so clean pixels pay nothing new (a reorder)
+        // and rejected pixels pay one extra depth fetch - no ray march needed. This also fixes
+        // the span itself: it used to measure against the GHOST's depth, so the leaked hull
+        // rendered un-fogged on top of being wrong. All reads explicit-LOD (branch-safe).
+        float surfEyeR  = EyeDepthOf(i.worldPos);
+        float sceneEyeR = LinearEyeDepth(RawSceneDepth(saturate(ruv)));
+        if (sceneEyeR < surfEyeR)
+        {
+            ruv = ScreenUV(i.screenPos);
+            sceneEyeR = LinearEyeDepth(RawSceneDepth(saturate(ruv)));
+        }
         refractedColor = UNITY_SAMPLE_TEX2D(_CameraOpaqueTexture, saturate(ruv)).rgb; // tinted by the water absorption below
 
         // Fog the transmitted view by the water thickness behind the surface
         // (scene eye-depth - surface eye-depth), so heavy fog reads through too.
         // Chunk bodies cap the span at the primitive exit (the scene behind is DRY space).
-        float sceneEyeR = LinearEyeDepth(RawSceneDepth(saturate(ruv)));
-        float surfEyeR  = EyeDepthOf(i.worldPos);
         float waterSpan = max(0.0, sceneEyeR - surfEyeR);
         if (_ChunkFogClamp > 0.5)
             waterSpan = min(waterSpan, ChunkRefractionSpan(i.position, refractedRay));
