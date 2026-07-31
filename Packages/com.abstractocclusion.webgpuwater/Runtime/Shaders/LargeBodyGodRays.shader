@@ -76,6 +76,14 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             // with the flat Simple fog waterline and pay zero extra fetches; Full derives them
             // from the live GPU field (see the surface-sync contract in the file header).
             #pragma multi_compile_fragment _ WATER_FOG_SIMPLE
+            // A2: scene-lamp in-scatter inside the march, on the fog's own published-light
+            // keyword (armed by PublishUnderwater from the SAME knobs the strength floats
+            // carry; never together with WATER_FOG_SIMPLE - the budget tier stays sun-only,
+            // and the lamp code below also self-fences on !SIMPLE so that dead combination
+            // compiles to nothing). Keyword + #ifdef, not a uniform branch: the per-sample
+            // lamp loop would otherwise size every pixel's register allocation whether or not
+            // a lamp exists - the exact fps-cliff mechanism the Simple fork documents.
+            #pragma multi_compile_fragment _ WATER_FOG_POINT_LIGHTS
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
@@ -127,6 +135,10 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             // 0 (the default) makes every above-water pixel early-out exactly as it did before this
             // existed, so the shipped underwater look is byte-identical until an author opts in.
             float  _LargeGodRayFromAir;
+            // A2: strength of the scene-lamp halos inside the march ([0,1], per body, gated
+            // CPU-side to an active god-ray ocean). 0 = the shipped sun-only shafts; the lamp
+            // term is additionally compiled out entirely unless WATER_FOG_POINT_LIGHTS is armed.
+            float  _LargeGodRayLightScatter;
 
             // Temporal reprojection (the KWS calm): the pass renders into a persistent history RT and
             // blends each pixel with last frame's value reprojected by scene world position. Combined
@@ -583,6 +595,52 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 float3 viewFogStep = (_WaterFogEnabled > 0.5)
                     ? exp(-_WaterExtinction.rgb * (_WaterFogDensity * dt)) : float3(1.0, 1.0, 1.0);
 
+#if defined(WATER_FOG_POINT_LIGHTS) && !defined(WATER_FOG_SIMPLE)
+                // A2 scene lamps - compact the published list to the lights whose RANGE SPHERE the
+                // marched span [tEnter, tExit] actually enters: one closest-approach test per
+                // light, so an out-of-reach lamp costs a dot product, never steps x evaluations.
+                // Colour x depthMood is constant along the ray per lamp and folded here ONCE.
+                // The depth-mood reference is the REST PLANE (_VolumeCenter.y) - exactly what the
+                // analytic fog and the surface pass the shared integral (their call sites both
+                // hand it _VolumeCenter.y), so the march halo and the fog glow of one lamp agree
+                // by construction; a wave passing over a lamp must not pump its mood. Everything
+                // surface-relative in this march stays on the live camSurfY terms above -
+                // doctrine unchanged, and no new use of the stale _UnderwaterSurfaceY scalar.
+                //
+                // tc/h/atan are hoisted because the march integrates each lamp's 1/d^2 with the
+                // integral's OWN atan kernel, per STEP SEGMENT, not by point-sampling the peak
+                // (see the loop) - the atan endpoint at a step's start is the previous step's
+                // end, so the running 'lampAtan' makes it one atan per lamp per step.
+                int lampIndex[WATER_SCENE_LIGHT_MAX];
+                float3 lampTint[WATER_SCENE_LIGHT_MAX];
+                float lampTc[WATER_SCENE_LIGHT_MAX];   // closest approach along the ray (unclamped)
+                float lampH[WATER_SCENE_LIGHT_MAX];    // closest-approach distance, integral's floor
+                float lampAtan[WATER_SCENE_LIGHT_MAX]; // running atan((t - tc)/h), seeded at tEnter
+                int lampCount = 0;
+                int sceneLightCount = min((int)_WaterSceneLightCount, WATER_SCENE_LIGHT_MAX);
+                [loop]
+                for (int li = 0; li < sceneLightCount; li++)
+                {
+                    float4 lampPosRange = _WaterSceneLightPosRange[li];
+                    float tcRay = dot(lampPosRange.xyz - camWorld, rayDir);
+                    float tLamp = clamp(tcRay, tEnter, tExit);
+                    float3 lampSep = lampPosRange.xyz - (camWorld + rayDir * tLamp);
+                    if (dot(lampSep, lampSep) > lampPosRange.w * lampPosRange.w) continue;
+                    float3 hVec = lampPosRange.xyz - (camWorld + rayDir * tcRay);
+                    float h = sqrt(max(dot(hVec, hVec), WATER_SCENE_LIGHT_MIN_DIST_SQ));
+                    lampIndex[lampCount] = li;
+                    lampTc[lampCount] = tcRay;
+                    lampH[lampCount] = h;
+                    lampAtan[lampCount] = atan((tEnter - tcRay) / h);
+                    lampTint[lampCount] = _WaterSceneLightColorCone[li].rgb
+                                        * DownwellingAttenuation(lampPosRange.y, _VolumeCenter.y);
+                    lampCount++;
+                }
+                // The lamps' OWN accumulator, never the sun's: the sun sum is later multiplied by
+                // _SunColor x HG phase x _LargeGodRayColor x density, none of which a lamp owes.
+                float3 lampAccum = float3(0.0, 0.0, 0.0);
+#endif
+
                 // Near-field caustic shimmer: the refracted sun and its reference plane are constant along
                 // the straight view ray, so hoist them; each sample then projects onto that plane to read
                 // the surface focusing. Skipped entirely when the shimmer is off (strength 0).
@@ -632,9 +690,53 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                     caustic *= 1.0 + GODRAY_BASE_CALM_GAIN * baseCalm;
                     caustic *= 1.0 - saturate(t * GODRAY_CAUSTIC_DISTANCE_FADE);
                     // Dry-interior exclusion: samples inside an exclusion volume are air - skip their
-                    // scatter; the view-fog transmittance still advances along the ray.
-                    if (!InsideExclusion(p))
+                    // scatter (sun AND lamps); the view-fog transmittance still advances along the ray.
+                    bool sampleWet = !InsideExclusion(p);
+                    if (sampleWet)
                         accum += shadow * depthFade * viewFog * (1.0 + caustic * _LargeGodRayCausticStrength);
+#if defined(WATER_FOG_POINT_LIGHTS) && !defined(WATER_FOG_SIMPLE)
+                    // A2 lamps, integrated over this STEP SEGMENT with the closed-form integral's
+                    // own atan kernel - NOT point-sampled at the jittered position. A lamp's
+                    // 1/d^2 core is far narrower than a march step (metres of dt vs centimetres
+                    // of halo), so point sampling aliases the peak against the step phase:
+                    // measured 379% overshoot with wild radial oscillation = the concentric
+                    // CIRCLES Bert saw around a sunk lamp (2026-07-31). The per-segment
+                    //   (atan((t1 - tc)/h) - atan((t0 - tc)/h)) / h
+                    // is EXACT for the inverse-square part at any step count (0.000% error in
+                    // the same test), so the halo is smooth by construction and converges to the
+                    // analytic fog glow's own shape - the two-glows-cannot-drift rule, now
+                    // holding per step. The running lampAtan advances EVERY step, skipped or
+                    // wet, so a dry segment's mass is dropped, never re-attributed.
+                    // Window / cone / light-leg absorption vary slowly across one step: sampled
+                    // at the nearest point the SEGMENT can see (the integral's own rule), via
+                    // the shared helper - x lightDist^2 strips the helper's 1/d^2, which the
+                    // kernel already integrates exactly. Deliberately NO phase term (the
+                    // analytic glow is isotropic and the two must agree in shape - Bert's A2
+                    // call) and NO sun-shadow / ExclusionSunVisibility term (those model the
+                    // SUN's path; the analytic fog glow carries no lamp shadowing either).
+                    float segEnd = tEnter + (s + 1) * dt; // un-jittered: the kernel is exact per
+                                                          // segment, jitter would only add noise
+                    [loop]
+                    for (int lj = 0; lj < lampCount; lj++)
+                    {
+                        float newAtan = atan((segEnd - lampTc[lj]) / lampH[lj]);
+                        float segKernel = (newAtan - lampAtan[lj]) / lampH[lj];
+                        lampAtan[lj] = newAtan;
+                        if (!sampleWet) continue;
+                        float tSeg = clamp(lampTc[lj], segEnd - dt, segEnd);
+                        float lampDist;
+                        float lampAtten = WaterSceneLightPointAtten(
+                            _WaterSceneLightPosRange[lampIndex[lj]],
+                            _WaterSceneLightColorCone[lampIndex[lj]],
+                            _WaterSceneLightSpotDir[lampIndex[lj]],
+                            camWorld + rayDir * tSeg, lampDist);
+                        float windowCone = lampAtten * (lampDist * lampDist);
+                        lampAccum += lampTint[lj]
+                                   * (windowCone * segKernel * viewFog
+                                      * exp(-_WaterExtinction.rgb
+                                            * (_WaterFogDensity * lampDist)));
+                    }
+#endif
                     float sampleWeight = (viewFog.r + viewFog.g + viewFog.b) / 3.0;
                     viewFogWeightSum += sampleWeight;
                     viewFogWeightedDist += sampleWeight * t;
@@ -653,6 +755,21 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 accum /= max(viewFogWeightSum, 1e-4);
 
                 float3 col = _LargeGodRayColor.rgb * _SunColor * (accum * _LargeGodRayDensity * phase);
+#if defined(WATER_FOG_POINT_LIGHTS) && !defined(WATER_FOG_SIMPLE)
+                // A2 lamps join here - BEFORE the regime scale and the temporal blend, so the
+                // halo is waterline-masked like the sun shafts, calmed by the same history, and
+                // reaches _LargeGodRayLastFrame for the underside mirror shafts for free.
+                // NO dt here: the per-segment atan kernel above already integrates dt exactly
+                // (it IS the span integral, chopped at step boundaries), so the only scale is
+                // the SAME density x gain the closed-form integral applies to its result - the
+                // march halo and the analytic fog glow share one tuning scale by construction -
+                // then the author's balance knob. Deliberately NOT the sun term's
+                // self-normalising average above: that normalisation keeps sun shafts O(1)
+                // against fog density, but the lamp halo must stay commensurate with the
+                // analytic glow it adds to. Knob 0 / keyword off = byte-identical legacy shafts.
+                col += lampAccum * (_WaterFogDensity
+                                    * WATER_SCENE_LIGHT_GAIN * _LargeGodRayLightScatter);
+#endif
                 // Submerged fade, or the from-air pane weight - whichever claims this pixel.
                 col *= regime;
 

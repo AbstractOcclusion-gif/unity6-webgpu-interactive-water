@@ -225,6 +225,31 @@ float4 _WaterSceneLightSpotDir[WATER_SCENE_LIGHT_MAX];   // xyz spot direction, 
 float _WaterSceneLightCount;   // TRUE published count - never a URP global (see above)
 float _UnderwaterLightScatter; // the per-body Light Scatter knob (Water Fog block)
 
+// Point-local attenuation of ONE published light at sample point 'p': smooth range window
+// (URP's (1-(d^2/r^2)^2)^2), squared spot cone, inverse-square falloff. These are the
+// geometry factors every lamp-glow consumer must agree on, extracted here so the closed-form
+// integral below and the god-ray march (per-sample) evaluate ONE implementation and can never
+// drift apart in tuning - the same rule that gave the fog and the surface one integral.
+// Colour, depth mood and extinction are deliberately NOT folded in: they multiply outside so
+// each caller keeps its own policy - the integral applies its single exp over view+light legs
+// exactly as before, while the march pairs the returned RAW 'lightDist' with the running
+// per-step view transmittance it already carries (folding an exp here would double-apply it).
+// Pure ALU, like everything in this header.
+float WaterSceneLightPointAtten(float4 posRange, float4 colorCone, float4 spotDir,
+                                float3 p, out float lightDist)
+{
+    float3 toLight = posRange.xyz - p;
+    float distSq = max(dot(toLight, toLight), WATER_SCENE_LIGHT_MIN_DIST_SQ);
+    float rangeSq = max(posRange.w * posRange.w, WATER_SCENE_LIGHT_MIN_DIST_SQ);
+    float window = saturate(1.0 - (distSq * distSq) / (rangeSq * rangeSq));
+    window *= window;
+    float3 lightDir = toLight * rsqrt(distSq);
+    float cone = saturate((dot(-lightDir, spotDir.xyz) - colorCone.w) * spotDir.w);
+    cone *= cone; // URP squares its angle attenuation; matched so lamps agree with geometry
+    lightDist = sqrt(distSq);
+    return window * cone / distSq;
+}
+
 // Closed-form single scatter of the published lights over the wet segment [tStart, tEnd] of
 // the unit ray cam + dir*t. 'tWaterStart' is where WATER begins on that ray: extinction is
 // measured from there, so an above-water eye does not extinguish its glow through AIR.
@@ -260,16 +285,12 @@ float3 WaterSceneLightsInscatter(float3 cam, float3 dir, float tStart, float tEn
         float h = sqrt(max(dot(hVec, hVec), WATER_SCENE_LIGHT_MIN_DIST_SQ));
         // Window/cone/1-over-d^2 sampled at the nearest point the SPAN can actually see, so a
         // light behind the camera or beyond the scene contributes what the water between the
-        // bounds receives, not what its own closest point would.
+        // bounds receives, not what its own closest point would. The factors themselves live
+        // in WaterSceneLightPointAtten (shared with the god-ray march - see its header).
         float tAtten = clamp(tc, tStart, tEnd);
-        float3 toLight = posRange.xyz - (cam + dir * tAtten);
-        float distSq = max(dot(toLight, toLight), WATER_SCENE_LIGHT_MIN_DIST_SQ);
-        float rangeSq = max(posRange.w * posRange.w, WATER_SCENE_LIGHT_MIN_DIST_SQ);
-        float window = saturate(1.0 - (distSq * distSq) / (rangeSq * rangeSq));
-        window *= window;
-        float3 lightDir = toLight * rsqrt(distSq);
-        float cone = saturate((dot(-lightDir, spotDir.xyz) - colorCone.w) * spotDir.w);
-        cone *= cone; // URP squares its angle attenuation; matched so lamps agree with geometry
+        float lightDist;
+        float atten = WaterSceneLightPointAtten(posRange, colorCone, spotDir,
+                                                cam + dir * tAtten, lightDist);
         float deltaAtan = atan((tEnd - tc) / h) - atan((tStart - tc) / h);
         // View leg (camera side, from where the water starts) PLUS light leg (lamp to the
         // sample point, all water by construction - the lamp is submerged if it glows at
@@ -277,13 +298,13 @@ float3 WaterSceneLightsInscatter(float3 cam, float3 dir, float tStart, float tEn
         // every other path through this medium.
         float3 extinct = exp(-_WaterExtinction.rgb
                              * (_WaterFogDensity
-                                * (max(tAtten - tWaterStart, 0.0) + sqrt(distSq))));
+                                * (max(tAtten - tWaterStart, 0.0) + lightDist)));
         // The depth-mood dial (see header): the lamp's own depth against the rest plane,
         // through the SAME DownwellingAttenuation everything else obeys. Identity while the
         // Depth Attenuation feature is off.
         float3 depthMood = DownwellingAttenuation(posRange.y, surfaceY);
         // (window * cone / d^2) at the sample point, times h * deltaAtan = the span integral.
-        scatter += colorCone.rgb * (window * cone / distSq * h * deltaAtan)
+        scatter += colorCone.rgb * (atten * h * deltaAtan)
                  * extinct * depthMood;
     }
     return scatter * (_WaterFogDensity * WATER_SCENE_LIGHT_GAIN);

@@ -145,6 +145,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_LargeGodRayCausticStrength = Shader.PropertyToID("_LargeGodRayCausticStrength");
         static readonly int ID_LargeGodRayCausticDepthSoften = Shader.PropertyToID("_LargeGodRayCausticDepthSoften");
         static readonly int ID_LargeGodRayFromAir = Shader.PropertyToID("_LargeGodRayFromAir");
+        static readonly int ID_LargeGodRayLightScatter = Shader.PropertyToID("_LargeGodRayLightScatter");
         static readonly int ID_LargeCausticProjectionLod = Shader.PropertyToID("_LargeCausticProjectionLod");
         static readonly int ID_CameraUnderwater = Shader.PropertyToID("_CameraUnderwater");
         static readonly int ID_CameraDryVolume = Shader.PropertyToID("_CameraDryVolume");
@@ -399,8 +400,13 @@ namespace AbstractOcclusion.WebGpuWater
             // not Simple (the budget path stays sun-only). Same keyword-beside-float split as the
             // Simple pair above, so the CPU gate and the compiled variant cannot disagree. The
             // light list itself is published in the same breath - list, keyword and knob move
-            // together or not at all.
-            bool fogPointLights = _body.UnderwaterLightScatter > 0f && fogSimple < 0.5f;
+            // together or not at all. TWO knobs can want the list since A2: the fog's Light
+            // Scatter and the god-ray march's Light Scatter (LargeGodRayLightScatter, already
+            // gated to an active god-ray ocean) - either arms the shared keyword, so a lamp can
+            // glow in the shafts even while the analytic fog glow is authored to 0.
+            bool fogPointLights = (_body.UnderwaterLightScatter > 0f
+                                   || _body.LargeGodRayLightScatter > 0f)
+                                  && fogSimple < 0.5f;
             if (fogPointLights) Shader.EnableKeyword(KW_UnderwaterFogPointLights);
             else Shader.DisableKeyword(KW_UnderwaterFogPointLights);
             PublishSceneLights(fogPointLights);
@@ -575,6 +581,7 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_LargeGodRayCausticStrength, _body.LargeGodRayCausticStrength);
             sink.SetFloat(ID_LargeGodRayCausticDepthSoften, _body.LargeGodRayCausticDepthSoften);
             sink.SetFloat(ID_LargeGodRayFromAir, _body.LargeGodRayFromAir);
+            sink.SetFloat(ID_LargeGodRayLightScatter, _body.LargeGodRayLightScatter);
             sink.SetFloat(ID_LargeCausticProjectionLod, _body.LargeCausticProjectionLod);
 
             sink.SetVectorArray(ID_WaveA, _body.WaveBank.PackedA);

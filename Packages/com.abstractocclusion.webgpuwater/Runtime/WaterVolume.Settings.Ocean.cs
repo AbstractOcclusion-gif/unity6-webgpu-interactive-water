@@ -99,6 +99,12 @@ namespace AbstractOcclusion.WebGpuWater
                      "but looking through a pane genuinely IS looking into a lit water volume. Scales " +
                      "the shafts relative to the submerged view, which always renders full strength.")]
             [Range(0f, 1f)] public float largeGodRayFromAir = 0f;
+            [Tooltip("Scene point/spot lights scattered INSIDE the volumetric shaft march: a sunk " +
+                     "lamp grows a real halo in the beams, and the halo reaches the underside " +
+                     "mirror shafts. This ADDS to the fog's own Light Scatter glow (Water Fog " +
+                     "block) - the two are separate layers, balance them by ear exactly like sun " +
+                     "in-scatter vs god rays. 0 = off, the shipped look. Simple fog tiers skip it.")]
+            [Range(0f, 1f)] public float largeGodRayLightScatter = 0f;
             [Tooltip("Raymarch samples per pixel for the ocean shafts - SEPARATE from the pool god-ray steps. " +
                      "More = smoother beams, higher cost.")]
             [Range(LargeGodRayMinSteps, LargeGodRayMaxSteps)] public int largeGodRaySteps = DefaultLargeGodRaySteps;
@@ -462,6 +468,13 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>Strength of the from-air (through-a-carve-pane) shafts relative to the
         /// submerged view. Ocean-only, like every other shaft term.</summary>
         internal float LargeGodRayFromAir => IsOceanClipmap ? ocean.largeGodRayFromAir : 0f;
+        /// <summary>Scene-light in-scatter inside the shaft march (the A2 lamp halos). Gated
+        /// like the mirror shafts: only an active god-ray ocean can spend it, so the shared
+        /// WATER_FOG_POINT_LIGHTS keyword this knob helps arm (WaterUniformPublisher) never
+        /// turns on for a body whose march cannot run. LargeGodRayDensity already folds the
+        /// tier's god-ray ceiling in, so a tier that suppresses shafts zeroes this too.</summary>
+        internal float LargeGodRayLightScatter
+            => (IsOceanClipmap && LargeGodRayDensity > 0f) ? ocean.largeGodRayLightScatter : 0f;
         internal float LargeCausticTimeScale => ocean.largeCausticTimeScale;
         internal float LargeCausticRippleScale => ocean.largeCausticRippleScale;
         internal float LargeCausticRippleStrength => ocean.largeCausticRippleStrength;
