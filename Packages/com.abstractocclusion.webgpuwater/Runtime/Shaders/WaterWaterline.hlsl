@@ -70,6 +70,31 @@ float SurfaceSignedGap(float3 world)
     return world.y - SurfaceHeightAtXZ(world.xz);
 }
 
+// ---- Displaced-surface height envelope ----------------------------------------------
+// Conservative half-band (metres) around the rest plane that brackets every height the displaced
+// surface can reach this frame: the swell reach (an amplitude multiple), the surf-front crest
+// reach (fronts shoal + break well above the swell), plus a pad for wind-wave chop. Moved here
+// from WaterUnderwaterFog.shader so "how far from the rest plane can the surface be" has exactly
+// one home: the fog sizes its crossing-march band with it, and the god-ray pass early-outs above
+// the ceiling it implies before paying any surface fetches. Widening it costs march steps /
+// early-outs, never correctness; narrowing it below a real crest clips a crossing.
+#define SURFACE_BAND_AMPLITUDES 3.0
+#define SURFACE_BAND_PAD_METERS 2.0
+
+float SurfaceHeightBand()
+{
+    // Surf fronts shoal + break to crests well above the swell (H <= _SurfAmplitude * setAmp_max
+    // * _SurfGreens; see WaterSurfWaves EvaluateSurfWaves), so a swell-only band would sit BELOW
+    // a tall shore crest. SURF_SETAMP_JITTER_MAX is the set-jitter ceiling the compute itself
+    // uses - the SAME constant (via the WaterSurfWaves include above), not a hand copy.
+    // Inert (0) when surf is off.
+    float surfReach = (_SurfActive > 0.5)
+                    ? _SurfAmplitude * SURF_SETAMP_JITTER_MAX * max(_SurfGreens, SURF_MIN_GREENS)
+                    : 0.0;
+    return max(abs(_LargeWaveAmplitude) * SURFACE_BAND_AMPLITUDES, surfReach)
+         + SURFACE_BAND_PAD_METERS;
+}
+
 // ---- Waterline coverage: ONE curve for every consumer -------------------------------
 // The fullscreen fog's mask and the exclusion wall's per-fragment classification both answer
 // "how much of this pixel is below the waterline". They used to answer it with two hand-rolled

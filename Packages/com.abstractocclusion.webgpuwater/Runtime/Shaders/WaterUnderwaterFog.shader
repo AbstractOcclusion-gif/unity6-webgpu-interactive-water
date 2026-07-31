@@ -73,12 +73,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // band is still bracketed on grazing up-looks, where the crossing sits many metres along the ray.
         #define UNDERWATER_CROSS_STEP_METRES 1.5
         #define UNDERWATER_CROSS_MAX_STEPS   40
-        #define UNDERWATER_SURFACE_BAND_AMPS 3.0
-        #define UNDERWATER_SURFACE_BAND_PAD  2.0
-        // Max SurfSetAmp jitter: SURF_SETAMP_JITTER_MAX from WaterSurfWaves.hlsl (via
-        // WaterLargeWaves above) - the crossing-search band brackets the highest surf crest the
-        // set jitter can produce, so it must be the SAME constant, not a hand copy.
-        #define UNDERWATER_SURF_SETAMP_MAX   SURF_SETAMP_JITTER_MAX
+        // The band half-width itself (swell reach vs surf-crest reach + chop pad) moved to
+        // WaterWaterline.hlsl as SurfaceHeightBand(): the god-ray pass early-outs against the
+        // SAME envelope before paying any surface fetches, so the number has exactly one home.
         // Fraction of the march reach where the wavy crossing starts fading to the flat fallback
         // (fully flat AT the reach), so the wavy->flat handover is a blend, not a seam.
         #define UNDERWATER_SEAM_BLEND_START  0.75
@@ -199,15 +196,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             float3 dir = ray / rayLen;
             float dySafe = ray.y + (ray.y >= 0.0 ? 1e-4 : -1e-4); // guard near-horizontal rays
             float restY = _VolumeCenter.y;
-            // Surf fronts shoal + break to crests well above the swell (H <= _SurfAmplitude * setAmp_max *
-            // _SurfGreens; see WaterSurfWaves EvaluateSurfWaves), so a swell-only band would start the march
-            // ABOVE a tall shore crest and miss the crossing, flattening the fog waterline onto the rest
-            // plane. Include that reach so the search brackets the shore crest. Inert (0) when surf is off.
-            float surfReach = (_SurfActive > 0.5)
-                            ? _SurfAmplitude * UNDERWATER_SURF_SETAMP_MAX * max(_SurfGreens, SURF_MIN_GREENS)
-                            : 0.0;
-            float band = max(abs(_LargeWaveAmplitude) * UNDERWATER_SURFACE_BAND_AMPS, surfReach)
-                       + UNDERWATER_SURFACE_BAND_PAD;
+            // Every height the displaced surface can reach: swell reach vs surf-crest reach, plus
+            // the chop pad. ONE definition, shared with the god-ray pass's above-surface early-out
+            // - see SurfaceHeightBand in WaterWaterline.hlsl (moved from here, value unchanged).
+            float band = SurfaceHeightBand();
             float tFlat = (restY - cam.y) / dySafe;              // flat rest-plane crossing (ray parameter)
             float tBand = band / max(abs(ray.y), 1e-4);          // half-band in ray-parameter units
             float startDist = saturate(tFlat - tBand) * rayLen;  // skip the deep water below the band
@@ -461,50 +453,39 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 return;
             }
 
-            // Mixed ray with NO prepass sample: the analytic fallback (flat crossing + the
-            // carve handoff to the validated marcher) prices the crossing.
+            // Mixed ray with NO prepass sample -> the SAME validated crossing search the
+            // no-prepass tier runs (OceanWavyPath: fixed 1.5 m march + refine, self-blending to
+            // the flat rest plane past its reach - UNDERWATER_SEAM_BLEND_START).
+            //
+            // This block used to keep a closed-form FLAT rest-plane crossing for open water
+            // (WATER_FOG_BRANCH_FLAT_FALLBACK, now unreachable), on the premise that "no sheet
+            // rasterised" means the far horizon or a straight-down look. PARTIAL SUBMERSION
+            // breaks that premise: the sheet is NEAR-CLIPPED around the lens, so the crossing
+            // band itself has no prepass sample - and there the flat plane sits a whole swell
+            // amplitude from the displaced surface (the "linear fog" edge). Worse than a
+            // misplaced line: with the eye riding a crest ABOVE the rest plane, an up-ray's flat
+            // crossing saturates to t = 0 and the span collapses to ZERO while the waterline
+            // mask demands full fog - the unfogged band popping at the crossing (Bert's
+            // mask-vs-span RED / branch-view yellow->red, 2026-07-31). The marcher prices
+            // exactly this case, its far end still degrades to the flat line, and the cost is
+            // confined to the no-prepass set: the near-clip strip, carve holes and sub-pixel
+            // silhouettes - every other water pixel is owned by the prepass above.
+            //
+            // Deliberately NOT a bespoke refine here: an earlier attempt bisected a +-band
+            // bracket five times, quantising the crossing to ~30 cm and printing steps.
+            // OceanWavyPath's fixed 1.5 m march + refine is the validated resolution.
             {
-                // No surface rasterised at this pixel. TWO causes land here and they must not
-                // share an answer invented on the spot:
-                //  * the far horizon past the clipmap, or a straight-down look. Open water: the flat
-                //    rest-plane crossing has always been right for it, and stays untouched.
-                //  * an exclusion volume DISCARDED the sheet (WaterSurface's carve discard). There
-                //    the flat rest plane is simply the WRONG waterline: the exclusion wall
-                //    classifies against the DISPLACED surface (SurfaceHeightAtXZ), so a flat fog
-                //    line sat a full wave amplitude away from it - the hole between the waterline
-                //    and the fog. Hand those pixels to OceanWavyPath: the SAME crossing search the
-                //    non-prepass tier runs, against the SAME displaced surface the wall uses, so the
-                //    two waterlines are ONE curve by construction instead of by agreement.
-                //    It also removes the old "band above water" on a sealed room's walls without any
-                //    camera-height guard: the wavy crossing lands INSIDE the room, so
-                //    ExclusionRayLength carves that whole span away and the air is never fogged.
-                //    (The flat crossing landed OUTSIDE the box, uncarved - which is why that band
-                //    existed and why it needed a guard that flipped with the eye's height.)
-                // Deliberately NOT a bespoke refine here: an earlier attempt bisected a +-band
-                // bracket five times, quantising the crossing to ~30 cm and printing steps.
-                // OceanWavyPath's fixed 1.5 m march + refine is the validated resolution.
+                // Carve test kept for the DEBUG STAMP only (the pricing is the same marcher
+                // either way now): a carve pixel must keep reading as the carve in the views.
                 float dySafe = ray.y + (ray.y >= 0.0 ? 1e-4 : -1e-4);
                 float tFlat = saturate((_VolumeCenter.y - cam.y) / dySafe);
-                hit = cam + ray * tFlat;
                 bool overCarve = _ExclusionCount > 0.5
-                              && (_CameraDryVolume > 0.5 || InsideExclusion(hit));
-                if (overCarve)
-                {
-                    OceanWavyPath(sceneWorld, cam, rayStartsWet, pathLen, deepestY, surfaceRefY,
-                                  wetStart);
-                    // AFTER the call, which stamps WAVY_MARCH on entry: this pixel is a carve
-                    // pixel that happens to be priced by the marcher, and the view must say so.
-                    WaterFogDebugBranch(WATER_FOG_BRANCH_CARVE_MARCH);
-                    return;
-                }
+                              && (_CameraDryVolume > 0.5 || InsideExclusion(cam + ray * tFlat));
+                OceanWavyPath(sceneWorld, cam, rayStartsWet, pathLen, deepestY, surfaceRefY,
+                              wetStart);
+                // AFTER the call, which stamps WAVY_MARCH on entry.
+                if (overCarve) WaterFogDebugBranch(WATER_FOG_BRANCH_CARVE_MARCH);
             }
-
-            WaterFogDebugBranch(WATER_FOG_BRANCH_FLAT_FALLBACK);
-            float3 underEnd = sceneUnder ? sceneWorld : cam;
-            pathLen = length(underEnd - hit);
-            deepestY = min(hit.y, underEnd.y);
-            surfaceRefY = sceneUnder ? sceneSurf : camSurf; // surface above the submerged endpoint
-            wetStart = rayStartsWet ? cam : hit;            // wet span runs [start -> far end] along the ray
         }
 #endif // !WATER_FOG_SIMPLE
 

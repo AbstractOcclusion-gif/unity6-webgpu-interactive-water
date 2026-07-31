@@ -320,6 +320,19 @@ namespace AbstractOcclusion.WebGpuWater
             // ABOVE its surface to count dry again, so a bobbing crest can't toggle the fog.
             float near = cam.nearClipPlane;
             float hysteresis = _wasCameraSubmerged ? SubmergeHysteresis : -SubmergeHysteresis;
+            // Ceiling arming the OCEAN fog pass. REWRITTEN 2026-07-31: each corner used to be
+            // tested against its STALE readback height with a fixed 0.5 m slack, and in a heavy
+            // sea that slack is routinely exceeded (readback latency x the swell's vertical
+            // speed, plus the horizontal chop the height field cannot see) - so the whole
+            // fullscreen fog toggled frame-to-frame while the shader's per-pixel mask still
+            // admitted pixels: the arming rule's own superset property, broken, on screen as the
+            // fog "completely popping" at partial submersion. The ceiling now comes from the
+            // WAVE ENVELOPE around the rest plane (the KWS CurrentMaxOceanWaveHeight move): NO
+            // readback in the test at all, so it cannot flap on staleness - it only moves when
+            // the CAMERA moves. Over-arming is the intended trade: an armed pass whose mask
+            // admits nothing changes no pixel (the property this band was always meant to
+            // have); it merely runs.
+            float fogArmCeilingY = VolumeCenter.y + SurfaceHeightEnvelope() + FogArmBandMeters;
             int cornersUnder = 0;
             int straddleUnder = 0;
             int straddleAbove = 0;
@@ -337,12 +350,9 @@ namespace AbstractOcclusion.WebGpuWater
                 // Bottom corners (viewport y = 0) double as the early-arm prediction points.
                 if (viewport.y < 0.5f && corner.y - WavePredictionMeters < cornerSurfaceY + hysteresis)
                     predictedUnder = true;
-                // Wider band arming the OCEAN fog pass. The shader-side fade this band used to be
-                // sized against (MURK_FADE_ABOVE_METERS) NO LONGER EXISTS - the camera-height murk
-                // ramp was replaced by the per-pixel waterline mask, which never paints an
-                // above-water pixel at all. The band survives as readback-staleness slack: it must
-                // stay wide enough that arming toggles before the eye reaches the surface.
-                if (corner.y < cornerSurfaceY + FogArmBandMeters) cornersNearOrUnder++;
+                // Envelope ceiling - see fogArmCeilingY above. Deliberately NOT cornerSurfaceY:
+                // the stale per-corner height is exactly what made this gate flap in a heavy sea.
+                if (corner.y < fogArmCeilingY) cornersNearOrUnder++;
             }
             _fogNearSurface = cornersNearOrUnder > 0;
 
@@ -374,11 +384,33 @@ namespace AbstractOcclusion.WebGpuWater
         // Downward test offset (metres) absorbing the FFT readback staleness, so the fog arms a
         // touch early rather than late on descent (KWS's OceanWavesPredictionOffset equivalent).
         const float WavePredictionMeters = 0.1f;
-        // Vertical band ABOVE the surface within which the ocean fog pass stays armed. Sized for
-        // READBACK STALENESS: the corner test runs on a ~frame-old readback, so the band must be
-        // wider than the eye can travel in that time. (It used to be pinned to the shader's
-        // MURK_FADE_ABOVE_METERS; that constant is gone - see the arming site above.)
+        // Extra pad on top of the wave-envelope arm ceiling (fogArmCeilingY at the arming site).
+        // The envelope bounds where the surface CAN be; this pad covers the near plane's own
+        // vertical extent and camera travel within a frame.
         const float FogArmBandMeters = 0.5f;
+
+        // CPU mirror of the shader's SurfaceHeightBand (WaterWaterline.hlsl): the conservative
+        // half-band around the rest plane containing every height the displaced surface can
+        // reach this frame - swell reach (an amplitude multiple) vs surf-crest reach, plus the
+        // wind-chop pad. Derived from the SAME values the shader's version reads off the
+        // published globals (LargeWaveAmplitudeEffective IS _LargeWaveAmplitude; the ctx fields
+        // ARE the _Surf* globals) and from LargeWaveField's own surf constants, so the two
+        // derivations cannot drift unless one is edited alone.
+        internal float SurfaceHeightEnvelope()
+        {
+            if (!openWater) return 0f;
+            ShoreWaveContext ctx = ShoreWaveCtx;
+            float surfReach = ctx.SurfActive
+                ? ctx.SurfAmplitude * LargeWaveField.SurfSetAmpJitterMax
+                  * Mathf.Max(ctx.Greens, LargeWaveField.SurfMinGreens)
+                : 0f;
+            return Mathf.Max(Mathf.Abs(LargeWaveAmplitudeEffective) * SurfaceBandAmplitudes,
+                             surfReach)
+                 + SurfaceBandPadMeters;
+        }
+        // KEEP IN SYNC with WaterWaterline.hlsl (SURFACE_BAND_AMPLITUDES / SURFACE_BAND_PAD_METERS).
+        const float SurfaceBandAmplitudes = 3f;
+        const float SurfaceBandPadMeters = 2f;
         // This frame's "any near-plane corner within FogArmBandMeters of its surface" flag.
         bool _fogNearSurface;
 

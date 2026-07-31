@@ -105,14 +105,17 @@ namespace AbstractOcclusion.WebGpuWater
         // degenerate knob.
         internal const float SurfMinPeriod = 0.5f;
         internal const float SurfMinWavelength = 1.0f;
-        const float SurfMinGreens = 1.0f; // SURF_MIN_GREENS
+        // internal: WaterVolume.SurfaceHeightEnvelope (the CPU mirror of the shader's
+        // SurfaceHeightBand) rebuilds the surf-crest reach from these two, so the fog's CPU arm
+        // ceiling and the shader's march band derive from the SAME constants.
+        internal const float SurfMinGreens = 1.0f; // SURF_MIN_GREENS
         // Set-amplitude shaping (SURF_SETAMP_*). The jitter MAX doubles as a cross-shader
-        // contract: WaterUnderwaterFog's UNDERWATER_SURF_SETAMP_MAX copy re-points at the HLSL
-        // name, so keep this pair's naming stable.
+        // contract: WaterWaterline.hlsl's SurfaceHeightBand re-points at the HLSL name
+        // (SURF_SETAMP_JITTER_MAX), so keep this pair's naming stable.
         const float SurfSetAmpHashPhase = 2.4f;
         const float SurfSetAmpFloor = 0.35f;
         const float SurfSetAmpJitterMin = 0.9f;
-        const float SurfSetAmpJitterMax = 1.1f;
+        internal const float SurfSetAmpJitterMax = 1.1f;
         // Compression reach in front spacings (SURF_WARP_REACH_SPACINGS) - also the factor inside
         // the published _ShoreWarpReach, so WarpExtra below rebuilds the same reach the shader
         // reads back from the global.

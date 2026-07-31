@@ -121,8 +121,8 @@ float _SurfFoamTrailLength;  // trailing-deposit length multiplier (1 = legacy)
 #define SURF_SETAMP_HASH_PHASE 2.4   // radians of per-front phase jitter fed into the set sine
 #define SURF_SETAMP_FLOOR      0.35  // smallest set-wave amplitude at full _SurfSetStrength
 // Per-front hash jitter bounds on the amplitude. The MAX is a published contract: other shaders
-// (WaterUnderwaterFog's UNDERWATER_SURF_SETAMP_MAX copy) size against the largest possible front,
-// so the name SURF_SETAMP_JITTER_MAX must stay stable for them to re-point at.
+// (WaterWaterline.hlsl's SurfaceHeightBand) size against the largest possible front, so the
+// name SURF_SETAMP_JITTER_MAX must stay stable for them to re-point at.
 #define SURF_SETAMP_JITTER_MIN 0.9
 #define SURF_SETAMP_JITTER_MAX 1.1
 // Shore-distance compression reach, in front spacings: reach = this * wavelength. The SAME curve
