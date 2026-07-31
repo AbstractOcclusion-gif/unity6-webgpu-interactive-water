@@ -63,6 +63,9 @@ namespace AbstractOcclusion.WebGpuWater
             UniversalResourceData resources = frameData.Get<UniversalResourceData>();
             TextureHandle cameraColor = resources.activeColorTexture;
             if (!cameraColor.IsValid()) return;
+            // (The point-light scatter reads the package's OWN published light list - see
+            // WaterUniformPublisher.PublishSceneLights - not URP's per-camera light data, so
+            // this pass carries no light plumbing.)
 
             // Rendered-surface waterline prepass (KWS trick): draw the primary ocean's DISPLACED
             // surface into an eye-depth target the fog samples per pixel, so its waterline is the

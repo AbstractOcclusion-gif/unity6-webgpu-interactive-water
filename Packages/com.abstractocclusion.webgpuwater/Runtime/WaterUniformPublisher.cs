@@ -29,6 +29,30 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SunColor = Shader.PropertyToID("_SunColor");
         static readonly int ID_FogColor = Shader.PropertyToID("_WaterFogColor");
         static readonly int ID_FogExt = Shader.PropertyToID("_WaterExtinction");
+        static readonly int ID_UnderwaterLightScatter = Shader.PropertyToID("_UnderwaterLightScatter");
+        // Compile-time variant for the scene-light scatter loops (the fps-cliff rule: an 8-light
+        // loop behind a uniform branch would still size every Simple/legacy pixel's registers).
+        const string KW_UnderwaterFogPointLights = "WATER_FOG_POINT_LIGHTS";
+
+        // ---- The package's OWN scene-light list (WaterSceneLightsInscatter, WaterFog.hlsl) ----
+        // Published rather than read from URP's additional-light arrays, for four verified
+        // reasons: the CGPROGRAM surface pass cannot include URP's Lighting.hlsl; URP's
+        // _AdditionalLightsCount global is the PER-OBJECT cap, not the visible count; its UBO
+        // arrays keep STALE entries past the visible count; and GetAdditionalLight(i) maps
+        // through per-object indices no fullscreen draw has. One list, one integral, and the
+        // submerged fog + the from-above surface glow can never read different lights.
+        const int MaxSceneLights = 8; // KEEP IN SYNC with WATER_SCENE_LIGHT_MAX (WaterFog.hlsl)
+        // Points publish this as cos(outerCone): the cone term saturates to 1 for any direction.
+        const float PointLightConeSentinel = -2f;
+        const float SpotConeRangeEpsilon = 1e-4f; // guards 1/(cosInner - cosOuter) on degenerate spots
+        static readonly int ID_SceneLightPosRange = Shader.PropertyToID("_WaterSceneLightPosRange");
+        static readonly int ID_SceneLightColorCone = Shader.PropertyToID("_WaterSceneLightColorCone");
+        static readonly int ID_SceneLightSpotDir = Shader.PropertyToID("_WaterSceneLightSpotDir");
+        static readonly int ID_SceneLightCount = Shader.PropertyToID("_WaterSceneLightCount");
+        static readonly Vector4[] s_SceneLightPosRange = new Vector4[MaxSceneLights];
+        static readonly Vector4[] s_SceneLightColorCone = new Vector4[MaxSceneLights];
+        static readonly Vector4[] s_SceneLightSpotDir = new Vector4[MaxSceneLights];
+        static readonly float[] s_SceneLightDistSq = new float[MaxSceneLights];
         static readonly int ID_FogDensity = WaterShaderProps.WaterFogDensity;
         static readonly int ID_FogEnabled = WaterShaderProps.WaterFogEnabled;
         static readonly int ID_WaterOpacity = Shader.PropertyToID("_WaterOpacity");
@@ -371,11 +395,86 @@ namespace AbstractOcclusion.WebGpuWater
             // Simple-tier pixel on a fullscreen pass, twice a frame. The keyword removes it.
             if (fogSimple > 0.5f) Shader.EnableKeyword(KW_UnderwaterFogSimple);
             else Shader.DisableKeyword(KW_UnderwaterFogSimple);
+            // Scene-light fog scattering: armed only when this body wants it AND the tier is
+            // not Simple (the budget path stays sun-only). Same keyword-beside-float split as the
+            // Simple pair above, so the CPU gate and the compiled variant cannot disagree. The
+            // light list itself is published in the same breath - list, keyword and knob move
+            // together or not at all.
+            bool fogPointLights = _body.UnderwaterLightScatter > 0f && fogSimple < 0.5f;
+            if (fogPointLights) Shader.EnableKeyword(KW_UnderwaterFogPointLights);
+            else Shader.DisableKeyword(KW_UnderwaterFogPointLights);
+            PublishSceneLights(fogPointLights);
             Shader.SetGlobalFloat(ID_UnderwaterFogArmed, fogArmed);
             // See KW_UndersideFoam: the underside sheet is only ever looked at from below, so above
             // the surface the whitecap/whitewash taps are compiled out of the surface pass entirely.
             if (fogArmed > 0.5f) Shader.EnableKeyword(KW_UndersideFoam);
             else Shader.DisableKeyword(KW_UndersideFoam);
+        }
+
+        // Gather the nearest point/spot lights and publish the package's own capped list (see
+        // the field block above for why URP's arrays are deliberately not read). Runs once per
+        // frame from the primary body's PublishUnderwater, and does real work only while a body
+        // has Light Scatter authored above 0 - disarmed frames publish count 0 so a stale list
+        // can never glow. FindObjectsByType each armed frame is bounded by the scene's light
+        // count and profiled trivial next to the sim; nearest-to-camera wins the cap so the
+        // lights that matter survive it.
+        void PublishSceneLights(bool armed)
+        {
+            if (!armed)
+            {
+                Shader.SetGlobalFloat(ID_SceneLightCount, 0f);
+                return;
+            }
+            Camera eye = _body.targetCamera;
+            Vector3 eyePos = eye != null ? eye.transform.position : _body.VolumeCenter;
+            Light[] lights = Object.FindObjectsByType<Light>(FindObjectsSortMode.None);
+            int count = 0;
+            for (int i = 0; i < lights.Length; i++)
+            {
+                Light light = lights[i];
+                if (light == null || !light.isActiveAndEnabled || light.intensity <= 0f) continue;
+                if (light.type != LightType.Point && light.type != LightType.Spot) continue;
+                Vector3 pos = light.transform.position;
+                float distSq = (pos - eyePos).sqrMagnitude;
+                // Insertion into the capped, nearest-first arrays (N is tiny; no allocations).
+                int slot = count < MaxSceneLights ? count : MaxSceneLights - 1;
+                if (count >= MaxSceneLights && distSq >= s_SceneLightDistSq[slot]) continue;
+                while (slot > 0 && s_SceneLightDistSq[slot - 1] > distSq)
+                {
+                    s_SceneLightDistSq[slot] = s_SceneLightDistSq[slot - 1];
+                    s_SceneLightPosRange[slot] = s_SceneLightPosRange[slot - 1];
+                    s_SceneLightColorCone[slot] = s_SceneLightColorCone[slot - 1];
+                    s_SceneLightSpotDir[slot] = s_SceneLightSpotDir[slot - 1];
+                    slot--;
+                }
+                s_SceneLightDistSq[slot] = distSq;
+                s_SceneLightPosRange[slot] = new Vector4(pos.x, pos.y, pos.z, light.range);
+                Color tint = light.color * light.intensity;
+                if (light.type == LightType.Spot)
+                {
+                    float cosOuter = Mathf.Cos(light.spotAngle * 0.5f * Mathf.Deg2Rad);
+                    float cosInner = Mathf.Cos(light.innerSpotAngle * 0.5f * Mathf.Deg2Rad);
+                    float invConeRange = 1f / Mathf.Max(cosInner - cosOuter, SpotConeRangeEpsilon);
+                    Vector3 dir = light.transform.forward;
+                    s_SceneLightColorCone[slot] = new Vector4(tint.r, tint.g, tint.b, cosOuter);
+                    s_SceneLightSpotDir[slot] = new Vector4(dir.x, dir.y, dir.z, invConeRange);
+                }
+                else
+                {
+                    // Point: the sentinel makes the shader's cone factor saturate to 1 for any
+                    // direction, so one code path serves both light types.
+                    s_SceneLightColorCone[slot] = new Vector4(tint.r, tint.g, tint.b,
+                                                              PointLightConeSentinel);
+                    s_SceneLightSpotDir[slot] = new Vector4(0f, 1f, 0f, 1f);
+                }
+                if (count < MaxSceneLights) count++;
+            }
+            // SetGlobalVectorArray pins the array SIZE on first use, so the full fixed-size
+            // arrays are always sent; the count bounds the shader loop over live entries.
+            Shader.SetGlobalVectorArray(ID_SceneLightPosRange, s_SceneLightPosRange);
+            Shader.SetGlobalVectorArray(ID_SceneLightColorCone, s_SceneLightColorCone);
+            Shader.SetGlobalVectorArray(ID_SceneLightSpotDir, s_SceneLightSpotDir);
+            Shader.SetGlobalFloat(ID_SceneLightCount, count);
         }
 
         /// <summary>Screen-space waterline (meniscus) tunables for the fog material's waterline
@@ -489,6 +588,9 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_FogDensity, _body.fogDensity);
             sink.SetFloat(ID_FogEnabled, _body.WaterFog ? 1f : 0f);
             sink.SetFloat(ID_WaterOpacity, _body.waterOpacity);
+            // Point/spot-light scattering strength in the underwater fog (the WATER_FOG_POINT_LIGHTS
+            // variant, armed by PublishUnderwater from the SAME field so gate and shader agree).
+            sink.SetFloat(ID_UnderwaterLightScatter, _body.UnderwaterLightScatter);
 
             // Lit volume scattering: turns the flat fog colour into a sun-lit in-scatter.
             sink.SetFloat(ID_ScatterEnabled, _body.volumeScatter ? 1f : 0f);

@@ -44,6 +44,11 @@ namespace AbstractOcclusion.WebGpuWater
                      "toward the fog colour. 0 = clear, 1 = fully non-transparent water. Reflections " +
                      "still show on top (tune with the material's Reflection Strength).")]
             [Range(0f, 1f)] public float waterOpacity = 0f;
+            [Tooltip("Scattering of Unity point/spot lights in the underwater fog (closed-form, no " +
+                     "ray march): each additional light grows a glow volume in the murk instead of " +
+                     "lighting geometry only. 0 = off, the legacy sun-only medium. Needs Water Fog " +
+                     "on; Simple fog tiers skip it. Exclusion volumes do not shadow this scatter.")]
+            [Range(0f, 1f)] public float lightScatter = 0f;
         }
 
         // Same-named forwarding accessors keep every reader unchanged. WaterFog stays a public get/set
@@ -53,6 +58,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal Color fogExtinction => waterFogSettings.fogExtinction;
         internal float fogDensity => waterFogSettings.fogDensity;
         internal float waterOpacity => waterFogSettings.waterOpacity;
+        internal float UnderwaterLightScatter => waterFogSettings.lightScatter;
 
         /// <summary>Beer-Lambert depth fog, shared by the surface, objects and pool.</summary>
         public bool WaterFog { get => waterFogSettings.waterFog; set => waterFogSettings.waterFog = value; }
@@ -158,8 +164,12 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("Per-channel downwelling extinction (red highest so deep water shifts blue). " +
                      "Applied as exp(-extinction * strength * depth).")]
             public Color depthExtinction = new Color(0.45f, 0.15f, 0.08f);
-            [Tooltip("Master multiplier on the depth term (acts like the fog density).")]
-            [Range(0f, 8f)] public float depthDarkenStrength = 1f;
+            [Tooltip("Master multiplier on the depth term (acts like the fog density). The " +
+                     "readout below the fields shows the half-brightness depth it implies - " +
+                     "past ~3 every channel crushes black within a metre, which is why the " +
+                     "slider stops there (the MaxFogDensity lesson: an exponential dial whose " +
+                     "top half is all-black is uncontrollable).")]
+            [Range(0f, 3f)] public float depthDarkenStrength = 1f;
             [Tooltip("Extra softening of projected caustics on objects, per world unit of depth.")]
             [Range(0f, 8f)] public float causticDepthFade = 0.5f;
             [Tooltip("Paint projected caustics onto ANY submerged surface (terrain, Standard Lit props, a " +

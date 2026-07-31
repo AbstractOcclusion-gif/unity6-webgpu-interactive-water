@@ -126,6 +126,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // is below the surface, which is the only time that sheet can be seen.
             // _fragment for the same reason as the shadow keywords above: no vertex consumer.
             #pragma multi_compile_fragment _ WATER_UNDERSIDE_FOAM
+            // Scene-light scattering in the transmitted (from-above) water column - the glow of
+            // point/spot lamps seen THROUGH the surface, the same published list + closed-form
+            // integral the fullscreen fog uses below the waterline (WaterSceneLightsInscatter,
+            // WaterFog.hlsl). A KEYWORD for the fps-cliff reason above: an 8-light [loop] would
+            // otherwise size every legacy pixel's registers. Armed by PublishUnderwater from the
+            // body's Light Scatter knob, never together with the Simple fog tier. Pure ALU -
+            // costs no sampler register in this exactly-at-the-cap pass.
+            #pragma multi_compile_fragment _ WATER_FOG_POINT_LIGHTS
             // Reflection mode (planar / SSR / URP-probe base / real refraction) is UNIFORM-driven,
             // published per body every frame via the MaterialPropertyBlock (WaterUniformPublisher),
             // so it updates live in the editor and needs no shader variants.

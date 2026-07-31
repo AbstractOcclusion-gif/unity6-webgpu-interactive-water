@@ -204,4 +204,89 @@ float WaterPathLength(float3 fragWS, float3 camWS, float level)
     return (fragUnder ? (1.0 - t) : t) * len;  // underwater portion only
 }
 
+// ---- Scene point/spot light scattering (the WATER_FOG_POINT_LIGHTS family) ------------------
+// The package's OWN capped light list, published per frame by WaterUniformPublisher
+// (PublishSceneLights): position+range, colour+outer-cone, spot dir + inverse cone range, and
+// the true count. Deliberately NOT URP's additional-light arrays: those need URP's
+// Lighting.hlsl (impossible in the CGPROGRAM surface pass), their count global is the
+// PER-OBJECT cap (a different number), their UBO entries past the visible count are STALE, and
+// GetAdditionalLight(i) maps through per-object indices no fullscreen draw has. One published
+// list + one integral, consumed identically by the fullscreen fog (submerged view) and the
+// surface's from-above transmitted term - the two views of one glow cannot drift.
+// This header stays SRP-MACRO-FREE and the function is pure ALU (no textures, no derivatives):
+// safe in CG and HLSL, in divergent flow, and inside the 16-sampler-capped surface pass.
+#define WATER_SCENE_LIGHT_MAX 8              // KEEP IN SYNC with WaterUniformPublisher.MaxSceneLights
+#define WATER_SCENE_LIGHT_MIN_DIST_SQ 0.0025 // closest-approach floor squared (integral divides by it)
+#define WATER_SCENE_LIGHT_GAIN 0.25          // art gain folding the scattering coefficient: knob 1
+                                             // on a default-density body reads as a strong lamp glow
+float4 _WaterSceneLightPosRange[WATER_SCENE_LIGHT_MAX];  // xyz world pos, w = range (metres)
+float4 _WaterSceneLightColorCone[WATER_SCENE_LIGHT_MAX]; // rgb colour * intensity, w = cos(outerCone); points publish -2 (cone factor saturates to 1)
+float4 _WaterSceneLightSpotDir[WATER_SCENE_LIGHT_MAX];   // xyz spot direction, w = 1 / (cosInner - cosOuter)
+float _WaterSceneLightCount;   // TRUE published count - never a URP global (see above)
+float _UnderwaterLightScatter; // the per-body Light Scatter knob (Water Fog block)
+
+// Closed-form single scatter of the published lights over the wet segment [tStart, tEnd] of
+// the unit ray cam + dir*t. 'tWaterStart' is where WATER begins on that ray: extinction is
+// measured from there, so an above-water eye does not extinguish its glow through AIR.
+// For a light at closest-approach distance h to the ray (closest at parameter tc), the
+// inverse-square in-scatter integral is analytic:
+//   I = INTEGRAL dt / (h^2 + (t - tc)^2) = (atan((tEnd - tc)/h) - atan((tStart - tc)/h)) / h
+// The range window (URP's smooth (1-(d^2/r^2)^2)^2) and the spot cone are evaluated at the
+// nearest IN-SPAN point and treated as constant across the span - exact for h << range, and
+// they fade the same direction elsewhere, so the approximation only ever dims.
+// TWO depth terms give a sunk lamp its depth feeling (Bert 2026-07-31, "no depth feeling"):
+//  * the LIGHT LEG - the lamp's photons are absorbed per channel over their distance THROUGH
+//    WATER to the scattering point (the first ship only extinguished the view leg, so a lamp
+//    at 30 m glowed like a lamp at 1 m);
+//  * DownwellingAttenuation at the LIGHT's depth against 'surfaceY' (callers pass the rest
+//    plane). Physically a local light owes the sun's downwelling nothing - but the Depth
+//    Attenuation knob is the depth-mood dial this package already has, and a lamp that
+//    ignores it reads wrong next to everything that obeys it. Bert's call; enabled/scaled by
+//    the existing _DepthDarken* family, so no new knob and off-by-default stays off.
+float3 WaterSceneLightsInscatter(float3 cam, float3 dir, float tStart, float tEnd,
+                                 float tWaterStart, float surfaceY)
+{
+    float3 scatter = float3(0.0, 0.0, 0.0);
+    int sceneLightCount = min((int)_WaterSceneLightCount, WATER_SCENE_LIGHT_MAX);
+    [loop]
+    for (int li = 0; li < sceneLightCount; li++)
+    {
+        float4 posRange = _WaterSceneLightPosRange[li];
+        float4 colorCone = _WaterSceneLightColorCone[li];
+        float4 spotDir = _WaterSceneLightSpotDir[li];
+        float tc = dot(posRange.xyz - cam, dir);        // closest approach (unclamped: the
+                                                        // atan pair handles out-of-span tc)
+        float3 hVec = posRange.xyz - (cam + dir * tc);
+        float h = sqrt(max(dot(hVec, hVec), WATER_SCENE_LIGHT_MIN_DIST_SQ));
+        // Window/cone/1-over-d^2 sampled at the nearest point the SPAN can actually see, so a
+        // light behind the camera or beyond the scene contributes what the water between the
+        // bounds receives, not what its own closest point would.
+        float tAtten = clamp(tc, tStart, tEnd);
+        float3 toLight = posRange.xyz - (cam + dir * tAtten);
+        float distSq = max(dot(toLight, toLight), WATER_SCENE_LIGHT_MIN_DIST_SQ);
+        float rangeSq = max(posRange.w * posRange.w, WATER_SCENE_LIGHT_MIN_DIST_SQ);
+        float window = saturate(1.0 - (distSq * distSq) / (rangeSq * rangeSq));
+        window *= window;
+        float3 lightDir = toLight * rsqrt(distSq);
+        float cone = saturate((dot(-lightDir, spotDir.xyz) - colorCone.w) * spotDir.w);
+        cone *= cone; // URP squares its angle attenuation; matched so lamps agree with geometry
+        float deltaAtan = atan((tEnd - tc) / h) - atan((tStart - tc) / h);
+        // View leg (camera side, from where the water starts) PLUS light leg (lamp to the
+        // sample point, all water by construction - the lamp is submerged if it glows at
+        // all): both per channel, so a deep or distant lamp reddens then dies exactly like
+        // every other path through this medium.
+        float3 extinct = exp(-_WaterExtinction.rgb
+                             * (_WaterFogDensity
+                                * (max(tAtten - tWaterStart, 0.0) + sqrt(distSq))));
+        // The depth-mood dial (see header): the lamp's own depth against the rest plane,
+        // through the SAME DownwellingAttenuation everything else obeys. Identity while the
+        // Depth Attenuation feature is off.
+        float3 depthMood = DownwellingAttenuation(posRange.y, surfaceY);
+        // (window * cone / d^2) at the sample point, times h * deltaAtan = the span integral.
+        scatter += colorCone.rgb * (window * cone / distSq * h * deltaAtan)
+                 * extinct * depthMood;
+    }
+    return scatter * (_WaterFogDensity * WATER_SCENE_LIGHT_GAIN);
+}
+
 #endif // WEBGL_WATER_FOG_INCLUDED

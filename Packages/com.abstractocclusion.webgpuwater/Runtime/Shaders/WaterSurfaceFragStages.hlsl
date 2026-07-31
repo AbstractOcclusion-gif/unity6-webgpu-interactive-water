@@ -703,6 +703,25 @@ float3 RefractionStage(v2f i, WaterGeomStage g, float waterClarity, out float3 b
         if (_ChunkFogClamp > 0.5)
             waterSpan = min(waterSpan, ChunkRefractionSpan(i.position, refractedRay));
         refractedColor = ApplyWaterVolumeClarity(refractedColor, waterSpan, bodyInscatter, waterClarity);
+#ifdef WATER_FOG_POINT_LIGHTS
+        // Scene-light glow in the transmitted column: the SAME published list and closed-form
+        // integral the fullscreen fog uses below the waterline (WaterSceneLightsInscatter), so
+        // a lamp's glow seen through the sheet from above is the glow seen swimming past it -
+        // this term is what makes the lights visible from OUT of the water at all (the fog pass
+        // deliberately never paints from-above pixels; the sheet owns that column). Span = the
+        // sheet point to the scene behind it, along the view ray - the same straight-ray
+        // approximation the thickness fog above already accepts. Water begins AT the sheet, so
+        // extinction starts there, never in the air between lens and sheet.
+        {
+            float3 camToSheet = i.worldPos - _WorldSpaceCameraPos;
+            float tSheet = max(length(camToSheet), 1e-4);
+            float3 viewDirDown = camToSheet / tSheet;
+            refractedColor += WaterSceneLightsInscatter(_WorldSpaceCameraPos, viewDirDown,
+                                                        tSheet, tSheet + waterSpan, tSheet,
+                                                        _VolumeCenter.y)
+                            * _UnderwaterLightScatter;
+        }
+#endif
     }
     else if (_LargeBody < 0.5)
     {
@@ -717,7 +736,21 @@ float3 RefractionStage(v2f i, WaterGeomStage g, float waterClarity, out float3 b
         if (_ChunkFogClamp > 0.5)
             exitTFog = min(exitTFog, max(ChunkIntersect(_ChunkShape, i.position, pdFog).y, 0.0));
         float3 exitWorld = PoolToWorld(i.position + pdFog * exitTFog);
-        refractedColor = ApplyWaterVolumeClarity(refractedColor, length(exitWorld - i.worldPos), bodyInscatter, waterClarity);
+        float poolChord = length(exitWorld - i.worldPos);
+        refractedColor = ApplyWaterVolumeClarity(refractedColor, poolChord, bodyInscatter, waterClarity);
+#ifdef WATER_FOG_POINT_LIGHTS
+        // Same scene-light glow for the analytic-pool transmitted view (a lamp in a night pool
+        // seen from the deck) - the chord through the box is this branch's water span.
+        {
+            float3 camToSheet = i.worldPos - _WorldSpaceCameraPos;
+            float tSheet = max(length(camToSheet), 1e-4);
+            float3 viewDirDown = camToSheet / tSheet;
+            refractedColor += WaterSceneLightsInscatter(_WorldSpaceCameraPos, viewDirDown,
+                                                        tSheet, tSheet + poolChord, tSheet,
+                                                        _VolumeCenter.y)
+                            * _UnderwaterLightScatter;
+        }
+#endif
     }
 
     refractedColor = ApplyWaterOpacityTintedClarity(refractedColor, bodyInscatter, waterClarity); // turbidity toward the body colour

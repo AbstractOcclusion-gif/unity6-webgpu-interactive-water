@@ -23,7 +23,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     WaterVolumePropertyPaths.FogColor,
                     WaterVolumePropertyPaths.FogExtinction,
                     WaterVolumePropertyPaths.FogDensity,
-                    "waterFogSettings.waterOpacity");
+                    "waterFogSettings.waterOpacity",
+                    "waterFogSettings.lightScatter");
                 EditorGUILayout.HelpBox(
                     WaterFogReachSummary(Prop(WaterVolumePropertyPaths.FogExtinction).colorValue,
                                          Prop(WaterVolumePropertyPaths.FogDensity).floatValue),
@@ -85,10 +86,41 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             _showDepth = WaterEditorUI.SectionWithToggle(
                 "Depth Attenuation (downwelling)", _showDepth, Prop("depthAttenuation.depthDarken"), () =>
+            {
+                bool linked = Prop("depthAttenuation.linkDepthToFog").boolValue;
+                // The colour row greys out while Link mirrors the fog extinction over it every
+                // frame - editing an overridden field silently did nothing (Bert 2026-07-31,
+                // "color depth extinction look to have no effect": the link was the effect).
+                DrawFieldsIf(!linked, "depthAttenuation.depthExtinction");
                 DrawFields(
-                    "depthAttenuation.depthExtinction",
                     "depthAttenuation.depthDarkenStrength",
-                    "depthAttenuation.linkDepthToFog"));
+                    "depthAttenuation.linkDepthToFog");
+                // Same treatment as the Water Fog readout above (the confirmed MaxFogDensity
+                // lesson): an exponential dial is only controllable next to the DISTANCE it
+                // implies, and hue only exists while the channels still differ.
+                Color depthExt = linked
+                    ? Prop(WaterVolumePropertyPaths.FogExtinction).colorValue
+                    : Prop("depthAttenuation.depthExtinction").colorValue;
+                EditorGUILayout.HelpBox(
+                    DepthReachSummary(depthExt, Prop("depthAttenuation.depthDarkenStrength").floatValue),
+                    MessageType.None);
+            });
+        }
+
+        // Half-brightness DEPTHS per channel for the downwelling term (exp(-ext * strength * d)),
+        // so the dial reads in metres instead of guesswork - and so it is obvious when all three
+        // channels crush within a metre and the colour can no longer show (past the point where
+        // every channel has halved several times, black is black whatever the hue).
+        static string DepthReachSummary(Color extinction, float strength)
+        {
+            const float Ln2 = 0.6931472f;
+            const float MinCoeff = 1e-4f;
+            float r = Ln2 / Mathf.Max(extinction.r * strength, MinCoeff);
+            float g = Ln2 / Mathf.Max(extinction.g * strength, MinCoeff);
+            float b = Ln2 / Mathf.Max(extinction.b * strength, MinCoeff);
+            return $"Half-brightness depth  R {r:0.0} m   G {g:0.0} m   B {b:0.0} m — " +
+                   "the colour shift lives between these depths; once all three have passed, " +
+                   "deeper just reads black.";
         }
 
         void DrawCausticsSection()

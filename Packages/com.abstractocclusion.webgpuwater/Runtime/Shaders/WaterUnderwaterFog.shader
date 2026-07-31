@@ -35,6 +35,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         float _UnderwaterSurfaceY;
         float _UnderwaterUnbounded; // 1 = ocean half-space, 0 = clip to this body's box (pond)
         float _UnderwaterFogSimple; // 1 = tier Simple mode: flat waterline, skip the crossing march
+        // Point/spot-light fog scattering (WATER_FOG_POINT_LIGHTS, inscatter pass only): the
+        // published light list, the shared integral AND the _UnderwaterLightScatter knob all
+        // live in WaterFog.hlsl (included above) - one home, shared with the surface's
+        // from-above transmitted term so both views of the glow read identical lights.
         // 1 = the EYE sits inside a dry exclusion volume (PublishUnderwater, alongside
         // _CameraUnderwater - which now means "the eye is in WATER" and reads 0 in here). A uniform,
         // so the camera-height terms below stand down on a screen-coherent branch: in a sunken room
@@ -79,6 +83,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // Fraction of the march reach where the wavy crossing starts fading to the flat fallback
         // (fully flat AT the reach), so the wavy->flat handover is a blend, not a seam.
         #define UNDERWATER_SEAM_BLEND_START  0.75
+        // Below this sigma*L the transmittance-weighted mean-depth formula (see the downwelling
+        // block in UnderwaterFog) is numerically degenerate (0/0) and its analytic limit L/2 is
+        // used instead.
+        #define DOWNWELL_MEAN_SIGMA_MIN 1e-3
         // The waterline coverage curve and its gradient floor are shared with the exclusion wall
         // (WaterWaterline.hlsl, WaterlineCoverage) so the two edges cannot land on different
         // pixels. Only the carve-specific over-cover lives here.
@@ -704,8 +712,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // Per-channel path transmittance for this pixel; also returns the depth-darkening term,
         // the sun visibility of the wet span past the exclusion volumes (1 = unshadowed), and the
         // per-pixel waterline mask (see ArmWeight).
+        // wetStartOut / wetSpanOut report the PRE-CARVE wet segment (start point on the ray +
+        // its world length) for the inscatter pass's additional-light loop. Pre-carve on
+        // purpose: point-light scatter does not respect exclusion volumes in this increment
+        // (documented on the knob), so handing it the carved span would fake half an awareness
+        // the feature does not have. The absorb pass passes dummies.
         float3 UnderwaterFog(float2 uv, out float3 depthAttenuation, out float sunVisibility,
-                             out float armWeight, out float4 debugColor)
+                             out float armWeight, out float4 debugColor,
+                             out float3 wetStartOut, out float wetSpanOut)
         {
             // FIRST, ahead of every per-pixel march below: the waterline mask takes a screen
             // derivative and must be evaluated in uniform control flow.
@@ -757,6 +771,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             float3 seg = sceneWorld - _WorldSpaceCameraPos;
             float3 segDir = seg / max(length(seg), 1e-5);
             float wetSpanLen = pathLen; // pre-carve span length (wetStart -> wet end, world metres)
+            wetStartOut = wetStart;     // reported for the additional-light loop - see the header
+            wetSpanOut = wetSpanLen;
             float dryLen = ExclusionRayLength(wetStart, segDir, pathLen);
             // MESH volumes carve by their real silhouette, taken from the depth prepass at this
             // pixel and returned in the SAME world metres as the analytic chord above (the analytic
@@ -798,7 +814,36 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // holes through dense fog inside a foam patch, and a partial cancel still washed the
             // drawn foam toward the fog colour. The fog stays physical and uniform; the foam now
             // sorts by draw order instead.
-            depthAttenuation = DownwellingAttenuation(deepestY, surfaceRefY);
+            // EFFECTIVE downwelling depth (2026-07-31; Bert: "depth extinction is still very
+            // strong, only the first meters are not too affected" - strength 0.1 crushed the
+            // frame, and the extinction COLOUR could not show). deepestY is the span's DEEPEST
+            // point, and on an unbounded ocean every below-horizontal ray ends at the far-plane
+            // abyss - so the depth term saturated to black for half the screen the moment the
+            // knob left zero, and with all three channels crushed there was no hue left to
+            // tint. The light this ray actually delivers in-scatters about one mean free path
+            // away, so the downwelling is evaluated at the transmittance-weighted MEAN depth of
+            // the wet span instead (the god-ray reprojection anchor's logic, in closed form):
+            //   tMean = 1/sigma - L * exp(-sigma*L) / (1 - exp(-sigma*L)),
+            // sigma = mean extinction * density, with the sigma*L -> 0 limit (L/2) taken
+            // explicitly below the threshold. The POSITION on the ray is geometry, so sigma is
+            // a scalar mean; the COLOUR stays fully per-channel inside DownwellingAttenuation -
+            // which is what finally lets the depth extinction colour read. Clamped no deeper
+            // than the carve-adjusted deepestY so the dry-room correction above keeps its
+            // meaning, and unchanged in shape for bounded ponds (their spans were never
+            // abyssal, the mean just sits a little shallower than the floor).
+            float downwellSigma = dot(_WaterExtinction.rgb, float3(1.0/3.0, 1.0/3.0, 1.0/3.0))
+                                * _WaterFogDensity;
+            float downwellSigmaL = downwellSigma * pathLen;
+            // Denominators clamped BEFORE the select: an HLSL ternary evaluates both lanes, so
+            // sigma = 0 (fog density slid to zero) would still compute 1/0 in the dead lane and
+            // trip the compiler's division-by-zero diagnostics even though the L/2 lane wins.
+            float downwellExp = exp(-downwellSigmaL);
+            float downwellTMean = (downwellSigmaL > DOWNWELL_MEAN_SIGMA_MIN)
+                ? (1.0 / max(downwellSigma, DOWNWELL_MEAN_SIGMA_MIN * 1e-3)
+                   - pathLen * downwellExp / max(1.0 - downwellExp, DOWNWELL_MEAN_SIGMA_MIN * 1e-3))
+                : (0.5 * pathLen);
+            float downwellY = max(wetStart.y + segDir.y * downwellTMean, deepestY);
+            depthAttenuation = DownwellingAttenuation(downwellY, surfaceRefY);
             // Carve-boundary pane: edge occlusion + sun facet of the box face this ray looks
             // through (Crest-style darkened zone edges, analytic). Folded into the term BOTH
             // hardware passes multiply by, so the scene absorption and the in-scatter darken
@@ -869,8 +914,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 float sunVisibilityUnused; // absorption is sun-independent; only the in-scatter shadows
                 float armWeight;
                 float4 debugColor;
+                float3 wetStartUnused;    // the wet segment feeds only the inscatter's light loop
+                float wetSpanUnused;
                 float3 pathTransmittance = UnderwaterFog(input.uv, depthAttenuation, sunVisibilityUnused,
-                                                         armWeight, debugColor);
+                                                         armWeight, debugColor,
+                                                         wetStartUnused, wetSpanUnused);
                 // Debug view: WIPE the frame. This pass blends Zero SrcColor (dst *= src), so
                 // returning 0 clears the target and the in-scatter pass immediately after - Blend
                 // One One - writes the false colour into it. The two passes that already exist ARE
@@ -899,6 +947,19 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             #pragma target 4.0
             #pragma multi_compile_fragment _ WATER_FOG_SIMPLE
             #pragma multi_compile_fragment _ WATER_FOG_NULL
+            // Point/spot-light scattering in the fog. THIS PASS ONLY (the absorb pass never
+            // in-scatters), so the variant count stays contained. A keyword, not a uniform: an
+            // 8-light loop behind a uniform branch would still size every legacy pixel's
+            // registers (the fps-cliff rule). multi_compile because this material is created at
+            // runtime by CoreUtils.CreateEngineMaterial - build-time stripping has no material
+            // keyword state to inspect. Armed by the publisher from the SAME per-body knob the
+            // strength float carries, and never together with WATER_FOG_SIMPLE.
+            #pragma multi_compile_fragment _ WATER_FOG_POINT_LIGHTS
+
+            // The light list + the shared closed-form integral (WaterSceneLightsInscatter) live
+            // in WaterFog.hlsl - the package's OWN published lights, shared verbatim with the
+            // surface's from-above transmitted term. See that header for the math and for why
+            // URP's additional-light arrays are deliberately not used.
 
             half4 FragInscatter(Varyings input) : SV_Target
             {
@@ -909,8 +970,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 float sunVisibility;
                 float armWeight;
                 float4 debugColor;
+                float3 wetStart;
+                float wetSpanLen;
                 float3 pathTransmittance = UnderwaterFog(input.uv, depthAttenuation, sunVisibility,
-                                                         armWeight, debugColor);
+                                                         armWeight, debugColor,
+                                                         wetStart, wetSpanLen);
                 // Additive onto the target the absorb pass just cleared: this IS the view.
                 if (debugColor.a > 0.5) return half4(debugColor.rgb, 1.0);
                 // Lit in-scatter target: the same WaterInscatterColor the surface uses, so the fog colour
@@ -930,7 +994,25 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 float3 inscatter = fogColor * (1.0 - pathTransmittance);
                 // Per-pixel arm fade: additive term scales straight to 0, mirroring the absorb pass.
                 inscatter *= armWeight;
-                return half4(inscatter * depthAttenuation + FogDither(input.positionCS.xy), 1.0);
+                float3 total = inscatter * depthAttenuation;
+#if defined(WATER_FOG_POINT_LIGHTS) && !defined(WATER_FOG_SIMPLE)
+                // Scene-light glow, added AFTER the downwelling multiply above: local lights
+                // never crossed the surface, so the sun's depth darkening does not apply to them
+                // (their own extinction-to-light is inside the integral, measured from where the
+                // WATER starts - tStart - so a from-air crossing ray does not extinguish its
+                // glow through the air segment). Rides the SAME armWeight as the fog, so the
+                // glow can never paint an above-waterline pixel.
+                if (wetSpanLen > 0.0)
+                {
+                    float3 dir = normalize(sceneWorld - _WorldSpaceCameraPos);
+                    float tStart = distance(_WorldSpaceCameraPos, wetStart);
+                    total += WaterSceneLightsInscatter(_WorldSpaceCameraPos, dir, tStart,
+                                                       tStart + wetSpanLen, tStart,
+                                                       _VolumeCenter.y)
+                           * (_UnderwaterLightScatter * armWeight);
+                }
+#endif
+                return half4(total + FogDither(input.positionCS.xy), 1.0);
 #endif
             }
             ENDHLSL
