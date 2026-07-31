@@ -58,7 +58,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (!WaterDebugView.FogViewActive
                 && WaterVolume.UnderwaterFogActive && _particlePass != null
                 && (WaterFoamParticles.Live.Count > 0 || WaterSplashEmitter.Live.Count > 0
-                    || foamOverlayNeeded))
+                    || foamOverlayNeeded || WaterFogTransparent.Live.Count > 0))
                 renderer.EnqueuePass(_particlePass);
 
             if (_pass == null) return; // shader unassigned / not created
@@ -137,6 +137,10 @@ namespace AbstractOcclusion.WebGpuWater
                 builder.SetRenderFunc((PassData d, RasterGraphContext ctx) =>
                 {
                     DrawFoamOverlays(ctx.cmd, d.block);
+                    // User transparents (WaterFogTransparent / WebGpuWaterFogAPI.hlsl) draw
+                    // BEFORE the sprites, so spray and foam read as the nearest layer over a
+                    // user prop, matching how they layer over the package's own geometry.
+                    DrawUserTransparents(ctx.cmd);
                     var quads = WaterFoamParticles.Live;
                     for (int i = 0; i < quads.Count; i++)
                         if (quads[i] != null) quads[i].RenderAfterFog(ctx.cmd, d.camera);
@@ -144,6 +148,31 @@ namespace AbstractOcclusion.WebGpuWater
                     for (int i = 0; i < emitters.Count; i++)
                         if (emitters[i] != null) emitters[i].DrawAfterFog(ctx.cmd);
                 });
+            }
+        }
+
+        // Draws the USER transparents that opted into the after-fog reroute via the
+        // WaterFogTransparent component (the public fog API's sorting half). On armed frames
+        // their queue-time draw is suppressed (forceRenderingOff, set by the component in
+        // lockstep with the SAME gate that enqueues this pass), so this explicit draw is
+        // their only submission - after the fog and the god rays, exactly like the sprites.
+        // Materials come from the component's CACHE, never Renderer.sharedMaterials here -
+        // that property allocates a fresh array per call and this pass stays GC-free (swap
+        // materials at runtime -> WaterFogTransparent.RefreshMaterials). Shader pass 0 per
+        // submesh: the forward pass of URP shaders and of every Shader Graph output.
+        static void DrawUserTransparents(RasterCommandBuffer cmd)
+        {
+            var live = WaterFogTransparent.Live;
+            for (int i = 0; i < live.Count; i++)
+            {
+                WaterFogTransparent entry = live[i];
+                if (entry == null) continue;
+                Renderer target = entry.TargetRenderer;
+                Material[] materials = entry.Materials;
+                if (target == null || materials == null) continue;
+                for (int m = 0; m < materials.Length; m++)
+                    if (materials[m] != null)
+                        cmd.DrawRenderer(target, materials[m], m, 0);
             }
         }
 
