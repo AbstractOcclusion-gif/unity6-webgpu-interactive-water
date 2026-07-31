@@ -125,6 +125,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         [SerializeField] WaterBuildKit.BoatModelForward _boatModelForward = WaterBuildKit.BoatModelForward.PositiveZ;
         [SerializeField] bool _boatChaseCamera = true;
         [SerializeField] bool _boatDryInterior = true;
+        [SerializeField] Mesh _boatDryInteriorMesh;
+        [SerializeField] bool _boatDryInteriorAuto;
 
         [SerializeField] bool _createExpanded = true;
         [SerializeField] bool _objectsExpanded = true;
@@ -587,13 +589,34 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                                                "water surface never renders inside the boat. Resize or delete " +
                                                "the child afterwards to fit an open cockpit."),
                 _boatDryInterior);
+            using (new EditorGUI.DisabledScope(!_boatDryInterior || _boatHullModel == null))
+                _boatDryInteriorMesh = (Mesh)EditorGUILayout.ObjectField(
+                    new GUIContent("Dry interior mesh", "Optional CONVEX proxy mesh, authored in the hull model's " +
+                                                        "own space, to carve the dry interior by SHAPE instead of a " +
+                                                        "box - a curved hull cuts the water along its real plating. " +
+                                                        "The build saves a normalised copy into the Generated folder " +
+                                                        "(the carve contract needs a -0.5..0.5 span; assigning a raw " +
+                                                        "mesh by hand carves at the wrong scale). Convex only: the " +
+                                                        "carve keeps one front and one back face per pixel. Needs " +
+                                                        "the WaterExclusionDepthFeature on your URP renderer."),
+                    _boatDryInteriorMesh, typeof(Mesh), allowSceneObjects: false);
+            using (new EditorGUI.DisabledScope(!_boatDryInterior || _boatHullModel == null || _boatDryInteriorMesh != null))
+                _boatDryInteriorAuto = EditorGUILayout.Toggle(
+                    new GUIContent("Generate convex proxy", "No proxy mesh at hand: build a convex approximation " +
+                                                            "of the hull model's own vertices at create time - a " +
+                                                            "cabin-less hull is already nearly convex, so the " +
+                                                            "approximation IS the hull shape. An assigned mesh " +
+                                                            "above always wins. Falls back to the fitted box " +
+                                                            "(with a console warning) on degenerate geometry."),
+                    _boatDryInteriorAuto);
 
             if (GUILayout.Button("Create Boat", GUILayout.Height(26f)))
             {
                 Undo.SetCurrentGroupName("Create Boat");
                 int undoGroup = Undo.GetCurrentGroup();
                 GameObject boat = CreateBoat(_boatHullModel, withSplash: _splash, withDryInterior: _boatDryInterior,
-                                             modelForward: _boatModelForward);
+                                             modelForward: _boatModelForward, dryInteriorMesh: _boatDryInteriorMesh,
+                                             dryInteriorConvexAuto: _boatDryInteriorAuto);
                 if (boat == null) return;
                 if (_boatChaseCamera) FocusSceneOnBoat(boat);
                 Selection.activeObject = boat;

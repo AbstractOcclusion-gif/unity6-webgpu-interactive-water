@@ -98,6 +98,15 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // Floor on a fitted dry-box edge so an extreme inset/shrink on a tiny hull can never
         // collapse (or invert) the box.
         const float DryInteriorMinEdge = 0.05f; // metres
+        // Mesh-carve dry interior (optional convex proxy): the carve-mesh contract is NORMALISED
+        // vertices spanning -0.5..0.5 (WaterExclusionVolume.carveMesh tooltip) - assigning a raw
+        // hull mesh by hand carves at the wrong scale/offset, so this path normalises the proxy
+        // and saves the normalised copy as a Generated asset. CONVEX proxies only for a clean
+        // carve: the mesh prepass keeps ONE front + ONE back face per pixel, so a concave
+        // cavity biases the exit face (documented on the field itself).
+        const float DryInteriorMeshShrink = 0.95f;   // slight inset keeps the cut edge behind the hull plating
+        const float MinCarveMeshSpan = 1e-4f;        // degenerate-axis guard for the normalisation divide
+        const string DryInteriorMeshSuffix = "_DryInterior";
 
         /// <summary>A drivable boat: probe buoyancy, BoatController drive, wake + membership,
         /// optional splash. The ROOT stays at scale (1,1,1) and carries all physics (Rigidbody,
@@ -108,16 +117,19 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         /// box the collider uses, so the water surface never renders inside the hull.
         /// Undo-registered; the caller owns the undo group.</summary>
         internal static GameObject CreateBoat(GameObject hullModel, bool withSplash, bool withDryInterior,
-                                              BoatModelForward modelForward = BoatModelForward.PositiveZ)
+                                              BoatModelForward modelForward = BoatModelForward.PositiveZ,
+                                              Mesh dryInteriorMesh = null,
+                                              bool dryInteriorConvexAuto = false)
         {
             var boat = NewUndoableGameObject(BoatName);
             boat.transform.position = PropSpawnPosition();
 
             Vector3 hullSize;
             Vector3 hullCenterLocal;
+            GameObject visual = null;
             if (hullModel != null)
             {
-                GameObject visual = InstantiateVisual(hullModel, boat.transform);
+                visual = InstantiateVisual(hullModel, boat.transform);
                 // Bow onto +Z FIRST - the bounds fit below must read the corrected frame.
                 visual.transform.localRotation = ModelForwardRotation(modelForward);
                 if (!TryGetCombinedRendererBounds(visual, out Bounds worldBounds))
@@ -160,7 +172,26 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             boat.AddComponent<WaterMembership>();
             boat.AddComponent<WaterInteractable>(); // wake ripples
             if (withSplash) boat.AddComponent<WaterSplash>();
-            if (withDryInterior) AddDryInterior(boat.transform, hullCenterLocal, hullSize, hullModel != null);
+            if (withDryInterior)
+            {
+                Mesh dryMesh = dryInteriorMesh;
+                Mesh generatedHull = null;
+                if (dryMesh == null && dryInteriorConvexAuto && visual != null)
+                {
+                    // Convex approximation of the model's own vertices: a cabin-less hull is
+                    // already nearly convex, so the approximation IS the hull shape. Degenerate
+                    // geometry returns null -> the fitted-box path below, loudly.
+                    generatedHull = BuildConvexHullMesh(visual.transform, hullModel.name);
+                    if (generatedHull == null)
+                        Debug.LogWarning(LogPrefix + "Convex approximation failed (degenerate hull " +
+                                         "geometry); the dry interior falls back to the fitted box.");
+                    dryMesh = generatedHull;
+                }
+                AddDryInterior(boat.transform, hullCenterLocal, hullSize, hullModel != null,
+                               dryMesh, visual != null ? visual.transform : null);
+                // AddDryInterior saved a NORMALISED copy as the asset; the raw hull is scratch.
+                if (generatedHull != null) Object.DestroyImmediate(generatedHull);
+            }
             return boat;
         }
 
@@ -169,9 +200,38 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // inset (primitive hull) or shrunk (custom model) so the cut edge stays behind the hull
         // walls. Visual-only (buoyancy reads the collider, not this); resize or delete the child
         // freely to fit an open cockpit. Creation is undo-registered like every build step.
-        static void AddDryInterior(Transform root, Vector3 hullCenterLocal, Vector3 hullSize, bool customHull)
+        static void AddDryInterior(Transform root, Vector3 hullCenterLocal, Vector3 hullSize, bool customHull,
+                                   Mesh dryMesh = null, Transform visual = null)
         {
+            if (dryMesh != null && visual == null)
+            {
+                Debug.LogWarning(LogPrefix + "Dry interior mesh is only used with a custom hull model; " +
+                                 "falling back to the fitted box.");
+                dryMesh = null;
+            }
+
             var dry = NewUndoableGameObject(BoatDryInteriorName);
+            if (dryMesh != null)
+            {
+                // Parent under the VISUAL child: the proxy is authored in the model's own frame,
+                // and the visual already carries the model-forward yaw - the carve inherits both
+                // for free instead of re-deriving them here.
+                dry.transform.SetParent(visual, worldPositionStays: false);
+                Bounds proxyBounds = dryMesh.bounds;
+                dry.transform.localPosition = proxyBounds.center;
+
+                EnsureGenFolder();
+                var meshVolume = dry.AddComponent<WaterExclusionVolume>();
+                meshVolume.shape = WaterExclusionVolume.Shape.Mesh;
+                meshVolume.carveMesh = SaveAsset(BuildNormalizedCarveMesh(dryMesh),
+                                                 Gen + "/" + dryMesh.name + DryInteriorMeshSuffix + ".asset");
+                meshVolume.meshProxy = WaterExclusionVolume.Shape.Box; // sun shadow / particles / CPU point test
+                meshVolume.size = Vector3.Max(proxyBounds.size * DryInteriorMeshShrink,
+                                              DryInteriorMinEdge * Vector3.one);
+                meshVolume.drawWaterWalls = false; // same content rule as the box path below
+                return;
+            }
+
             dry.transform.SetParent(root, worldPositionStays: false);
             dry.transform.localPosition = hullCenterLocal;
 
@@ -183,6 +243,31 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             // The hull IS the boundary geometry (the content rule): water walls here would paint
             // fog colour over the cockpit interior. Bare standalone volumes keep them on.
             volume.drawWaterWalls = false;
+        }
+
+        // Normalised copy of the proxy for the carve-mesh contract (-0.5..0.5 span): vertices
+        // recentred and divided by the bounds; triangles/winding untouched (positive scale).
+        // The ORIGINAL bounds become the volume's Size, so the carve lands exactly where the
+        // proxy was authored. SaveAsset overwrites the Generated copy on rebuild, so an edited
+        // proxy regenerates instead of serving a stale normalisation.
+        static Mesh BuildNormalizedCarveMesh(Mesh source)
+        {
+            Bounds bounds = source.bounds;
+            Vector3 inverseSize = new Vector3(
+                1f / Mathf.Max(bounds.size.x, MinCarveMeshSpan),
+                1f / Mathf.Max(bounds.size.y, MinCarveMeshSpan),
+                1f / Mathf.Max(bounds.size.z, MinCarveMeshSpan));
+            Vector3[] vertices = source.vertices;
+            for (int i = 0; i < vertices.Length; i++)
+                vertices[i] = Vector3.Scale(vertices[i] - bounds.center, inverseSize);
+
+            var normalized = new Mesh { name = source.name + DryInteriorMeshSuffix };
+            normalized.indexFormat = source.indexFormat;
+            normalized.vertices = vertices;
+            normalized.triangles = source.triangles;
+            normalized.RecalculateBounds();
+            normalized.RecalculateNormals();
+            return normalized;
         }
 
         // Instantiate the hull visual under the boat root (prefab-linked when the source is a
