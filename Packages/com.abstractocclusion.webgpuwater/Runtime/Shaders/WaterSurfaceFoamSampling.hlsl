@@ -86,6 +86,37 @@ float _ShoreSwashDepositGain;  // FOAM-5: >0 = persistent swash deposits live in
 #define OCEAN_WHITECAP_OCTAVE_BLEND_DIST 60.0       // metres over which the 2nd octave fades in (near water keeps one crisp tile)
 #define OCEAN_WHITECAP_CONTRAST          1.6        // >1 sharpens the pattern so foam breaks into crisper shapes, less round
 #define OCEAN_WHITECAP_CONTRAST_DENSE    1.0        // contrast relaxes toward this as coverage saturates (KWS), so dense foam goes SOLID instead of staying lacy
+// Texture-histogram constants, ONE home: the far-field FoamDissolveExpected model (further
+// down) and the variance-preserving octave blend (WhitecapOctaveBlend, below) both read
+// them, and this block sits before both use sites.
+// ⚠️ Calibrated to the SHIPPED whitecap texture (all three channels identical: mean 0.501,
+// stddev 0.189, measured 2026-07-31). A user who swaps in a foam pattern with a very
+// different histogram (much flatter, or much more contrasty) will see the near and far
+// fields disagree - remeasure and update MEAN/STDDEV, they are the only texture-specific
+// constants in the foam path.
+#define OCEAN_FOAM_PATTERN_MEAN     0.501
+#define OCEAN_FOAM_PATTERN_STDDEV   0.189
+#define OCEAN_FOAM_PATTERN_CDF_SPAN 2.45       // +/- sigma over which the smoothstep approximates the normal CDF
+#define OCEAN_FOAM_OCTAVE_BLEND_NORM 0.70710678 // 1/sqrt(2): variance normalizer for two decorrelated octaves
+
+// Variance-preserving octave combine - the anti-tiling mix that REPLACED min().
+// (a + b - 2*mean)/sqrt(2) + mean keeps the blended pattern's mean AND variance equal to a
+// single octave's (measured on the shipped texture: 0.501/0.188 blended vs 0.501/0.189
+// raw), so the dissolve threshold - calibrated on the raw histogram, exactly like
+// FoamDissolveExpected's constants - keeps the SAME foam density at every distance. The
+// old min() combine collapsed the distribution (mean 0.394, stddev 0.158): at coverage 0.2
+// the kept fraction fell from 0.086 to 0.009 - TEN TIMES sparser - across the whole
+// 60 m+ band, then FoamDissolveExpected (still on raw stats) brought the density BACK at
+// the far handover. On screen: "whitecaps sparser inside the sim window than at distance"
+// (Bert 2026-07-31). The 60 m octave-blend edge sits at the sim window's visual edge, but
+// the window was never involved - this path reads no window state at all. Two decorrelated
+// rotated grids share no common repeat, so the anti-tiling job survives the change; only
+// the far foam's SHAPES soften, from intersection-clumps to mixed cells.
+float3 WhitecapOctaveBlend(float3 a, float3 b)
+{
+    return saturate((a + b - 2.0 * OCEAN_FOAM_PATTERN_MEAN) * OCEAN_FOAM_OCTAVE_BLEND_NORM
+                    + OCEAN_FOAM_PATTERN_MEAN);
+}
 // Whitecap parallax (SW3-style fake height): the foam pattern is sampled where a layer floating
 // PARALLAX_HEIGHT metres above the surface would intersect the view ray, so foam visually sits
 // on top of the water instead of being painted into it. The view-ray Y is floored so grazing
@@ -228,9 +259,10 @@ void EvaluateFoam(float2 fuv, float2 fuvDdx, float2 fuvDdy,
     float3 baseA = SampleFoamPattern(uvA, fuvDdx, fuvDdy);
     pattern = lerp(baseA, SampleFoamPattern(fuv - flowDir * phaseB, fuvDdx, fuvDdy), seesaw);
 
-    // Distance anti-tiling, same recipe as SampleOceanWhitecapPattern: min() of a
-    // rotated second octave keeps foam only where BOTH octaves agree, breaking the
-    // repeat into irregular shapes toward the distance.
+    // Distance anti-tiling, same recipe as SampleOceanWhitecapPattern: a rotated second
+    // octave, mixed by the variance-preserving WhitecapOctaveBlend so the pattern's
+    // histogram - and with it the dissolved foam DENSITY - stays what the threshold was
+    // calibrated for at every distance (the old min() starved it; see the helper's header).
     float octaveBlend = saturate(camDist / OCEAN_WHITECAP_OCTAVE_BLEND_DIST);
     if (octaveBlend > 0.0)
     {
@@ -248,7 +280,7 @@ void EvaluateFoam(float2 fuv, float2 fuvDdx, float2 fuvDdy,
             fuvDdy.x * OCEAN_WHITECAP_OCTAVE2_ROT_SIN + fuvDdy.y * OCEAN_WHITECAP_OCTAVE2_ROT_COS)
             / OCEAN_WHITECAP_OCTAVE2_SCALE;
         float3 octave1 = SampleFoamPattern(rotated - flowDir * phaseA, rotDdx, rotDdy);
-        pattern = lerp(pattern, min(pattern, octave1), octaveBlend);
+        pattern = lerp(pattern, WhitecapOctaveBlend(pattern, octave1), octaveBlend);
     }
 
     core = smoothstep(FOAM_CORE_START, FOAM_CORE_FULL, mask);
@@ -375,7 +407,7 @@ float3 SampleOceanWhitecapPatternTiled(float2 worldXZ, float camDist, float tile
     float3 octave1 = tex2Dgrad(_OceanWhitecapTex, rotated / tile1, rotDdx, rotDdy).rgb;
 
     float blend = saturate(camDist / OCEAN_WHITECAP_OCTAVE_BLEND_DIST);
-    return lerp(octave0, min(octave0, octave1), blend);
+    return lerp(octave0, WhitecapOctaveBlend(octave0, octave1), blend);
 }
 
 float3 SampleOceanWhitecapPattern(float2 worldXZ, float camDist,
@@ -489,13 +521,10 @@ float FoamDissolve(float patternValue, float coverage, float feather, float extr
 // Feather therefore reaches the far field, which it must: it is the same band the near-field
 // smoothstep uses, so raising it dims distant foam exactly as it softens near foam.
 //
-// ⚠️ MEAN and STDDEV are calibrated to the SHIPPED whitecap texture. A user who swaps in a foam
-// pattern with a very different histogram (much flatter, or much more contrasty) will see the near
-// and far fields disagree again - remeasure and update these two numbers, they are the only
-// texture-specific constants in the foam path.
-#define OCEAN_FOAM_PATTERN_MEAN     0.501
-#define OCEAN_FOAM_PATTERN_STDDEV   0.189
-#define OCEAN_FOAM_PATTERN_CDF_SPAN 2.45   // +/- sigma over which the smoothstep approximates the normal CDF
+// The OCEAN_FOAM_PATTERN_* histogram constants live in the whitecap-constants block near
+// the top of this file (ONE home): the variance-preserving octave blend reads the mean
+// too, and up there the defines precede both use sites. The ⚠️ swap-your-own-texture
+// calibration warning lives with them.
 float FoamDissolveExpected(float coverage, float feather, float extraThreshold)
 {
     float threshold, contrast;
