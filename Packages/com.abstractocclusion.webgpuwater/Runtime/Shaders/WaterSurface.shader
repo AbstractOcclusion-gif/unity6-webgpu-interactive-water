@@ -63,6 +63,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
         [HideInInspector] _UnderFresnelFloor ("Underside Fresnel Floor", Range(0,1)) = 0.0
         [HideInInspector] _UnderReflectionStrength ("Underside Reflection Strength", Range(0,1)) = 1.0
         [HideInInspector] _UnderMirrorWaterBlend ("Underside Mirror Water Blend", Range(0,1)) = 0.5
+        // No property for _LargeGodRayLastFrame ON PURPOSE: a Properties texture is per-material
+        // state that would OVERRIDE the Shader.SetGlobalTexture binding the god-ray pass makes
+        // (same reason _CameraOpaqueTexture has no entry). The float rides the normal per-body
+        // publisher path like its siblings.
+        [HideInInspector] _UnderMirrorShafts ("Underside Mirror Shafts", Range(0,1)) = 0.0
         [HideInInspector] _FoamUndersideDarken ("Underside Foam Silhouette Darken", Range(0,1)) = 0.6
         [HideInInspector] _FoamUndersideGlow ("Underside Foam Sun Glow", Range(0,1)) = 0.4
         [HideInInspector] _UnderDetailNormalStrength ("Underside Detail Normal Strength", Range(0,2)) = 0.0

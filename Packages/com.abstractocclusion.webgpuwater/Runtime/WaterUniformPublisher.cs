@@ -172,6 +172,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_UnderFresnelFloor = Shader.PropertyToID("_UnderFresnelFloor");
         static readonly int ID_UnderReflectionStrength = Shader.PropertyToID("_UnderReflectionStrength");
         static readonly int ID_UnderMirrorWaterBlend = Shader.PropertyToID("_UnderMirrorWaterBlend");
+        static readonly int ID_UnderMirrorShafts = Shader.PropertyToID("_UnderMirrorShafts");
         static readonly int ID_FoamUndersideDarken = Shader.PropertyToID("_FoamUndersideDarken");
         static readonly int ID_FoamUndersideGlow = Shader.PropertyToID("_FoamUndersideGlow");
         static readonly int ID_UnderDetailNormalStrength = Shader.PropertyToID("_UnderDetailNormalStrength");
@@ -556,6 +557,10 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_UnderFresnelFloor, _body.UnderwaterFresnelFloor);
             sink.SetFloat(ID_UnderReflectionStrength, _body.UnderwaterReflectionStrength);
             sink.SetFloat(ID_UnderMirrorWaterBlend, _body.UnderwaterMirrorWaterBlend);
+            // Volumetric coupling of the TIR mirror (KWS increment, phase 1). The accessor gates
+            // to 0 without an active god-ray ocean, so the shader term (which samples the shaft
+            // HISTORY global LargeBodyAtmospherePass binds) adds black on every legacy scene.
+            sink.SetFloat(ID_UnderMirrorShafts, _body.UnderwaterMirrorShafts);
             sink.SetFloat(ID_FoamUndersideDarken, _body.FoamUndersideDarken);
             sink.SetFloat(ID_FoamUndersideGlow, _body.FoamUndersideGlow);
             sink.SetFloat(ID_UnderDetailNormalStrength, _body.UnderwaterDetailNormalStrength);

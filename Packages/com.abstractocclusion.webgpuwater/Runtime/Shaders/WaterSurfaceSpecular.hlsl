@@ -113,6 +113,17 @@ float _UnderTirSoftness;          // blend width into the TIR mirror at the Snel
 float _UnderFresnelFloor;         // artistic minimum underside reflectance (physical mode only)
 float _UnderReflectionStrength;   // strength of the underside (TIR) mirror; 0 = fully transparent
 float _UnderMirrorWaterBlend;     // mirror source: 0 = tinted sky (legacy) .. 1 = water in-scatter
+// Volumetric coupling of the TIR mirror (KWS increment, phase 1): strength of the god-ray shaft
+// light added into the mirror, and the texture carrying it - LAST frame's post-blend half-res
+// shaft history, bound as a real global by LargeBodyAtmospherePass (black when no god-ray ocean
+// is active, and the publisher forces the strength to 0 then too - double-gated so legacy
+// scenes are byte-identical). One frame late by design: the surface draws before this frame's
+// march, and the 0.88-blend history already integrates ~8 frames, so the lag is invisible.
+float _UnderMirrorShafts;         // 0 = off (legacy decoupled mirror)
+// NOSAMPLER: this pass sits at the 16-sampler ps_4_0 cap, so the history owns NO sampler and
+// borrows _CameraOpaqueTexture's (declared UNITY_DECLARE_TEX2D in WaterSurfaceScreen.hlsl for
+// exactly this) at the sample site - both are screen-space RTs wanting the same linear clamp.
+UNITY_DECLARE_TEX2D_NOSAMPLER(_LargeGodRayLastFrame); // last frame's shaft history (global; black when absent)
 float _FoamUndersideDarken;       // how hard dense foam silhouettes darken the surface from below
 float _FoamUndersideGlow;         // sunlit glow scattered through thin foam lace from below
 float _UnderDetailNormalStrength; // detail-normal tilt on the underside (0 = off, the legacy look)
@@ -161,7 +172,7 @@ float3 SampleOpaqueSmeared(float2 uv, float roughness)
     for (int tap = 0; tap < SKY_ANISO_TAP_COUNT; tap++)
     {
         float2 tapUV = saturate(uv + float2(0.0, spread * ANISO_TAP_OFFSETS[tap]));
-        color += tex2Dlod(_CameraOpaqueTexture, float4(tapUV, 0.0, 0.0)).rgb
+        color += UNITY_SAMPLE_TEX2D_LOD(_CameraOpaqueTexture, tapUV, 0.0).rgb
                * ANISO_TAP_WEIGHTS[tap];
     }
     return color;

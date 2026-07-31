@@ -36,6 +36,12 @@ namespace AbstractOcclusion.WebGpuWater
                      "tinted by the water (legacy), 1 = the water body's own in-scatter colour " +
                      "(reads as the depths mirrored on the surface). Blendable.")]
             [Range(0f, 1f)] public float mirrorWaterBlend = 0.5f;
+            [Tooltip("Couples the mirror to the ocean god-ray shafts: adds last frame's " +
+                     "volumetric shaft light into the total-internal-reflection mirror, so the " +
+                     "'depths' it shows carry the same beams the fog around it does (the KWS " +
+                     "unified-volumetric look). 0 = off, the legacy decoupled mirror. Inert " +
+                     "without an active god-ray ocean.")]
+            [Range(0f, 1f)] public float mirrorShafts = 0f;
             [Tooltip("How strongly dense foam patches darken the surface seen from below (the " +
                      "silhouette blocking the sky).")]
             [Range(0f, 1f)] public float foamSilhouetteDarken = 0.6f;
@@ -66,6 +72,14 @@ namespace AbstractOcclusion.WebGpuWater
         internal float UnderwaterFresnelFloor => underwaterSurfaceSettings.fresnelFloor;
         internal float UnderwaterReflectionStrength => underwaterSurfaceSettings.reflectionStrength;
         internal float UnderwaterMirrorWaterBlend => underwaterSurfaceSettings.mirrorWaterBlend;
+        // Gated on an active god-ray ocean: with the shafts off (or a bounded body) the shaft
+        // history global is black or stale, so the effective strength must read 0 - the shader's
+        // term then adds nothing and every existing scene stays byte-identical. LargeGodRayDensity
+        // already folds in the tier's _godRaysAllowed ceiling, so a tier that suppresses shafts
+        // suppresses this coupling with it.
+        internal float UnderwaterMirrorShafts
+            => (IsOceanClipmap && LargeGodRayDensity > 0f)
+                ? underwaterSurfaceSettings.mirrorShafts : 0f;
         internal float FoamUndersideDarken => underwaterSurfaceSettings.foamSilhouetteDarken;
         internal float FoamUndersideGlow => underwaterSurfaceSettings.foamSunGlow;
         // No texture -> strength 0, same convention as DetailNormalStrength above: the shader's

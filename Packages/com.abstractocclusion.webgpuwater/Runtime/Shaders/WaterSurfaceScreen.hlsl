@@ -6,8 +6,17 @@
 #ifndef WATER_SURFACE_SCREEN_INCLUDED
 #define WATER_SURFACE_SCREEN_INCLUDED
 
-// URP scene textures (enable Opaque Texture + Depth Texture in the URP asset)
-sampler2D _CameraOpaqueTexture;
+// URP scene textures (enable Opaque Texture + Depth Texture in the URP asset).
+// UNITY_DECLARE_TEX2D, not sampler2D (2026-07-31): ps_4_0 caps sampler registers at 16 and
+// this pass sits EXACTLY at the cap (the comment below already records the last combined slot
+// going to the detail normal). The macro family keeps the opaque texture's one sampler
+// NAMEABLE (sampler_CameraOpaqueTexture), so the god-ray shaft history the underside mirror
+// samples (_LargeGodRayLastFrame, WaterSurfaceSpecular.hlsl) can BORROW it via
+// UNITY_SAMPLE_TEX2D_SAMPLER instead of costing a 17th register - which is exactly how the
+// compile failed when it was declared sampler2D. The sampler state is the texture's own,
+// identical to what tex2D/tex2Dlod resolved to; every call site swapped to the matching
+// UNITY_SAMPLE_TEX2D / _LOD macro in the same change (all in this TU).
+UNITY_DECLARE_TEX2D(_CameraOpaqueTexture);
 // Depth as a separate Texture2D + the shared point sampler, NOT a sampler2D: depth
 // must be point-sampled anyway (filtering depth values is meaningless), and ps_4_0
 // caps sampler registers at 16 - the detail-normal texture took the last combined

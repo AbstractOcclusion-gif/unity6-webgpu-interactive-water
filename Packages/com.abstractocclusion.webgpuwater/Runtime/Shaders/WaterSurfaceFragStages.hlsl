@@ -401,13 +401,25 @@ float4 UnderwaterStage(v2f i, WaterGeomStage g, float waterClarity)
     float3 bodyInscatterUnder = WaterInscatterColor(-incomingRay, _LightDir, _SunColor, 0.0);
     float3 reflectedColor = lerp(SampleEnvironment(reflectedRay) * UnderwaterViewTint(),
                                  bodyInscatterUnder, _UnderMirrorWaterBlend);
+    // VOLUMETRIC COUPLING (KWS increment, phase 1). A real TIR mirror shows THE DEPTHS, and the
+    // depths are shaft-lit: without this term the mirror band sat dark against fog the god-ray
+    // composite brightens all around it - the "decoupled" underside (Bert, 2026-07-31). Sampled
+    // from LAST frame's post-blend shaft history at this pixel's own screen uv: a screen-space
+    // stand-in for the reflected direction, and one frame late - both hidden by the ~8 frames
+    // the 0.88-blend history already integrates. Added BEFORE the fresnel lerp below so it
+    // rides the mirror weight: strongest at grazing, exactly where the TIR band lives, absent
+    // in the clear Snell window overhead. Unconditional (their zero-coverage rule: adds black
+    // at strength 0), and both the strength (publisher, needs an active god-ray ocean) and the
+    // texture (pass binding, black without valid history) gate it to a no-op on legacy scenes.
+    reflectedColor += UNITY_SAMPLE_TEX2D_SAMPLER(_LargeGodRayLastFrame, _CameraOpaqueTexture,
+                                                 ScreenUV(i.screenPos)).rgb * _UnderMirrorShafts;
     float3 refractedColor = GetSurfaceRayColor(i.worldPos, refractedRay, float3(1.0, 1.0, 1.0)) * UnderwaterViewTint();
 
     // Real transparency from below: sample the live scene above the surface.
     if (_RealRefraction > 0.5)
     {
         float2 ruvU = ScreenUV(i.screenPos) + normal.xz * _RefractionDistortion;
-        refractedColor = tex2D(_CameraOpaqueTexture, saturate(ruvU)).rgb * UnderwaterViewTint();
+        refractedColor = UNITY_SAMPLE_TEX2D(_CameraOpaqueTexture, saturate(ruvU)).rgb * UnderwaterViewTint();
     }
 
     refractedColor = ApplyWaterOpacityTintedClarity(refractedColor, bodyInscatterUnder, waterClarity); // turbidity from below too
@@ -680,7 +692,7 @@ float3 RefractionStage(v2f i, WaterGeomStage g, float waterClarity, out float3 b
     {
         float2 ruv = ScreenUV(i.screenPos);
         ruv += normal.xz * _RefractionDistortion;
-        refractedColor = tex2D(_CameraOpaqueTexture, saturate(ruv)).rgb; // tinted by the water absorption below
+        refractedColor = UNITY_SAMPLE_TEX2D(_CameraOpaqueTexture, saturate(ruv)).rgb; // tinted by the water absorption below
 
         // Fog the transmitted view by the water thickness behind the surface
         // (scene eye-depth - surface eye-depth), so heavy fog reads through too.
@@ -1351,15 +1363,15 @@ float3 FinalCompositeStage(v2f i, WaterGeomStage g, float3 outColor,
             float s4 = HorizonSkyWeight(t4) * 0.09;
             float skySum = s0 + s1 + s2 + s3 + s4;   // 1 when every tap is sky, 0 when none is
             float3 perAzimuth =
-                  (tex2Dlod(_CameraOpaqueTexture, float4(t0, 0, 0)).rgb * s0
-                 + tex2Dlod(_CameraOpaqueTexture, float4(t1, 0, 0)).rgb * s1
-                 + tex2Dlod(_CameraOpaqueTexture, float4(t2, 0, 0)).rgb * s2
-                 + tex2Dlod(_CameraOpaqueTexture, float4(t3, 0, 0)).rgb * s3
-                 + tex2Dlod(_CameraOpaqueTexture, float4(t4, 0, 0)).rgb * s4)
+                  (UNITY_SAMPLE_TEX2D_LOD(_CameraOpaqueTexture, t0, 0).rgb * s0
+                 + UNITY_SAMPLE_TEX2D_LOD(_CameraOpaqueTexture, t1, 0).rgb * s1
+                 + UNITY_SAMPLE_TEX2D_LOD(_CameraOpaqueTexture, t2, 0).rgb * s2
+                 + UNITY_SAMPLE_TEX2D_LOD(_CameraOpaqueTexture, t3, 0).rgb * s3
+                 + UNITY_SAMPLE_TEX2D_LOD(_CameraOpaqueTexture, t4, 0).rgb * s4)
                 / max(skySum, HORIZON_SKY_MIN_WEIGHT);
             float2 centreUV = float2(0.5, saturate(horizonUV.y));
             float centreSky = HorizonSkyWeight(centreUV);
-            float3 centreBand = tex2Dlod(_CameraOpaqueTexture, float4(centreUV, 0, 0)).rgb;
+            float3 centreBand = UNITY_SAMPLE_TEX2D_LOD(_CameraOpaqueTexture, centreUV, 0).rgb;
 
             // Two independent reasons to stop trusting the per-azimuth sample - the projection is
             // unusable, or its taps are not sky. Take whichever is stronger; both are smooth, so the

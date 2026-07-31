@@ -19,6 +19,7 @@
 // Ocean-only: the feature gates enqueue on an active ocean with god rays on, and the shader reads
 // _LargeGodRayDensity (0 for bounded bodies) as a second guard. Pools stay untouched.
 #if WEBGPUWATER_URP
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.RenderGraphModule;
@@ -51,6 +52,11 @@ namespace AbstractOcclusion.WebGpuWater
         // via SetGlobalTextureAfterPass (the project's RenderGraph handoff convention).
         static readonly int ID_ShaftTexture = Shader.PropertyToID("_LargeGodRayTex");
         static readonly int ID_History = Shader.PropertyToID("_LargeGodRayHistory");
+        // LAST frame's post-blend shafts, bound as a REAL global (Shader.SetGlobalTexture) so the
+        // WATER SURFACE - which draws long before this pass - can add the shaft light into its
+        // underside TIR mirror (_UnderMirrorShafts). See the binding site for why it is the
+        // HISTORY and not this frame's transient.
+        static readonly int ID_ShaftsLastFrame = Shader.PropertyToID("_LargeGodRayLastFrame");
         static readonly int ID_PrevVP = Shader.PropertyToID("_GodRayPrevVP");
         static readonly int ID_CurrVP = Shader.PropertyToID("_GodRayCurrVP");
         static readonly int ID_TemporalBlend = Shader.PropertyToID("_GodRayTemporalBlend");
@@ -62,11 +68,21 @@ namespace AbstractOcclusion.WebGpuWater
 
         // Persistent half-res history for the temporal accumulation, filled by a copy AFTER the
         // march (single RT - the march never writes it directly, so there is no read/write hazard).
-        RTHandle _history;
-        int _historyWidth, _historyHeight;
-        bool _historyValid;   // false until a game-camera frame has copied into it (and after resize)
-        Matrix4x4 _prevViewProj;
-        bool _prevViewProjValid;
+        // PER GAME CAMERA (audit H-4): keyed on size alone, two game cameras of equal resolution
+        // used to share one RT and one prevVP - each frame the second camera reprojected against
+        // the first one's matrix and history, corrupting both accumulations.
+        sealed class CameraHistory
+        {
+            public RTHandle Rt;
+            public int Width, Height;
+            public bool Valid;   // false until this camera has copied into it (and after resize)
+            public Matrix4x4 PrevViewProj;
+            public bool PrevValid;
+        }
+        readonly Dictionary<Camera, CameraHistory> _histories = new Dictionary<Camera, CameraHistory>();
+        // Destroyed cameras leave dictionary entries behind (a Camera key never hashes away).
+        // Swept only when the count passes this bound, so the common one-camera case never scans.
+        const int HistorySweepThreshold = 4;
 
         internal LargeBodyAtmospherePass(Material material)
         {
@@ -76,10 +92,12 @@ namespace AbstractOcclusion.WebGpuWater
 
         internal void Dispose()
         {
-            _history?.Release();
-            _history = null;
-            _historyValid = false;
-            _prevViewProjValid = false;
+            foreach (CameraHistory entry in _histories.Values)
+                entry.Rt?.Release();
+            _histories.Clear();
+            // Last-body-out reset (the stale-global trap): the surface's mirror term must never
+            // sample a released RT. Black is also what the term multiplies to nothing.
+            Shader.SetGlobalTexture(ID_ShaftsLastFrame, Texture2D.blackTexture);
         }
 
         sealed class RaymarchPassData
@@ -106,15 +124,30 @@ namespace AbstractOcclusion.WebGpuWater
             TextureHandle shaftTexture = CreateHalfResTarget(renderGraph, cameraColor, out TextureDesc halfDesc);
 
             bool temporal = cameraData.cameraType == CameraType.Game;
-            if (temporal) EnsureHistory(halfDesc);
-
             Camera cam = cameraData.camera;
+            CameraHistory entry = temporal ? EnsureHistory(cam, halfDesc) : null;
+
+            // VOLUMETRIC COUPLING (KWS increment, phase 1): bind LAST frame's post-blend shafts
+            // as a real global so the water surface - drawn long before this pass, outside the
+            // graph's dependency tracking - can add the shaft light into its underside TIR mirror.
+            // Deliberately the HISTORY, not this frame's transient: rescheduling the march before
+            // transparents was tried in this pass's past and blanked the shafts (see the file
+            // header's rollback note), while the 0.88 blend already integrates ~8 frames, so one
+            // frame of lag is invisible where a scheduling regression is not. Black when no valid
+            // history exists (first frames, resize, non-game camera), so the mirror term adds
+            // nothing - and the strength itself is gated CPU-side on an active god-ray ocean
+            // (WaterVolume.UnderwaterMirrorShafts). Set at record time: all of this camera's
+            // graph executes after every record, so the binding reaches its transparents.
+            Shader.SetGlobalTexture(ID_ShaftsLastFrame,
+                (temporal && entry.Valid) ? (Texture)entry.Rt : Texture2D.blackTexture);
+
             Matrix4x4 viewProj = GL.GetGPUProjectionMatrix(cam.projectionMatrix, true)
                                  * cam.worldToCameraMatrix;
-            float blend = (temporal && _historyValid && _prevViewProjValid) ? TemporalHistoryWeight : 0f;
-            Matrix4x4 prevVP = _prevViewProjValid ? _prevViewProj : viewProj;
-            TextureHandle historyRead = (temporal && _historyValid)
-                ? renderGraph.ImportTexture(_history)
+            bool historyUsable = temporal && entry.Valid && entry.PrevValid;
+            float blend = historyUsable ? TemporalHistoryWeight : 0f;
+            Matrix4x4 prevVP = (temporal && entry.PrevValid) ? entry.PrevViewProj : viewProj;
+            TextureHandle historyRead = (temporal && entry.Valid)
+                ? renderGraph.ImportTexture(entry.Rt)
                 : TextureHandle.nullHandle;
 
             RecordRaymarch(renderGraph, resources, shaftTexture, historyRead, prevVP, viewProj, blend);
@@ -124,12 +157,12 @@ namespace AbstractOcclusion.WebGpuWater
                 // Snapshot this frame's (post-blend) shafts into the persistent history for next
                 // frame. Rides AFTER the visible chain: if this copy ever fails, the shafts on
                 // screen are untouched - only the smoothing degrades.
-                TextureHandle historyWrite = renderGraph.ImportTexture(_history);
+                TextureHandle historyWrite = renderGraph.ImportTexture(entry.Rt);
                 renderGraph.AddCopyPass(shaftTexture, historyWrite,
                                         passName: "LargeBodyGodRays.HistoryCopy");
-                _historyValid = true;
-                _prevViewProj = viewProj;
-                _prevViewProjValid = true;
+                entry.Valid = true;
+                entry.PrevViewProj = viewProj;
+                entry.PrevValid = true;
             }
 
             RecordComposite(renderGraph, cameraColor);
@@ -148,16 +181,41 @@ namespace AbstractOcclusion.WebGpuWater
             return renderGraph.CreateTexture(desc);
         }
 
-        void EnsureHistory(in TextureDesc desc)
+        CameraHistory EnsureHistory(Camera cam, in TextureDesc desc)
         {
-            if (_history != null && _historyWidth == desc.width && _historyHeight == desc.height)
-                return;
-            _history?.Release();
-            _history = RTHandles.Alloc(desc.width, desc.height, colorFormat: desc.format,
+            if (!_histories.TryGetValue(cam, out CameraHistory entry))
+            {
+                if (_histories.Count >= HistorySweepThreshold) SweepDeadCameras();
+                entry = new CameraHistory();
+                _histories.Add(cam, entry);
+            }
+            if (entry.Rt != null && entry.Width == desc.width && entry.Height == desc.height)
+                return entry;
+            entry.Rt?.Release();
+            entry.Rt = RTHandles.Alloc(desc.width, desc.height, colorFormat: desc.format,
                                        name: "_LargeGodRayHistory");
-            _historyWidth = desc.width;
-            _historyHeight = desc.height;
-            _historyValid = false; // fresh RT holds garbage; blend stays 0 until the first copy
+            entry.Width = desc.width;
+            entry.Height = desc.height;
+            entry.Valid = false; // fresh RT holds garbage; blend stays 0 until the first copy
+            return entry;
+        }
+
+        // Release entries whose camera has been destroyed. Called only when the map outgrows the
+        // sweep threshold, so the common one-game-camera case never pays the scan.
+        void SweepDeadCameras()
+        {
+            List<Camera> dead = null;
+            foreach (KeyValuePair<Camera, CameraHistory> pair in _histories)
+            {
+                if (pair.Key != null) continue; // Unity fake-null: destroyed Camera compares == null
+                (dead ??= new List<Camera>()).Add(pair.Key);
+            }
+            if (dead == null) return;
+            for (int i = 0; i < dead.Count; i++)
+            {
+                _histories[dead[i]].Rt?.Release();
+                _histories.Remove(dead[i]);
+            }
         }
 
         void RecordRaymarch(RenderGraph renderGraph, UniversalResourceData resources,

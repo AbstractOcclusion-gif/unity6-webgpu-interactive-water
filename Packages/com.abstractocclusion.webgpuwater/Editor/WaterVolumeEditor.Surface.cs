@@ -154,7 +154,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 DrawFields(
                     "underwaterSurfaceSettings.physicalFresnel",
                     "underwaterSurfaceSettings.reflectionStrength",
-                    "underwaterSurfaceSettings.mirrorWaterBlend");
+                    "underwaterSurfaceSettings.mirrorWaterBlend",
+                    "underwaterSurfaceSettings.mirrorShafts");
                 WaterEditorUI.SubHeading("Foam seen from below");
                 DrawFields(
                     "underwaterSurfaceSettings.foamSilhouetteDarken",
