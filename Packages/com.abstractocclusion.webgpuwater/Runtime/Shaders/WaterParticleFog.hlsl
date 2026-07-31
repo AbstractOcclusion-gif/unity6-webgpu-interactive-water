@@ -29,19 +29,40 @@ float _UnderwaterSurfaceY;   // wave-aware surface height at the camera xz (the 
 
 // lightDir/sunColor are passed in (not read as globals) so this include never fights the
 // declaration each particle shader already carries for them.
+//
+// TWO entry points over ONE body (the cross-side transparent fix split):
+//  * ParticleUnderwaterFogAlways - prices the wet path whenever the FOG FEATURE is on
+//    (_WaterFogEnabled), regardless of the fullscreen pass arming. The public transparent
+//    API uses this: a WaterFogTransparent renderer is rerouted after the water stack on
+//    EVERY water frame (not just armed ones), and a submerged prop seen from the air
+//    bypasses the sheet's refraction, so it must carry its own water tint even while the
+//    fullscreen fog is disarmed.
+//  * ParticleUnderwaterFog - the sprites' original armed-gated wrapper, byte-identical in
+//    behaviour: their reroute keys on the SAME armed gate, so fog-off frames stay the
+//    untouched queue-time look (and armed implies _WaterFogEnabled - UnderwaterFogActive
+//    requires the body's waterFog - so the inner gate never fires for them).
+void ParticleUnderwaterFogAlways(float3 worldPos, float3 lightDir, float3 sunColor,
+                                 out float3 fogMul, out float3 fogAdd)
+{
+    fogMul = float3(1.0, 1.0, 1.0);
+    fogAdd = float3(0.0, 0.0, 0.0);
+    if (_WaterFogEnabled < 0.5) return; // fog feature off for this body: identity
+    float wet = WaterPathLength(worldPos, _WorldSpaceCameraPos.xyz, _UnderwaterSurfaceY);
+    if (wet <= 0.0) return; // fragment and camera both in air (spray above a pond seen from above)
+    float3 transmittance = exp(-_WaterExtinction.rgb * (_WaterFogDensity * wet));
+    float3 viewDirWS = normalize(_WorldSpaceCameraPos.xyz - worldPos);
+    float3 inscatter = WaterInscatterColor(viewDirWS, lightDir, sunColor, 0.0);
+    fogMul = transmittance;
+    fogAdd = inscatter * (1.0 - transmittance);
+}
+
 void ParticleUnderwaterFog(float3 worldPos, float3 lightDir, float3 sunColor,
                            out float3 fogMul, out float3 fogAdd)
 {
     fogMul = float3(1.0, 1.0, 1.0);
     fogAdd = float3(0.0, 0.0, 0.0);
     if (_UnderwaterFogArmed < 0.5) return; // fog off: queue-time draw path, untouched look
-    float wet = WaterPathLength(worldPos, _WorldSpaceCameraPos.xyz, _UnderwaterSurfaceY);
-    if (wet <= 0.0) return; // sprite and camera both in air (spray above a pond seen from above)
-    float3 transmittance = exp(-_WaterExtinction.rgb * (_WaterFogDensity * wet));
-    float3 viewDirWS = normalize(_WorldSpaceCameraPos.xyz - worldPos);
-    float3 inscatter = WaterInscatterColor(viewDirWS, lightDir, sunColor, 0.0);
-    fogMul = transmittance;
-    fogAdd = inscatter * (1.0 - transmittance);
+    ParticleUnderwaterFogAlways(worldPos, lightDir, sunColor, fogMul, fogAdd);
 }
 
 #endif // WATER_PARTICLE_FOG_INCLUDED

@@ -1118,5 +1118,42 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             }
             ENDHLSL
         }
+
+        // ---- Pass 3: RestoreOpaqueDepth (the cross-side transparent fix) --------------
+        // The water sheet renders with ZWrite On (WaterSurface Pass 0 computes an
+        // opaque-looking colour, Blend Off), so its DEPTH occludes everything drawn later -
+        // which is exactly where the after-fog reroute draws WaterFogTransparent renderers.
+        // A user transparent on the far side of the sheet z-failed against the sheet's depth
+        // and vanished (Bert 2026-07-31: a submerged prop invisible from the air, an
+        // above-water prop invisible from below; the same-side submerged case worked because
+        // no sheet sat between camera and prop).
+        // This pass rewrites the depth ATTACHMENT from _CameraDepthTexture - the resolved
+        // OPAQUE-only copy in URP's default setup, the same source this shader's own
+        // down-look exemption and the sprites' soft fade already trust - so the user draws
+        // that follow z-test correctly against walls and terrain but see THROUGH the sheet.
+        // Raw buffer value in, raw value out via SV_Depth: no reversed-Z conversion, the
+        // convention cancels by construction. ColorMask 0: depth only, the composited image
+        // is untouched. Dispatched ONLY by the user-transparent after-fog pass
+        // (WaterUnderwaterFogFeature), never by the fog chain itself. If a project copies
+        // depth AFTER transparents (CopyDepthMode), the copy already contains the sheet and
+        // this restore degrades to a no-op - today's behaviour, never worse.
+        Pass
+        {
+            Name "WaterRestoreOpaqueDepth"
+            ColorMask 0
+            ZWrite On
+            ZTest Always
+
+            HLSLPROGRAM
+            #pragma vertex Vert
+            #pragma fragment FragRestoreDepth
+            #pragma target 4.0
+
+            float FragRestoreDepth(Varyings input) : SV_Depth
+            {
+                return SampleSceneDepth(input.uv);
+            }
+            ENDHLSL
+        }
     }
 }

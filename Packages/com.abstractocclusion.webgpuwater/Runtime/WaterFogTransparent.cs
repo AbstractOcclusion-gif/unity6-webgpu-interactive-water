@@ -1,20 +1,20 @@
 // WebGpuWater - opt-in after-fog reroute for USER transparent renderers (the public fog API's
 // sorting half; see WebGpuWaterFogAPI.hlsl's header for the why).
 //
-// The fullscreen underwater fog runs AFTER every transparent and integrates to the OPAQUE
-// depth, so on submerged frames it paints the full water column's fog over anything drawn in
-// the transparent queue. The package sprites solved this by skipping their queue-time draw on
-// fog-armed frames and re-drawing AFTER the fog (WaterParticlesAfterFogPass); this component
-// extends exactly that reroute to a user renderer whose material prices its own fog through
-// WebGpuWaterFogAPI.hlsl:
-//  * on armed frames it raises Renderer.forceRenderingOff (the queue-time draw stands down,
-//    every camera) and WaterParticlesAfterFogPass draws the renderer explicitly - after the
-//    fog and the god rays, BEFORE the package sprites so spray reads as the nearest layer;
-//  * disarmed frames lower the flag and touch nothing - the scene is byte-identical to a
-//    project that never heard of this component.
-// The gate is the SAME WaterVolume.UnderwaterFogActive the sprite reroute keys on, read in
-// LateUpdate (rendering runs after all updates), so user transparents and package sprites
-// flip on exactly the same frames, never one frame apart.
+// TWO reasons a queue-time transparent dies around this water (both hit Bert on day one):
+// the water sheet renders with ZWrite On, so its depth kills any later draw BEHIND it (a
+// submerged prop seen from the air, an above-water prop seen from below - the cross-side
+// views); and on submerged frames the fullscreen fog paints the whole column's fog over
+// queue-time transparents. This component reroutes a user renderer past both:
+//  * whenever ANY water body is active it raises Renderer.forceRenderingOff (the
+//    queue-time draw stands down, every camera) and the water feature draws the renderer
+//    explicitly AFTER the whole water stack, over depth RESTORED to the opaque-only copy
+//    (WaterRestoreOpaqueDepth) - z-tested against walls and terrain, visible through the
+//    sheet from either side, fogged by its own material via WebGpuWaterFogAPI.hlsl;
+//  * with no water body in the scene the flag stays down and nothing changes.
+// The gate (WaterVolume.ActiveBodyCount) is the same one the feature's enqueue reads, in
+// LateUpdate (rendering runs after all updates), so suppression and re-draw cannot
+// disagree within a frame.
 //
 // Known trades, same as the sprites: while a fog DEBUG VIEW owns the frame the after-fog pass
 // stands down and rerouted renderers vanish for the duration; and on armed frames the
@@ -71,9 +71,17 @@ namespace AbstractOcclusion.WebGpuWater
         {
 #if WEBGPUWATER_URP
             if (_renderer == null) return;
-            // Same gate, same frame semantics as the sprite reroute (WaterFoamParticles reads
-            // this in its own submit path): armed -> the after-fog pass owns the draw.
-            _renderer.forceRenderingOff = WaterVolume.UnderwaterFogActive;
+            // EVERY water frame, not just fog-armed ones (the cross-side fix): the water
+            // sheet renders with ZWrite On, so a queue-time draw of this renderer dies
+            // behind the sheet's depth on any cross-side view (submerged prop from the air,
+            // above-water prop from below) - and on from-above ocean frames the old armed
+            // gate was false, leaving exactly that broken queue-time path. Rerouted, the
+            // renderer draws after the whole water stack over RESTORED opaque depth
+            // (WaterRestoreOpaqueDepth), so it z-tests against walls but sees through the
+            // sheet. Same gate as the feature's enqueue (ActiveBodyCount), read in
+            // LateUpdate - rendering runs after all updates, so the two cannot disagree
+            // within a frame. No water bodies: flag off, byte-identical legacy scene.
+            _renderer.forceRenderingOff = WaterVolume.ActiveBodyCount > 0;
 #endif
         }
     }

@@ -17,14 +17,16 @@
 // already carries). Shader Graph: add a Custom Function node (File mode) pointing here with
 // function name "WebGpuWaterFog" - the _float wrapper below handles preview.
 //
-// IMPORTANT - the SORTING half (why a component exists): the fullscreen underwater fog runs
-// AFTER every transparent and integrates to the OPAQUE depth, so on submerged frames it paints
-// the full water column's fog OVER anything drawn in the transparent queue - self-fogged or
-// not (the exact artifact the package sprites had before their after-fog reroute). Put the
-// WaterFogTransparent component on your renderer: on fog-armed frames it suppresses the
-// queue-time draw and the water feature re-draws the renderer AFTER the fog and the god rays,
-// beside the package sprites. Fog-off frames are untouched - your material draws exactly as
-// it always did, and this function returns identity (mul 1, add 0).
+// IMPORTANT - the SORTING half (why a component exists): the water sheet renders with
+// ZWrite On (its Pass 0 computes an opaque-looking colour), so anything drawn after it and
+// BEHIND it in depth z-fails and vanishes - and the fullscreen fog additionally paints the
+// whole column's fog over queue-time transparents on submerged frames. Put the
+// WaterFogTransparent component on your renderer: on EVERY frame a water body is active it
+// suppresses the queue-time draw, and the water feature re-draws the renderer AFTER the
+// whole water stack over RESTORED opaque-only depth - so your prop z-tests correctly
+// against walls and terrain, sees THROUGH the sheet from either side (submerged prop from
+// the air, above-water prop from below), and never double-fogs. No water in the scene:
+// the component is inert and your material draws exactly as it always did.
 //
 // Limits, stated up front:
 //  * The waterline here is the flat closed-form one (_UnderwaterSurfaceY, the Simple-fog
@@ -50,15 +52,18 @@
 void WebGpuWaterFogTransparent(float3 worldPos, float3 lightDir, float3 sunColor,
                                out float3 fogMul, out float3 fogAdd)
 {
-    // Extinction + lit in-scatter over the wet path: the particles' own function, verbatim -
-    // one implementation for every "self-fogged transparent" in and out of the package.
-    ParticleUnderwaterFog(worldPos, lightDir, sunColor, fogMul, fogAdd);
+    // Extinction + lit in-scatter over the wet path: the particles' own maths, through the
+    // ALWAYS entry point - priced whenever the fog FEATURE is on, not only while the
+    // fullscreen pass is armed. A rerouted prop bypasses the sheet's refraction, so from
+    // above the water it must carry its own tint even on disarmed frames (the sheet would
+    // otherwise have provided it); the sprites keep their armed-gated wrapper untouched.
+    ParticleUnderwaterFogAlways(worldPos, lightDir, sunColor, fogMul, fogAdd);
 
     // Scene-lamp glow (the A1 family): the SAME closed-form integral the fullscreen fog and
     // the water surface evaluate, over the wet segment of the camera->fragment ray, so a
-    // lamp's glow on your transparent matches its glow in the fog behind it. Uniform-gated
-    // by design - see the header note.
-    if (_UnderwaterFogArmed < 0.5) return;
+    // lamp's glow on your transparent matches its glow in the fog behind it - and like the
+    // surface's own from-above term it carries NO armed gate (the published light count and
+    // the knob are the whole switch). Uniform-gated by design - see the header note.
     if (_WaterSceneLightCount < 0.5 || _UnderwaterLightScatter <= 0.0) return;
     float3 toFrag = worldPos - _WorldSpaceCameraPos.xyz;
     float len = max(length(toFrag), WEBGPU_WATER_FOG_API_MIN_RAY);

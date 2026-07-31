@@ -28,6 +28,12 @@ namespace AbstractOcclusion.WebGpuWater
         const int AbsorbShaderPass = 0;
         const int InscatterShaderPass = 1;
         const int WaterlineShaderPass = 2;
+        // "WaterRestoreOpaqueDepth": rewrites the depth attachment from the opaque-only
+        // _CameraDepthTexture so user transparents drawn after the water stack stop
+        // z-failing behind the sheet's ZWrite On depth (the cross-side transparent fix).
+        // Dispatched by WaterParticlesAfterFogPass (the feature hands it this material),
+        // never by the fog chain in this file - internal so that pass can reach the index.
+        internal const int RestoreDepthShaderPass = 3;
         // WaterSurface.shader's "OceanSurfaceEyeDepth" pass, drawn per surface renderer below.
         const int SurfaceDepthShaderPass = 1;
 

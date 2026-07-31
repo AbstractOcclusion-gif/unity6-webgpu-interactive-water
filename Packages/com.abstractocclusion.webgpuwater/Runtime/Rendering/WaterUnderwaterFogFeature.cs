@@ -32,10 +32,15 @@ namespace AbstractOcclusion.WebGpuWater
         // pass's history targets) per inspector tweak. Create and Dispose now share ONE teardown, so
         // they cannot drift.
             ReleaseResources();
-            _particlePass = new WaterParticlesAfterFogPass(); // material-free: needs no shader
+            _particlePass = new WaterParticlesAfterFogPass(); // sprite half is material-free
             if (underwaterFogShader == null) { _pass = null; return; } // unassigned: feature is inert
             _material = CoreUtils.CreateEngineMaterial(underwaterFogShader);
             _pass = new WaterUnderwaterFogPass(_material);
+            // The user-transparent half needs the fog material for its depth-restore draw
+            // (WaterRestoreOpaqueDepth - see the cross-side fix). Null (shader unassigned)
+            // degrades to drawing without the restore: cross-side props stay hidden behind
+            // the sheet's depth, exactly the pre-fix behaviour, never worse.
+            _particlePass.FogMaterial = _material;
         }
 
         public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
@@ -55,11 +60,26 @@ namespace AbstractOcclusion.WebGpuWater
             // stand down rather than paint over it. They vanish entirely for the duration - their
             // queue-time draw is already skipped while the fog is armed - which is the right
             // trade for a view whose whole job is to show what the FOG did. See WaterDebugView.
-            if (!WaterDebugView.FogViewActive
-                && WaterVolume.UnderwaterFogActive && _particlePass != null
-                && (WaterFoamParticles.Live.Count > 0 || WaterSplashEmitter.Live.Count > 0
-                    || foamOverlayNeeded || WaterFogTransparent.Live.Count > 0))
+            //
+            // TWO independent halves ride this one pass since the cross-side fix:
+            //  * sprites/foam - armed frames only, exactly the original condition;
+            //  * user transparents (WaterFogTransparent) - EVERY frame a water body is
+            //    active, armed or not: the component suppresses their queue-time draw on the
+            //    same ActiveBodyCount gate, so this pass is their only draw whenever water
+            //    exists (the sheet's ZWrite On depth would eat a queue-time draw on any
+            //    cross-side view - see DrawUserTransparents).
+            bool spritesNeeded = WaterVolume.UnderwaterFogActive
+                              && (WaterFoamParticles.Live.Count > 0 || WaterSplashEmitter.Live.Count > 0
+                                  || foamOverlayNeeded);
+            bool userTransparentsNeeded = WaterFogTransparent.Live.Count > 0
+                                       && WaterVolume.ActiveBodyCount > 0;
+            if (!WaterDebugView.FogViewActive && _particlePass != null
+                && (spritesNeeded || userTransparentsNeeded))
+            {
+                _particlePass.SpritesThisFrame = spritesNeeded;
+                _particlePass.UserTransparentsThisFrame = userTransparentsNeeded;
                 renderer.EnqueuePass(_particlePass);
+            }
 
             if (_pass == null) return; // shader unassigned / not created
             // Fog: ocean = submerged only, pond = whenever fog is on. Waterline: the near plane
@@ -90,6 +110,14 @@ namespace AbstractOcclusion.WebGpuWater
     internal sealed class WaterParticlesAfterFogPass : ScriptableRenderPass
     {
         readonly ProfilingSampler _sampler = new ProfilingSampler("WaterParticlesAfterFog");
+        readonly ProfilingSampler _userSampler = new ProfilingSampler("WaterTransparentsAfterFog");
+
+        // Set by the feature each enqueue (see AddRenderPasses): which of the two halves run.
+        internal bool SpritesThisFrame;
+        internal bool UserTransparentsThisFrame;
+        // The fog material, for the WaterRestoreOpaqueDepth draw in the user half. Null when
+        // the fog shader is unassigned - the user draws then run without the restore.
+        internal Material FogMaterial;
 
         // WaterSurface.shader's "PondFoamOverlay" pass, drawn per above-surface renderer below.
         const int FoamOverlayShaderPass = 2;
@@ -98,6 +126,7 @@ namespace AbstractOcclusion.WebGpuWater
         readonly MaterialPropertyBlock _scratchBlock = new MaterialPropertyBlock();
 
         sealed class PassData { public Camera camera; public MaterialPropertyBlock block; }
+        sealed class UserPassData { public Material fogMaterial; }
 
         internal WaterParticlesAfterFogPass()
         {
@@ -110,56 +139,91 @@ namespace AbstractOcclusion.WebGpuWater
             UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
             if (!resources.activeColorTexture.IsValid()) return;
 
-            // Pond-foam overlay (the surface-foam half of the particle/fog sorting fix): the
-            // queue-time surface pass skipped its pond foam this frame, so collect the live
-            // above-surface renderers to re-draw it here - after the fog and the god rays,
-            // before the sprites (spray lands ON the foam). Submerged frames collect nothing:
-            // the fog is in front of the foam there and Pass 0 kept its own draw.
-            s_FoamRenderers.Clear();
-            if (!WaterVolume.CameraSubmerged)
-                WaterVolume.CollectFoamOverlayRenderers(s_FoamRenderers);
-
-            using (var builder = renderGraph.AddRasterRenderPass("WaterParticlesAfterFog",
-                                                                 out PassData data, _sampler))
+            // ---- Half 1: sprites + pond-foam overlay (armed frames only, the original pass) --
+            if (SpritesThisFrame)
             {
-                data.camera = cameraData.camera;
-                data.block = _scratchBlock;
-                // ReadWrite (not Write): the sprites and the pond-foam overlay are alpha-blended, so the
-                // rendered scene must be LOADED, not discarded. Write alone left the screen black on a
-                // load-action-honouring backend - the same trap LargeBodyAtmospherePass.cs already records.
-                builder.SetRenderAttachment(resources.activeColorTexture, 0, AccessFlags.ReadWrite);
-                // Depth READ: the sprites keep their hardware ZTest against the scene (and the
-                // soft-fade depth sample rides the global _CameraDepthTexture).
-                if (resources.activeDepthTexture.IsValid())
-                    builder.SetRenderAttachmentDepth(resources.activeDepthTexture, AccessFlags.Read);
-                builder.AllowPassCulling(false); // driven by our own lists, not renderer visibility
-                builder.UseAllGlobalTextures(true);
-                builder.SetRenderFunc((PassData d, RasterGraphContext ctx) =>
+                // Pond-foam overlay (the surface-foam half of the particle/fog sorting fix): the
+                // queue-time surface pass skipped its pond foam this frame, so collect the live
+                // above-surface renderers to re-draw it here - after the fog and the god rays,
+                // before the sprites (spray lands ON the foam). Submerged frames collect nothing:
+                // the fog is in front of the foam there and Pass 0 kept its own draw.
+                s_FoamRenderers.Clear();
+                if (!WaterVolume.CameraSubmerged)
+                    WaterVolume.CollectFoamOverlayRenderers(s_FoamRenderers);
+
+                using (var builder = renderGraph.AddRasterRenderPass("WaterParticlesAfterFog",
+                                                                     out PassData data, _sampler))
                 {
-                    DrawFoamOverlays(ctx.cmd, d.block);
-                    // User transparents (WaterFogTransparent / WebGpuWaterFogAPI.hlsl) draw
-                    // BEFORE the sprites, so spray and foam read as the nearest layer over a
-                    // user prop, matching how they layer over the package's own geometry.
-                    DrawUserTransparents(ctx.cmd);
-                    var quads = WaterFoamParticles.Live;
-                    for (int i = 0; i < quads.Count; i++)
-                        if (quads[i] != null) quads[i].RenderAfterFog(ctx.cmd, d.camera);
-                    var emitters = WaterSplashEmitter.Live;
-                    for (int i = 0; i < emitters.Count; i++)
-                        if (emitters[i] != null) emitters[i].DrawAfterFog(ctx.cmd);
-                });
+                    data.camera = cameraData.camera;
+                    data.block = _scratchBlock;
+                    // ReadWrite (not Write): the sprites and the pond-foam overlay are alpha-blended, so the
+                    // rendered scene must be LOADED, not discarded. Write alone left the screen black on a
+                    // load-action-honouring backend - the same trap LargeBodyAtmospherePass.cs already records.
+                    builder.SetRenderAttachment(resources.activeColorTexture, 0, AccessFlags.ReadWrite);
+                    // Depth READ: the sprites keep their hardware ZTest against the scene (and the
+                    // soft-fade depth sample rides the global _CameraDepthTexture).
+                    if (resources.activeDepthTexture.IsValid())
+                        builder.SetRenderAttachmentDepth(resources.activeDepthTexture, AccessFlags.Read);
+                    builder.AllowPassCulling(false); // driven by our own lists, not renderer visibility
+                    builder.UseAllGlobalTextures(true);
+                    builder.SetRenderFunc((PassData d, RasterGraphContext ctx) =>
+                    {
+                        DrawFoamOverlays(ctx.cmd, d.block);
+                        var quads = WaterFoamParticles.Live;
+                        for (int i = 0; i < quads.Count; i++)
+                            if (quads[i] != null) quads[i].RenderAfterFog(ctx.cmd, d.camera);
+                        var emitters = WaterSplashEmitter.Live;
+                        for (int i = 0; i < emitters.Count; i++)
+                            if (emitters[i] != null) emitters[i].DrawAfterFog(ctx.cmd);
+                    });
+                }
+            }
+
+            // ---- Half 2: user transparents (every water frame - the cross-side fix) ----------
+            // Recorded AFTER the sprite pass so the props composite over fog, god rays, foam
+            // and spray. Its FIRST draw rewrites the depth attachment from the opaque-only
+            // _CameraDepthTexture (WaterRestoreOpaqueDepth): the water sheet renders with
+            // ZWrite On, so without the restore any prop on the FAR side of the sheet
+            // (submerged prop from the air, above-water prop from below) z-failed against the
+            // sheet's depth and vanished - while walls and terrain must keep occluding, which
+            // is why the depth is restored rather than the test dropped. Depth ReadWrite: the
+            // restore writes it, the prop draws then test against the restored values.
+            if (UserTransparentsThisFrame)
+            {
+                using (var builder = renderGraph.AddRasterRenderPass("WaterTransparentsAfterFog",
+                                                                     out UserPassData data, _userSampler))
+                {
+                    data.fogMaterial = FogMaterial;
+                    builder.SetRenderAttachment(resources.activeColorTexture, 0, AccessFlags.ReadWrite);
+                    if (resources.activeDepthTexture.IsValid())
+                        builder.SetRenderAttachmentDepth(resources.activeDepthTexture, AccessFlags.ReadWrite);
+                    if (resources.cameraDepthTexture.IsValid())
+                        builder.UseTexture(resources.cameraDepthTexture, AccessFlags.Read);
+                    builder.AllowPassCulling(false); // driven by our own list, not renderer visibility
+                    builder.UseAllGlobalTextures(true);
+                    builder.SetRenderFunc((UserPassData d, RasterGraphContext ctx) =>
+                    {
+                        if (d.fogMaterial != null)
+                            CoreUtils.DrawFullScreen(ctx.cmd, d.fogMaterial, null,
+                                                     WaterUnderwaterFogPass.RestoreDepthShaderPass);
+                        DrawUserTransparents(ctx.cmd);
+                    });
+                }
             }
         }
 
-        // Draws the USER transparents that opted into the after-fog reroute via the
-        // WaterFogTransparent component (the public fog API's sorting half). On armed frames
-        // their queue-time draw is suppressed (forceRenderingOff, set by the component in
-        // lockstep with the SAME gate that enqueues this pass), so this explicit draw is
-        // their only submission - after the fog and the god rays, exactly like the sprites.
-        // Materials come from the component's CACHE, never Renderer.sharedMaterials here -
-        // that property allocates a fresh array per call and this pass stays GC-free (swap
-        // materials at runtime -> WaterFogTransparent.RefreshMaterials). Shader pass 0 per
-        // submesh: the forward pass of URP shaders and of every Shader Graph output.
+        // Draws the USER transparents that opted into the after-water reroute via the
+        // WaterFogTransparent component (the public fog API's sorting half). Their
+        // queue-time draw is suppressed on EVERY water frame (forceRenderingOff, set by the
+        // component on the SAME ActiveBodyCount gate that enqueues this half), so this
+        // explicit draw is their only submission - after the whole water stack, over the
+        // restored opaque depth. Materials come from the component's CACHE, never
+        // Renderer.sharedMaterials here - that property allocates a fresh array per call
+        // and this pass stays GC-free (swap materials at runtime ->
+        // WaterFogTransparent.RefreshMaterials). Shader pass 0 per submesh: the forward
+        // pass of URP shaders and of every Shader Graph output. List order, no depth sort
+        // between multiple props - overlapping user transparents may layer by registration
+        // order (v1 trade, same as the sprite emitters).
         static void DrawUserTransparents(RasterCommandBuffer cmd)
         {
             var live = WaterFogTransparent.Live;
