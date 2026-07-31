@@ -113,6 +113,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // _fragment: the only consumer is in frag, so the unscoped form compiled one identical
             // vertex program per shadow keyword for nothing.
             #pragma multi_compile_fragment _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
+            // Underside sea foam (ocean whitecaps + surf whitewash silhouetted from below, in
+            // UnderwaterStage). A KEYWORD rather than the usual uniform because the guarded code is
+            // two whitecap pattern taps, and a fragment shader's register allocation is sized to its
+            // worst path whether or not the branch is taken - the same trap that made the underwater
+            // fog march cost every Simple-tier pixel. Armed by PublishUnderwater only while the eye
+            // is below the surface, which is the only time that sheet can be seen.
+            // _fragment for the same reason as the shadow keywords above: no vertex consumer.
+            #pragma multi_compile_fragment _ WATER_UNDERSIDE_FOAM
             // Reflection mode (planar / SSR / URP-probe base / real refraction) is UNIFORM-driven,
             // published per body every frame via the MaterialPropertyBlock (WaterUniformPublisher),
             // so it updates live in the editor and needs no shader variants.

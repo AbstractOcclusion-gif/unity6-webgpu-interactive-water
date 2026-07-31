@@ -27,7 +27,6 @@ float _SurfFoamTrailDissolve;  // seconds an aged deposit takes to rot into hole
 float _SurfSwashFoam;          // swash foam strength (0 = feature off)
 float _SurfSwashFoamWidth;     // metres of run-up height covered by the foam band
 float _SurfSwashFoamDissolve;  // 0..1 how hard reflux age erodes the stranded line
-float _SurfSwashStreak;        // 0..1 downslope streak stretch during the backwash
 float _ShoreSwashDepositGain;  // FOAM-5: >0 = persistent swash deposits live in the foam buffer;
                                // the surface then lifts + keeps the beach alive under them so they
                                // dissolve on the sand instead of blinking off when the wet line recedes
@@ -35,8 +34,6 @@ float _ShoreSwashDepositGain;  // FOAM-5: >0 = persistent swash deposits live in
 // brightest pattern peaks alive - lace filaments, then nothing).
 #define SURF_TRAIL_ERODE_MAX   0.6
 #define SURF_SWASH_ERODE_MAX   0.7
-// Full-streak elongation factor of the backwash drain marks at _SurfSwashStreak = 1.
-#define SURF_SWASH_STREAK_GAIN 3.0
 // Swash-phase at which the stranded deposit line reaches peak brightness (a little past the
 // uprush apex SURF_SWASH_UPRUSH). It rises to here, then dissolves to ~0 by the cycle wrap, so
 // the deposit fades gradually instead of snapping off when the next uprush begins.

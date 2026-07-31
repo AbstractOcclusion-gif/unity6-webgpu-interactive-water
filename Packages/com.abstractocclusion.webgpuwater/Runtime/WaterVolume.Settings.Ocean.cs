@@ -112,9 +112,13 @@ namespace AbstractOcclusion.WebGpuWater
                      "close to the camera, inside the sim window). 0 = plain shadow shafts. Needs the Large Body " +
                      "Caustics Shader assigned.")]
             [Min(0f)] public float largeGodRayCausticStrength = DefaultLargeGodRayCausticStrength;
-            [Tooltip("Shaft caustic smoothing radius (metres): the beams focus only through waves LONGER than " +
-                     "about twice this, so the shimmer rides the slow swell instead of fast wind ripple. The " +
-                     "rendered surface keeps its full detail. 0 = full spectrum (fast, harsh pinpoint flicker).")]
+            [Tooltip("Caustic smoothing radius (metres) for the SWELL the caustics focus through - both the " +
+                     "shafts and the pattern on the seabed. They focus only through waves LONGER than about " +
+                     "twice this, so the shimmer rides the slow swell instead of fast wind ripple; the rendered " +
+                     "surface keeps its full detail. 0 = full spectrum, and NOT a saving - that path samples the " +
+                     "shore and surf fields instead, so it is likely dearer; what changes is the content, and " +
+                     "the FFT chop is back, flickering at a rate Ripple Speed cannot slow. Above 0 costs 4 height " +
+                     "taps per caustic vertex - and the caustic pass evaluates every vertex 5 times.")]
             [Range(0f, 10f)] public float largeGodRayCausticSmooth = 2f;
             [Tooltip("How quickly the shaft shimmer blurs and calms with the sample's depth below the surface " +
                      "(softening per metre): deep beams read broad and slow instead of razor sharp, like real " +
@@ -127,12 +131,17 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("Dominant wavelength (metres) of the caustic's own ripple field - the small waves that " +
                      "trigger the shafts. Smaller = finer, denser beams; larger = broad slow bands.")]
             [Range(0.5f, 10f)] public float largeCausticRippleScale = 3f;
-            [Tooltip("Strength of the dedicated caustic ripples. 0 = caustic from the smoothed swell only.")]
+            [Tooltip("Strength of the dedicated caustic ripple layer, which is ADDED ON TOP of the swell - " +
+                     "0 = swell only, above 0 = swell plus this much fine dapple. It is not a mode switch: the " +
+                     "caustics keep showing the actual wave shape at every value. The dapple has its own clock " +
+                     "(Ripple Speed / Ripple Scale) because the surface's own small content is FFT-driven and " +
+                     "cannot be slowed.")]
             [Range(0f, 2f)] public float largeCausticRippleStrength = 1f;
-            [Tooltip("EXTRA softening (in mip levels) for the SCREEN-SPACE caustics painted on the seabed - " +
-                     "the light shafts are never affected, they keep reading the sharp map. A floor is applied " +
-                     "automatically so the projection never samples finer than the generator grid actually " +
-                     "resolves; raise this only if you want the pattern softer than physically necessary.")]
+            [Tooltip("Softening (in mip levels) for the caustics painted on the seabed and on terrain - " +
+                     "the light shafts are never affected, they keep reading the sharp map. 0 = the sharpest " +
+                     "the generator can produce, and that is now the right default: the caustic field is " +
+                     "smooth by construction, so there is no pixelation left for a blur to hide. Raise it " +
+                     "only as a look choice.")]
             [Range(0f, ProjectionSoftenMax)] public float largeCausticProjectionSoften = 0f;
 
             [Header("Ocean foam (whitecaps)")]
@@ -457,25 +466,23 @@ namespace AbstractOcclusion.WebGpuWater
         internal float LargeCausticRippleScale => ocean.largeCausticRippleScale;
         internal float LargeCausticRippleStrength => ocean.largeCausticRippleStrength;
 
-        /// <summary>Mip bias the screen-space caustic projection samples the caustic RT at.
-        /// The generator flat-shades ONE value per grid cell (the focus term is an area Jacobian
-        /// across the projected triangle, and ddx/ddy of a linearly interpolated attribute is
-        /// constant over a triangle), so a caustic RT larger than the grid stores each cell as a
-        /// block of identical texels - visible as hard pixelation, and NOT fixable by changing the
-        /// RT resolution because the information content is set by the grid. Sampling at
-        /// log2(rt / grid) puts one texel back on one cell, which is the finest level that carries
-        /// real detail; the artist term adds softness beyond that. The shafts do not use this - they
-        /// keep their own LOD, so the beam banding stays sharp.</summary>
-        internal float LargeCausticProjectionLod
-        {
-            get
-            {
-                float cellsPerTexel = EffectiveCausticResolution
-                                    / (float)Mathf.Max(1, SimResolution);
-                float gridFloor = Mathf.Max(0f, Mathf.Log(Mathf.Max(1f, cellsPerTexel), 2f));
-                return gridFloor + ocean.largeCausticProjectionSoften;
-            }
-        }
+        /// <summary>Mip bias the caustic projection samples the caustic RT at - now the ARTIST
+        /// term alone. The shafts do not use it; they keep their own LOD so the beam banding stays sharp.
+        ///
+        /// THERE USED TO BE AN AUTOMATIC log2(rt / grid) FLOOR HERE, AND REMOVING IT IS THE POINT.
+        /// Its whole justification was that the generator flat-shaded ONE value per grid cell (the
+        /// focus term was an area Jacobian read with ddx/ddy of a linearly interpolated attribute,
+        /// which is constant over a triangle), so an RT larger than the grid stored each cell as a
+        /// block of identical texels and the only cure was to sample back down to one texel per cell.
+        /// The generators now measure that Jacobian PER VERTEX by central differences and pass it as
+        /// a varying, so the stored field is C0-continuous: there are no blocks left to hide, and at
+        /// 256 cells into a 1024 RT the field is already smoother than the sampling rate, so LOD 0
+        /// cannot alias. Keeping the floor after that change did not preserve detail, it destroyed it -
+        /// linear ramps average away where flat plateaus survived, which read as "blobby".
+        ///
+        /// If a future change ever makes the RT carry a discontinuous field again, the floor comes
+        /// back WITH it - do not re-add one without that reason.</summary>
+        internal float LargeCausticProjectionLod => ocean.largeCausticProjectionSoften;
 
         [Header("Water body (multi-instance)")]
         [Tooltip("Renderers driven by THIS body via a MaterialPropertyBlock (surface above/under, " +

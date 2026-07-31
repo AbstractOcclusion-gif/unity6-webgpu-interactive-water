@@ -81,14 +81,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string PropFoamTex = WaterShaderProps.FoamTexName;
         internal const string PropFoamTexFrames = WaterShaderProps.FoamTexFramesName;
         internal const string PropParticleTex = WaterShaderProps.ParticleTexName;
+        internal const string PropBreakupTex = WaterShaderProps.BreakupTexName;
 
         // GPU foam particles (compute + procedural-quad shader + sprite atlas).
         internal const string ShaderFoamParticles = WaterShaderNames.FoamParticles;
         internal const string ShaderFoamDensityComposite = WaterShaderNames.FoamDensityComposite;
         internal static string FoamParticleComputePath => PackageShadersRoot + "/WaterFoamParticles.compute";
-        internal const string FoamParticleAtlasPath = Gen + "/FoamParticleAtlas_2x2.png";
-        // Round soft droplet sprite for the airborne spray pass (its own look, separate from foam).
-        internal const string FoamDropletTexPath = Gen + "/FoamDroplet.png";
 
         // Shuriken splash rendering (lit + soft-fade replacement for Sprites/Default).
         internal const string ShaderSplashParticles = WaterShaderNames.SplashParticles;
@@ -120,10 +118,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // materials still on the legacy shader path.
         internal const string DropletTexturePath = Gen + "/DropletPacked.png";
 
-        // Foam pattern flipbook (frames laid out in a grid; the surface shader
-        // cross-fades frames over time so the foam churns internally). Relief is
-        // procedural (finite differences of the pattern), so no normal-map asset.
-        const string FoamFlipbookPath = Gen + "/FoamFlipbook_4x4.png";
         const int FoamFlipbookCols = 4;
         const int FoamFlipbookRows = 4;
 
@@ -134,11 +128,26 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // ocean god-ray density so "god rays" mean the same strength on every body type.
         internal const float DefaultGodRayDensity = 0.8f;
 
-        // Default surface textures the wizard assigns onto a new WaterVolume's Textures block.
-        // They live in the package's IMPORTED Runtime/Textures folder (with their authored .meta
-        // import settings - the detail map stays a Normal Map), unlike the crown sheet, which is
-        // provisioned out of Samples~ because it is copied into consumer-project Gen assets.
+        // Authored art the wizard assigns onto a new body: the WaterVolume Textures block AND the
+        // foam/spray/veil material sprite slots. It all lives in the package's IMPORTED
+        // Runtime/Textures folder (with its authored .meta import settings - the detail map stays a
+        // Normal Map), unlike the crown sheet, which is provisioned out of Samples~ because it is
+        // copied into consumer-project Gen assets.
+        //
+        // These are FILE NAMES, not Gen paths: the sheets are shipped art, not build products, so
+        // they are read straight out of the package (LoadDefaultTexture). They used to be declared
+        // as Gen/<file> paths that NOTHING ever wrote, so every load silently returned null and the
+        // foam quads drew against Unity's 1x1 "white" fallback - opaque squares, no warning.
         internal static string DefaultTexturesRoot => WaterPackagePaths.Asset("Runtime/Textures");
+        internal const string FoamParticleAtlasFile = "FoamParticleAtlas_2x2.png";
+        // Round soft droplet sprite for the airborne spray pass (its own look, separate from foam).
+        internal const string FoamDropletTexFile = "Droplet.png";
+        // Foam pattern flipbook (frames laid out in a grid; the surface shader cross-fades frames
+        // over time so the foam churns internally). Relief is procedural (finite differences of the
+        // pattern), so no normal-map asset.
+        internal const string FoamFlipbookFile = "FoamFlipbook_4x4.png";
+        // World-tiled lace the density veil breaks its alpha against (_BreakupStrength > 0).
+        internal const string FoamBreakupTexFile = "FoamBreakupWorley.png";
 
         // Demo camera framing. FOV/clip planes come from WaterVolume's internal constants (the
         // single source of truth; the volume's activation distance is coupled to the far clip).

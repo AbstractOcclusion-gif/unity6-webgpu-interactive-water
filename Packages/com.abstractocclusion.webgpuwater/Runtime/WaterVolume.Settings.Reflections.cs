@@ -101,6 +101,17 @@ namespace AbstractOcclusion.WebGpuWater
                      "real reflected ray and sticks to it by construction. Affects PLANAR only - SSR " +
                      "and the environment base ignore this.")]
             public LayerMask planarExcludeLayers = 0;
+            [Tooltip("How deep BELOW this body's rest plane still reaches the planar mirror, metres. " +
+                     "The mirror crops at the plane, so on a big sea the strip of shoreline a wave " +
+                     "TROUGH exposes gets cropped out and the island's base reflects SKY through the " +
+                     "gap. Raise this to about the body's wave height to close it; the cost is that " +
+                     "geometry that far under the surface reaches the mirror too. 0 = crop at the " +
+                     "plane. Affects PLANAR only.")]
+            [Range(0f, PlanarClipDepthMaxMeters)] public float planarClipDepth = 0f;
+
+            // Below this the mirror starts showing the seabed instead of the shoreline strip the band
+            // exists to save - a worse artifact than the gap it closes.
+            const float PlanarClipDepthMaxMeters = 10f;
 
             // Look (drives the above-water surface; the under-water surface uses the same strength /
             // distortion for its total-internal-reflection view). Ranges mirror the shader.
@@ -174,6 +185,10 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>Layers the author wants kept out of this body's planar mirror (on top of the
         /// water layer, which <see cref="PlanarReflectLayers"/> always removes).</summary>
         internal LayerMask PlanarExcludeLayers => reflectionSettings.planarExcludeLayers;
+        /// <summary>Metres below the rest plane the planar mirror keeps instead of cropping. Clamped
+        /// non-negative: a negative value would crop ABOVE the plane and eat the very shoreline strip
+        /// this exists to save. The slider cannot go there, a script or a migrated asset can.</summary>
+        internal float PlanarClipDepth => Mathf.Max(0f, reflectionSettings.planarClipDepth);
         internal bool EffectiveRealRefraction => _realRefractionAllowed && reflectionSettings.realRefraction;
         internal bool ReflectUrpProbe => reflectionSettings.reflectUrpProbe;
         internal float ReflectionStrength => reflectionSettings.reflectionStrength;

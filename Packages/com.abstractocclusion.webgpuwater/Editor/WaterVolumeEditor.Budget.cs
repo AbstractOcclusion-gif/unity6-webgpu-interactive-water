@@ -39,6 +39,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     // live. Greyed, not hidden: the value still ships in the scene and still applies the
                     // moment the asset is cleared.
                     DrawFieldsIf(Prop("quality").objectReferenceValue == null, "causticResolution");
+                    // NOT greyed by the quality asset: the lattice density is the artist's, while the
+                    // map size above is the tier's. They cap each other, they do not replace each other.
+                    DrawFields("causticDetail");
                     EditorGUILayout.HelpBox(CausticResolutionBudgetHelp, MessageType.None);
                     // The bed bake only happens when a bed terrain drives this body (Body tab).
                     DrawFieldsIf(UsesBedDepth, "bedDepthSettings.bedResolution");

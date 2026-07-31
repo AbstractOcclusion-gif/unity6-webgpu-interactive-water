@@ -134,8 +134,10 @@ namespace AbstractOcclusion.WebGpuWater
 
         // ---- WaterBuildKit.cs <-> WaterFoamProfile.cs ----
         internal const string ParticleTexName = "_ParticleTex";
+        internal const string BreakupTexName = "_BreakupTex";
 
         internal static readonly int ParticleTex = Shader.PropertyToID(ParticleTexName);
+        internal static readonly int BreakupTex = Shader.PropertyToID(BreakupTexName);
 
         // ---- PlanarReflection.cs <-> WaterUniformPublisher.cs ----
         internal const string PlanarReflectionTexName = "_PlanarReflectionTex";

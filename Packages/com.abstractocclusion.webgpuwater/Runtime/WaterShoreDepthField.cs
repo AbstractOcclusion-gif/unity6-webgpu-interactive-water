@@ -80,7 +80,6 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SurfSwashFoam = Shader.PropertyToID("_SurfSwashFoam");
         static readonly int ID_SurfSwashFoamWidth = Shader.PropertyToID("_SurfSwashFoamWidth");
         static readonly int ID_SurfSwashFoamDissolve = Shader.PropertyToID("_SurfSwashFoamDissolve");
-        static readonly int ID_SurfSwashStreak = Shader.PropertyToID("_SurfSwashStreak");
         static readonly int ID_ShoreSwashDepositGain = WaterShaderProps.ShoreSwashDepositGain;
 
         // How many box-blur passes smooth the SDF direction field (see the header note).
@@ -516,7 +515,6 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalFloat(ID_SurfSwashFoam, _body.surfSwashFoam);
             Shader.SetGlobalFloat(ID_SurfSwashFoamWidth, _body.surfSwashFoamWidth);
             Shader.SetGlobalFloat(ID_SurfSwashFoamDissolve, _body.surfSwashFoamDissolve);
-            Shader.SetGlobalFloat(ID_SurfSwashStreak, _body.surfSwashStreak);
             // FOAM-5: the SAME gain the sim uses to inject persistent deposits, published to the
             // SURFACE too so the vertex lift + fragment clip keep the beach alive under them.
             Shader.SetGlobalFloat(ID_ShoreSwashDepositGain, _body.surfSwashDepositGain);

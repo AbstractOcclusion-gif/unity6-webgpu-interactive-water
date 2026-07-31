@@ -458,6 +458,20 @@ float LbwGeometryFoamGate(ShoreData shore)
     return SurfFieldMask(shore.depth, shore.toShore, shore.influence);
 }
 
+// The SUPPRESSION half, split off from the gate above. That one has TWO callers doing two different
+// jobs: ApplyLargeBodyWaveNormalFoamShore uses it to scale the surf's OWN geometry foam (which must
+// keep the front contour, wet term and all), while the fragment used it to decide which OTHER foam
+// engines stand down. Only the second job wants the ownership contour, so it gets its own function -
+// changing the shared one would have silently moved the geometry foam too.
+//
+// Off surf bodies this is byte-identical to LbwGeometryFoamGate on purpose: the chunk geometry-foam
+// floor is the value the whitecap suppression at the call site was already reading there.
+float LbwFoamOwnershipGate(ShoreData shore)
+{
+    if (_SurfActive < 0.5) return _LbwGeomFoamFloor;
+    return SurfOwnershipMask(shore.depth, shore.toShore, shore.influence);
+}
+
 // Shore-aware normal + GEOMETRY FOAM: xyz = tilted world normal, w = breaker foam (0..1) derived
 // from the composite surface's own slope + displacement Jacobian. The caller has already sampled
 // the shore substrate + surf-front layer at the source xz (the fragment hoists ONE sample and

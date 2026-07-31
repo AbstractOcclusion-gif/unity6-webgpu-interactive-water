@@ -197,6 +197,173 @@ float EvaluateWaterClarity(v2f i, ShoreData shoreFrag)
     return waterClarity;
 }
 
+// Whitecap COVERAGE only: the dissolved, textured foam fraction, plus the pattern it was dissolved
+// from and the parallax-lifted point that pattern was read at. Split out of OceanWhitecapLayer (the
+// body is a verbatim move) so the UNDERSIDE stage can silhouette the same caps without paying for
+// the lit look, which is above-water-only. Factored rather than copied for the reason
+// PondFoamCoverage already records: per-consumer copies of a coverage formula have drifted in this
+// file before, and the two faces of ONE surface disagreeing about where the foam is was a real bug.
+float OceanWhitecapCoverage(v2f i, WaterGeomStage g, float2 foamWorldDdx, float2 foamWorldDdy,
+                            out float3 oceanFoamPattern, out float2 oceanFoamSampleXZ)
+{
+    float3 incomingRay = g.incomingRay;
+    ShoreData shoreFrag = g.shore;
+    // ---- Ocean FFT whitecap foam: coverage sampled per pixel from the cascade (.w), on the
+    // same crests as the normal tilt, then broken into moving lace by the foam flipbook -
+    // the coverage is a black-point threshold that dissolves the pattern in (Crest's
+    // WhiteFoamTexture). Whitecaps are matte, so the resulting alpha knocks the specular
+    // reflection down before compositing (this surface expresses gloss as the reflection
+    // term). Coverage source: FFT cascade accumulator on oceans, instantaneous geometry
+    // foam on analytic bodies with the _LbwGeomFoamFloor opt-in (ocean-surface chunks);
+    // pools leave this at 0. ----
+    float oceanFoam = 0.0;                       // textured coverage: drives matte + blend
+    oceanFoamPattern = float3(1.0, 1.0, 1.0);
+    oceanFoamSampleXZ = i.largeWaveSourceXZ;     // parallax-lifted pattern-sample point
+    float coverage = 0.0;
+    if (_OceanFftActive > 0.5)
+    {
+        // The surf band is the surf system's territory: the FFT foam ACCUMULATOR
+        // is depth-blind (its small cascades still whitecap at 2 m of water), so
+        // accumulated ocean whitecaps fade out where the fronts/whitewash own the
+        // shallows. Inert off surf bodies (the gate is 0 there).
+        coverage = OceanFftFoam(i.largeWaveSourceXZ)
+                 * (1.0 - LbwFoamOwnershipGate(shoreFrag));
+    }
+    else if (_LbwGeomFoamFloor > 0.0)
+    {
+        // ANALYTIC whitecaps (ocean-surface chunks - see _LbwGeomFoamFloor): no accumulator
+        // exists on the analytic path, so the coverage is the INSTANTANEOUS geometry foam
+        // (Gerstner Jacobian pinch + slope steepness, already computed by the normal stage) -
+        // crests whiten as they pinch and fade as they relax. It then rides the exact same
+        // pattern/dissolve/lit pipeline as the FFT whitecaps below.
+        coverage = g.surfGeomFoam;
+    }
+    if (coverage > FOAM_MASK_EPSILON)
+    {
+        // Parallax: sample the PATTERN where a layer floating just above the surface
+        // meets the view ray (coverage stays at the true surface point - foam is still
+        // WHERE the sim says, it just reads as sitting on top of the water).
+        float3 viewToCam = -incomingRay;
+        oceanFoamSampleXZ = i.largeWaveSourceXZ + viewToCam.xz
+            * (OCEAN_FOAM_PARALLAX_HEIGHT / max(viewToCam.y, OCEAN_FOAM_PARALLAX_MIN_VIEW_Y));
+
+        // Stock white _FoamTex -> pattern ~= 1 -> solid coverage (no regression); a real
+        // foam texture dissolves in as lace. Distance anti-tiling (second rotated octave)
+        // hides the repeat toward the horizon; the contrast sharpen breaks round blobs.
+        float foamCamDist = distance(i.largeWaveSourceXZ, _WorldSpaceCameraPos.xz);
+        oceanFoamPattern = SampleOceanWhitecapPattern(oceanFoamSampleXZ, foamCamDist,
+                                                      foamWorldDdx, foamWorldDdy);
+        // WHO OWNS THE OUTLINE. FoamDissolve thresholds the PATTERN, with coverage only sliding the
+        // threshold - so the foam's outline is literally the texture's iso-contours. Our whitecap
+        // artwork is cellular, so it printed round caps no matter what the wave field was doing
+        // underneath. Ceto splits these two jobs with Ceto_TextureWaveFoam
+        // (Assets/Ceto/Shaders/OceanUnderWater.cginc:26 - foam.x = lerp(foam.x, foam.x * foamTexture,
+        // Ceto_TextureWaveFoam)): its foam SHAPE comes from the multi-scale Jacobian field and the
+        // texture only breaks it up. The other end of this lerp is the COVERAGE FRACTION itself,
+        // which is where the crest-aligned structure lives (see OceanFoamAnisotropy).
+        //
+        // AND IT FADES WITH DISTANCE, which fixes a real far-field defect: a tiled pattern loses its
+        // VARIANCE as it mips, so far out the dissolve is thresholding a near-uniform grey. The caps
+        // stop being discrete, the result is a flat wash that reads far too BRIGHT, and - because the
+        // texture is what gates the result - the foam knobs stop visibly doing anything out there.
+        // Past the fade the foam IS the coverage fraction, which is the correct antialiasing of a
+        // sub-pixel mask (its expected value) and is driven purely by the wave field, so every knob
+        // keeps working all the way to the horizon.
+        #define OCEAN_FOAM_TEXTURE_FADE_START 120.0  // metres where the pattern starts handing over
+        #define OCEAN_FOAM_TEXTURE_FADE_RANGE 400.0  // ...and over which it fully does
+        float oceanFoamTexWeight = _OceanFoamTextureInfluence
+            * (1.0 - saturate((foamCamDist - OCEAN_FOAM_TEXTURE_FADE_START)
+                              / OCEAN_FOAM_TEXTURE_FADE_RANGE));
+        // Shared KWS contrast/dissolve law (FoamDissolve above); no erosion term.
+        float oceanFoamDissolved = FoamDissolve(oceanFoamPattern.r, coverage, _OceanFoamFeather, 0.0);
+        // The far end of this blend is the dissolve's EXPECTED value, NOT the raw coverage. Coverage
+        // is the area the foam COULD occupy; the dissolve only keeps the part of it that clears the
+        // pattern threshold, so blending toward coverage made distant foam brighter than the near
+        // foam it is supposed to match - which is exactly what it looked like.
+        oceanFoam = lerp(FoamDissolveExpected(coverage, _OceanFoamFeather, 0.0),
+                         oceanFoamDissolved, oceanFoamTexWeight);
+    }
+    return oceanFoam;
+}
+
+// Whitewash COVERAGE only, the surf twin of OceanWhitecapCoverage and split out for the same
+// reason: the underside needs the dissolved fraction and its pattern, never the lit look. Body is a
+// verbatim move out of SurfWhitewashLayer.
+float SurfWhitewashCoverage(v2f i, WaterGeomStage g, float2 foamWorldDdx, float2 foamWorldDdy,
+                            out float3 surfPattern, out float2 surfSampleXZ)
+{
+    float3 incomingRay = g.incomingRay;
+    SurfWaveSample surfFrag = g.surf;
+    surfPattern = float3(1.0, 1.0, 1.0);
+    surfSampleXZ = i.largeWaveSourceXZ;
+    float surfFoam = 0.0;
+    // Off surf bodies the front terms are inert, but the geometry foam can now be non-zero
+    // there too (_LbwGeomFoamFloor - the ANALYTIC whitecap source for ocean-surface chunks,
+    // rendered by OceanWhitecapLayer): keep it out of the whitewash on those bodies or a
+    // chunk would draw the same foam through two pipelines at once.
+    float surfGeomFoam = (_SurfActive > 0.5) ? g.surfGeomFoam : 0.0;
+    // ---- Surf whitewash look: ANALYTIC coverage from the breaker-front layer (broken
+    // bores + trailing churn) + GEOMETRY foam (the surface's own Jacobian/slope,
+    // computed beside the normal above - white glued to whatever the rendered waves
+    // actually do). Rendered through the OCEAN WHITECAP pipeline, not the pond
+    // flipbook: whitewash IS seawater whitecap foam, so the surf shares the deep
+    // caps' texture + KWS contrast law (one material language from open ocean to
+    // the beach) - but through its own DEDICATED _SurfFoam* knobs, fully decoupled
+    // from both the ripple-foam and the ocean-whitecap sliders. ----
+    // FOAM-1: artist pop curve. The LUT maps the front's lifecycle clock (overCap,
+    // 0..SURF_CREST_LUT_OVERCAP_MAX) to crest-foam intensity, times the timing-free
+    // lip footprint - the curve alone decides WHEN crest foam pops and how it holds/
+    // releases. Inactive = 0 added; the legacy breaker window still feeds the sim
+    // injection + SSS, so nothing is lost. tex2Dlod: no derivatives, WGSL-uniform.
+    float surfCrestFoam = 0.0;
+    if (_SurfCrestFoamLutActive > 0.5 && surfFrag.lipShape > 0.0)
+    {
+        float crestLutU = saturate(surfFrag.overCap / SURF_CREST_LUT_OVERCAP_MAX);
+        float crestCurve = tex2Dlod(_SurfCrestFoamLut,
+                                    float4(crestLutU, 0.5, 0.0, 0.0)).r;
+        surfCrestFoam = crestCurve * surfFrag.lipShape * _SurfCrestFoamGain;
+    }
+    // FOAM-4: crest cap. The whitewash coverage above is the bore + its SEAWARD trail (dAcross>0)
+    // + the geometry foam - all of which load foam onto the wave's BACK/BASE, while the crisp lip
+    // foam (surfFrag.breaker) is spent on the SSS glow + sim injection and never reaches the
+    // surface coverage. So a broken front reads bald on TOP and heavy at the BASE ("foam lacks on
+    // top, too much at base"). lipShape is the crest-anchored, surge-killed, plunge-widened
+    // footprint; gating it by the cresting window keeps it OFF unbroken swell and ON from first
+    // curl all the way through the bore (the window saturates past break), so the breaking crest
+    // keeps a bright cap. Surface-only and independent of the FOAM-1 pop LUT - it fires even with
+    // no authored curve. Gated by _SurfFoamCrestCap: 0 = byte-identical.
+    float surfCrestCap = surfFrag.lipShape
+                       * smoothstep(SURF_CRESTING_START, SURF_CRESTING_END, surfFrag.overCap)
+                       * _SurfFoamCrestCap;
+    float surfCoverage = saturate((surfFrag.whitewash + surfCrestFoam + surfCrestCap + surfGeomFoam)
+                                  * _SurfFoamStrength);
+    if (surfCoverage > FOAM_MASK_EPSILON)
+    {
+        // Same parallax lift as the ocean caps: foam reads as sitting ON the water.
+        float3 surfViewToCam = -incomingRay;
+        surfSampleXZ = i.largeWaveSourceXZ + surfViewToCam.xz
+            * (OCEAN_FOAM_PARALLAX_HEIGHT / max(surfViewToCam.y, OCEAN_FOAM_PARALLAX_MIN_VIEW_Y));
+        float surfDist = distance(i.largeWaveSourceXZ, _WorldSpaceCameraPos.xz);
+        // Gradients hoisted with the whitecap's (foamWorldDdx/Ddy above): same base
+        // world XZ, additive parallax - exact for this tap too (WGSL uniformity).
+        surfPattern = SampleOceanWhitecapPatternTiled(surfSampleXZ, surfDist,
+                                                      max(_SurfFoamTileSize, 1e-3),
+                                                      foamWorldDdx, foamWorldDdy);
+        // FOAM-2: aged deposit rots into HOLES, not a uniform fade - age raises the
+        // pattern-dissolve threshold, so old foam breaks into lace patches, then
+        // filaments, then nothing (real sea foam dies by holes opening). trailAge
+        // is bore-gated, so the bore head (age ~0) stays solid. 0 seconds = off.
+        float surfTrailErode = 0.0;
+        if (_SurfFoamTrailDissolve > 0.0)
+            surfTrailErode = saturate(surfFrag.trailAge / _SurfFoamTrailDissolve)
+                           * SURF_TRAIL_ERODE_MAX;
+        // Shared KWS contrast/dissolve law (FoamDissolve above) + the trail erosion.
+        surfFoam = FoamDissolve(surfPattern.r, surfCoverage, _SurfFoamFeather,
+                                surfTrailErode);
+    }
+    return surfFoam;
+}
+
 // The whole seen-from-below path; returns the final pixel colour.
 float4 UnderwaterStage(v2f i, WaterGeomStage g, float waterClarity)
 {
@@ -254,11 +421,15 @@ float4 UnderwaterStage(v2f i, WaterGeomStage g, float waterClarity)
     tUnder = lerp(1.0, tUnder, _UnderReflectionStrength); // strength 0 = fully refracted
     float3 underColor = lerp(reflectedColor, refractedColor, tUnder);
 
-    // ---- Foam seen from below: the same advected mask, but instead of lit
+    // ---- Foam seen from below: the same coverage the top side draws, but instead of lit
     // white it reads as a SILHOUETTE - dense foam blocks the sky coming
     // through the surface, thin lace scatters a faint sun glow through.
     // No contact foam here: the depth texture holds the scene ABOVE the
-    // surface from this side, so the contact heuristic is meaningless. ----
+    // surface from this side, so the contact heuristic is meaningless.
+    // Every engine writes these two accumulators and the knob pair is applied ONCE below, so
+    // two families overlapping cannot darken the same pixel twice. ----
+    float undersideFoam = 0.0;                    // combined silhouette coverage
+    float3 undersideGlow = float3(0.0, 0.0, 0.0); // sum of colour * pattern * that engine's coverage
     if (_FoamEnabled > 0.5)
     {
         // Windowed bodies read the foam buffer at the SOURCE xz (undisplaced), exactly like the
@@ -285,13 +456,66 @@ float4 UnderwaterStage(v2f i, WaterGeomStage g, float waterClarity)
             float3 pattern; float core, lace, foamAlpha; float2 tilt;
             EvaluateFoam(fuv, fuvDdx, fuvDdy, nxz, mask, foamDist, pattern, core, lace, foamAlpha, tilt);
 
-            // Applied BEFORE the downwelling dim below, so the silhouette
-            // and its glow fade with eye depth like the rest of the scene.
-            float sunThrough = saturate(_LightDir.y);
-            underColor *= 1.0 - _FoamUndersideDarken * foamAlpha;
-            underColor += _FoamColor.rgb * pattern * (_FoamUndersideGlow * sunThrough * lace * mask);
+            undersideFoam = max(undersideFoam, foamAlpha);
+            undersideGlow += _FoamColor.rgb * pattern * (lace * mask);
         }
     }
+
+#ifdef WATER_UNDERSIDE_FOAM
+    // ---- Sea foam from below: ocean whitecaps + surf whitewash. These two engines had NO
+    // underside representation at all - OceanWhitecapLayer and SurfWhitewashLayer are reached
+    // only from the above-water path, which returns before this stage - so a diver under a
+    // whitecapping sea saw a bare ceiling. They call the SAME coverage functions the top side
+    // does, so the two faces of one surface agree on where the foam is by construction.
+    //
+    // NOT the swash, which is not an omission: swash foam only draws where the bed rises ABOVE
+    // the still level (ShorelineStage's beachRise > 0 branch) - a film on wet sand with no water
+    // column beneath it. There is nowhere to put an eye that could see its underside.
+    //
+    // A KEYWORD, not a uniform: a uniform branch still compiles these pattern taps into the pass,
+    // and a fragment shader's register allocation is sized to its worst path - the same trap that
+    // made the 40-step fog march cost every Simple-tier pixel. Armed by PublishUnderwater only
+    // while the eye is below the surface, which is the only time this sheet is visible.
+    {
+        // Hoisted with no runtime condition around them (WGSL derivative uniformity), off the same
+        // base world XZ as the top side's hoist in WaterSurface.shader. The coverage functions add
+        // only an ADDITIVE parallax lift on top, so these gradients stay exact for their taps.
+        float2 foamWorldDdx = ddx(i.largeWaveSourceXZ);
+        float2 foamWorldDdy = ddy(i.largeWaveSourceXZ);
+
+        // The parallax lift inside these two is left alone rather than zeroed for this side. It
+        // exists to make foam read as sitting ON the water and points the wrong way from below,
+        // but it is bounded by OCEAN_FOAM_PARALLAX_HEIGHT / OCEAN_FOAM_PARALLAX_MIN_VIEW_Y =
+        // 0.16 m of XZ - about 2% of a default foam tile, i.e. below the noise floor of the
+        // pattern itself. Threading a per-side height through both signatures would buy nothing.
+        // The sample points come back only because the top side needs them to glue its relief tap
+        // to the pattern tap; this side draws no relief, so they are written and dropped.
+        float3 oceanPattern; float2 unusedOceanSampleXZ;
+        float oceanFoam = OceanWhitecapCoverage(i, g, foamWorldDdx, foamWorldDdy,
+                                                oceanPattern, unusedOceanSampleXZ);
+        float3 surfPattern; float2 unusedSurfSampleXZ;
+        float surfFoam = SurfWhitewashCoverage(i, g, foamWorldDdx, foamWorldDdy,
+                                               surfPattern, unusedSurfSampleXZ);
+
+        // max, not sum: these all occlude the SAME sky, so the densest layer owns the pixel -
+        // the same rule the above-water composite applies with its foamMatte.
+        undersideFoam = max(undersideFoam, max(oceanFoam, surfFoam));
+        // ONE coverage factor each, where the pond engine above contributes two (lace * mask):
+        // that engine keeps its thin-lace and raw-mask terms apart, while these two carry a single
+        // dissolved fraction. Squaring it would make sea foam glow dimmer than pond foam at equal
+        // coverage for no physical reason.
+        undersideGlow += _OceanFoamColor.rgb * oceanPattern * oceanFoam
+                       + _SurfFoamColor.rgb * surfPattern * surfFoam;
+    }
+#endif
+
+    // Applied BEFORE the downwelling dim below, so the silhouette and its glow fade with eye
+    // depth like the rest of the scene. Unconditional: at zero coverage the darken is a multiply
+    // by one and the glow adds black, so a guard here could only cost the faint lace glow the
+    // per-engine form used to draw.
+    float sunThrough = saturate(_LightDir.y);
+    underColor *= 1.0 - _FoamUndersideDarken * undersideFoam;
+    underColor += undersideGlow * (_FoamUndersideGlow * sunThrough);
 
     // Dim the underwater view by the CAMERA's depth: the deeper the eye, the less
     // downwelling light reaches it, so the whole submerged scene reads darker.
@@ -488,6 +712,7 @@ float3 RefractionStage(v2f i, WaterGeomStage g, float waterClarity, out float3 b
     return refractedColor;
 }
 
+
 // Ocean FFT whitecap: cascade coverage broken into lace by the tiling pattern.
 // oceanCoverage returns the raw TEXTURED coverage - the specular matte reads it,
 // not the layer alpha (which folds in _OceanFoamColor.a).
@@ -495,83 +720,10 @@ FoamLayer OceanWhitecapLayer(v2f i, WaterGeomStage g, float2 foamWorldDdx,
                              float2 foamWorldDdy, out float oceanCoverage)
 {
     float3 normal = g.normal;
-    float3 incomingRay = g.incomingRay;
-    ShoreData shoreFrag = g.shore;
-    // ---- Ocean FFT whitecap foam: coverage sampled per pixel from the cascade (.w), on the
-    // same crests as the normal tilt, then broken into moving lace by the foam flipbook -
-    // the coverage is a black-point threshold that dissolves the pattern in (Crest's
-    // WhiteFoamTexture). Whitecaps are matte, so the resulting alpha knocks the specular
-    // reflection down before compositing (this surface expresses gloss as the reflection
-    // term). Coverage source: FFT cascade accumulator on oceans, instantaneous geometry
-    // foam on analytic bodies with the _LbwGeomFoamFloor opt-in (ocean-surface chunks);
-    // pools leave this at 0. ----
-    float oceanFoam = 0.0;                       // textured coverage: drives matte + blend
-    float3 oceanFoamPattern = float3(1.0, 1.0, 1.0);
-    float2 oceanFoamSampleXZ = i.largeWaveSourceXZ; // parallax-lifted pattern-sample point
-    float coverage = 0.0;
-    if (_OceanFftActive > 0.5)
-    {
-        // The surf band is the surf system's territory: the FFT foam ACCUMULATOR
-        // is depth-blind (its small cascades still whitecap at 2 m of water), so
-        // accumulated ocean whitecaps fade out where the fronts/whitewash own the
-        // shallows. Inert off surf bodies (the gate is 0 there).
-        coverage = OceanFftFoam(i.largeWaveSourceXZ)
-                 * (1.0 - LbwGeometryFoamGate(shoreFrag));
-    }
-    else if (_LbwGeomFoamFloor > 0.0)
-    {
-        // ANALYTIC whitecaps (ocean-surface chunks - see _LbwGeomFoamFloor): no accumulator
-        // exists on the analytic path, so the coverage is the INSTANTANEOUS geometry foam
-        // (Gerstner Jacobian pinch + slope steepness, already computed by the normal stage) -
-        // crests whiten as they pinch and fade as they relax. It then rides the exact same
-        // pattern/dissolve/lit pipeline as the FFT whitecaps below.
-        coverage = g.surfGeomFoam;
-    }
-    if (coverage > FOAM_MASK_EPSILON)
-    {
-        // Parallax: sample the PATTERN where a layer floating just above the surface
-        // meets the view ray (coverage stays at the true surface point - foam is still
-        // WHERE the sim says, it just reads as sitting on top of the water).
-        float3 viewToCam = -incomingRay;
-        oceanFoamSampleXZ = i.largeWaveSourceXZ + viewToCam.xz
-            * (OCEAN_FOAM_PARALLAX_HEIGHT / max(viewToCam.y, OCEAN_FOAM_PARALLAX_MIN_VIEW_Y));
-
-        // Stock white _FoamTex -> pattern ~= 1 -> solid coverage (no regression); a real
-        // foam texture dissolves in as lace. Distance anti-tiling (second rotated octave)
-        // hides the repeat toward the horizon; the contrast sharpen breaks round blobs.
-        float foamCamDist = distance(i.largeWaveSourceXZ, _WorldSpaceCameraPos.xz);
-        oceanFoamPattern = SampleOceanWhitecapPattern(oceanFoamSampleXZ, foamCamDist,
-                                                      foamWorldDdx, foamWorldDdy);
-        // WHO OWNS THE OUTLINE. FoamDissolve thresholds the PATTERN, with coverage only sliding the
-        // threshold - so the foam's outline is literally the texture's iso-contours. Our whitecap
-        // artwork is cellular, so it printed round caps no matter what the wave field was doing
-        // underneath. Ceto splits these two jobs with Ceto_TextureWaveFoam
-        // (Assets/Ceto/Shaders/OceanUnderWater.cginc:26 - foam.x = lerp(foam.x, foam.x * foamTexture,
-        // Ceto_TextureWaveFoam)): its foam SHAPE comes from the multi-scale Jacobian field and the
-        // texture only breaks it up. The other end of this lerp is the COVERAGE FRACTION itself,
-        // which is where the crest-aligned structure lives (see OceanFoamAnisotropy).
-        //
-        // AND IT FADES WITH DISTANCE, which fixes a real far-field defect: a tiled pattern loses its
-        // VARIANCE as it mips, so far out the dissolve is thresholding a near-uniform grey. The caps
-        // stop being discrete, the result is a flat wash that reads far too BRIGHT, and - because the
-        // texture is what gates the result - the foam knobs stop visibly doing anything out there.
-        // Past the fade the foam IS the coverage fraction, which is the correct antialiasing of a
-        // sub-pixel mask (its expected value) and is driven purely by the wave field, so every knob
-        // keeps working all the way to the horizon.
-        #define OCEAN_FOAM_TEXTURE_FADE_START 120.0  // metres where the pattern starts handing over
-        #define OCEAN_FOAM_TEXTURE_FADE_RANGE 400.0  // ...and over which it fully does
-        float oceanFoamTexWeight = _OceanFoamTextureInfluence
-            * (1.0 - saturate((foamCamDist - OCEAN_FOAM_TEXTURE_FADE_START)
-                              / OCEAN_FOAM_TEXTURE_FADE_RANGE));
-        // Shared KWS contrast/dissolve law (FoamDissolve above); no erosion term.
-        float oceanFoamDissolved = FoamDissolve(oceanFoamPattern.r, coverage, _OceanFoamFeather, 0.0);
-        // The far end of this blend is the dissolve's EXPECTED value, NOT the raw coverage. Coverage
-        // is the area the foam COULD occupy; the dissolve only keeps the part of it that clears the
-        // pattern threshold, so blending toward coverage made distant foam brighter than the near
-        // foam it is supposed to match - which is exactly what it looked like.
-        oceanFoam = lerp(FoamDissolveExpected(coverage, _OceanFoamFeather, 0.0),
-                         oceanFoamDissolved, oceanFoamTexWeight);
-    }
+    float3 oceanFoamPattern;
+    float2 oceanFoamSampleXZ;
+    float oceanFoam = OceanWhitecapCoverage(i, g, foamWorldDdx, foamWorldDdy,
+                                            oceanFoamPattern, oceanFoamSampleXZ);
 
     float oceanFoamAlpha = 0.0;
     float3 oceanFoamLook = float3(0.0, 0.0, 0.0);
@@ -696,6 +848,17 @@ FoamLayer PondFoamLayer(v2f i, WaterGeomStage g)
         // the buffer ahead of where the lip foam was injected (empty crest head). FFT
         // chop caused the same error at a smaller, invisible scale.
         float mask = PondFoamCoverage(i);
+        // THE SURF BAND BELONGS TO THE WHITEWASH PIPELINE. The ocean whitecaps have stood down here
+        // since 2026-07-28; the ripple/turbulence foam never did, so the shore band drew BOTH - the
+        // sim buffer's low-frequency, decayed, advected copy through the pond pattern AND the
+        // analytic whitewash through the whitecap pattern, max()ed together. Same weight, same
+        // contour, one more consumer.
+        //
+        // Applied HERE and not in PondFoamCoverage: the overlay pass early-clips on that function
+        // BEFORE it builds the geometry stage, and that hoist is only legal because coverage takes
+        // no WaterGeomStage. Both draw points call THIS function, so both are covered anyway, and
+        // the early clip stays a conservative superset (this can only lower the mask).
+        mask *= 1.0 - LbwFoamOwnershipGate(g.shore);
 
         // WORLD-space pattern UV (like the ocean whitecap): scale set by the
         // body's Foam Pattern Size, independent of extent, anchored under a
@@ -732,91 +895,32 @@ FoamLayer PondFoamLayer(v2f i, WaterGeomStage g)
     return layer;
 }
 
+
 // Surf whitewash: analytic breaker-front coverage + geometry foam, rendered
 // through the ocean-whitecap pipeline with its dedicated _SurfFoam* knobs.
 FoamLayer SurfWhitewashLayer(v2f i, WaterGeomStage g, float2 foamWorldDdx,
                              float2 foamWorldDdy)
 {
     float3 normal = g.normal;
-    float3 incomingRay = g.incomingRay;
-    SurfWaveSample surfFrag = g.surf;
-    // Off surf bodies the front terms are inert, but the geometry foam can now be non-zero
-    // there too (_LbwGeomFoamFloor - the ANALYTIC whitecap source for ocean-surface chunks,
-    // rendered by OceanWhitecapLayer): keep it out of the whitewash on those bodies or a
-    // chunk would draw the same foam through two pipelines at once.
-    float surfGeomFoam = (_SurfActive > 0.5) ? g.surfGeomFoam : 0.0;
-    // ---- Surf whitewash look: ANALYTIC coverage from the breaker-front layer (broken
-    // bores + trailing churn) + GEOMETRY foam (the surface's own Jacobian/slope,
-    // computed beside the normal above - white glued to whatever the rendered waves
-    // actually do). Rendered through the OCEAN WHITECAP pipeline, not the pond
-    // flipbook: whitewash IS seawater whitecap foam, so the surf shares the deep
-    // caps' texture + KWS contrast law (one material language from open ocean to
-    // the beach) - but through its own DEDICATED _SurfFoam* knobs, fully decoupled
-    // from both the ripple-foam and the ocean-whitecap sliders. ----
+    float3 surfPattern;
+    float2 surfSampleXZ;
+    float surfFoam = SurfWhitewashCoverage(i, g, foamWorldDdx, foamWorldDdy,
+                                           surfPattern, surfSampleXZ);
+
     float surfFoamAlpha = 0.0;
     float3 surfFoamLook = float3(0.0, 0.0, 0.0);
-    // FOAM-1: artist pop curve. The LUT maps the front's lifecycle clock (overCap,
-    // 0..SURF_CREST_LUT_OVERCAP_MAX) to crest-foam intensity, times the timing-free
-    // lip footprint - the curve alone decides WHEN crest foam pops and how it holds/
-    // releases. Inactive = 0 added; the legacy breaker window still feeds the sim
-    // injection + SSS, so nothing is lost. tex2Dlod: no derivatives, WGSL-uniform.
-    float surfCrestFoam = 0.0;
-    if (_SurfCrestFoamLutActive > 0.5 && surfFrag.lipShape > 0.0)
+    if (surfFoam > FOAM_MASK_EPSILON)
     {
-        float crestLutU = saturate(surfFrag.overCap / SURF_CREST_LUT_OVERCAP_MAX);
-        float crestCurve = tex2Dlod(_SurfCrestFoamLut,
-                                    float4(crestLutU, 0.5, 0.0, 0.0)).r;
-        surfCrestFoam = crestCurve * surfFrag.lipShape * _SurfCrestFoamGain;
-    }
-    // FOAM-4: crest cap. The whitewash coverage above is the bore + its SEAWARD trail (dAcross>0)
-    // + the geometry foam - all of which load foam onto the wave's BACK/BASE, while the crisp lip
-    // foam (surfFrag.breaker) is spent on the SSS glow + sim injection and never reaches the
-    // surface coverage. So a broken front reads bald on TOP and heavy at the BASE ("foam lacks on
-    // top, too much at base"). lipShape is the crest-anchored, surge-killed, plunge-widened
-    // footprint; gating it by the cresting window keeps it OFF unbroken swell and ON from first
-    // curl all the way through the bore (the window saturates past break), so the breaking crest
-    // keeps a bright cap. Surface-only and independent of the FOAM-1 pop LUT - it fires even with
-    // no authored curve. Gated by _SurfFoamCrestCap: 0 = byte-identical.
-    float surfCrestCap = surfFrag.lipShape
-                       * smoothstep(SURF_CRESTING_START, SURF_CRESTING_END, surfFrag.overCap)
-                       * _SurfFoamCrestCap;
-    float surfCoverage = saturate((surfFrag.whitewash + surfCrestFoam + surfCrestCap + surfGeomFoam)
-                                  * _SurfFoamStrength);
-    if (surfCoverage > FOAM_MASK_EPSILON)
-    {
-        // Same parallax lift as the ocean caps: foam reads as sitting ON the water.
-        float3 surfViewToCam = -incomingRay;
-        float2 surfSampleXZ = i.largeWaveSourceXZ + surfViewToCam.xz
-            * (OCEAN_FOAM_PARALLAX_HEIGHT / max(surfViewToCam.y, OCEAN_FOAM_PARALLAX_MIN_VIEW_Y));
-        float surfDist = distance(i.largeWaveSourceXZ, _WorldSpaceCameraPos.xz);
-        float surfTile = max(_SurfFoamTileSize, 1e-3);
-        // Gradients hoisted with the whitecap's (foamWorldDdx/Ddy above): same base
-        // world XZ, additive parallax - exact for this tap too (WGSL uniformity).
-        float3 surfPattern = SampleOceanWhitecapPatternTiled(surfSampleXZ, surfDist, surfTile,
-                                                             foamWorldDdx, foamWorldDdy);
-        // FOAM-2: aged deposit rots into HOLES, not a uniform fade - age raises the
-        // pattern-dissolve threshold, so old foam breaks into lace patches, then
-        // filaments, then nothing (real sea foam dies by holes opening). trailAge
-        // is bore-gated, so the bore head (age ~0) stays solid. 0 seconds = off.
-        float surfTrailErode = 0.0;
-        if (_SurfFoamTrailDissolve > 0.0)
-            surfTrailErode = saturate(surfFrag.trailAge / _SurfFoamTrailDissolve)
-                           * SURF_TRAIL_ERODE_MAX;
-        // Shared KWS contrast/dissolve law (FoamDissolve above) + the trail erosion.
-        float surfFoam = FoamDissolve(surfPattern.r, surfCoverage, _SurfFoamFeather,
-                                      surfTrailErode);
-        if (surfFoam > FOAM_MASK_EPSILON)
-        {
-            float2 surfTiltXY = SampleOceanWhitecapTiltTiled(surfSampleXZ, surfTile,
-                                                             foamWorldDdx, foamWorldDdy)
-                              * (_FoamNormalStrength * surfFoam);
-            float3 surfFoamNormal = ApplyFoamTiltToNormal(normal, surfTiltXY);
-            float surfWrapped = FoamWrappedDiffuse(surfFoamNormal, _LightDir);
-            float3 surfTint = _SurfFoamColor.rgb
-                * lerp(surfPattern, float3(1.0, 1.0, 1.0), surfFoam);
-            surfFoamLook = FoamLitColor(surfTint, _SunColor, surfWrapped);
-            surfFoamAlpha = surfFoam * _SurfFoamColor.a;
-        }
+        float2 surfTiltXY = SampleOceanWhitecapTiltTiled(surfSampleXZ,
+                                                         max(_SurfFoamTileSize, 1e-3),
+                                                         foamWorldDdx, foamWorldDdy)
+                          * (_FoamNormalStrength * surfFoam);
+        float3 surfFoamNormal = ApplyFoamTiltToNormal(normal, surfTiltXY);
+        float surfWrapped = FoamWrappedDiffuse(surfFoamNormal, _LightDir);
+        float3 surfTint = _SurfFoamColor.rgb
+            * lerp(surfPattern, float3(1.0, 1.0, 1.0), surfFoam);
+        surfFoamLook = FoamLitColor(surfTint, _SunColor, surfWrapped);
+        surfFoamAlpha = surfFoam * _SurfFoamColor.a;
     }
     FoamLayer layer;
     layer.alpha = surfFoamAlpha;
@@ -1039,35 +1143,19 @@ float3 ShorelineStage(v2f i, WaterGeomStage g, float3 outColor, float3 refracted
                 float swashCoverage = saturate(max(edgeFoamW, depositW) * _SurfSwashFoam);
                 if (swashCoverage > FOAM_MASK_EPSILON)
                 {
-                    // Downslope drain streaks: a LINEAR xz warp stretching the
-                    // pattern along the local downslope axis (toward the water-
-                    // line), growing with reflux age. Linear, so the hoisted
-                    // gradients transform exactly (WGSL uniformity intact).
-                    float2 streakAxis = shoreFrag.toShore;
-                    float streakAlong = 1.0 / (1.0 + _SurfSwashStreak * refluxAge
-                                                     * SURF_SWASH_STREAK_GAIN);
-                    // Pivot the anisotropic stretch at the SHORE-FIELD CENTRE, not the world
-                    // origin. The old form scaled dot(worldXZ, axis) about (0,0), so the sample
-                    // point's along-axis shift = dot(worldXZ, axis) * (streakAlong - 1) grew with
-                    // ABSOLUTE world distance; since streakAlong animates with refluxAge, that
-                    // shift swept the pattern under the fragment faster the further the beach sat
-                    // from the origin - the "weird distortion" in the swash foam. Anchoring the
-                    // pivot to the field centre bounds the pivot distance to the field's own
-                    // extent, so the stretch stays a local reshape everywhere on the coast.
-                    // Gradients (swashDdx/swashDdy below) are differences, so they are
-                    // origin-invariant and already correct - only this mapping carried the bug.
-                    float2 streakLocalXZ = i.largeWaveSourceXZ - _ShoreDepthCenter.xy;
-                    float2 swashXZ = i.largeWaveSourceXZ + streakAxis
-                        * (dot(streakLocalXZ, streakAxis) * (streakAlong - 1.0));
-                    float2 swashDdx = foamWorldDdx + streakAxis
-                        * (dot(foamWorldDdx, streakAxis) * (streakAlong - 1.0));
-                    float2 swashDdy = foamWorldDdy + streakAxis
-                        * (dot(foamWorldDdy, streakAxis) * (streakAlong - 1.0));
+                    // Plain world XZ with the hoisted gradients. This used to be warped by an
+                    // anisotropic downslope stretch that grew with reflux age (Swash Streak),
+                    // REMOVED 2026-07-30 - it jittered and added nothing readable. Note WHY it
+                    // jittered, because the shape recurs: an age-animated COORDINATE WARP slides
+                    // the pattern under a static fragment every frame, so it shimmers by
+                    // construction. The 2026-07-22 field-centre pivot only bounded how FAST it
+                    // slid (it fixed the distance-dependent "weird distortion"); no pivot can
+                    // remove motion that is the effect's own definition.
                     float swashDist = distance(i.largeWaveSourceXZ,
                                                _WorldSpaceCameraPos.xz);
                     float3 swashPattern = SampleOceanWhitecapPatternTiled(
-                        swashXZ, swashDist, max(_SurfFoamTileSize, 1e-3),
-                        swashDdx, swashDdy);
+                        i.largeWaveSourceXZ, swashDist, max(_SurfFoamTileSize, 1e-3),
+                        foamWorldDdx, foamWorldDdy);
                     // Same shared law as the whitewash (FoamDissolve), plus the
                     // reflux hole-erosion: age raises the dissolve threshold, so
                     // the stranded line rots into lace patches, then filaments.

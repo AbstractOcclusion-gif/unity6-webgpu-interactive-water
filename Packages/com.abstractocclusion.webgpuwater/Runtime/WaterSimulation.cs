@@ -73,6 +73,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FoamFromCurv = Shader.PropertyToID("_FoamFromCurv");
         static readonly int ID_FoamAdvect = Shader.PropertyToID("_FoamAdvect");
         static readonly int ID_FoamDeposit = Shader.PropertyToID("_FoamDeposit");
+        static readonly int ID_FoamHeadroom = Shader.PropertyToID("_FoamHeadroom");
         static readonly int ID_FoamBreakStrength = Shader.PropertyToID("_FoamBreakStrength");
         static readonly int ID_FoamBreakRange = Shader.PropertyToID("_FoamBreakRange");
         static readonly int ID_FoamCrestBias = Shader.PropertyToID("_FoamCrestBias");
@@ -635,16 +636,21 @@ namespace AbstractOcclusion.WebGpuWater
         /// and decay scale by <paramref name="dtSteps"/> (elapsed time in reference steps,
         /// 1 = 1/60 s) so foam evolves frame-rate independently; <paramref name="decayRate"/>
         /// is a user time-scale on decay only (1 = authored speed, 2 = twice as fast).
+        /// <paramref name="headroom"/> scales the additive generation by the FREE surface
+        /// (1 - existing foam), so turbulence yields to whatever foamed a column first instead of
+        /// clipping on top of it; 0 = off, generation ignores existing foam exactly as before.
         /// Reads the current height/normal state; ping-pongs the foam textures.</summary>
         public void StepFoam(float genRate, float genThreshold, float minWaveHeight, float decayFresh,
                              float decayResidual, float spread, float fromSpeed, float fromCurv,
                              float advect, float dtSteps, float decayRate,
                              float breakStrength, float breakRange, float crestBias, float deposit,
+                             float headroom,
                              float wetDrySurvival = 1f, bool foamVisible = true)
         {
             SetGridUniforms();
             _cs.SetFloat(ID_FoamCrestBias, crestBias);
             _cs.SetFloat(ID_FoamDeposit, deposit);
+            _cs.SetFloat(ID_FoamHeadroom, headroom);
             _cs.SetFloat(ID_FoamGenRate, genRate);
             _cs.SetFloat(ID_FoamGenThreshold, genThreshold);
             _cs.SetFloat(ID_FoamMinWaveHeight, minWaveHeight);

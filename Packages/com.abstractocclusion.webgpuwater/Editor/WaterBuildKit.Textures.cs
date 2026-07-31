@@ -129,9 +129,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             });
         }
 
-        // 'linear' is for data textures (e.g. the raw-RGB foam normal map): sRGB sampling
-        // would distort the decoded vectors.
-        static Texture2D LoadFlipbook(string path, TextureWrapMode wrap, bool mipmaps, bool linear = false)
+        // Import-and-load a sheet that lives in the CONSUMER's Generated folder, where rewriting the
+        // importer is legal. Package-shipped art must NOT come through here (its folder can be
+        // immutable) - use LoadDefaultTexture, which loads the authored .meta as-is.
+        // 'linear' is for data textures (e.g. the packed crown sheets): sRGB sampling would distort
+        // the decoded channels. No default - the single caller states its intent explicitly.
+        static Texture2D LoadFlipbook(string path, TextureWrapMode wrap, bool mipmaps, bool linear)
         {
             if (!File.Exists(path)) return null;
             AssetDatabase.ImportAsset(path);

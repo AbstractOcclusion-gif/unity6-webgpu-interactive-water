@@ -553,6 +553,29 @@ SurfWaveSample SurfWaveSampleInert()
 // waterline; a wide fade STRANDED the foam ~25 cm deep) x wet x field influence x shore exposure
 // (the swell-facing coast gets the surf; the lee side calms down). Shared by EvaluateSurfWaves and
 // every other surf consumer, so they all mask exactly like the surface.
+// WHO OWNS THIS WATER - the SUPPRESSION contour, deliberately NOT SurfFieldMask.
+//
+// SurfFieldMask carries a 'wet' term whose job is to let the FRONTS run almost onto the sand
+// (SURF_WET_FADE_LO/HI, see its comment: a wide fade STRANDED the foam ~25 cm deep). Reusing that
+// same expression as the weight that tells OTHER foam engines to stand down made ownership die in
+// the last ~10 cm of water - so accumulated ocean whitecaps, and the ripple/turbulence foam, both
+// switched back on exactly AT the waterline. "How strong are the fronts here" and "who owns this
+// water" are two different questions and they need two contours.
+//
+// This keeps develop x influence x exposure. Keeping influence and exposure is deliberate and is
+// what stops the 2026-07-28 "barren strip" regression: a depth-only window killed whitecaps on the
+// lee side of an island and in the outer band ring, where no whitewash ever appears. It simply does
+// not fade out at the waterline.
+//
+// SUPERSET OF SurfFieldMask BY CONSTRUCTION (wet <= 1), so it can never suppress LESS than the
+// shipped behaviour did - only more, and only inside the surf field.
+float SurfOwnershipMask(float depth, float2 toShore, float influence)
+{
+    float band = max(_SurfBandDepth, SURF_MIN_BAND_DEPTH);
+    float develop = 1.0 - smoothstep(SURF_NEAR_FADE * band, band, max(depth, 0.0));
+    return develop * influence * SurfExposure(toShore);
+}
+
 float SurfFieldMask(float depth, float2 toShore, float influence)
 {
     float band = max(_SurfBandDepth, SURF_MIN_BAND_DEPTH);

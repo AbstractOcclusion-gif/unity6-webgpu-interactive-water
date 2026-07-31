@@ -137,21 +137,32 @@ namespace AbstractOcclusion.WebGpuWater
                 return;
             }
             _planarMirror ??= new PlanarMirror(name + "_PlanarMirror");
-            // Mirror across the WAVE-AWARE surface height, not the flat rest plane. A planar mirror
-            // is exact only ON its plane: an object floating at height h above the plane has its
-            // image placed at -h while the surface it should reflect in sits at +h, so the
-            // reflection lands 2h too low - and as a swell LIFTS the object by h its reflection
-            // DROPS by h. That signature (up one way, down the other, twice the amount) is exactly
-            // what a floating boat showed. Using the same height that arms the fog collapses the
-            // error to the wave-height DIFFERENCE between the camera and the reflected object,
-            // instead of the full wave amplitude, and costs nothing - the value is already
-            // computed every frame.
-            // NOT a complete fix, and cannot be: one plane cannot fit a displaced surface, so an
-            // object far away on a different wave phase is still offset. The exact answer for
-            // near-field object reflections is SSR, which marches the real reflected ray.
-            _planarMirror.Render(cam, SurfaceHeightAtCamera(), PlanarMirrorResolutionScale,
-                                 PlanarMirrorClipPlaneOffset, PlanarReflectLayers());
+            // Mirror across this body's REST plane, and nothing else. This used to track the WAVE
+            // height under the camera, which helped the one thing that rides the camera's own wave
+            // phase (a nearby floating boat) and wrecked everything that does not.
+            // A mirror plane puts a static point's image at 2*planeY - y, so moving the plane one
+            // metre moves the ENTIRE reflected world two. On a raging sea the camera's wave height
+            // swings by the full swell amplitude every frame, so a static island - which shares none
+            // of that phase - had its reflection sliding by twice the amplitude and tearing away
+            // from its own base. A still plane cannot do that, at any sea state.
+            // A floating object's reflection is NOT this function's job: one plane can never fit a
+            // displaced surface, so an object h above the plane is imaged at -h whatever the plane
+            // does. PlanarExcludeLayers keeps it out of the mirror and SSR, which marches the real
+            // reflected ray, owns it.
+            _planarMirror.Render(cam, VolumeCenter.y, PlanarMirrorResolutionScale,
+                                 PlanarMirrorClipOffset(), PlanarReflectLayers());
         }
+
+        // The oblique near-clip offset the mirror crops with, along the surface normal from the mirror
+        // plane. The positive constant is the seam guard (crop a hair ABOVE the plane so the plane's own
+        // pixels cannot bleed into their own reflection); PlanarClipDepth subtracts from it to keep a
+        // band BELOW the plane instead.
+        // WHY that band is wanted: the surface is displaced and the mirror plane is not, so a wave
+        // TROUGH exposes shoreline sitting under the rest plane. Cropped out, the mirror has a hole
+        // there and answers with the reflection camera's own skybox - the island's base reflecting SKY.
+        // WHY the depth is an art knob and not the live wave height: the crop is exactly what a live
+        // value would change every frame, which is the flicker the still plane above just removed.
+        float PlanarMirrorClipOffset() => PlanarMirrorClipPlaneOffset - PlanarClipDepth;
 
         // Hand the live mirror to the retire slot instead of destroying it here. _planarMirror is cleared
         // IMMEDIATELY so PlanarReflectionTexture stops answering with an RT that is about to be released -

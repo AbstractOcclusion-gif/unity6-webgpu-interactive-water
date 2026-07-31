@@ -45,6 +45,12 @@ namespace AbstractOcclusion.WebGpuWater
         /// more GPU cost. Windowed oceans are unaffected (they keep the quality-tier resolution).</summary>
         public enum RippleQuality { Low, Medium, High, Ultra }
 
+        /// <summary>Density of the caustic generator's OWN sampling lattice, as a multiple of the
+        /// ripple-sim grid. The caustic pattern is band-limited by that lattice and NOT by the caustic
+        /// map size - the generator writes one focus sample per lattice vertex, so a bigger RT can only
+        /// interpolate what the lattice already carried.</summary>
+        public enum CausticDetail { MatchSim = 1, Double = 2 }
+
         /// <summary>Body archetype used by the inspector to show the relevant settings and apply sensible
         /// defaults. Advisory only: it drives the editor UI + the "Apply defaults" action, not the runtime
         /// paths (those still read openWater / unboundedOcean / enableLargeBodyWindow).</summary>

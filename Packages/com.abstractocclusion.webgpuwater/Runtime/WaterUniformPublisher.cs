@@ -133,6 +133,14 @@ namespace AbstractOcclusion.WebGpuWater
         // variant is COMPILED without the wavy-crossing machinery instead of merely branching past
         // it at runtime.
         const string KW_UnderwaterFogSimple = "WATER_FOG_SIMPLE";
+        // Compiles the underside sea-foam silhouette (ocean whitecaps + surf whitewash) into
+        // WaterSurface's fragment program. Same reasoning as the keyword above and NOT a uniform for
+        // the same reason: the guarded code is two whitecap pattern taps, and register allocation is
+        // sized to the worst path through the module whether or not the branch is taken. Armed off
+        // the fog's arming flag - the broader of the two underwater facts, true whenever the eye is
+        // below the surface plane even inside a dry exclusion volume - because that is exactly when
+        // the underside sheet can be looked at.
+        const string KW_UndersideFoam = "WATER_UNDERSIDE_FOAM";
         static readonly int ID_UnderwaterFogArmed = Shader.PropertyToID("_UnderwaterFogArmed");
         static readonly int ID_PeakedRefine = Shader.PropertyToID("_PeakedRefineSteps");
         static readonly int ID_UsePlanar = Shader.PropertyToID("_UsePlanar");
@@ -363,6 +371,10 @@ namespace AbstractOcclusion.WebGpuWater
             if (fogSimple > 0.5f) Shader.EnableKeyword(KW_UnderwaterFogSimple);
             else Shader.DisableKeyword(KW_UnderwaterFogSimple);
             Shader.SetGlobalFloat(ID_UnderwaterFogArmed, fogArmed);
+            // See KW_UndersideFoam: the underside sheet is only ever looked at from below, so above
+            // the surface the whitecap/whitewash taps are compiled out of the surface pass entirely.
+            if (fogArmed > 0.5f) Shader.EnableKeyword(KW_UndersideFoam);
+            else Shader.DisableKeyword(KW_UndersideFoam);
         }
 
         /// <summary>Screen-space waterline (meniscus) tunables for the fog material's waterline

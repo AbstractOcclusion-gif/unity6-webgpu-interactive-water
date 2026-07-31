@@ -20,9 +20,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             float cullFront = (float)UnityEngine.Rendering.CullMode.Front;
             float cullBack = (float)UnityEngine.Rendering.CullMode.Back;
             var above = LoadOrCreateMaterial(folder + "/WaterAbove.mat", sfWater,
-                                             m => { m.SetFloat(PropUnderwater, 0f); m.SetFloat(PropCull, cullBack); EnableRealRefraction(m); AssignFoamFlipbook(m); });
+                                             m => { m.SetFloat(PropUnderwater, 0f); m.SetFloat(PropCull, cullBack); EnableRealRefraction(m); });
             var under = LoadOrCreateMaterial(folder + "/WaterUnder.mat", sfWater,
                                              m => { m.SetFloat(PropUnderwater, 1f); m.SetFloat(PropCull, cullFront); EnableRealRefraction(m); });
+            // OUTSIDE the create-once lambda: LoadOrCreateMaterial only runs 'configure' when it
+            // actually creates the asset, so a material built before the sprite existed could never
+            // be healed - not by a rebuild, not by the inspector's Repair button. Slot-empty guards
+            // (below) make this safe to re-run over a hand-tuned material.
+            AssignFoamFlipbook(above);
             Material pool = null;
             if (buildAnalyticPool && sfPool != null)
                 pool = LoadOrCreateMaterial(folder + "/Pool.mat", sfPool, m => m.SetFloat(PropCull, cullBack));
@@ -38,27 +43,49 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             m.SetFloat(PropRealRefraction, 1f);
         }
 
-        // Give a water surface material the animated foam pattern. Skipped silently when the
-        // flipbook asset is absent: the shader's white default degrades to flat foam. Relief
-        // is procedural now (finite differences of the pattern, like the ocean whitecap), so
-        // no normal-map assignment; the generated FoamFlipbookNormal asset stays on disk for
-        // old materials that still serialize it.
-        internal static void AssignFoamFlipbook(Material m)
+        // Give a water surface material the animated foam pattern, and the grid that decodes it.
+        // The two MUST move together: the sheet without _FoamTexFrames plays as one frozen frame.
+        // Relief is procedural (finite differences of the pattern, like the ocean whitecap), so no
+        // normal-map assignment; the generated FoamFlipbookNormal asset stays on disk for old
+        // materials that still serialize it.
+        internal static void AssignFoamFlipbook(Material material)
         {
-            var flipbook = LoadFlipbook(FoamFlipbookPath, TextureWrapMode.Repeat, true);
-            if (flipbook == null) return;
-            m.SetTexture(PropFoamTex, flipbook);
-            m.SetVector(PropFoamTexFrames, new Vector4(FoamFlipbookCols, FoamFlipbookRows, 0f, 0f));
+            if (material == null || material.GetTexture(PropFoamTex) != null) return;
+
+            var flipbook = LoadDefaultTexture(FoamFlipbookFile);
+            if (flipbook == null) return; // LoadDefaultTexture already named the missing file
+
+            material.SetTexture(PropFoamTex, flipbook);
+            material.SetVector(PropFoamTexFrames, new Vector4(FoamFlipbookCols, FoamFlipbookRows, 0f, 0f));
+            EditorUtility.SetDirty(material);
         }
 
-        // A default surface texture from the package's imported Runtime/Textures folder. Null (with
-        // a loud warning) if the package copy is missing, so a broken install fails visibly instead
-        // of silently building an untextured body.
-        internal static Texture LoadDefaultTexture(string fileName)
+        // Fill ONE sprite slot from the package's shipped art, and only when it is empty. Every
+        // wiring path routes through here so a re-run or a Repair heals a missing sprite without
+        // ever clobbering one the user picked by hand.
+        internal static void AssignPackagedSpriteIfEmpty(Material material, string property, string textureFile)
         {
-            var texture = AssetDatabase.LoadAssetAtPath<Texture>(DefaultTexturesRoot + "/" + fileName);
+            if (material == null || material.GetTexture(property) != null) return;
+
+            var texture = LoadDefaultTexture(textureFile);
+            if (texture == null) return; // LoadDefaultTexture already named the missing file
+
+            material.SetTexture(property, texture);
+            EditorUtility.SetDirty(material);
+        }
+
+        // Shipped art from the package's imported Runtime/Textures folder. Loaded through the
+        // AssetDatabase with NO importer rewrite: on a registry or tarball install the package
+        // folder is IMMUTABLE, so a SaveAndReimport here would fail - and the authored .meta files
+        // already carry the right settings. Null (with a loud warning) when the copy is missing, so
+        // a broken install fails visibly instead of silently building an untextured body.
+        internal static Texture2D LoadDefaultTexture(string fileName)
+        {
+            string path = DefaultTexturesRoot + "/" + fileName;
+            var texture = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
             if (texture == null)
-                Debug.LogWarning($"[WebGpuWater] Default texture '{fileName}' not found under {DefaultTexturesRoot}; the corresponding slot stays empty.");
+                Debug.LogWarning(LogPrefix + $"packaged texture '{fileName}' not found at '{path}'; " +
+                                 "the corresponding slot stays empty and the shader falls back to flat white.");
             return texture;
         }
 

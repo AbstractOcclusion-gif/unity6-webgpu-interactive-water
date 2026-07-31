@@ -181,9 +181,6 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("How hard reflux age erodes the stranded foam line into lace holes (0 = " +
                      "the line only drains with the next uprush).")]
             [Range(0f, 1f)] public float surfSwashFoamDissolve = 0.6f;
-            [Tooltip("Downslope streak stretch of the swash foam during the backwash - drain " +
-                     "marks running toward the waterline.")]
-            [Range(0f, 1f)] public float surfSwashStreak = 0.5f;
             [Tooltip("Persistent swash deposits: the backwash strands foam into the interactive " +
                      "foam BUFFER, so deposits LINGER across waves and fade over real time instead " +
                      "of the per-cycle analytic fade. How LONG they last is set by the body's Foam " +
@@ -284,7 +281,6 @@ namespace AbstractOcclusion.WebGpuWater
         internal float surfSwashFoam => bedDepthSettings.surfSwashFoam;
         internal float surfSwashFoamWidth => bedDepthSettings.surfSwashFoamWidth;
         internal float surfSwashFoamDissolve => bedDepthSettings.surfSwashFoamDissolve;
-        internal float surfSwashStreak => bedDepthSettings.surfSwashStreak;
         internal float surfSwashDepositGain => bedDepthSettings.surfSwashDepositGain;
     }
 }

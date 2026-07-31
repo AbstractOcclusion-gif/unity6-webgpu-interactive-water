@@ -242,6 +242,38 @@ namespace AbstractOcclusion.WebGpuWater
         [System.NonSerialized] int _causticRes;
         internal int EffectiveCausticResolution => _causticRes > 0 ? _causticRes : causticResolution;
 
+        [Tooltip("Density of the caustic generator's own sampling lattice, as a multiple of the ripple " +
+                 "sim grid. THE PATTERN IS BAND-LIMITED BY THIS, NOT BY CAUSTIC MAP SIZE: usable Ripple " +
+                 "Scale is roughly 15x the lattice cell, so a 50 m window on a 256 grid (0.2 m cells) " +
+                 "stops resolving below about 3 m of wavelength. Double halves the cell and so halves " +
+                 "the shortest Ripple Scale that still reads. Costs 4x the caustic pass's vertex work, " +
+                 "which is already 5 projections per vertex - raise it only if you actually push Ripple " +
+                 "Scale low. Capped at Caustic Map Size, and ignored on a disc-surface pool.")]
+        [SerializeField] internal CausticDetail causticDetail = CausticDetail.MatchSim;
+
+        /// <summary>Resolution of the DEDICATED caustic lattice, or 0 when the caustic pass should keep
+        /// drawing the body's own mesh (the surface grid on a pool, the sim-window patch on an ocean).
+        ///
+        /// Decoupling matters most exactly where the artist has the least control: a WINDOWED body takes
+        /// its sim resolution from the quality TIER and ignores Ripple Quality entirely
+        /// (WaterVolume.cs, "if (!_windowed)"), so without this the caustic detail of an ocean is
+        /// hostage to a knob about ripple physics.
+        ///
+        /// Capped at the RT size because a lattice finer than the map it writes into cannot be stored.
+        /// Returns 0 for a DISC pool: the lattice is a square in [-1,1] and swapping it for the disc
+        /// mesh would draw caustics into the RT's corners, outside the footprint the disc body
+        /// establishes - a footprint change masquerading as a detail knob.</summary>
+        internal int CausticGridResolution
+        {
+            get
+            {
+                int multiplier = (int)causticDetail;
+                if (multiplier <= 1) return 0;                  // 1x = keep the body's own mesh, byte-identical
+                if (!IsWindowed && discSurface) return 0;       // see the disc note above
+                return Mathf.Min(SimResolution * multiplier, EffectiveCausticResolution);
+            }
+        }
+
         // Direction TOWARD the light: the assigned sun wins, the serialized vector is the manual
         // fallback. Derived (not written back to the field): the old per-frame write-back silently
         // dirtied the authored value under [ExecuteAlways] in edit mode.

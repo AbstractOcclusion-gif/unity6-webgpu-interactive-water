@@ -80,10 +80,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     WaterVolumePropertyPaths.ScreenSpaceReflection,
                     WaterVolumePropertyPaths.PlanarReflection,
                     "reflectionSettings.reflectUrpProbe");
-                // Greyed unless planar is on: it is the planar mirror's culling mask and does
-                // nothing to SSR or the environment base.
+                // Greyed unless planar is on: the culling mask and the crop depth both belong to the
+                // planar mirror and do nothing to SSR or the environment base.
                 DrawFieldsIf(Prop(WaterVolumePropertyPaths.PlanarReflection).boolValue,
-                    "reflectionSettings.planarExcludeLayers");
+                    "reflectionSettings.planarExcludeLayers",
+                    "reflectionSettings.planarClipDepth");
 
                 // Refraction gets its own heading rather than one line buried in the SSR foldout,
                 // where nobody looking for "how do I tune refraction" would ever find it. The two
@@ -215,7 +216,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                         "foamSettings.foamMinWaveHeight",
                         "foamSettings.foamFromSpeed",
                         "foamSettings.foamFromCurvature",
-                        "foamSettings.foamCrestBias");
+                        "foamSettings.foamCrestBias",
+                        "foamSettings.foamHeadroom");
                     WaterEditorUI.SubHeading("Breaking + deposit");
                     DrawFields(
                         "foamSettings.foamDeposit",
@@ -318,7 +320,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "bedDepthSettings.surfSwashFoam",
                     "bedDepthSettings.surfSwashFoamWidth",
                     "bedDepthSettings.surfSwashFoamDissolve",
-                    "bedDepthSettings.surfSwashStreak",
                     "bedDepthSettings.surfSwashDepositGain");
             },
             contentEnabled: UsesBedDepth && Prop(WaterVolumePropertyPaths.SurfEnabled).boolValue);

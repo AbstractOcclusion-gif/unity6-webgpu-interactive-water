@@ -243,6 +243,11 @@ float _FoamFromSpeed;  // foam from |velocity|
 float _FoamFromCurv;   // foam from negative curvature (wave crests/chop)
 float _FoamAdvect;     // texels foam is carried along the surface flow per step
 float _FoamDeposit;    // 0..1 instant DEPOSIT floor: turbulence lays lasting foam, not just a rate trickle
+// Headroom - "yield to existing foam". 0 = generation ignores what is already on the column
+// (legacy). 1 = the additive rate is scaled by the FREE surface, so the ripple engine stands down
+// wherever something else already whitened this water. See the use site in Foam() for why this is
+// the one gate the activity knobs cannot express.
+float _FoamHeadroom;
 
 // Shallow-water breaking boost (foam pass move #1). Where a baked bed makes the water column
 // shallow, waves shoal and break more readily, so surface turbulence aerates white far sooner
@@ -659,7 +664,25 @@ void Foam(uint3 id : SV_DispatchThreadID)
         gen *= 1.0 + _FoamBreakStrength * FOAM_BREAK_MAX_BOOST * shallow * breaking;
     }
 
-    foam += gen * (_FoamGenRate * _FoamDtSteps);
+    // HEADROOM. Turbulence cannot aerate water that is already aerated, and this buffer is ONE
+    // saturating scalar shared by every source - ripple turbulence, the wake stamp and the surf
+    // injection below all sum into it. In the surf band the shore engine alone already drives the
+    // column toward 1, so the ripple term only ever contributed the clipping: the band lost its
+    // per-front structure and read as a flat white slab the moment foam was switched on.
+    // Scaling the RATE by the free surface makes turbulence yield to whoever foamed the column
+    // first ('foam' here is last step's value, already advected in, so the surf injection counts).
+    //
+    // The point is that this filters by WHERE THERE IS ROOM, not by how energetic the water is.
+    // _FoamGenThreshold and _FoamMinWaveHeight can only do the latter, which is why raising them
+    // to calm the shore also kills every splash and interaction: they cannot tell a bore from a
+    // rock hitting the water. In open water foam is ~0, headroom is 1, and a splash foams exactly
+    // as before.
+    //
+    // Only the RATE term is scaled. The deposit floor below is a max(), so it already self-limits
+    // against existing foam - scaling it too would weaken real deposits for nothing.
+    // _FoamHeadroom 0 = byte-identical.
+    float headroom = lerp(1.0, saturate(1.0 - foam), _FoamHeadroom);
+    foam += gen * headroom * (_FoamGenRate * _FoamDtSteps);
     // DEPOSIT floor: the rate term above only trickles foam in, so a wake that churns a cell for just a
     // few frames as it passes leaves almost nothing. Real turbulence DEPOSITS - one strong turbulent
     // moment lays a lasting patch of foam that the residual decay then dissolves (KWS floors the foam

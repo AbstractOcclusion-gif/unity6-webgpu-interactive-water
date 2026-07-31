@@ -21,6 +21,10 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_CausticSmooth = Shader.PropertyToID("_LargeGodRayCausticSmooth");
         static readonly int ID_CausticTime = Shader.PropertyToID("_LargeCausticTime");
         static readonly int ID_CausticRippleScale = Shader.PropertyToID("_LargeCausticRippleScale");
+        // Normalised step between adjacent caustic-MESH vertices. Both generators measure their
+        // focusing Jacobian over exactly this span, so it has to describe the mesh this pass draws -
+        // not the sim texture, which merely happens to share its resolution today.
+        static readonly int ID_CausticGridStep = Shader.PropertyToID("_CausticGridStepNorm");
         static readonly int ID_CausticRippleStrength = Shader.PropertyToID("_LargeCausticRippleStrength");
 
         // Green channel of the caustic RT starts at 1 (unshadowed) so floor fragments that sample
@@ -32,6 +36,11 @@ namespace AbstractOcclusion.WebGpuWater
         readonly Material _largeBodyMaterial; // null when the large-body caustics shader isn't assigned (oceans only)
         readonly Material _occluderMaterial;  // null when the occluder shader isn't assigned -> object shadows stay on the shadow map
         readonly RenderTexture _target;
+        // The caustic pass's OWN sampling lattice, decoupled from the surface/patch mesh the body
+        // draws. Null when WaterVolume.CausticGridResolution asked for the caller's mesh instead
+        // (detail 1x, or a disc pool) - which is the default, so this is inert until opted into.
+        readonly Mesh _causticGrid;
+        readonly int _causticGridRes;
         readonly CommandBuffer _cb;
         // The body this pass belongs to: DrawOccluders draws ONLY interactables contained in this
         // body. The old unfiltered loop stamped EVERY submerged interactable in the scene into
@@ -52,13 +61,23 @@ namespace AbstractOcclusion.WebGpuWater
         internal bool OccluderChannelValid { get; private set; }
 
         internal WaterCausticsPass(WaterVolume owner, Shader causticsShader, Shader largeBodyCausticsShader,
-                                   Shader occluderShader, int resolution)
+                                   Shader occluderShader, int resolution, int causticGridResolution)
         {
             _owner = owner ?? throw new System.ArgumentNullException(nameof(owner));
             if (causticsShader == null) throw new System.ArgumentNullException(nameof(causticsShader));
             if (resolution <= 0)
                 throw new System.ArgumentException($"Caustic resolution must be positive, got {resolution}.",
                                                    nameof(resolution));
+
+            // Dedicated caustic lattice. 0 = draw the mesh the caller passes, exactly as before.
+            // BuildGrid already uses IndexFormat.UInt32, so a 512 or 1024 lattice is legal - the cost
+            // is vertices, not indices, which is why the detail knob is capped rather than free.
+            if (causticGridResolution > 0)
+            {
+                _causticGrid = WaterMeshBuilder.BuildGrid(causticGridResolution);
+                _causticGrid.hideFlags = HideFlags.HideAndDontSave;
+                _causticGridRes = causticGridResolution;
+            }
 
             // HideAndDontSave: an edit-mode preview must never serialize these into the scene.
             _material = new Material(causticsShader) { hideFlags = HideFlags.HideAndDontSave };
@@ -101,11 +120,12 @@ namespace AbstractOcclusion.WebGpuWater
             // this pass runs before the owner applies its per-body block, so the wave params aren't on
             // the material otherwise. Inert when Wind Waves is off (_WaveCount == 0 -> no change).
             _owner.ApplyCausticWaveUniforms(_material);
+            _material.SetFloat(ID_CausticGridStep, CausticGridStepNorm());
 
             _cb.Clear();
             _cb.SetRenderTarget(_target);
             _cb.ClearRenderTarget(true, true, CausticClear);
-            _cb.DrawMesh(waterMesh, Matrix4x4.identity, _material, 0, 0);
+            _cb.DrawMesh(_causticGrid != null ? _causticGrid : waterMesh, Matrix4x4.identity, _material, 0, 0);
             DrawOccluders(waterRestY, volumeCenter, volumeExtent, volumeRotation, lightDir);
             if (_target.useMipMap) _cb.GenerateMips(_target); // keep every level valid (see ctor)
             Graphics.ExecuteCommandBuffer(_cb);
@@ -158,6 +178,15 @@ namespace AbstractOcclusion.WebGpuWater
             }
         }
 
+        // Normalised spacing between adjacent vertices of the mesh the caustic pass draws. Both
+        // meshes span [-1,1], so the step is 2/resolution. The pool draws EffectiveWaterMesh and the
+        // ocean draws the sim-window patch grid, and both are BuildGrid(_simRes) today - but the
+        // authored pool mesh is an exception whose resolution nothing can report, and the sim grid is
+        // the caustic content's own band-limit either way, so SimResolution is both the correct answer
+        // and the safe one. When the caustic mesh is decoupled from the sim, THIS is what re-points.
+        float CausticGridStepNorm()
+            => 2f / Mathf.Max(1, _causticGrid != null ? _causticGridRes : _owner.SimResolution);
+
         // A LayerMask is a bitfield indexed by layer number, so membership is a shift and a test.
         static bool LayerInMask(int layer, LayerMask mask) => (mask.value & (1 << layer)) != 0;
 
@@ -168,7 +197,8 @@ namespace AbstractOcclusion.WebGpuWater
         internal void RenderLargeBody(Mesh windowMesh, RenderTexture simTexture,
                                       Vector3 windowCenter, Vector3 windowHalfExtent)
         {
-            if (_largeBodyMaterial == null || windowMesh == null) return;
+            Mesh mesh = _causticGrid != null ? _causticGrid : windowMesh;
+            if (_largeBodyMaterial == null || mesh == null) return;
             OccluderChannelValid = false; // the large-body path clears green to 0 and draws no silhouettes
             if (simTexture != null) _largeBodyMaterial.SetTexture(ID_Water, simTexture);
             _largeBodyMaterial.SetVector(ID_SimCenter, windowCenter);
@@ -183,11 +213,12 @@ namespace AbstractOcclusion.WebGpuWater
             _largeBodyMaterial.SetFloat(ID_CausticTime, _owner.WaveTime * _owner.LargeCausticTimeScale);
             _largeBodyMaterial.SetFloat(ID_CausticRippleScale, _owner.LargeCausticRippleScale);
             _largeBodyMaterial.SetFloat(ID_CausticRippleStrength, _owner.LargeCausticRippleStrength);
+            _largeBodyMaterial.SetFloat(ID_CausticGridStep, CausticGridStepNorm());
 
             _cb.Clear();
             _cb.SetRenderTarget(_target);
             _cb.ClearRenderTarget(true, true, Color.clear);
-            _cb.DrawMesh(windowMesh, Matrix4x4.identity, _largeBodyMaterial, 0, 0);
+            _cb.DrawMesh(mesh, Matrix4x4.identity, _largeBodyMaterial, 0, 0);
             if (_target.useMipMap) _cb.GenerateMips(_target); // the god rays sample depth-scaled LODs
             Graphics.ExecuteCommandBuffer(_cb);
         }
@@ -202,6 +233,7 @@ namespace AbstractOcclusion.WebGpuWater
                 _target.Release();
                 WaterObjects.DestroyRuntime(_target);
             }
+            WaterObjects.DestroyRuntime(_causticGrid);
             WaterObjects.DestroyRuntime(_material);
             WaterObjects.DestroyRuntime(_largeBodyMaterial);
             WaterObjects.DestroyRuntime(_occluderMaterial);

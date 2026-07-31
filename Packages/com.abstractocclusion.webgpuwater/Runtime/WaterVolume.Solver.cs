@@ -161,7 +161,7 @@ namespace AbstractOcclusion.WebGpuWater
                                 foamFromCurvature * foamActivityScale, foamAdvect,
                                 _foamTimeDebt, foamDecayRate,
                                 foamBreakStrength, foamBreakRange / VolumeExtentSafe.y,
-                                foamCrestBias, foamDeposit,
+                                foamCrestBias, foamDeposit, foamHeadroom,
                                 WetMarkSurvivalPerStep(wetnessDryTime),
                                 foam);
                 _foamTimeDebt = 0f;

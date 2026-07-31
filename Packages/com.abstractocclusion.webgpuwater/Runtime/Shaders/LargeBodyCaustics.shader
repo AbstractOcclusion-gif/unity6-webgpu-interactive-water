@@ -65,6 +65,13 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyCaustics"
             float _LargeCausticRippleScale;    // dominant ripple wavelength (metres)
             float _LargeCausticRippleStrength; // field strength (0 = legacy surface-driven caustic)
 
+            // Normalised window step between adjacent caustic-mesh vertices (2 / meshResolution),
+            // set per body by WaterCausticsPass. THIS IS THE EPSILON the focusing Jacobian is
+            // measured over - see vert. It must track the mesh the pass actually draws, which is
+            // why it is pushed from C# rather than derived from _WaterTexel (the sim's resolution
+            // and the caustic mesh's are the same today, but they are not the same THING).
+            float _CausticGridStepNorm;
+
             // SELF-CONTAINED: when the field is active it REPLACES the surface height entirely -
             // with an FFT ocean, LargeBodyWaveHeight is the live FFT texture, which no clock can
             // slow, so any surface contribution reintroduces uncontrolled motion. The field brings
@@ -97,9 +104,13 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyCaustics"
             struct appdata { float4 vertex : POSITION; };
             struct v2f
             {
-                float4 pos    : SV_POSITION;
-                float3 oldPos : TEXCOORD0; // undisturbed projection (flat surface)
-                float3 newPos : TEXCOORD1; // refracted projection (displaced surface)
+                float4 pos   : SV_POSITION;
+                // Focusing ratio, computed PER VERTEX and interpolated. It used to be two projected
+                // positions the fragment took ddx/ddy of - but ddx/ddy of a linearly interpolated
+                // varying is CONSTANT over a triangle, so the RT was flat-shaded one value per grid
+                // cell and no RT resolution could add detail. Measuring it per vertex instead makes
+                // the stored field C0-continuous, which is what removes the blocks.
+                float focus  : TEXCOORD0;
             };
 
             // March a ray from 'origin' along 'dir' down to the horizontal plane y = planeY.
@@ -110,14 +121,14 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyCaustics"
                 return origin + dir * t;
             }
 
-            v2f vert(appdata v)
+            // ONE projected sample of the caustic map: the displaced surface at 'windowNorm',
+            // refracted down onto the reference plane. Factored out of vert so the SAME code can be
+            // evaluated at the vertex and at +/- epsilon around it - which is what lets the focusing
+            // Jacobian be measured in the window's own frame instead of from screen-space
+            // derivatives. Everything inside is the original vert body, moved verbatim.
+            float3 CausticProjectedPos(float2 windowNorm, float surfaceY, float refPlaneY)
             {
-                v2f o;
-                // The window grid is a normalised [-1,1] plane in xy; map it into the window's world frame.
-                float2 windowNorm = v.vertex.xy;
                 float2 worldXZ = _SimCenter.xz + windowNorm * _SimExtent.xz; // axis-aligned window (ocean is unrotated)
-                float surfaceY = _SimCenter.y;
-                float refPlaneY = surfaceY - LARGE_CAUSTIC_REFERENCE_DEPTH;
 
                 // Base tilt from the interactive ripple sim, softened + weighted DOWN: it is coarse over a
                 // large window, so it must not dominate. It stays LIVE in every mode - wake/splash
@@ -125,67 +136,125 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyCaustics"
                 float4 info = SampleWaterBilinear(windowNorm * 0.5 + 0.5);
                 float2 rippleTilt = info.ba * (CAUSTIC_NORMAL_SOFTEN * CAUSTIC_RIPPLE_WEIGHT);
                 float3 normal = float3(rippleTilt.x, sqrt(max(0.0, 1.0 - dot(rippleTilt, rippleTilt))), rippleTilt.y);
-                float causticFieldHeight = 0.0;
-                bool dedicatedField = _LargeCausticRippleStrength > 0.0;
-                if (dedicatedField)
+                // TWO LAYERS THAT COMPOSE, and that is the fix. These used to be an
+                // if / else-if / else, so ANY _LargeCausticRippleStrength above zero shadowed BOTH
+                // surface branches: the caustic stopped seeing the waves entirely (normal AND height
+                // came only from the synthetic field) and the smoothing radius below became
+                // unreachable. A [0..2] slider whose first epsilon silently switches MODE is not a
+                // strength. Swell first, dedicated ripple dapple on top, one normalize at the end.
+
+                // ---- Layer 1: THE SWELL - always folded in now. ----
+                float swellHeight;
+                if (_LargeGodRayCausticSmooth > 0.0)
                 {
-                    // Self-contained caustic field on its own clock (see CausticField above): the
-                    // surface height is NOT sampled at all in this mode - with an FFT ocean it is
-                    // the live FFT texture, which would reintroduce motion no knob controls.
-                    float2 fieldSlope;
-                    CausticField(worldXZ, fieldSlope, causticFieldHeight);
-                    normal.xz -= fieldSlope * (_WaveNormalStrength * _LargeCausticRippleStrength);
-                    normal = normalize(normal);
-                }
-                // Legacy surface-driven paths (field strength 0): fold in the large-body swell so the
-                // caustic focuses through the ACTUAL visible wave shape. Smoothed mode (radius > 0):
-                // band-limited slope from height differences over the radius (see
-                // _LargeGodRayCausticSmooth above) - the sim normal convention is n.xz = -grad h,
-                // matching the ripple tilt this normal already carries.
-                else if (_LargeGodRayCausticSmooth > 0.0)
-                {
+                    // Band-limited: differencing the height over the radius drops everything shorter
+                    // than about twice it, so the caustic focuses through the slow swell and not the
+                    // fast wind chop. The sim normal convention is n.xz = -grad h, matching the
+                    // ripple tilt this normal already carries.
                     float r = _LargeGodRayCausticSmooth;
-                    float2 slope = float2(
-                        LargeBodyWaveHeight(worldXZ + float2(r, 0.0)) - LargeBodyWaveHeight(worldXZ - float2(r, 0.0)),
-                        LargeBodyWaveHeight(worldXZ + float2(0.0, r)) - LargeBodyWaveHeight(worldXZ - float2(0.0, r)))
-                        / (2.0 * r);
-                    normal.xz -= slope * _WaveNormalStrength;
-                    normal = normalize(normal);
+                    float hXP = LargeBodyWaveHeight(worldXZ + float2(r, 0.0));
+                    float hXN = LargeBodyWaveHeight(worldXZ - float2(r, 0.0));
+                    float hZP = LargeBodyWaveHeight(worldXZ + float2(0.0, r));
+                    float hZN = LargeBodyWaveHeight(worldXZ - float2(0.0, r));
+                    normal.xz -= float2(hXP - hXN, hZP - hZN) / (2.0 * r) * _WaveNormalStrength;
+                    // THE SAME FOUR TAPS, AVERAGED, ARE A BAND-LIMITED HEIGHT - free. That matters:
+                    // the height displaces where the ray leaves the surface, so it slides the pattern
+                    // laterally. Feeding the RAW FFT height here would slide it at a speed no time
+                    // scale controls, which is the real reason the old code cut the surface out
+                    // altogether instead of band-limiting it. Smoothing it makes composing safe.
+                    swellHeight = (hXP + hXN + hZP + hZN) * 0.25;
                 }
                 else
                 {
+                    // Radius 0 = full spectrum. NOT a cost saving, despite dropping the four taps:
+                    // ApplyLargeBodyWaveNormal runs ShoreSample + EvaluateSurfWaves internally, so
+                    // this branch is likely DEARER than the band-limited one. The difference is
+                    // spectral content, not cost - and the fast FFT content is back here, so the
+                    // pattern shimmers at a rate largeCausticTimeScale cannot slow.
                     normal = ApplyLargeBodyWaveNormal(normal, worldXZ, _WaveNormalStrength);
+                    swellHeight = LargeBodyWaveHeight(worldXZ);
                 }
 
-                float3 refractedLight = refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER); // undisturbed
-                float3 ray           = refract(-_LightDir, normal,               IOR_AIR / IOR_WATER); // through the surface
+                // ---- Layer 2: the dedicated ripple field, ON TOP of the swell. ----
+                // Still self-contained and still on its own clock (see CausticField above) - that
+                // part was always right; it just should never have replaced the sea to get it.
+                float causticFieldHeight = 0.0;
+                if (_LargeCausticRippleStrength > 0.0)
+                {
+                    float2 fieldSlope;
+                    CausticField(worldXZ, fieldSlope, causticFieldHeight);
+                    normal.xz -= fieldSlope * (_WaveNormalStrength * _LargeCausticRippleStrength);
+                }
+                normal = normalize(normal);
+
+                float3 ray = refract(-_LightDir, normal, IOR_AIR / IOR_WATER); // through the surface
 
                 // Displaced surface point: the active mode's wave height + the (soft) interactive
                 // ripple height. Dedicated mode uses its own field height - same no-surface rule.
-                float waveHeight = (dedicatedField ? causticFieldHeight : LargeBodyWaveHeight(worldXZ))
+                // Both layers' heights add, matching the two slope layers above. causticFieldHeight
+                // is 0 when the field is off, so this stays the pure swell there.
+                float waveHeight = swellHeight + causticFieldHeight
                                  + info.r * _SimExtent.y * CAUSTIC_RIPPLE_WEIGHT;
-                float3 flatPos = float3(worldXZ.x, surfaceY, worldXZ.y);
-                float3 dispPos = float3(worldXZ.x, surfaceY + waveHeight, worldXZ.y);
+                return ProjectToPlane(float3(worldXZ.x, surfaceY + waveHeight, worldXZ.y), ray, refPlaneY);
+            }
 
-                o.oldPos = ProjectToPlane(flatPos, refractedLight, refPlaneY);
-                o.newPos = ProjectToPlane(dispPos, ray,            refPlaneY);
+            v2f vert(appdata v)
+            {
+                v2f o;
+                // The window grid is a normalised [-1,1] plane in xy; map it into the window's world frame.
+                float2 windowNorm = v.vertex.xy;
+                float surfaceY = _SimCenter.y;
+                float refPlaneY = surfaceY - LARGE_CAUSTIC_REFERENCE_DEPTH;
+                float3 refractedLight = refract(-_LightDir, float3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER); // undisturbed
+
+                float3 newPos = CausticProjectedPos(windowNorm, surfaceY, refPlaneY);
+
+                // FOCUSING, measured in the WINDOW's frame by central differences over ONE MESH CELL -
+                // the same span the old screen-space ddx/ddy covered, so the band-limit and the
+                // brightness law are unchanged. What changes is that the result is now per VERTEX and
+                // interpolates, instead of being constant across a triangle.
+                //
+                // HALF a cell, so the central difference spans exactly ONE cell - the same span the
+                // old ddx/ddy covered between adjacent vertices (a full-cell epsilon would span TWO
+                // and quietly blur more than the code it replaces).
+                //
+                // AND IT MUST NOT GO BELOW THAT. The vertices ARE the sample points, so a smaller
+                // epsilon measures the local Jacobian more precisely while the RT still carries only
+                // a piecewise-LINEAR reconstruction between vertices: nothing finer than ~2 cells can
+                // be represented however accurately it is measured. A sub-cell epsilon buys aliasing,
+                // not detail. Raising that ceiling is the caustic MESH's job, not this epsilon's.
+                float2 e = float2(max(_CausticGridStepNorm * 0.5, 1e-5), 0.0);
+                float3 nX0 = CausticProjectedPos(windowNorm - e.xy, surfaceY, refPlaneY);
+                float3 nX1 = CausticProjectedPos(windowNorm + e.xy, surfaceY, refPlaneY);
+                float3 nZ0 = CausticProjectedPos(windowNorm - e.yx, surfaceY, refPlaneY);
+                float3 nZ1 = CausticProjectedPos(windowNorm + e.yx, surfaceY, refPlaneY);
+
+                // The UNDISTURBED projection needs no samples: through a flat surface the refracted
+                // ray is uniform, so ProjectToPlane is the identity plus a constant offset and the
+                // reference area is exactly the grid step mapped to world. Both areas are measured
+                // over the same 2*e span, so the span cancels in the ratio exactly as it did before.
+                // (Both projections land ON the reference plane, so their y derivative is 0 and this
+                // 2D length equals the float3 length the old code took.)
+                float oldArea = (2.0 * e.x * abs(_SimExtent.x)) * (2.0 * e.x * abs(_SimExtent.z));
+                float newArea = length(nX1.xz - nX0.xz) * length(nZ1.xz - nZ0.xz);
+                // Guard newArea: a degenerate (near-parallel) projection would divide by ~0 and write
+                // Inf/NaN into the RT that the god rays and every caustic consumer then sample.
+                o.focus = oldArea / max(newArea, 1e-6) * CAUSTIC_FOCUS_SCALE;
 
                 // Index the caustic RT in the window frame: the refracted hit's world xz, normalised
                 // back into [-1,1] over the window, so the god-ray march samples it by the same map.
-                float2 causticNorm = (o.newPos.xz - _SimCenter.xz) / max(_SimExtent.xz, 1e-3);
+                float2 causticNorm = (newPos.xz - _SimCenter.xz) / max(_SimExtent.xz, 1e-3);
                 o.pos = float4(causticNorm.x, causticNorm.y * _ProjectionParams.x, 0.0, 1.0);
                 return o;
             }
 
             fixed4 frag(v2f i) : SV_Target
             {
-                // Brighter where the projected triangle shrank (light converging), dimmer where it
-                // spread. Guard newArea: a degenerate near-parallel projection would divide by ~0 and
-                // write Inf/NaN into the RT that the god rays then sample.
-                float oldArea = length(ddx(i.oldPos)) * length(ddy(i.oldPos));
-                float newArea = length(ddx(i.newPos)) * length(ddy(i.newPos));
                 // r = focusing; g = 1 (no occluder shadow term, matching the pool caustic RT layout).
-                return float4(oldArea / max(newArea, 1e-6) * CAUSTIC_FOCUS_SCALE, 1.0, 0.0, 0.0);
+                // Brighter where the projection shrank (light converging), dimmer where it spread -
+                // but that ratio is computed per VERTEX now (see vert) and arrives interpolated, which
+                // is what stopped the RT being one flat value per grid cell.
+                return float4(i.focus, 1.0, 0.0, 0.0);
             }
             ENDCG
         }

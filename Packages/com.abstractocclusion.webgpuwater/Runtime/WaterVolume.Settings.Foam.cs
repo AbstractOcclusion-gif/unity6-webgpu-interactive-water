@@ -90,6 +90,16 @@ namespace AbstractOcclusion.WebGpuWater
                      "CRESTS (rise above the local average), the KWS/Crest whitecap rule. Raise to stop " +
                      "foam filling troughs and read as proper whitecaps.")]
             [Range(0f, 1f)] public float foamCrestBias = 0f;
+            [Tooltip("Yield to existing foam: how strongly ripple/turbulence generation is scaled " +
+                     "down by the foam ALREADY on a column. 0 = every foam source stacks into one " +
+                     "saturating channel, which is why a breaking shore - already white from the " +
+                     "surf engine - clips to a flat slab the moment ripple foam is switched on. " +
+                     "1 = ripple foam only fills water that is still clear, so the shore keeps the " +
+                     "surf's own structure. This is a SPATIAL limit, not a strength cut: it never " +
+                     "weakens foam where there is room for it, so splashes and wakes in open water " +
+                     "are untouched - which is exactly what raising the activity gates above " +
+                     "cannot do.")]
+            [Range(0f, 1f)] public float foamHeadroom = 0f;
             [Tooltip("Wake foam: how strongly a moving interactor (boat/sphere) stamps foam at the hull, " +
                      "which then advects and decays into the trail. 0 = off (wake foam comes only from " +
                      "the emergent churn, which reads thin). This is the crisp bow/stern foam.")]
@@ -135,6 +145,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal float foamBreakStrength => foamSettings.foamBreakStrength;
         internal float foamBreakRange => foamSettings.foamBreakRange;
         internal float foamCrestBias => foamSettings.foamCrestBias;
+        internal float foamHeadroom => foamSettings.foamHeadroom;
         internal float foamWakeStrength => foamSettings.foamWakeStrength;
         internal float foamWakeRadiusScale => foamSettings.foamWakeRadiusScale;
         internal Color foamColor => foamSettings.foamColor;

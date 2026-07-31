@@ -133,7 +133,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         // GPU foam/spray particles alongside the body's WaterVolume. The component idles
         // until the body's foam toggle is on, so bodies without foam pay nothing. Skipped
-        // silently when the compute/shader/atlas assets are missing (feature simply absent).
+        // (with a warning) when the compute or shader is missing - the feature is simply absent.
         internal static WaterFoamParticles AddFoamParticles(WaterVolume volume, string materialFolder)
         {
             if (volume == null) return null;
@@ -168,19 +168,22 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 return;
             }
 
-            var material = LoadOrCreateMaterial(materialFolder + "/FoamParticles.mat", shader, m =>
-            {
-                var atlas = LoadFlipbook(FoamParticleAtlasPath, TextureWrapMode.Clamp, true);
-                if (atlas != null) m.SetTexture(PropParticleTex, atlas);
-            });
+            // Sprite assignment sits OUTSIDE LoadOrCreateMaterial's 'configure' lambda, which only
+            // runs on creation: a material created before its sprite existed could otherwise never
+            // be healed, and this very method is what the inspector's Repair button calls.
+            // AssignPackagedSpriteIfEmpty fills empty slots only, so a hand-picked sprite survives.
+            var material = LoadOrCreateMaterial(materialFolder + "/FoamParticles.mat", shader);
+            AssignPackagedSpriteIfEmpty(material, PropParticleTex, FoamParticleAtlasFile);
 
             // Screen-space density composite (KWS-style connected foam). Optional: when the
             // shader is missing the component warns and falls back to quads at runtime.
             Material densityMaterial = null;
             var densityShader = Shader.Find(ShaderFoamDensityComposite);
             if (densityShader != null)
-                densityMaterial = LoadOrCreateMaterial(materialFolder + "/FoamDensityComposite.mat",
-                                                       densityShader, m => { });
+            {
+                densityMaterial = LoadOrCreateMaterial(materialFolder + "/FoamDensityComposite.mat", densityShader);
+                AssignPackagedSpriteIfEmpty(densityMaterial, PropBreakupTex, FoamBreakupTexFile);
+            }
 
             if (particles.volume == null) particles.volume = particles.GetComponentInParent<WaterVolume>();
             particles.particleCompute = compute;
@@ -188,14 +191,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             particles.densityMaterial = densityMaterial;
 
             // Spray droplet material: same FoamParticles shader, a round droplet sprite so airborne
-            // spray reads as droplets not foam clumps. Only set when unassigned (never clobber a
-            // hand-picked one); if the droplet texture is missing the material just draws a soft dot.
+            // spray reads as droplets not foam clumps. The MATERIAL is only created when unassigned
+            // (never clobber a hand-picked one), but its sprite slot is topped up either way.
             if (particles.sprayMaterial == null)
-                particles.sprayMaterial = LoadOrCreateMaterial(materialFolder + "/FoamDroplet.mat", shader, m =>
-                {
-                    var droplet = LoadFlipbook(FoamDropletTexPath, TextureWrapMode.Clamp, true);
-                    if (droplet != null) m.SetTexture(PropParticleTex, droplet);
-                });
+                particles.sprayMaterial = LoadOrCreateMaterial(materialFolder + "/FoamDroplet.mat", shader);
+            AssignPackagedSpriteIfEmpty(particles.sprayMaterial, PropParticleTex, FoamDropletTexFile);
 
             EditorUtility.SetDirty(particles);
         }
