@@ -29,12 +29,45 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // top so the four sections are not guessed at from field names alone.
         const string SectionGuide =
             "What each section drives:\n" +
-            "• Shared Look — appearance of ALL foam particles (tint, opacity, sprite, flipbook, " +
-            "size bias). The splash crown keeps its own tint/opacity in Splash.\n" +
-            "• Ambient Foam & Spray — the always-on surface sim (WaterFoamParticles): floating foam " +
-            "patches, the airborne mist droplets they fling, and the foam a landed droplet deposits.\n" +
+            "• Shared Look — appearance shared by ALL foam particles (tint, opacity, sprite, foam " +
+            "flipbook, size bias). The splash crown keeps its own tint/opacity under Splash.\n" +
+            "• Ambient Source & Foam Ranges — how much foam the always-on surface sim makes, PLUS the " +
+            "floating-foam and landed-foam life/size ranges. Those ranges are NOT ambient-only: every " +
+            "source lands in the same pool, so crest foam and a boat's spray use them too.\n" +
             "• Density Veil — the screen-space density wash (FoamDensityComposite), not sprites.\n" +
-            "• Splash — impact & pump bursts (WaterSplashEmitter): the droplet fan and the crown ring.";
+            "• Splash & Pump Bursts — the droplet fan and crown ring thrown by impacts and spray pumps " +
+            "(WaterSplashEmitter). The droplet MATERIAL is not here: airborne droplets are one draw " +
+            "pass shared with the ambient mist, set on the Water Foam Particles component.";
+
+        // The ambient section is drawn in explicit groups rather than field order, so it reads the same
+        // way the component does: the particle you are looking at first, the source that feeds it after.
+        // Anything not listed here still gets drawn (see DrawAmbientSection), so a new field cannot go
+        // missing just because this list was not updated.
+        static readonly (string Field, string Label, string Tooltip)[] FloatingFoamFields =
+        {
+            ("lifeRange", "Foam Lifetime", "Lifetime of a floating foam particle, in seconds."),
+            ("sizeRange", "Foam Size", "World half-size range of a floating foam particle."),
+        };
+
+        static readonly (string Field, string Label, string Tooltip)[] LandedFoamFields =
+        {
+            ("depositLifeRange", "Landed Lifetime",
+             "Lifetime of the patch left by ANY droplet that lands - mist, surf lip or boat spray."),
+            ("depositSizeRange", "Landed Size", "World half-size of that patch."),
+        };
+
+        static readonly (string Field, string Label, string Tooltip)[] AmbientSourceFields =
+        {
+            ("spawnThreshold", "Foam Threshold", "Foam level (0-1) below which the ambient source spawns nothing."),
+            ("spawnRate", "Spawn Rate", "Ambient spawns per second per square world unit of fully-foamed water."),
+            ("maxSpawnPerFrame", "Max Spawn Per Frame", "Per-frame cap on the AMBIENT source only."),
+            ("spawnMaxDistance", "Spawn Distance", "Distance LOD for the ambient source, in metres. 0 = no thinning."),
+            ("sprayChance", "Mist Chance", "Fraction of ambient spawns launched as airborne mist."),
+            ("sprayLaunchSpeed", "Mist Launch Speed", "Upward launch speed of those mist droplets."),
+            ("sprayLifeRange", "Mist Lifetime",
+             "AMBIENT MIST only. Splash and pump droplets carry their own life, set under Splash."),
+            ("spraySizeRange", "Mist Size", "Ambient mist only, for the same reason."),
+        };
 
         // Section expanded state (editor-session only). Open by default so every knob is discoverable.
         bool _lookExpanded = true;
@@ -59,17 +92,70 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             _lookExpanded = WaterEditorUI.SectionWithToggle("Shared Look", _lookExpanded,
                 look.FindPropertyRelative(DriveField), () => DrawSectionFields(look));
-            _ambientExpanded = WaterEditorUI.SectionWithToggle("Ambient Foam & Spray", _ambientExpanded,
-                ambient.FindPropertyRelative(DriveField), () => DrawSectionFields(ambient));
+            _ambientExpanded = WaterEditorUI.SectionWithToggle("Ambient Source & Foam Ranges", _ambientExpanded,
+                ambient.FindPropertyRelative(DriveField), () => DrawAmbientSection(ambient));
             _veilExpanded = WaterEditorUI.SectionWithToggle("Density Veil", _veilExpanded,
                 veil.FindPropertyRelative(DriveField), () => DrawSectionFields(veil));
-            _splashExpanded = WaterEditorUI.SectionWithToggle("Splash", _splashExpanded,
+            _splashExpanded = WaterEditorUI.SectionWithToggle("Splash & Pump Bursts", _splashExpanded,
                 splash.FindPropertyRelative(DriveField), () => DrawSectionFields(splash));
 
             serializedObject.ApplyModifiedProperties();
 
             DrawApplyToBody();
             WaterEditorUI.DrawFooter();
+        }
+
+        // The ambient section, grouped by which particle each field reaches. Any field NOT named in the
+        // three tables is drawn afterwards under "Other", so growing the struct can never silently drop a
+        // knob out of the inspector - the failure mode of every hand-written field list.
+        static void DrawAmbientSection(SerializedProperty ambient)
+        {
+            var drawn = new System.Collections.Generic.HashSet<string> { DriveField };
+
+            WaterEditorUI.SubHeading("Floating foam (every source)");
+            DrawGroup(ambient, FloatingFoamFields, drawn);
+            WaterEditorUI.SubHeading("Landed foam (every source)");
+            DrawGroup(ambient, LandedFoamFields, drawn);
+            WaterEditorUI.SubHeading("Ambient turbulence source");
+            EditorGUILayout.HelpBox("Only the ambient source reads these. Ocean crests and splash / pump " +
+                "bursts spawn regardless, so zeroing Spawn Rate does not stop a boat spraying.",
+                MessageType.None);
+            DrawGroup(ambient, AmbientSourceFields, drawn);
+
+            DrawRemainingFields(ambient, drawn);
+        }
+
+        static void DrawGroup(SerializedProperty section,
+                              (string Field, string Label, string Tooltip)[] fields,
+                              System.Collections.Generic.HashSet<string> drawn)
+        {
+            foreach ((string field, string label, string tooltip) in fields)
+            {
+                SerializedProperty property = section.FindPropertyRelative(field);
+                if (property == null) continue; // renamed or removed upstream: skip, never throw
+                EditorGUILayout.PropertyField(property, new GUIContent(label, tooltip), true);
+                drawn.Add(field);
+            }
+        }
+
+        static void DrawRemainingFields(SerializedProperty section,
+                                        System.Collections.Generic.HashSet<string> drawn)
+        {
+            bool headingDrawn = false;
+            SerializedProperty iterator = section.Copy();
+            SerializedProperty end = section.GetEndProperty();
+            bool enterChildren = true;
+            while (iterator.NextVisible(enterChildren) && !SerializedProperty.EqualContents(iterator, end))
+            {
+                enterChildren = false;
+                if (drawn.Contains(iterator.name)) continue;
+                if (!headingDrawn)
+                {
+                    WaterEditorUI.SubHeading("Other");
+                    headingDrawn = true;
+                }
+                EditorGUILayout.PropertyField(iterator, true);
+            }
         }
 
         // Every field of a section EXCEPT 'drive' (which is the section header's toggle already).

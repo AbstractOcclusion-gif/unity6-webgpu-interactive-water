@@ -17,6 +17,11 @@
 // so the earlier closing-speed signal missed it; horizontalPlowWeight scales the point's own horizontal
 // ground speed into the Boat/Both trigger (0 = off, vertical motion only).
 //
+// PETALS. A probe carrying an outwardLocal direction throws an ARC instead of a ring, centred on that
+// direction and turned toward astern by the rake. Astern is measured PER PROBE from its own motion, so a
+// hard turn shears the flower - inner and outer probes rake differently. That is wanted; it reads as
+// alive. A probe with a zero direction keeps the full ring, unchanged, all the way to the spawn kernel.
+//
 // All same-sampling probes are gathered into one batched WaterVolume.SampleHeights call into reused
 // buffers (at most two: ripples-included and analytic-only), so an N-probe pump allocates nothing per frame.
 using UnityEngine;
@@ -31,6 +36,21 @@ namespace AbstractOcclusion.WebGpuWater
         Rock, // the water rising toward a (near-)static point; interactive ripples included
     }
 
+    /// <summary>Why a probe did or did not spray on a given frame.</summary>
+    /// <remarks>Every one of these reads as the same thing on screen - no spray - so they are named and
+    /// counted rather than inferred. Returned unconditionally (an enum return costs nothing over void)
+    /// but only recorded in the editor.</remarks>
+    internal enum SprayProbeGate
+    {
+        Fired,
+        OutsideBody,   // the batched query came back invalid: this probe is off the water body entirely
+        NoHistory,     // fewer than two frames of motion to difference
+        OutOfBand,     // further than surfaceBand from the waterline
+        CoolingDown,
+        NoEmitter,
+        BelowMinSpeed,
+    }
+
     [DisallowMultipleComponent]
     public class WaterSprayPump : MonoBehaviour
     {
@@ -41,6 +61,21 @@ namespace AbstractOcclusion.WebGpuWater
         const float DefaultEmitCooldownSeconds = 0.06f;
         const float DefaultSprayRadius = 0.25f;
         const float DefaultPlowWeight = 0.5f;
+        // Petal defaults chosen so ADDING these fields changes nothing: a full ring, no rake, no spin.
+        // The arc bounds are internal so the Water Wizard's hull fit offers the same range this
+        // inspector accepts, instead of a copy of the numbers that could drift out of it.
+        internal const float FullRingDegrees = 360f;
+        internal const float MinPetalArcDegrees = 10f;
+        const float MaxPetalSpinDegrees = 180f;
+        // Elevation is an OFFSET on the emitter's own launch angle, so the useful range is asymmetric:
+        // straight up is the ceiling, and the floor only has to reach far enough to flatten a lively
+        // emitter back toward horizontal (the burst path clamps the total at horizontal anyway).
+        internal const float MinPetalElevationDegrees = -45f;
+        internal const float MaxPetalElevationDegrees = 90f;
+        // Below this squared length a direction is unusable - an unset probe direction, or a hull that
+        // has not moved this frame - and the petal falls back to straight out (or, for the probe's own
+        // direction, to the legacy full ring).
+        const float MinPetalLengthSquared = 1e-8f;
 
         // Per-probe spray amount is stored as a boost ABOVE the base, so the field's serialized default of
         // zero means "no change". A plain multiplier can't work here: C# struct fields can't carry a
@@ -77,6 +112,11 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(MinAmountBoost, MaxAmountBoost)]
             [UnityEngine.Serialization.FormerlySerializedAs("sizeBoost")]
             public float amountBoost;
+
+            [Tooltip("Local-space horizontal direction this probe throws toward - out of the hull. " +
+                     "ZERO means the legacy full-ring burst, which is what every probe placed before " +
+                     "hull fitting does. Set by the Water Wizard's Fit Spray To Hull.")]
+            public Vector3 outwardLocal;
         }
 
         [Header("Probes")]
@@ -106,6 +146,33 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("World radius of each spray burst passed to the emitter.")]
         [Min(0f)] [SerializeField] float sprayRadius = DefaultSprayRadius;
 
+        [Header("Petals")]
+        [Tooltip("Width of each burst's wedge. 360 is the full ring every splash threw before hull " +
+                 "fitting; narrow it and a probe throws a petal instead. Needs a probe direction, which " +
+                 "the Water Wizard's Fit Spray To Hull writes.")]
+        [Range(MinPetalArcDegrees, FullRingDegrees)]
+        [SerializeField] float petalArcDegrees = FullRingDegrees;
+
+        [Tooltip("How far each petal turns from straight out toward straight astern while the hull is " +
+                 "barely moving. 0 = straight out.")]
+        [Range(0f, 1f)] [SerializeField] float petalRakeAtRest;
+
+        [Tooltip("The same at full trigger speed. Raise it above Rake At Rest and the flower sweeps " +
+                 "astern as the boat accelerates.")]
+        [Range(0f, 1f)] [SerializeField] float petalRakeAtSpeed;
+
+        [Tooltip("Flat extra rotation applied to every petal after the rake, for a deliberately " +
+                 "asymmetric look. 0 = none.")]
+        [Range(-MaxPetalSpinDegrees, MaxPetalSpinDegrees)]
+        [SerializeField] float petalSpinDegrees;
+
+        [Tooltip("Lift every burst toward vertical, ON TOP of the launch angle the emitter's Upward " +
+                 "Bias and Outward Spread already give it. 0 = unchanged; 90 tops out straight up; " +
+                 "negative flattens it toward horizontal. Unlike the other petal knobs this needs no " +
+                 "probe direction, so it lifts full-ring probes too.")]
+        [Range(MinPetalElevationDegrees, MaxPetalElevationDegrees)]
+        [SerializeField] float petalElevationDegrees;
+
         [Tooltip("Explicit splash emitter override. Left empty, the water body under the pump " +
                  "supplies one (WaterVolume.ResolveSplashEmitter).")]
         [SerializeField] WaterSplashEmitter emitter;
@@ -117,6 +184,28 @@ namespace AbstractOcclusion.WebGpuWater
         WaterSample[] _rippleSamples;   // interactive ripples included -> Rock, Both
         WaterSample[] _analyticSamples; // analytic surface only -> Boat
         ProbeState[] _states;
+
+#if UNITY_EDITOR
+        // Editor diagnostics (compiles to nothing in a build). This counts EMITS, not droplets: it is
+        // what separates "this probe never triggered" - a trigger/waterline problem - from "it triggered
+        // and the particle pool dropped the burst" - a frame-budget problem. The two look identical on
+        // screen and want opposite fixes.
+        int[] _probeEmitCounts;
+
+        /// <summary>Bursts each probe has successfully handed to the emitter since the buffers were built.</summary>
+        internal int[] ProbeEmitCounts => _probeEmitCounts;
+
+        SprayProbeGate[] _probeGates;
+        float[] _probeBandDistances;
+
+        /// <summary>What stopped each probe on the most recent frame (or that it fired).</summary>
+        internal SprayProbeGate[] ProbeGates => _probeGates;
+
+        /// <summary>Each probe's current vertical distance from the waterline, in metres. Compare against
+        /// Surface Band: a hull whose probes all read further than the band is not a trigger problem, it
+        /// is a band that is too tight for how far the surface varies along the hull.</summary>
+        internal float[] ProbeBandDistances => _probeBandDistances;
+#endif
 
         // Drop stale history so a re-enable (or leaving and re-entering the water) can't diff across the
         // missing frames and fire a phantom burst.
@@ -156,7 +245,7 @@ namespace AbstractOcclusion.WebGpuWater
             WaterSplashEmitter activeEmitter = emitter != null ? emitter : body.ResolveSplashEmitter();
 
             for (int i = 0; i < count; i++)
-                StepProbe(i, deltaSeconds, activeEmitter);
+                StepProbe(i, count, deltaSeconds, activeEmitter);
         }
 
         // At most two batched queries: one ripple-included (Rock/Both), one analytic-only (Boat). Each is
@@ -178,42 +267,51 @@ namespace AbstractOcclusion.WebGpuWater
                 body.SampleHeights(owner, 0f, _worldPoints, _analyticSamples, TriggerFields, excludeInteractiveRipples: true);
         }
 
-        void StepProbe(int index, float deltaSeconds, WaterSplashEmitter activeEmitter)
+        void StepProbe(int index, int probeCount, float deltaSeconds, WaterSplashEmitter activeEmitter)
         {
             WaterSprayMode mode = probes[index].mode;
             WaterSample sample = mode == WaterSprayMode.Boat ? _analyticSamples[index] : _rippleSamples[index];
             if (!sample.Valid)
             {
                 _states[index].HasHistory = false; // no reading this frame: don't diff across the gap
+#if UNITY_EDITOR
+                _probeGates[index] = SprayProbeGate.OutsideBody;
+#endif
                 return;
             }
 
             Vector3 world = _worldPoints[index];
             float surfaceHeight = sample.Height;
-            TryEmit(index, mode, world, surfaceHeight, deltaSeconds, activeEmitter);
+#if UNITY_EDITOR
+            _probeBandDistances[index] = Mathf.Abs(world.y - surfaceHeight);
+            _probeGates[index] =
+#endif
+            TryEmit(index, probeCount, mode, world, surfaceHeight, deltaSeconds, activeEmitter);
 
             _states[index].PreviousProbePosition = world;
             _states[index].PreviousSurfaceHeight = surfaceHeight;
             _states[index].HasHistory = true;
         }
 
-        void TryEmit(int index, WaterSprayMode mode, Vector3 world, float surfaceHeight, float deltaSeconds,
-                     WaterSplashEmitter activeEmitter)
+        SprayProbeGate TryEmit(int index, int probeCount, WaterSprayMode mode, Vector3 world,
+                               float surfaceHeight, float deltaSeconds, WaterSplashEmitter activeEmitter)
         {
             ref ProbeState state = ref _states[index];
-            if (!state.HasHistory) return;                             // need two frames to measure a speed
-            if (Mathf.Abs(world.y - surfaceHeight) > surfaceBand) return; // not at the waterline
-            if (Time.time < state.NextEmitTime) return;               // cooling down
-            if (activeEmitter == null) return;                        // body has no emitter (or opts out): nothing to emit through
+            if (!state.HasHistory) return SprayProbeGate.NoHistory;    // need two frames to measure a speed
+            if (Mathf.Abs(world.y - surfaceHeight) > surfaceBand) return SprayProbeGate.OutOfBand;
+            if (Time.time < state.NextEmitTime) return SprayProbeGate.CoolingDown;
+            if (activeEmitter == null) return SprayProbeGate.NoEmitter; // body has no emitter, or opts out
 
             Vector3 previous = state.PreviousProbePosition;
             float surfaceRise = (surfaceHeight - state.PreviousSurfaceHeight) / deltaSeconds; // > 0 water rising
             float probeDescent = (previous.y - world.y) / deltaSeconds;                       // > 0 point sinking
-            float horizontalSpeed =
-                new Vector2(world.x - previous.x, world.z - previous.z).magnitude / deltaSeconds;
+            // The horizontal step is kept as a VECTOR, not just its length: its direction is where the
+            // petal rakes to, and it is already paid for by the speed the trigger needs.
+            var horizontalStep = new Vector2(world.x - previous.x, world.z - previous.z);
+            float horizontalSpeed = horizontalStep.magnitude / deltaSeconds;
 
             float signal = TriggerSignal(mode, surfaceRise, probeDescent, horizontalPlowWeight * horizontalSpeed);
-            if (signal < minImpactSpeed) return;
+            if (signal < minImpactSpeed) return SprayProbeGate.BelowMinSpeed;
 
             float span = Mathf.Max(MinImpactSpeedSpan, maxImpactSpeed - minImpactSpeed);
             float strength = Mathf.Clamp01((signal - minImpactSpeed) / span);
@@ -226,8 +324,63 @@ namespace AbstractOcclusion.WebGpuWater
             // Clamp01 saturation, which is why the boost felt untunable.
             float amountScale = Mathf.Max(MinAmountScale, BaseAmountScale + probes[index].amountBoost);
             Vector3 surfacePoint = new Vector3(world.x, surfaceHeight, world.z);
-            activeEmitter.EmitSplash(surfacePoint, strength, sprayRadius, amountScale);
-            state.NextEmitTime = Time.time + emitCooldownSeconds;
+            // strength IS the normalised trigger speed. Reusing it rather than normalising the speed a
+            // second time keeps the rake tied to maxImpactSpeed instead of drifting from it.
+            Vector3 petalDirection = ResolvePetalDirection(index, horizontalStep, strength);
+            activeEmitter.EmitSplash(surfacePoint, strength, sprayRadius, amountScale,
+                                     petalDirection, petalArcDegrees, petalElevationDegrees);
+            state.NextEmitTime = Time.time + StaggeredCooldown(ref state, index, probeCount);
+#if UNITY_EDITOR
+            _probeEmitCounts[index]++;
+#endif
+            return SprayProbeGate.Fired;
+        }
+
+        // WaterFoamParticles DROPS the burst requests past its per-frame cap rather than deferring them,
+        // and the drops land on whichever probes sit late in the array - one whole side of a hull goes
+        // quiet. Pushing each probe's FIRST burst out by its own fraction of the cooldown spreads the
+        // array across the window once and for all: same total spray, no systematic loser.
+        //
+        // ONLY when the array can actually overrun the cap, though. Spreading is not free: probes that
+        // fire together throw one SHEET of spray, and probes spread across the window throw a steady
+        // dribble of the same total volume. A pump small enough to fit inside the budget never had a
+        // problem to fix, so it keeps the sheet.
+        float StaggeredCooldown(ref ProbeState state, int index, int probeCount)
+        {
+            if (state.HasEmitted || probeCount <= WaterFoamParticles.MaxBurstsPerFrame)
+                return emitCooldownSeconds;
+
+            state.HasEmitted = true;
+            return emitCooldownSeconds * (1f + index / (float)probeCount);
+        }
+
+        // Where this probe throws: straight out of the hull, turned toward astern by the rake, then by
+        // the flat spin. A probe with no direction returns ZERO, which is the legacy full-ring sentinel
+        // all the way down to the spawn kernel.
+        Vector3 ResolvePetalDirection(int index, Vector2 horizontalStep, float normalisedTriggerSpeed)
+        {
+            Vector3 outward = transform.TransformDirection(probes[index].outwardLocal);
+            outward.y = 0f;
+            if (outward.sqrMagnitude < MinPetalLengthSquared) return Vector3.zero;
+
+            outward.Normalize();
+            float rake = Mathf.Lerp(petalRakeAtRest, petalRakeAtSpeed, normalisedTriggerSpeed);
+            Vector3 raked = RakeTowardAstern(outward, horizontalStep, rake);
+            return Quaternion.AngleAxis(petalSpinDegrees, Vector3.up) * raked;
+        }
+
+        // ROTATE toward astern; never lerp-and-normalise. A linear blend collapses to the zero vector
+        // when outward and astern are opposed - a transom probe while the boat backs up - and
+        // normalising that yields NaN. The signed angle has no such degenerate case. A hull that has not
+        // moved leaves astern undefined, so the rake falls to zero and the petal points straight out,
+        // which is what a stationary hull should do.
+        static Vector3 RakeTowardAstern(Vector3 outward, Vector2 horizontalStep, float rake)
+        {
+            if (rake <= 0f || horizontalStep.sqrMagnitude < MinPetalLengthSquared) return outward;
+
+            Vector3 astern = new Vector3(-horizontalStep.x, 0f, -horizontalStep.y).normalized;
+            float angleToAstern = Vector3.SignedAngle(outward, astern, Vector3.up);
+            return Quaternion.AngleAxis(angleToAstern * Mathf.Clamp01(rake), Vector3.up) * outward;
         }
 
         // Rock keys off the water alone (a static probe's own motion shouldn't matter); Boat keys off the
@@ -250,6 +403,11 @@ namespace AbstractOcclusion.WebGpuWater
             _rippleSamples = new WaterSample[count];
             _analyticSamples = new WaterSample[count];
             _states = new ProbeState[count]; // fresh state: a resized array starts without history
+#if UNITY_EDITOR
+            _probeEmitCounts = new int[count];
+            _probeGates = new SprayProbeGate[count];
+            _probeBandDistances = new float[count];
+#endif
         }
 
         void InvalidateAll()
@@ -266,6 +424,9 @@ namespace AbstractOcclusion.WebGpuWater
             public float PreviousSurfaceHeight;
             public float NextEmitTime;
             public bool HasHistory;
+            // Whether this probe has ever fired, so the one-off cooldown stagger is applied exactly once
+            // and every burst after it keeps the plain cooldown.
+            public bool HasEmitted;
         }
     }
 }

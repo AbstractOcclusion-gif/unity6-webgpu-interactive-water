@@ -42,8 +42,11 @@ namespace AbstractOcclusion.WebGpuWater
         const int CompositeVertexCount = 3;         // one fullscreen triangle
 
         // ---- CPU-event splash bursts (spray unification). MUST match BurstRequest in
-        // WaterFoamParticles.compute (48 bytes) and MAX_BURST_DROPLETS there. ----
-        const int MaxBurstsPerFrame = 16;
+        // WaterFoamParticles.compute (64 bytes) and MAX_BURST_DROPLETS there. ----
+        // Internal so authoring tools QUOTE this cap instead of carrying a copy of the number: a hull
+        // outline wants 20-40 probes, and requests past the cap in one frame are DROPPED by
+        // QueueSplashBurst - always the probes late in the array, i.e. one side of the boat.
+        internal const int MaxBurstsPerFrame = 16;
         const int MaxBurstDroplets = 64;
 
         [StructLayout(LayoutKind.Sequential)]
@@ -54,8 +57,54 @@ namespace AbstractOcclusion.WebGpuWater
             // Per-burst droplet life/size (was padding): splash/pump bursts tune on the
             // WaterSplashEmitter, fully independent of the ambient-mist spray ranges.
             public float lifeMin, lifeMax, size;
+            // Petal arc: which way the burst throws (world XZ, unit) and how wide the wedge is.
+            // A ZERO direction is the legacy full ring, end to end - an old scene deserialises to
+            // zero, flows here as zero, and hits the kernel's untouched r0 * 2pi line.
+            public float dirX, dirZ, arcHalfRadians;
+            // Lifts (or flattens) the whole burst in its own vertical plane; ZERO is untouched.
+            // Independent of the arc - a full-ring burst tilts just as happily as a petal - and it
+            // rounds the request to a clean 64 bytes.
+            public float elevationRadians;
         }
         static readonly int BurstStride = Marshal.SizeOf<BurstRequest>();
+
+#if UNITY_EDITOR
+        // ---- burst budget diagnostics (editor only; compiles to nothing in a build) ----
+        //
+        // Requests past MaxBurstsPerFrame are DROPPED, and always the ones that arrive late in the frame
+        // - so a hull's probes lose whichever end of the array queues last, and a second caller can be
+        // starved entirely by the first. That failure is invisible by design: QueueSplashBurst just
+        // returns. These counters exist so it can be READ instead of inferred from what looks wrong.
+
+        /// <summary>Bursts asked for this frame, accepted or not.</summary>
+        internal int BurstsRequestedThisFrame { get; private set; }
+
+        /// <summary>Bursts refused this frame because the per-frame cap was already full.</summary>
+        internal int BurstsDroppedThisFrame { get; private set; }
+
+        /// <summary>Every burst dropped since play started.</summary>
+        internal int BurstsDroppedTotal { get; private set; }
+
+        /// <summary>Bursts refused because particles are off entirely - a different fault from a drop.</summary>
+        internal int BurstsSuppressedTotal { get; private set; }
+
+        /// <summary>The busiest frame seen. The cap is <see cref="MaxBurstsPerFrame"/>.</summary>
+        internal int PeakBurstsRequestedPerFrame { get; private set; }
+
+        int _burstDiagnosticFrame = -1;
+
+        // Keyed off the frame counter rather than the drain, so the numbers stay honest even when the
+        // pool's own LateUpdate early-outs and never drains at all - which is itself worth seeing.
+        void BeginBurstFrame()
+        {
+            if (_burstDiagnosticFrame == Time.frameCount) return;
+
+            _burstDiagnosticFrame = Time.frameCount;
+            PeakBurstsRequestedPerFrame = Mathf.Max(PeakBurstsRequestedPerFrame, BurstsRequestedThisFrame);
+            BurstsRequestedThisFrame = 0;
+            BurstsDroppedThisFrame = 0;
+        }
+#endif
 
         // Safety margin on the burst-keep-alive window (covers landing detection latency).
         const float BurstSimPadSeconds = 0.5f;
@@ -709,11 +758,39 @@ namespace AbstractOcclusion.WebGpuWater
         /// Consumed next simulation dispatch; requests beyond the per-frame cap are dropped
         /// (soft budget, like the turbulence spawns). Droplet look/motion is this system's
         /// spray path, so event splashes match turbulence-thrown spray exactly.</summary>
+        /// <param name="petalDirection">World XZ direction the wedge is centred on. ZERO (the default)
+        /// is the legacy full ring, and every caller that omits it behaves exactly as before.</param>
+        /// <param name="arcHalfRadians">Half-width of the wedge. Ignored when the direction is zero.</param>
+        /// <param name="elevationRadians">Lifts the burst in its own vertical plane. ZERO (the default)
+        /// leaves the launch angle exactly as the up/out speeds imply.</param>
         public void QueueSplashBurst(Vector3 surfacePos, float strength, float radius,
                                      int dropletCount, float upSpeed, float outSpeed,
-                                     Vector2 dropletLifeRange, float dropletSize)
+                                     Vector2 dropletLifeRange, float dropletSize,
+                                     Vector2 petalDirection = default, float arcHalfRadians = Mathf.PI,
+                                     float elevationRadians = 0f)
         {
-            if (!useParticles || !isActiveAndEnabled || _pendingBursts.Count >= MaxBurstsPerFrame) return;
+#if UNITY_EDITOR
+            BeginBurstFrame();
+            BurstsRequestedThisFrame++;
+#endif
+            // Split from the cap check below so the two silences are told apart: a body with particles
+            // switched off is a different fault from a body that ran out of frame budget, and they used
+            // to look identical from the outside.
+            if (!useParticles || !isActiveAndEnabled)
+            {
+#if UNITY_EDITOR
+                BurstsSuppressedTotal++;
+#endif
+                return;
+            }
+            if (_pendingBursts.Count >= MaxBurstsPerFrame)
+            {
+#if UNITY_EDITOR
+                BurstsDroppedThisFrame++;
+                BurstsDroppedTotal++;
+#endif
+                return;
+            }
             _pendingBursts.Add(new BurstRequest
             {
                 center = surfacePos,
@@ -725,7 +802,13 @@ namespace AbstractOcclusion.WebGpuWater
                 count = Mathf.Clamp(dropletCount, 1, MaxBurstDroplets),
                 lifeMin = Mathf.Max(0f, dropletLifeRange.x),
                 lifeMax = Mathf.Max(dropletLifeRange.x, dropletLifeRange.y),
-                size = Mathf.Max(0f, dropletSize)
+                size = Mathf.Max(0f, dropletSize),
+                // Passed through unnormalised-checked: the caller owns the sentinel, because the same
+                // zero-vs-direction decision has to drive the Shuriken fallback identically.
+                dirX = petalDirection.x,
+                dirZ = petalDirection.y,
+                arcHalfRadians = Mathf.Max(0f, arcHalfRadians),
+                elevationRadians = elevationRadians
             });
             // Keep the sim/draw alive (even with ambient foam OFF) until these droplets
             // have fully lived: airborne life + the deposited-foam life they roll on landing.

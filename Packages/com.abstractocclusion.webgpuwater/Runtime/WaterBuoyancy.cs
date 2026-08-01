@@ -112,24 +112,36 @@ namespace AbstractOcclusion.WebGpuWater
 
         void OnDestroy() => SharedQuery.Release(GetInstanceID());
 
-        // Lay out a lattice of float points across the collider's local bounding box and
-        // pick a per-point sphere radius from the vertical spacing.
         void BuildSamplePoints()
         {
-            GetLocalBox(_col, out Vector3 localCenter, out Vector3 localSize);
+            BuildProbeLayout(out _localPoints, out _sphereRadius);
+            _worldPoints = new Vector3[_localPoints.Length];
+        }
+
+        /// <summary>
+        /// The float-point lattice (object-local) and its per-point sphere radius, derived from the
+        /// collider's local box. Shared by the runtime build, the edit-mode gizmo preview and the editor's
+        /// hull-draft solver: all three need the SAME layout, and a second copy of the radius formula had
+        /// already drifted into the gizmo file once.
+        /// </summary>
+        /// <remarks>Reads the collider through GetComponent rather than the cached <c>_col</c> because the
+        /// editor callers run before Awake has assigned it. At runtime the two are the same object, since
+        /// Awake assigns <c>_col</c> before Start calls this.</remarks>
+        internal void BuildProbeLayout(out Vector3[] localPoints, out float sphereRadius)
+        {
+            GetLocalBox(GetComponent<Collider>(), out Vector3 localCenter, out Vector3 localSize);
 
             int n = Mathf.Clamp(samplesPerAxis, MinSamplesPerAxis, MaxSamplesPerAxis);
             var points = new List<Vector3>(n * n * n);
             AppendLatticePoints(localCenter, localSize, n, points);
-            _localPoints = points.ToArray();
-            _worldPoints = new Vector3[_localPoints.Length];
+            localPoints = points.ToArray();
 
             // Radius ~ half the world vertical spacing, scaled, so the spherical cap
             // transitions smoothly over each layer. Force is normalised by point count,
             // so radius changes the softness of the curve, not the equilibrium depth.
             Vector3 worldSize = Vector3.Scale(localSize, AbsScale(transform.lossyScale));
             float spacingY = worldSize.y / n;
-            _sphereRadius = Mathf.Max(MinSphereRadius, 0.5f * spacingY * floatRadiusScale);
+            sphereRadius = Mathf.Max(MinSphereRadius, 0.5f * spacingY * floatRadiusScale);
         }
 
         // Even lattice of n^3 points across a local box (fractional offsets in [-0.5, 0.5]). Shared by the
@@ -262,7 +274,9 @@ namespace AbstractOcclusion.WebGpuWater
         // Submerged fraction of a sphere whose centre is 'depth' below the surface
         // (depth > 0 means below). Spherical-cap volume over full sphere volume -> a
         // smooth 0..1 S-curve that is exactly 0.5 when the centre sits on the surface.
-        static float SphereSubmergedFraction(float depth, float radius)
+        // Internal so the editor's hull-draft solver bisects on the EXACT curve the physics uses:
+        // its own approximation of this shape would put the drawn waterline off the floated one.
+        internal static float SphereSubmergedFraction(float depth, float radius)
         {
             if (depth >= radius) return 1f;
             if (depth <= -radius) return 0f;

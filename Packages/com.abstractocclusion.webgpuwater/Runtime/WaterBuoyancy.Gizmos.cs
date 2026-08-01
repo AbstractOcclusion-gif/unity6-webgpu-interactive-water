@@ -9,7 +9,6 @@
 // The whole file is UNITY_EDITOR-guarded, so it compiles to nothing in a build - the runtime
 // WaterBuoyancy never carries any gizmo cost. Delete this file to remove the instrumentation.
 #if UNITY_EDITOR
-using System.Collections.Generic;
 using UnityEngine;
 
 namespace AbstractOcclusion.WebGpuWater
@@ -57,18 +56,13 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         // Edit mode / before init: preview the probe layout from the collider (no water sampled yet).
+        // The layout comes from the same BuildProbeLayout the runtime build uses, so the gizmo cannot
+        // show a grid the solver never applies.
         void DrawLayoutPreview()
         {
-            Collider col = GetComponent<Collider>();
-            GetLocalBox(col, out Vector3 center, out Vector3 size);
-
-            int n = Mathf.Clamp(samplesPerAxis, MinSamplesPerAxis, MaxSamplesPerAxis);
-            var points = new List<Vector3>(n * n * n);
-            AppendLatticePoints(center, size, n, points);
-
-            float radius = PreviewProbeRadius(size, n);
-            for (int i = 0; i < points.Count; i++)
-                DrawProbe(transform.TransformPoint(points[i]), radius, 0f);
+            BuildProbeLayout(out Vector3[] localPoints, out float radius);
+            for (int i = 0; i < localPoints.Length; i++)
+                DrawProbe(transform.TransformPoint(localPoints[i]), radius, 0f);
         }
 
         void DrawProbe(Vector3 world, float radius, float submergedFraction)
@@ -92,13 +86,6 @@ namespace AbstractOcclusion.WebGpuWater
             Vector3 tip = world + up * (submergedFraction * ForceArrowRadii * _sphereRadius);
             Gizmos.DrawLine(world, tip);
             Gizmos.DrawSphere(tip, markerRadius);
-        }
-
-        // Same radius BuildSamplePoints derives, recomputed for the edit-mode preview (which runs before Start).
-        float PreviewProbeRadius(Vector3 localSize, int n)
-        {
-            Vector3 worldSize = Vector3.Scale(localSize, AbsScale(transform.lossyScale));
-            return Mathf.Max(MinSphereRadius, 0.5f * (worldSize.y / n) * floatRadiusScale);
         }
     }
 }

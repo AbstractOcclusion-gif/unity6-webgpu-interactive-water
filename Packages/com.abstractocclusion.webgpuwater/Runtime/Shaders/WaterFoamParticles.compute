@@ -211,7 +211,7 @@ static const float SURF_SPRAY_THROW_SPEED = 6.0;
 // queue burst requests on the CPU; the SpawnBurst kernel throws KIND_SPRAY droplets from
 // the same pool, so ALL airborne droplets share one tech path + one look (the Shuriken
 // system keeps only the one-shot crown flipbook). MUST match BurstRequest in
-// WaterFoamParticles.cs (48 bytes) and MAX_BURST_DROPLETS <= the kernel thread count. ----
+// WaterFoamParticles.cs (64 bytes) and MAX_BURST_DROPLETS <= the kernel thread count. ----
 struct BurstRequest
 {
     float3 center;   // world surface position of the impact
@@ -221,11 +221,19 @@ struct BurstRequest
     float  outSpeed; // world units/sec base outward throw
     float  seed;     // per-burst random salt
     float  count;    // droplets requested (<= MAX_BURST_DROPLETS)
-    // Per-burst droplet life/size (was padding; stride stays 48 bytes): bursts tune on
-    // the WaterSplashEmitter, fully independent of the ambient-mist _SprayLife/_SpraySize.
+    // Per-burst droplet life/size (was padding): bursts tune on the WaterSplashEmitter,
+    // fully independent of the ambient-mist _SprayLife/_SpraySize.
     float  lifeMin;  // seconds
     float  lifeMax;  // seconds
     float  size;     // world half-size before jitter
+    // Petal arc. A ZERO (dirX, dirZ) is the legacy full ring, so every splash authored before
+    // hull fitting still spawns byte-identically.
+    float  dirX;             // world X of the unit direction the wedge is centred on
+    float  dirZ;             // world Z of the same
+    float  arcHalfRadians;   // half-width of the wedge; ignored when the direction is zero
+    // Lifts (or flattens) the whole burst in its own vertical plane. ZERO is the untouched original.
+    // Independent of the arc: a full-ring burst tilts just as happily as a petal.
+    float  elevationRadians;
 };
 StructuredBuffer<BurstRequest> BurstRequests;
 uint _BurstRequestCount;
@@ -240,6 +248,16 @@ static const float BURST_UP_JITTER_MIN = 0.5;
 static const float BURST_UP_JITTER_MAX = 1.2;
 static const float BURST_SPAWN_HEIGHT = 0.01;  // just above the surface, never submerged
 static const float BURST_RING_RADIUS_SCALE = 0.5; // spawn inside half the impact radius
+// Below this squared length a burst's direction is the ZERO SENTINEL: throw the legacy full ring.
+// Mirrored by WaterSplashEmitter.BurstDirectionMinSquared so the GPU and Shuriken paths agree on
+// which bursts are petals - guarded by WaterWaveConstantsValidator.
+static const float BURST_DIR_MIN_SQ = 1e-8;
+// Below this the elevation is "unset" and the velocity line runs untouched, so a burst authored
+// before the tilt existed is bit-for-bit what it always was.
+static const float BURST_ELEVATION_MIN = 1e-5;
+// Straight up. The tilt ADDS to the elevation the emitter's up/out speeds already imply, so it is
+// capped here rather than allowed to rotate past vertical and throw droplets back through the hull.
+static const float BURST_MAX_ELEVATION = 1.5707963;
 static const float BURST_SIZE_JITTER_MIN = 0.6;   // matches WaterSplashEmitter.SizeJitterMin
 static const float BURST_SIZE_JITTER_MAX = 1.3;   // matches WaterSplashEmitter.SizeJitterMax
 
@@ -599,6 +617,26 @@ void Spawn(uint3 id : SV_DispatchThreadID)
     Particles[slot] = particle;
 }
 
+// Turns a droplet's outward/up speed pair into a velocity, lifted by the burst's elevation.
+//
+// The rotation happens AFTER the per-droplet jitter, so the natural spread in launch angle is
+// preserved and simply swung as a whole. It also preserves SPEED: tilting changes where a droplet
+// goes, never how hard it was thrown - which is what keeps the tilt independent of the emitter's
+// Upward Bias instead of fighting it.
+//
+// A zero elevation takes the original line verbatim rather than round-tripping through atan2/sin/cos,
+// because that round trip is not bit-exact and every pre-tilt burst has to stay exactly as it was.
+float3 Elevate(float2 dir, float outSpeed, float upSpeed, float elevationRadians)
+{
+    if (abs(elevationRadians) < BURST_ELEVATION_MIN)
+        return float3(dir.x * outSpeed, upSpeed, dir.y * outSpeed);
+
+    float speed = length(float2(outSpeed, upSpeed));
+    float elevation = clamp(atan2(upSpeed, outSpeed) + elevationRadians, 0.0, BURST_MAX_ELEVATION);
+    float horizontal = cos(elevation) * speed;
+    return float3(dir.x * horizontal, sin(elevation) * speed, dir.y * horizontal);
+}
+
 // One thread group per CPU-queued burst request, one thread per droplet candidate: throws
 // KIND_SPRAY droplets on a ring around an impact (rigidbody splash, mouse splash). They
 // integrate ballistically in Update and land as surface foam, so event splashes share the
@@ -618,7 +656,13 @@ void SpawnBurst(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID)
     float r2 = Rand01(key, salt ^ 0x85EBCA6Bu);
     float r3 = Rand01(key, salt ^ 0xC2B2AE35u);
 
-    float angle = r0 * 6.2831853;
+    // Petal arc: narrow the ring to a wedge centred on the burst's own direction. burst.* is
+    // per-REQUEST, so this branch is uniform across the thread group - coherent, no divergence
+    // cost - and a zero direction takes the original full-ring line unchanged.
+    float2 petal = float2(burst.dirX, burst.dirZ);
+    float angle = (dot(petal, petal) < BURST_DIR_MIN_SQ)
+        ? r0 * 6.2831853
+        : atan2(petal.y, petal.x) + (r0 * 2.0 - 1.0) * burst.arcHalfRadians;
     float2 dir = float2(cos(angle), sin(angle));
     float ring = burst.radius * BURST_RING_RADIUS_SCALE * r1;
     float2 spawnXZ = burst.center.xz + dir * ring;
@@ -647,7 +691,7 @@ void SpawnBurst(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID)
                                spawnXZ.y);
     float outSpeed = burst.outSpeed * lerp(BURST_OUT_JITTER_MIN, BURST_OUT_JITTER_MAX, r2);
     float upSpeed = burst.upSpeed * lerp(BURST_UP_JITTER_MIN, BURST_UP_JITTER_MAX, r3);
-    particle.velocity = float3(dir.x * outSpeed, upSpeed, dir.y * outSpeed);
+    particle.velocity = Elevate(dir, outSpeed, upSpeed, burst.elevationRadians);
     particle.age = 0.0;
     // Burst droplets carry their OWN life/size in the request (from the WaterSplashEmitter),
     // so pump/impact splashes tune independently of the ambient-mist spray ranges.

@@ -12,7 +12,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
     {
         // Weld grid for the input cloud: coincident/near-coincident vertices collapse so the
         // hull works from unique positions (a dense model drops to a few thousand candidates).
-        const float ConvexWeldGridMeters = 0.005f;
+        // Internal because WaterHullSlice welds its plane-crossing endpoints on the same tolerance:
+        // one weld grid for the package, not two that drift apart.
+        internal const float ConvexWeldGridMeters = 0.005f;
         // Face-distance epsilon as a fraction of the cloud's bounds diagonal: a point within
         // this of a face is ON it and never spawns a new face - what terminates quickhull.
         const float ConvexEpsilonFraction = 1e-4f;

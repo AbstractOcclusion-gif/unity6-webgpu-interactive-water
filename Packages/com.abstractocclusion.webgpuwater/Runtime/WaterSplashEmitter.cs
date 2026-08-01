@@ -51,6 +51,20 @@ namespace AbstractOcclusion.WebGpuWater
         const float MinOutwardStrength = 0.4f;        // horizontal throw floor for soft splashes
         const float SizeJitterMin = 0.6f;             // per-droplet size randomisation
         const float SizeJitterMax = 1.3f;
+        // ---- petal arc ----
+        // Below this squared length a caller's direction is the ZERO SENTINEL and the burst is the
+        // legacy full ring. Mirrored by BURST_DIR_MIN_SQ in the compute so the GPU and Shuriken
+        // paths agree on which bursts are petals; a fork there and the look depends on whether a
+        // body happens to have a GPU pool.
+        const float BurstDirectionMinSquared = 1e-8f;
+        const float FullRingDegrees = 360f;
+        // Below this the elevation is "unset" and the velocity is passed through untouched, so a burst
+        // authored before the tilt existed stays exactly what it was. Mirrors BURST_ELEVATION_MIN.
+        const float BurstElevationMinRadians = 1e-5f;
+        // Straight up (pi/2, written as a literal so the constants validator can parse it). The tilt ADDS
+        // to the angle upwardBias/outwardSpread already imply, so it is capped rather than allowed past
+        // vertical. Mirrors BURST_MAX_ELEVATION.
+        const float MaxBurstElevationRadians = 1.5707963f;
         // Droplet opacity scales with impact strength (DWP2's velocity-proportional spray:
         // emission AND alpha ride the object's speed) - a slow entry dribbles faint droplets,
         // a hard slam throws an opaque sheet. Floor keeps soft splashes visible.
@@ -252,7 +266,16 @@ namespace AbstractOcclusion.WebGpuWater
         /// Shuriken droplet burst. amountScale scales ONLY the droplet count (spray volume):
         /// launch speed, droplet size, spread and opacity are untouched, so a boosted caller
         /// throws MORE spray, never FASTER spray. 0 mutes the burst (crown included).</summary>
-        public void EmitSplash(Vector3 surfacePos, float strength, float radius, float amountScale = BaseAmountScale)
+        /// <param name="petalDirection">World direction the burst throws toward; only its horizontal
+        /// part is used. ZERO (the default) is the legacy full ring, so no existing call site moves.</param>
+        /// <param name="arcDegrees">Wedge width around that direction. 360 is a full ring either way.</param>
+        /// <param name="elevationDegrees">Lifts the whole burst toward vertical, on top of the angle
+        /// Upward Bias and Outward Spread already imply. ZERO (the default) changes nothing, and it
+        /// applies to full rings as readily as to petals.</param>
+        public void EmitSplash(Vector3 surfacePos, float strength, float radius,
+                               float amountScale = BaseAmountScale,
+                               Vector3 petalDirection = default, float arcDegrees = FullRingDegrees,
+                               float elevationDegrees = 0f)
         {
             if (particles == null) return;
             // Master profile: applied at emit time (splashes are event-driven; there is no
@@ -268,6 +291,12 @@ namespace AbstractOcclusion.WebGpuWater
             // downstream - the GPU path clamps to MaxBurstDroplets, Shuriken to main.maxParticles.
             count = Mathf.Max(1, Mathf.RoundToInt(count * amountScale));
 
+            // Resolved ONCE here, so the GPU kernel and the Shuriken loop below can never disagree
+            // about whether this burst is a petal or a ring.
+            Vector2 petal = HorizontalPetal(petalDirection);
+            float arcHalfRadians = 0.5f * arcDegrees * Mathf.Deg2Rad;
+            float elevationRadians = elevationDegrees * Mathf.Deg2Rad;
+
             WaterVolume body = WaterVolume.BodyContaining(surfacePos);
             WaterFoamParticles gpuSpray = body != null ? body.GetComponent<WaterFoamParticles>() : null;
             // Body-wide particle master (WaterFoamParticles "Use Particles"): off = this body emits NO splash
@@ -282,7 +311,7 @@ namespace AbstractOcclusion.WebGpuWater
                 // Droplet life/size travel WITH the request: pump/splash bursts obey THIS
                 // component (or the profile's Splash section), not the ambient-mist ranges.
                 gpuSpray.QueueSplashBurst(surfacePos, strength, radius, count, upSpeed, outSpeed,
-                                          lifetime, dropletSize);
+                                          lifetime, dropletSize, petal, arcHalfRadians, elevationRadians);
                 EmitCrown(surfacePos, strength, radius);
                 return;
             }
@@ -290,7 +319,10 @@ namespace AbstractOcclusion.WebGpuWater
             var ep = new ParticleSystem.EmitParams();
             for (int i = 0; i < count; i++)
             {
-                Vector2 r = Random.insideUnitCircle;
+                // The fallback must honour the arc too, or a body without a GPU pool silently loses
+                // the petals and the two paths fork. Same remap the kernel does: a full-circle angle
+                // when the direction is the zero sentinel, a wedge around it otherwise.
+                Vector2 r = PetalUnitCircle(petal, arcHalfRadians);
                 Vector3 outward = new Vector3(r.x, 0f, r.y)
                                   * (radius * outwardSpread * Random.Range(OutwardJitterMin, OutwardJitterMax));
                 float up = Random.Range(UpwardJitterMin, UpwardJitterMax) * upwardBias
@@ -299,7 +331,8 @@ namespace AbstractOcclusion.WebGpuWater
                 ep.position = surfacePos + new Vector3(r.x * radius * SpawnRingRadiusScale,
                                                        SpawnHeightAboveSurface,
                                                        r.y * radius * SpawnRingRadiusScale);
-                ep.velocity = outward * Mathf.Max(MinOutwardStrength, strength) + new Vector3(0f, up, 0f);
+                ep.velocity = Elevate(outward * Mathf.Max(MinOutwardStrength, strength)
+                                      + new Vector3(0f, up, 0f), elevationRadians);
                 ep.startLifetime = Random.Range(lifetime.x, lifetime.y);
                 ep.startSize = dropletSize * Random.Range(SizeJitterMin, SizeJitterMax);
                 // Velocity-proportional opacity (DWP2): faint droplets on a soft entry,
@@ -311,6 +344,67 @@ namespace AbstractOcclusion.WebGpuWater
             }
 
             EmitCrown(surfacePos, strength, radius);
+        }
+
+        // A caller's direction flattened to horizontal and normalised, or ZERO when there isn't one.
+        // Zero is the sentinel the whole feature rests on: it reaches the GPU as a zero direction and
+        // hits the kernel's untouched full-ring line, so pre-petal splashes are unchanged end to end.
+        static Vector2 HorizontalPetal(Vector3 direction)
+        {
+            var flat = new Vector2(direction.x, direction.z);
+            return flat.sqrMagnitude < BurstDirectionMinSquared ? Vector2.zero : flat.normalized;
+        }
+
+        // The Shuriken twin of the kernel's angle remap. The sentinel branch calls insideUnitCircle
+        // itself rather than reimplementing it, so a legacy burst draws from the identical distribution
+        // it always did.
+        static Vector2 PetalUnitCircle(Vector2 petal, float arcHalfRadians)
+        {
+            if (petal.sqrMagnitude < BurstDirectionMinSquared) return Random.insideUnitCircle;
+
+            float angle = Mathf.Atan2(petal.y, petal.x) + Random.Range(-arcHalfRadians, arcHalfRadians);
+            // sqrt keeps the distribution uniform over AREA, as insideUnitCircle is, so narrowing the
+            // arc changes where droplets go without changing how far out they start.
+            float distance = Mathf.Sqrt(Random.value);
+            return new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * distance;
+        }
+
+        // The Shuriken twin of the kernel's Elevate: swing a droplet's velocity in its own vertical
+        // plane, preserving SPEED so a tilt changes where the droplet goes and not how hard it was
+        // thrown. A body without a GPU pool must tilt identically, or the look forks on whether one
+        // happens to be present.
+        static Vector3 Elevate(Vector3 velocity, float elevationRadians)
+        {
+            if (Mathf.Abs(elevationRadians) < BurstElevationMinRadians) return velocity;
+
+            var horizontal = new Vector2(velocity.x, velocity.z);
+            // Already straight up: there is no heading left to swing it around.
+            if (horizontal.sqrMagnitude < BurstDirectionMinSquared) return velocity;
+
+            float speed = velocity.magnitude;
+            float elevation = ElevationOf(velocity.y, horizontal.magnitude, elevationRadians);
+            Vector2 heading = horizontal.normalized * (Mathf.Cos(elevation) * speed);
+            return new Vector3(heading.x, Mathf.Sin(elevation) * speed, heading.y);
+        }
+
+        // The launch angle above horizontal, tilt included and capped at straight up. One definition,
+        // shared by the Shuriken path above and the editor gizmo below, so a drawn wedge cannot claim
+        // an angle the emitter does not throw.
+        static float ElevationOf(float upSpeed, float outSpeed, float elevationRadians)
+            => Mathf.Clamp(Mathf.Atan2(upSpeed, outSpeed) + elevationRadians, 0f, MaxBurstElevationRadians);
+
+        /// <summary>
+        /// The angle above horizontal a burst's droplets leave at, before their per-droplet jitter.
+        /// Editor previews call this rather than re-deriving it, since the angle comes from THIS
+        /// component's Upward Bias and Outward Spread and only then from the caller's tilt.
+        /// </summary>
+        /// <remarks>A linked Foam Profile overrides those fields at emit time, so a preview taken here
+        /// reflects the profile only once it has been applied.</remarks>
+        internal float PreviewLaunchElevationRadians(float strength, float radius, float elevationDegrees)
+        {
+            float upSpeed = upwardBias * (UpwardStrengthFloor + UpwardStrengthGain * strength);
+            float outSpeed = radius * outwardSpread * Mathf.Max(MinOutwardStrength, strength);
+            return ElevationOf(upSpeed, outSpeed, elevationDegrees * Mathf.Deg2Rad);
         }
 
         // One flipbook crown splash at the impact, for strong-enough hits. The crown

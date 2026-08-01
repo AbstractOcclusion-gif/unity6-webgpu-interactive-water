@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hull spray tool — user POV mockup</title>
+<style>
+  :root{
+    --bg:#08111c; --panel:#0e1b29; --edge:#1c3247;
+    --ink:#d6e6f2; --dim:#7e97ab;
+    --cyan:#4dd8e8; --amber:#f0b45a; --green:#6fd08c; --violet:#b78bea; --rose:#f07a8c;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:34px 26px 90px;background:var(--bg);color:var(--ink);
+       font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:1180px;margin:0 auto}
+  h1{font-size:22px;font-weight:600;margin:0 0 6px}
+  .sub{color:var(--dim);font-size:14px;margin:0 0 30px}
+  h2{font-size:15px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--cyan);
+     margin:44px 0 4px;border-bottom:1px solid var(--edge);padding-bottom:9px}
+  h2 span{color:var(--dim);font-weight:400;letter-spacing:0;text-transform:none;font-size:13px;margin-left:10px}
+  .card{background:var(--panel);border:1px solid var(--edge);border-radius:9px;padding:18px;margin:18px 0 0}
+  svg{display:block;width:100%;height:auto}
+  .cap{color:var(--dim);font-size:13px;margin:11px 2px 0}
+  code{font-family:var(--mono);font-size:12.5px;color:var(--cyan)}
+  .note{border-left:3px solid var(--amber);background:rgba(240,180,90,.07);padding:11px 15px;
+        border-radius:0 6px 6px 0;margin:18px 0;font-size:13.5px;color:#e8d5b6}
+  .note b{color:var(--amber)}
+  ol{margin:10px 0 0;padding-left:22px;color:var(--ink);font-size:14px}
+  ol li{margin-bottom:7px}
+  ol li b{color:var(--cyan);font-weight:500}
+  .dimtext{color:var(--dim)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Fit Spray To Hull — user POV</h1>
+<p class="sub">Mockup only. What the person actually sees, and where they see it.</p>
+
+<div class="note">
+  <b>Why a dedicated view is not optional.</b> The water surface renders at the rest plane with
+  <code>ZWrite On</code>. In the Scene view the submerged half of the hull &mdash; the exact half you are
+  trying to slice &mdash; is <i>behind an opaque sheet</i>. You would be picking a draft line you cannot see.
+</div>
+
+<!-- ======================= A ======================= -->
+<h2>A — Picking the draft <span>side elevation, water suppressed</span></h2>
+
+<div class="card">
+<svg viewBox="0 0 1140 470" role="img" aria-label="Mockup of the draft picking view with an inspector panel">
+
+  <!-- ============ viewport ============ -->
+  <rect x="0" y="0" width="720" height="470" rx="7" fill="#0b1420" stroke="#1c3247"/>
+  <!-- grid -->
+  <g stroke="#12212e" stroke-width="1">
+    <line x1="0" y1="60" x2="720" y2="60"/><line x1="0" y1="120" x2="720" y2="120"/>
+    <line x1="0" y1="180" x2="720" y2="180"/><line x1="0" y1="240" x2="720" y2="240"/>
+    <line x1="0" y1="300" x2="720" y2="300"/><line x1="0" y1="360" x2="720" y2="360"/>
+    <line x1="0" y1="420" x2="720" y2="420"/>
+    <line x1="80" y1="0" x2="80" y2="470"/><line x1="160" y1="0" x2="160" y2="470"/>
+    <line x1="240" y1="0" x2="240" y2="470"/><line x1="320" y1="0" x2="320" y2="470"/>
+    <line x1="400" y1="0" x2="400" y2="470"/><line x1="480" y1="0" x2="480" y2="470"/>
+    <line x1="560" y1="0" x2="560" y2="470"/><line x1="640" y1="0" x2="640" y2="470"/>
+  </g>
+
+  <!-- toolbar chips -->
+  <g font-family="ui-monospace,monospace" font-size="11.5">
+    <rect x="14" y="14" width="112" height="24" rx="12" fill="#12303f" stroke="#4dd8e8" stroke-width="1.2"/>
+    <text x="70" y="30" fill="#4dd8e8" text-anchor="middle">water hidden</text>
+    <rect x="134" y="14" width="86" height="24" rx="12" fill="#0e1b29" stroke="#3d5a70" stroke-width="1.2"/>
+    <text x="177" y="30" fill="#7e97ab" text-anchor="middle">side</text>
+    <rect x="228" y="14" width="70" height="24" rx="12" fill="#0e1b29" stroke="#3d5a70" stroke-width="1.2"/>
+    <text x="263" y="30" fill="#7e97ab" text-anchor="middle">top</text>
+    <rect x="306" y="14" width="82" height="24" rx="12" fill="#0e1b29" stroke="#3d5a70" stroke-width="1.2"/>
+    <text x="347" y="30" fill="#7e97ab" text-anchor="middle">front</text>
+  </g>
+
+  <!-- hull profile (side) -->
+  <path d="M120 190 L560 190 L604 214 L580 300 C 520 340, 240 344, 168 300 L120 214 Z"
+        fill="#22303c" stroke="#8fb6c9" stroke-width="2"/>
+  <!-- cabin -->
+  <path d="M300 190 L300 152 L420 152 L420 190 Z" fill="#22303c" stroke="#8fb6c9" stroke-width="1.6"/>
+  <!-- excluded-from-slice hatch on the cabin -->
+  <g stroke="#7e97ab" stroke-width="1" opacity=".45">
+    <line x1="306" y1="188" x2="330" y2="154"/><line x1="330" y1="188" x2="354" y2="154"/>
+    <line x1="354" y1="188" x2="378" y2="154"/><line x1="378" y1="188" x2="402" y2="154"/>
+    <line x1="402" y1="188" x2="418" y2="166"/>
+  </g>
+  <text x="360" y="142" fill="#7e97ab" font-size="11" text-anchor="middle" font-family="ui-monospace,monospace">not hull mesh — excluded</text>
+
+  <!-- rest plane (ghost) -->
+  <line x1="40" y1="248" x2="700" y2="248" stroke="#2f5f78" stroke-width="1.4" stroke-dasharray="6 6"/>
+  <text x="48" y="242" fill="#3f6f88" font-size="11" font-family="ui-monospace,monospace">body rest plane</text>
+
+  <!-- DRAFT LINE -->
+  <line x1="40" y1="272" x2="700" y2="272" stroke="#f0b45a" stroke-width="2.6"/>
+  <!-- draft handle -->
+  <g transform="translate(668,272)">
+    <rect x="-14" y="-11" width="28" height="22" rx="4" fill="#f0b45a"/>
+    <line x1="-6" y1="-4" x2="6" y2="-4" stroke="#0b1420" stroke-width="1.6"/>
+    <line x1="-6" y1="0" x2="6" y2="0" stroke="#0b1420" stroke-width="1.6"/>
+    <line x1="-6" y1="4" x2="6" y2="4" stroke="#0b1420" stroke-width="1.6"/>
+  </g>
+  <text x="48" y="266" fill="#f0b45a" font-size="12" font-family="ui-monospace,monospace">DRAFT — drag me</text>
+  <!-- offset bracket -->
+  <line x1="620" y1="248" x2="620" y2="272" stroke="#f0b45a" stroke-width="1.2"/>
+  <line x1="614" y1="248" x2="626" y2="248" stroke="#f0b45a" stroke-width="1.2"/>
+  <line x1="614" y1="272" x2="626" y2="272" stroke="#f0b45a" stroke-width="1.2"/>
+  <text x="632" y="245" fill="#b8874a" font-size="11" font-family="ui-monospace,monospace">-0.18 m</text>
+
+  <!-- probes on the slice -->
+  <g fill="#4dd8e8">
+    <circle cx="152" cy="272" r="4.6"/><circle cx="206" cy="272" r="4.6"/>
+    <circle cx="262" cy="272" r="4.6"/><circle cx="318" cy="272" r="4.6"/>
+    <circle cx="374" cy="272" r="4.6"/><circle cx="430" cy="272" r="4.6"/>
+    <circle cx="486" cy="272" r="4.6"/><circle cx="542" cy="272" r="4.6"/>
+    <circle cx="590" cy="272" r="4.6"/>
+  </g>
+  <line x1="374" y1="278" x2="374" y2="392" stroke="#4dd8e8" stroke-width="1.2"/>
+  <text x="374" y="410" fill="#4dd8e8" font-size="12" text-anchor="middle" font-family="ui-monospace,monospace">24 probes — live preview, not committed</text>
+
+  <!-- submerged shading -->
+  <path d="M168 300 C 240 344, 520 340, 580 300 L 588 272 L 156 272 Z" fill="#123a52" opacity=".35"/>
+  <text x="374" y="322" fill="#3f6f88" font-size="11" text-anchor="middle" font-family="ui-monospace,monospace">submerged volume</text>
+
+  <!-- ============ inspector ============ -->
+  <rect x="740" y="0" width="400" height="470" rx="7" fill="#0e1b29" stroke="#1c3247"/>
+  <g font-family="ui-monospace,monospace">
+    <rect x="740" y="0" width="400" height="34" rx="7" fill="#12303f"/>
+    <text x="758" y="22" fill="#4dd8e8" font-size="12.5">Fit Spray To Hull</text>
+
+    <!-- rows -->
+    <g font-size="12">
+      <text x="758" y="62" fill="#7e97ab">Hull mesh</text>
+      <rect x="878" y="50" width="244" height="20" rx="3" fill="#0b1420" stroke="#3d5a70"/>
+      <text x="888" y="64" fill="#cfe2ee">Hull (Mesh Filter)</text>
+
+      <text x="758" y="96" fill="#7e97ab">Draft source</text>
+      <rect x="878" y="84" width="244" height="20" rx="3" fill="#0b1420" stroke="#3d5a70"/>
+      <text x="888" y="98" fill="#cfe2ee">Rest plane + offset</text>
+
+      <text x="758" y="130" fill="#7e97ab">Draft offset</text>
+      <line x1="878" y1="124" x2="1090" y2="124" stroke="#3d5a70" stroke-width="2"/>
+      <circle cx="962" cy="124" r="6" fill="#f0b45a"/>
+      <text x="1100" y="129" fill="#f0b45a">-0.18</text>
+
+      <rect x="878" y="144" width="244" height="22" rx="4" fill="#12303f" stroke="#4dd8e8" stroke-width="1.2"/>
+      <text x="1000" y="159" fill="#4dd8e8" font-size="11.5" text-anchor="middle">Solve from buoyancy</text>
+
+      <line x1="758" y1="186" x2="1122" y2="186" stroke="#1c3247"/>
+
+      <text x="758" y="212" fill="#7e97ab">Probe count</text>
+      <line x1="878" y1="206" x2="1090" y2="206" stroke="#3d5a70" stroke-width="2"/>
+      <circle cx="1002" cy="206" r="6" fill="#4dd8e8"/>
+      <text x="1100" y="211" fill="#4dd8e8">24</text>
+
+      <text x="758" y="246" fill="#7e97ab">Outward inset</text>
+      <line x1="878" y1="240" x2="1090" y2="240" stroke="#3d5a70" stroke-width="2"/>
+      <circle cx="906" cy="240" r="6" fill="#4dd8e8"/>
+      <text x="1100" y="245" fill="#4dd8e8">0.03</text>
+
+      <line x1="758" y1="266" x2="1122" y2="266" stroke="#1c3247"/>
+      <text x="758" y="292" fill="#b78bea" font-size="11.5">PETALS</text>
+
+      <text x="758" y="320" fill="#7e97ab">Arc width</text>
+      <line x1="878" y1="314" x2="1090" y2="314" stroke="#3d5a70" stroke-width="2"/>
+      <circle cx="930" cy="314" r="6" fill="#b78bea"/>
+      <text x="1100" y="319" fill="#b78bea">70&deg;</text>
+
+      <text x="758" y="354" fill="#7e97ab">Rake at rest</text>
+      <line x1="878" y1="348" x2="1090" y2="348" stroke="#3d5a70" stroke-width="2"/>
+      <circle cx="894" cy="348" r="6" fill="#b78bea"/>
+      <text x="1100" y="353" fill="#b78bea">0.05</text>
+
+      <text x="758" y="388" fill="#7e97ab">Rake at speed</text>
+      <line x1="878" y1="382" x2="1090" y2="382" stroke="#3d5a70" stroke-width="2"/>
+      <circle cx="1040" cy="382" r="6" fill="#b78bea"/>
+      <text x="1100" y="387" fill="#b78bea">0.75</text>
+    </g>
+
+    <!-- warning strip -->
+    <rect x="758" y="404" width="364" height="26" rx="4" fill="#2d2216" stroke="#f0b45a" stroke-width="1.2"/>
+    <text x="770" y="421" fill="#f0b45a" font-size="11">24 probes &times; 0.06 s &rarr; peaks at 24/frame, cap is 16</text>
+
+    <!-- apply -->
+    <rect x="758" y="440" width="176" height="24" rx="4" fill="#12303f" stroke="#4dd8e8" stroke-width="1.4"/>
+    <text x="846" y="456" fill="#4dd8e8" font-size="12" text-anchor="middle">Apply to pump</text>
+    <rect x="946" y="440" width="176" height="24" rx="4" fill="#0b1420" stroke="#3d5a70" stroke-width="1.2"/>
+    <text x="1034" y="456" fill="#7e97ab" font-size="12" text-anchor="middle">Revert preview</text>
+  </g>
+</svg>
+</div>
+<p class="cap">Nothing is written to the component until <b>Apply</b>. Everything before that is preview geometry.</p>
+
+<!-- ======================= B ======================= -->
+<h2>B — Checking the flower <span>top view, same tool, one chip click</span></h2>
+
+<div class="card">
+<svg viewBox="0 0 1140 420" role="img" aria-label="Top view of the hull outline with petal wedges">
+
+  <rect x="0" y="0" width="1140" height="420" rx="7" fill="#0b1420" stroke="#1c3247"/>
+  <g stroke="#12212e" stroke-width="1">
+    <line x1="0" y1="70" x2="1140" y2="70"/><line x1="0" y1="140" x2="1140" y2="140"/>
+    <line x1="0" y1="210" x2="1140" y2="210"/><line x1="0" y1="280" x2="1140" y2="280"/>
+    <line x1="0" y1="350" x2="1140" y2="350"/>
+  </g>
+
+  <g font-family="ui-monospace,monospace" font-size="11.5">
+    <rect x="14" y="14" width="112" height="24" rx="12" fill="#0e1b29" stroke="#3d5a70" stroke-width="1.2"/>
+    <text x="70" y="30" fill="#7e97ab" text-anchor="middle">water hidden</text>
+    <rect x="134" y="14" width="86" height="24" rx="12" fill="#0e1b29" stroke="#3d5a70" stroke-width="1.2"/>
+    <text x="177" y="30" fill="#7e97ab" text-anchor="middle">side</text>
+    <rect x="228" y="14" width="70" height="24" rx="12" fill="#12303f" stroke="#4dd8e8" stroke-width="1.2"/>
+    <text x="263" y="30" fill="#4dd8e8" text-anchor="middle">top</text>
+  </g>
+
+  <!-- motion arrow -->
+  <line x1="150" y1="210" x2="250" y2="210" stroke="#6fd08c" stroke-width="2"/>
+  <polygon points="250,210 238,204 238,216" fill="#6fd08c"/>
+  <text x="196" y="196" fill="#6fd08c" font-size="12" text-anchor="middle" font-family="ui-monospace,monospace">heading</text>
+
+  <!-- hull outline (top, bow right) -->
+  <path d="M330 150 L760 150 C 830 150, 880 178, 906 210 C 880 242, 830 270, 760 270 L330 270 C 306 250, 306 170, 330 150 Z"
+        fill="#22303c" stroke="#f0b45a" stroke-width="2.4"/>
+  <text x="560" y="216" fill="#8fb6c9" font-size="12" text-anchor="middle" font-family="ui-monospace,monospace">sliced waterline outline</text>
+
+  <!-- petals : top side (rake astern = toward -x) -->
+  <g fill="#b78bea" opacity=".28" stroke="#b78bea" stroke-width="1">
+    <path d="M400 150 L358 92 L444 96 Z"/>
+    <path d="M470 150 L428 92 L514 96 Z"/>
+    <path d="M540 150 L498 92 L584 96 Z"/>
+    <path d="M610 150 L568 92 L654 96 Z"/>
+    <path d="M680 150 L638 92 L724 96 Z"/>
+    <path d="M750 150 L710 94 L794 104 Z"/>
+  </g>
+  <!-- petals : bottom side -->
+  <g fill="#b78bea" opacity=".28" stroke="#b78bea" stroke-width="1">
+    <path d="M400 270 L358 328 L444 324 Z"/>
+    <path d="M470 270 L428 328 L514 324 Z"/>
+    <path d="M540 270 L498 328 L584 324 Z"/>
+    <path d="M610 270 L568 328 L654 324 Z"/>
+    <path d="M680 270 L638 328 L724 324 Z"/>
+    <path d="M750 270 L710 326 L794 316 Z"/>
+  </g>
+  <!-- bow petals : nearly straight out, barely raked -->
+  <g fill="#b78bea" opacity=".28" stroke="#b78bea" stroke-width="1">
+    <path d="M846 168 L892 116 L924 158 Z"/>
+    <path d="M900 205 L968 180 L968 232 Z"/>
+    <path d="M846 252 L892 304 L924 262 Z"/>
+  </g>
+  <!-- stern petals : raked hard astern -->
+  <g fill="#b78bea" opacity=".28" stroke="#b78bea" stroke-width="1">
+    <path d="M330 168 L262 132 L246 182 Z"/>
+    <path d="M312 210 L238 190 L238 236 Z"/>
+    <path d="M330 252 L262 288 L246 238 Z"/>
+  </g>
+
+  <!-- probe dots -->
+  <g fill="#4dd8e8">
+    <circle cx="400" cy="150" r="4"/><circle cx="470" cy="150" r="4"/><circle cx="540" cy="150" r="4"/>
+    <circle cx="610" cy="150" r="4"/><circle cx="680" cy="150" r="4"/><circle cx="750" cy="150" r="4"/>
+    <circle cx="400" cy="270" r="4"/><circle cx="470" cy="270" r="4"/><circle cx="540" cy="270" r="4"/>
+    <circle cx="610" cy="270" r="4"/><circle cx="680" cy="270" r="4"/><circle cx="750" cy="270" r="4"/>
+    <circle cx="846" cy="168" r="4"/><circle cx="900" cy="205" r="4"/><circle cx="846" cy="252" r="4"/>
+    <circle cx="330" cy="168" r="4"/><circle cx="312" cy="210" r="4"/><circle cx="330" cy="252" r="4"/>
+  </g>
+
+  <!-- callouts -->
+  <line x1="940" y1="205" x2="1010" y2="205" stroke="#7e97ab" stroke-width="1.2"/>
+  <text x="1018" y="200" fill="#cfe2ee" font-size="12" font-family="ui-monospace,monospace">bow</text>
+  <text x="1018" y="216" fill="#7e97ab" font-size="11" font-family="ui-monospace,monospace">barely raked</text>
+
+  <line x1="238" y1="212" x2="180" y2="290" stroke="#7e97ab" stroke-width="1.2"/>
+  <text x="172" y="306" fill="#cfe2ee" font-size="12" text-anchor="end" font-family="ui-monospace,monospace">stern</text>
+  <text x="172" y="322" fill="#7e97ab" font-size="11" text-anchor="end" font-family="ui-monospace,monospace">raked hard astern</text>
+
+  <text x="560" y="372" fill="#b78bea" font-size="12" text-anchor="middle" font-family="ui-monospace,monospace">arc 70&deg; &middot; rake at speed 0.75 &mdash; the flower shears back with the heading</text>
+  <text x="560" y="392" fill="#54707f" font-size="11" text-anchor="middle" font-family="ui-monospace,monospace">drag any slider and this redraws; nothing has been applied yet</text>
+</svg>
+</div>
+
+<!-- ======================= C ======================= -->
+<h2>C — The whole path <span>from a boat prefab to spray on screen</span></h2>
+
+<div class="card">
+<ol>
+  <li><b>Add Component &rarr; Water Spray Pump.</b> The inspector opens on an empty probe array with one line: <span class="dimtext">"No probes. Fit to hull &rsaquo;"</span></li>
+  <li><b>Click Fit to hull.</b> The view opens already showing the boat from the side, water suppressed, the draft line sitting on the body's rest plane, and a preview ring of probes.</li>
+  <li><b>Drag the draft handle</b> until the line sits where the boat really floats. The outline and probes re-slice as you drag. <span class="dimtext">Or press Solve from buoyancy and skip this.</span></li>
+  <li><b>Click the top chip</b> to check the flower &mdash; probe spacing, arc width, how hard the petals rake.</li>
+  <li><b>Apply to pump.</b> Only now is anything serialized, in one Undo step.</li>
+  <li><b>Enter play mode and drive.</b> Petals swing astern as the boat accelerates.</li>
+</ol>
+</div>
+
+<div class="note">
+  <b>The draft is not a number anyone knows.</b> Nobody can tell you their boat floats at -0.18 m; they
+  know what it looks like sitting in the water. So the default has to be right without being touched,
+  and <code>WaterBuoyancy</code> already holds what is needed to compute it &mdash; float strength and the
+  sphere-cap submerged fraction. Equilibrium is where buoyancy &times; submerged fraction = 1. That is what
+  <b>Solve from buoyancy</b> does, and it means step 3 is usually skipped entirely.
+</div>
+
+</div>
+</body>
+</html>

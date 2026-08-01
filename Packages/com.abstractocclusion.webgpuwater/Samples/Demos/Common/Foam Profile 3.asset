@@ -31,7 +31,7 @@ MonoBehaviour:
     sizeRange: {x: 0.8, y: 1}
     spawnMaxDistance: 400
     sprayLifeRange: {x: 2, y: 4}
-    spraySizeRange: {x: 0.1, y: 0.2}
+    spraySizeRange: {x: 0.5, y: 1}
     depositLifeRange: {x: 0.5, y: 1}
     depositSizeRange: {x: 0.1, y: 0.2}
   veil:
@@ -45,9 +45,9 @@ MonoBehaviour:
   splash:
     drive: 1
     maxParticlesPerBurst: 25
-    upwardBias: 1.7
+    upwardBias: 3
     outwardSpread: 2
-    dropletSize: 0.2
+    dropletSize: 0.5
     lifetime: {x: 1, y: 1.5}
     crownMinStrength: 0
     crownBaseSize: 0.5

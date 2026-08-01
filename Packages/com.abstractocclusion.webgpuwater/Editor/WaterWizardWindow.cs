@@ -16,7 +16,9 @@ using static AbstractOcclusion.WebGpuWater.Editor.WaterBuildKit;
 
 namespace AbstractOcclusion.WebGpuWater.Editor
 {
-    internal sealed class WaterWizardWindow : EditorWindow
+    // Partial: the "Fit Spray To Hull" section lives in WaterWizardWindow.HullSpray.cs, which carries
+    // its own preview drawing and would otherwise double this file's length.
+    internal sealed partial class WaterWizardWindow : EditorWindow
     {
         const string MenuPath = MenuRoot + "Water Wizard";
         const string WindowTitle = "Water Wizard";
@@ -151,6 +153,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             _createExpanded = WaterEditorUI.Section("Create Water", _createExpanded, DrawCreateSection);
             _objectsExpanded = WaterEditorUI.Section("Floating Objects", _objectsExpanded, DrawFloatingObjectsSection);
             _boatExpanded = WaterEditorUI.Section("Boat", _boatExpanded, DrawBoatSection);
+            _hullSprayExpanded = WaterEditorUI.Section("Fit Spray To Hull", _hullSprayExpanded, DrawFitSprayToHullSection);
             _splashExpanded = WaterEditorUI.Section("Splash & Crown", _splashExpanded, DrawSplashSection);
             _utilitiesExpanded = WaterEditorUI.Section("Utilities", _utilitiesExpanded, DrawUtilitiesSection);
             WaterEditorUI.DrawFooter();

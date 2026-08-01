@@ -216,6 +216,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             ("BURST_SPAWN_HEIGHT",      "SpawnHeightAboveSurface"),
             ("BURST_SIZE_JITTER_MIN",   "SizeJitterMin"),
             ("BURST_SIZE_JITTER_MAX",   "SizeJitterMax"),
+            // The petal sentinel. Both paths must agree on which bursts are wedges and which are full
+            // rings, or the same splash reads differently depending only on whether the body happens
+            // to carry a GPU pool.
+            ("BURST_DIR_MIN_SQ",        "BurstDirectionMinSquared"),
+            // The elevation tilt's own sentinel and ceiling. Same reason: both paths must agree on
+            // which bursts are tilted, and on where "straight up" stops.
+            ("BURST_ELEVATION_MIN",     "BurstElevationMinRadians"),
+            ("BURST_MAX_ELEVATION",     "MaxBurstElevationRadians"),
         };
 
         // The exclusion-volume cap is authored twice: EXCLUSION_MAX_VOLUMES sizes the shader's
