@@ -115,11 +115,16 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         /// primitive hull's (2, 0.6, 5) stretch - and can be swapped later by replacing the child.
         /// withDryInterior adds a "Dry Interior" WaterExclusionVolume child fitted to the same
         /// box the collider uses, so the water surface never renders inside the hull.
+        /// interactionMesh names WHICH of the model's meshes drives the water interaction
+        /// (submersion bounds, wake emission, refract-shadow silhouette) - on a multi-mesh
+        /// model the component's auto-resolve takes the FIRST child renderer, which may be a
+        /// cabin rather than the hull. Empty keeps the auto-resolve.
         /// Undo-registered; the caller owns the undo group.</summary>
         internal static GameObject CreateBoat(GameObject hullModel, bool withSplash, bool withDryInterior,
                                               BoatModelForward modelForward = BoatModelForward.PositiveZ,
                                               Mesh dryInteriorMesh = null,
-                                              bool dryInteriorConvexAuto = false)
+                                              bool dryInteriorConvexAuto = false,
+                                              Mesh interactionMesh = null)
         {
             var boat = NewUndoableGameObject(BoatName);
             boat.transform.position = PropSpawnPosition();
@@ -170,22 +175,34 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var controller = boat.AddComponent<BoatController>();
             if (hullModel != null) FitControllerToHull(controller, rigidbody, hullCenterLocal, hullSize);
             boat.AddComponent<WaterMembership>();
-            boat.AddComponent<WaterInteractable>(); // wake ripples
+            var interactable = boat.AddComponent<WaterInteractable>(); // wake ripples
+            WireInteractionRenderer(interactable, interactionMesh, visual);
             if (withSplash) boat.AddComponent<WaterSplash>();
             if (withDryInterior)
             {
+                // The dry-interior shape, in three steps: pick the SOURCE, optionally convexify it,
+                // and fall back loudly if that fails.
+                //
+                // The source used to be all-or-nothing: assigning a mesh switched the convex
+                // generator off entirely, and with no mesh the generator hulled EVERY MeshFilter
+                // under the visual root. A model split across two meshes therefore produced the
+                // convex envelope of BOTH fused together - a shape that fits neither. Naming the
+                // hull mesh AND convexifying it is the case that was missing.
                 Mesh dryMesh = dryInteriorMesh;
                 Mesh generatedHull = null;
-                if (dryMesh == null && dryInteriorConvexAuto && visual != null)
+                if (dryInteriorConvexAuto && (dryInteriorMesh != null || visual != null))
                 {
-                    // Convex approximation of the model's own vertices: a cabin-less hull is
-                    // already nearly convex, so the approximation IS the hull shape. Degenerate
-                    // geometry returns null -> the fitted-box path below, loudly.
-                    generatedHull = BuildConvexHullMesh(visual.transform, hullModel.name);
+                    generatedHull = dryInteriorMesh != null
+                        ? BuildConvexHullMesh(dryInteriorMesh, hullModel.name)   // just the named mesh
+                        : BuildConvexHullMesh(visual.transform, hullModel.name); // the whole model
                     if (generatedHull == null)
-                        Debug.LogWarning(LogPrefix + "Convex approximation failed (degenerate hull " +
-                                         "geometry); the dry interior falls back to the fitted box.");
-                    dryMesh = generatedHull;
+                        Debug.LogWarning(LogPrefix + "Convex approximation failed (degenerate or " +
+                                         "non-manifold hull geometry). The dry interior falls back to " +
+                                         (dryInteriorMesh != null
+                                            ? "the assigned mesh as authored - which the carve needs to be CONVEX."
+                                            : "the fitted box."));
+                    // Null keeps whatever the user named; null with no named mesh reaches the box.
+                    if (generatedHull != null) dryMesh = generatedHull;
                 }
                 AddDryInterior(boat.transform, hullCenterLocal, hullSize, hullModel != null,
                                dryMesh, visual != null ? visual.transform : null);
@@ -193,6 +210,25 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 if (generatedHull != null) Object.DestroyImmediate(generatedHull);
             }
             return boat;
+        }
+
+        // Point the interactable at the renderer whose MeshFilter holds the NAMED mesh - the
+        // wizard offers the same mesh-picking UX as the dry interior, but the component needs a
+        // RENDERER (bounds + silhouette draws), so the mesh is translated here where the
+        // instantiated visual exists to search. Falls back loudly to the component's own
+        // auto-resolve when the mesh is not found under the visual (wrong model assigned).
+        static void WireInteractionRenderer(WaterInteractable interactable, Mesh interactionMesh,
+                                            GameObject visual)
+        {
+            if (interactionMesh == null || visual == null) return;
+            foreach (MeshFilter filter in visual.GetComponentsInChildren<MeshFilter>())
+            {
+                if (filter.sharedMesh != interactionMesh) continue;
+                Renderer renderer = filter.GetComponent<Renderer>();
+                if (renderer != null) { interactable.rendererOverride = renderer; return; }
+            }
+            Debug.LogWarning(LogPrefix + $"Interaction mesh '{interactionMesh.name}' was not found " +
+                             "under the hull model; the interactable auto-resolves its renderer instead.");
         }
 
         // The "boat doesn't fill with water" step: a WaterExclusionVolume over the hull so the

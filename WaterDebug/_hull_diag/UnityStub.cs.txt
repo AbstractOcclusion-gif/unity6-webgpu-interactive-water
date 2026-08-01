@@ -1,0 +1,70 @@
+// Minimal Unity math stubs, float-faithful to UnityEngine semantics.
+using System;
+using System.Collections.Generic;
+
+namespace UnityEngine
+{
+    public struct Vector3
+    {
+        public float x, y, z;
+        public Vector3(float x, float y, float z) { this.x = x; this.y = y; this.z = z; }
+
+        public const float kEpsilon = 1e-5f; // Unity's Vector3 normalize threshold
+
+        public static Vector3 zero => new Vector3(0, 0, 0);
+        public static Vector3 one => new Vector3(1, 1, 1);
+        public static Vector3 down => new Vector3(0, -1, 0);
+
+        public static Vector3 operator +(Vector3 a, Vector3 b) => new Vector3(a.x + b.x, a.y + b.y, a.z + b.z);
+        public static Vector3 operator -(Vector3 a, Vector3 b) => new Vector3(a.x - b.x, a.y - b.y, a.z - b.z);
+        public static Vector3 operator -(Vector3 a) => new Vector3(-a.x, -a.y, -a.z);
+        public static Vector3 operator *(Vector3 a, float s) => new Vector3(a.x * s, a.y * s, a.z * s);
+        public static Vector3 operator *(float s, Vector3 a) => a * s;
+
+        public float sqrMagnitude => x * x + y * y + z * z;
+        public float magnitude => (float)Math.Sqrt(x * x + y * y + z * z);
+
+        public Vector3 normalized
+        {
+            get { float m = magnitude; return m > kEpsilon ? new Vector3(x / m, y / m, z / m) : zero; }
+        }
+        public void Normalize()
+        {
+            float m = magnitude;
+            if (m > kEpsilon) { x /= m; y /= m; z /= m; } else { x = y = z = 0f; }
+        }
+
+        public static float Dot(Vector3 a, Vector3 b) => a.x * b.x + a.y * b.y + a.z * b.z;
+        public static Vector3 Cross(Vector3 a, Vector3 b) =>
+            new Vector3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+        public static Vector3 Min(Vector3 a, Vector3 b) =>
+            new Vector3(Math.Min(a.x, b.x), Math.Min(a.y, b.y), Math.Min(a.z, b.z));
+        public static Vector3 Max(Vector3 a, Vector3 b) =>
+            new Vector3(Math.Max(a.x, b.x), Math.Max(a.y, b.y), Math.Max(a.z, b.z));
+        public override string ToString() => $"({x:0.###}, {y:0.###}, {z:0.###})";
+    }
+
+    public struct Vector3Int : IEquatable<Vector3Int>
+    {
+        public int x, y, z;
+        public Vector3Int(int x, int y, int z) { this.x = x; this.y = y; this.z = z; }
+        public bool Equals(Vector3Int o) => x == o.x && y == o.y && z == o.z;
+        public override bool Equals(object o) => o is Vector3Int v && Equals(v);
+        public override int GetHashCode() => x * 73856093 ^ y * 19349663 ^ z * 83492791;
+    }
+
+    public struct Matrix4x4
+    {
+        public bool isIdentity;
+        public static Matrix4x4 identity => new Matrix4x4 { isIdentity = true };
+        public Vector3 MultiplyPoint3x4(Vector3 v) => v; // identity only in this harness
+    }
+
+    public static class Mathf
+    {
+        // Unity's Mathf.RoundToInt = Math.Round banker's rounding (to even)
+        public static int RoundToInt(float f) => (int)Math.Round(f, MidpointRounding.ToEven);
+        public static float Max(float a, float b) => Math.Max(a, b);
+        public static float Abs(float f) => Math.Abs(f);
+    }
+}

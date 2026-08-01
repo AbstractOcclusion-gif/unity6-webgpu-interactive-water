@@ -1,0 +1,388 @@
+// VERBATIM port of WaterBuildKit.ConvexHull.cs (Packages/com.abstractocclusion.webgpuwater/Editor).
+// Only changes: Mesh removed (returns verts+tris), instrumentation counters added (no behavior change).
+using System.Collections.Generic;
+using UnityEngine;
+
+namespace HullRepro
+{
+    public static class WaterBuildKit
+    {
+        internal const float ConvexWeldGridMeters = 0.005f;
+        const float ConvexEpsilonFraction = 1e-4f;
+        const float DegenerateFaceSqr = 1e-12f;
+        const int MinHullIndices = 12;
+        const int ManifoldEdgeUses = 2;
+
+        // ---- instrumentation (read-only observers, no behavior change) ----
+        public static int LastGuardRemaining;
+        public static bool LastGuardExhausted;
+        public static int LastApexInsertions;
+        public static bool LastValidatorRejected;
+        public static float LastEps;
+        public static int LastUnreachableVisible;   // apex-visible faces left alive by the connectivity walk
+        public static int LastDroppedOrphans;       // orphans no live face reclaimed (> eps outside during re-home? tracked below)
+        public static int LastOrphanEvents;         // orphans re-homed total
+        public static System.Action<int, List<Vector3>, List<int>> IterationSnapshot; // optional deep-dive hook
+        public static int FirstUnreachableIteration;
+        public static string FirstUnreachableViaBand;
+        public delegate void PreAudit(int iter, List<HullFace> faces, List<Vector3> pts, HullFace work, int apex, float eps);
+        public delegate void PostAudit(int iter, List<HullFace> faces, List<Vector3> pts, int apex, float eps);
+        public static PreAudit PreInsertionAudit;
+        public static PostAudit PostInsertionAudit;
+        public static (int A, int B, int C, float[] normal, float planeD, bool alive, int outsideCount)[] SnapshotFaces(List<HullFace> faces)
+        {
+            var arr = new (int, int, int, float[], float, bool, int)[faces.Count];
+            for (int i = 0; i < faces.Count; i++)
+            {
+                var f = faces[i];
+                arr[i] = (f.A, f.B, f.C, new[] { f.Normal.x, f.Normal.y, f.Normal.z }, f.PlaneD, f.Alive, f.Outside.Count);
+            }
+            return arr;
+        }
+
+        // BFS from the consumed visible set, allowed to also cross faces with Dist(apex) > -eps
+        // (the coplanar band). Reports whether every abandoned visible face becomes reachable.
+        static string ReachableViaCoplanarBand(List<HullFace> faces, List<Vector3> pts,
+                                               List<HullFace> visible, int apex, float eps)
+        {
+            var byEdge = BuildEdgeMap(faces); // alive faces only (visible already consumed)
+            var reached = new HashSet<HullFace>();
+            var stack = new Stack<HullFace>(visible);
+            while (stack.Count > 0)
+            {
+                HullFace f = stack.Pop();
+                foreach ((int a, int b) in FaceEdges(f))
+                {
+                    if (!byEdge.TryGetValue(UndirectedEdge(a, b), out var shared)) continue;
+                    foreach (HullFace n in shared)
+                        if (n.Alive && !reached.Contains(n) && n.Dist(pts[apex]) > -eps)
+                        { reached.Add(n); stack.Push(n); }
+                }
+            }
+            int abandoned = 0, recovered = 0;
+            foreach (HullFace f in faces)
+                if (f.Alive && f.Dist(pts[apex]) > eps)
+                { abandoned++; if (reached.Contains(f)) recovered++; }
+            return $"{recovered}/{abandoned} abandoned faces reachable when crossing the |d|<=eps band";
+        }
+        public static int FirstUnreachableReflexEdges;  // reflex (non-convex) edges on the crust when the first face is left behind
+        public static float FirstUnreachableApexDist;   // how far above the abandoned face the apex was
+
+        // Reflex edges among ALIVE faces: for adjacent faces F,G sharing an edge, convexity needs the
+        // vertex of G opposite the edge to sit at or below F's plane. Observer only.
+        static int CountReflexEdges(List<HullFace> faces, List<Vector3> pts, float eps)
+        {
+            var byEdge = BuildEdgeMap(faces);
+            int reflex = 0;
+            foreach (var kv in byEdge)
+            {
+                if (kv.Value.Count != 2) continue;
+                HullFace f = kv.Value[0], g = kv.Value[1];
+                int opposite = OppositeVertex(g, kv.Key);
+                if (opposite >= 0 && f.Dist(pts[opposite]) > eps) reflex++;
+            }
+            return reflex;
+        }
+
+        static int OppositeVertex(HullFace f, (int, int) edge)
+        {
+            foreach (int v in new[] { f.A, f.B, f.C })
+                if (v != edge.Item1 && v != edge.Item2) return v;
+            return -1;
+        }
+
+        public static (List<Vector3> verts, int[] tris)? BuildHullFromPoints(List<Vector3> points)
+        {
+            if (points.Count < 4) return null;
+            List<int> tris = QuickHull(points);
+            if (tris == null) return null;
+
+            var remap = new Dictionary<int, int>();
+            var verts = new List<Vector3>();
+            var outTris = new int[tris.Count];
+            for (int i = 0; i < tris.Count; i++)
+            {
+                if (!remap.TryGetValue(tris[i], out int idx))
+                {
+                    idx = verts.Count;
+                    verts.Add(points[tris[i]]);
+                    remap.Add(tris[i], idx);
+                }
+                outTris[i] = idx;
+            }
+            return (verts, outTris);
+        }
+
+        public static void WeldInto(Vector3[] source, Matrix4x4 transform, HashSet<Vector3Int> seen, List<Vector3> into)
+        {
+            foreach (Vector3 v in source)
+            {
+                Vector3 p = transform.MultiplyPoint3x4(v);
+                var cell = new Vector3Int(
+                    Mathf.RoundToInt(p.x / ConvexWeldGridMeters),
+                    Mathf.RoundToInt(p.y / ConvexWeldGridMeters),
+                    Mathf.RoundToInt(p.z / ConvexWeldGridMeters));
+                if (seen.Add(cell)) into.Add(p);
+            }
+        }
+
+        public sealed class HullFace
+        {
+            public int A, B, C;
+            public Vector3 Normal;
+            public float PlaneD;
+            public List<int> Outside = new List<int>();
+            public bool Alive = true;
+            public float Dist(Vector3 p) => Vector3.Dot(Normal, p) - PlaneD;
+        }
+
+        static HullFace MakeSimplexFace(List<Vector3> pts, int a, int b, int c, Vector3 inside)
+        {
+            Vector3 normal = Vector3.Cross(pts[b] - pts[a], pts[c] - pts[a]);
+            if (normal.sqrMagnitude < DegenerateFaceSqr) return null;
+            normal.Normalize();
+            if (Vector3.Dot(normal, inside - pts[a]) > 0f) { (b, c) = (c, b); normal = -normal; }
+            return new HullFace { A = a, B = b, C = c, Normal = normal, PlaneD = Vector3.Dot(normal, pts[a]) };
+        }
+
+        static HullFace MakeHorizonFace(List<Vector3> pts, int a, int b, int apex)
+        {
+            Vector3 normal = Vector3.Cross(pts[b] - pts[a], pts[apex] - pts[a]);
+            if (normal.sqrMagnitude < DegenerateFaceSqr) return null;
+            normal.Normalize();
+            return new HullFace { A = a, B = b, C = apex, Normal = normal, PlaneD = Vector3.Dot(normal, pts[a]) };
+        }
+
+        static float BoundsDiagonal(List<Vector3> pts)
+        {
+            Vector3 mn = pts[0], mx = pts[0];
+            foreach (Vector3 p in pts) { mn = Vector3.Min(mn, p); mx = Vector3.Max(mx, p); }
+            return (mx - mn).magnitude;
+        }
+
+        static bool InitialSimplex(List<Vector3> pts, float eps,
+                                   out int i0, out int i1, out int i2, out int i3)
+        {
+            i0 = i1 = i2 = i3 = -1;
+            int[] ext = { 0, 0, 0, 0, 0, 0 };
+            for (int p = 1; p < pts.Count; p++)
+            {
+                if (pts[p].x < pts[ext[0]].x) ext[0] = p;
+                if (pts[p].x > pts[ext[1]].x) ext[1] = p;
+                if (pts[p].y < pts[ext[2]].y) ext[2] = p;
+                if (pts[p].y > pts[ext[3]].y) ext[3] = p;
+                if (pts[p].z < pts[ext[4]].z) ext[4] = p;
+                if (pts[p].z > pts[ext[5]].z) ext[5] = p;
+            }
+            float bestSq = 0f;
+            for (int a = 0; a < 6; a++)
+                for (int b = a + 1; b < 6; b++)
+                {
+                    float dSq = (pts[ext[a]] - pts[ext[b]]).sqrMagnitude;
+                    if (dSq > bestSq) { bestSq = dSq; i0 = ext[a]; i1 = ext[b]; }
+                }
+            if (bestSq < eps * eps) return false;
+
+            Vector3 dir = (pts[i1] - pts[i0]).normalized;
+            float bestLine = eps;
+            for (int p = 0; p < pts.Count; p++)
+            {
+                Vector3 rel = pts[p] - pts[i0];
+                float d = (rel - Vector3.Dot(rel, dir) * dir).magnitude;
+                if (d > bestLine) { bestLine = d; i2 = p; }
+            }
+            if (i2 < 0) return false;
+
+            Vector3 n = Vector3.Cross(pts[i1] - pts[i0], pts[i2] - pts[i0]).normalized;
+            float bestPlane = eps;
+            for (int p = 0; p < pts.Count; p++)
+            {
+                float d = Mathf.Abs(Vector3.Dot(pts[p] - pts[i0], n));
+                if (d > bestPlane) { bestPlane = d; i3 = p; }
+            }
+            return i3 >= 0;
+        }
+
+        public static List<int> QuickHull(List<Vector3> pts)
+        {
+            LastGuardExhausted = false; LastApexInsertions = 0; LastValidatorRejected = false;
+            LastUnreachableVisible = 0; LastDroppedOrphans = 0; LastOrphanEvents = 0;
+            FirstUnreachableIteration = -1; FirstUnreachableReflexEdges = 0; FirstUnreachableApexDist = 0f;
+            float eps = Mathf.Max(BoundsDiagonal(pts) * ConvexEpsilonFraction, 1e-6f);
+            LastEps = eps;
+            if (!InitialSimplex(pts, eps, out int i0, out int i1, out int i2, out int i3)) return null;
+
+            Vector3 inside = (pts[i0] + pts[i1] + pts[i2] + pts[i3]) * 0.25f;
+            var faces = new List<HullFace>
+            {
+                MakeSimplexFace(pts, i0, i1, i2, inside), MakeSimplexFace(pts, i0, i1, i3, inside),
+                MakeSimplexFace(pts, i0, i2, i3, inside), MakeSimplexFace(pts, i1, i2, i3, inside),
+            };
+            if (faces.Contains(null)) return null;
+
+            for (int p = 0; p < pts.Count; p++)
+            {
+                if (p == i0 || p == i1 || p == i2 || p == i3) continue;
+                foreach (HullFace f in faces)
+                    if (f.Dist(pts[p]) > eps) { f.Outside.Add(p); break; }
+            }
+
+            int guard = pts.Count + 8;
+            while (guard-- > 0)
+            {
+                HullFace work = null;
+                foreach (HullFace f in faces)
+                    if (f.Alive && f.Outside.Count > 0) { work = f; break; }
+                if (work == null) break;
+
+                int apex = -1;
+                float best = eps;
+                foreach (int p in work.Outside)
+                {
+                    float d = work.Dist(pts[p]);
+                    if (d > best) { best = d; apex = p; }
+                }
+                if (apex < 0) { work.Outside.Clear(); continue; }
+                LastApexInsertions++;
+                PreInsertionAudit?.Invoke(LastApexInsertions, faces, pts, work, apex, eps);
+
+                var visible = new List<HullFace>();
+                var orphans = new List<int>();
+                CollectVisible(faces, pts, work, apex, eps, visible, orphans);
+
+                // -- observer: apex-visible faces the connectivity walk left alive --
+                int unreachableNow = 0;
+                foreach (HullFace f in faces)
+                    if (f.Alive && f.Dist(pts[apex]) > eps) unreachableNow++;
+                LastUnreachableVisible += unreachableNow;
+                if (unreachableNow > 0 && FirstUnreachableIteration < 0)
+                {
+                    FirstUnreachableIteration = LastApexInsertions;
+                    FirstUnreachableReflexEdges = CountReflexEdges(faces, pts, eps);
+                    FirstUnreachableApexDist = 0f;
+                    foreach (HullFace f in faces)
+                        if (f.Alive && f.Dist(pts[apex]) > eps)
+                            FirstUnreachableApexDist = System.Math.Max(FirstUnreachableApexDist, f.Dist(pts[apex]));
+                    // Would the abandoned faces be reachable if the walk were allowed to cross the
+                    // eps-coplanar band (faces with |dist| <= eps)? Proves/refutes the band theory.
+                    FirstUnreachableViaBand = ReachableViaCoplanarBand(faces, pts, visible, apex, eps);
+                }
+
+                var directed = new HashSet<(int, int)>();
+                foreach (HullFace f in visible)
+                {
+                    directed.Add((f.A, f.B));
+                    directed.Add((f.B, f.C));
+                    directed.Add((f.C, f.A));
+                }
+                var fresh = new List<HullFace>();
+                foreach ((int a, int b) in directed)
+                {
+                    if (directed.Contains((b, a))) continue;
+                    HullFace made = MakeHorizonFace(pts, a, b, apex);
+                    if (made == null) return null;
+                    fresh.Add(made);
+                }
+
+                faces.AddRange(fresh);
+
+                foreach (int p in orphans)
+                {
+                    if (p == apex) continue;
+                    LastOrphanEvents++;
+                    bool rehomed = false;
+                    foreach (HullFace f in faces)
+                        if (f.Alive && f.Dist(pts[p]) > eps) { f.Outside.Add(p); rehomed = true; break; }
+                    if (!rehomed) LastDroppedOrphans++; // may legitimately be inside now; flagged for correlation only
+                }
+                PostInsertionAudit?.Invoke(LastApexInsertions, faces, pts, apex, eps);
+            }
+            LastGuardRemaining = guard;
+            LastGuardExhausted = guard < 0;
+
+            var tris = new List<int>();
+            foreach (HullFace f in faces)
+                if (f.Alive) { tris.Add(f.A); tris.Add(f.B); tris.Add(f.C); }
+            if (tris.Count < MinHullIndices) return null;
+            if (!IsClosedConvexTriangulation(tris)) { LastValidatorRejected = true; return null; }
+            return tris;
+        }
+
+        static void CollectVisible(List<HullFace> faces, List<Vector3> pts, HullFace seed, int apex,
+                                   float eps, List<HullFace> visible, List<int> orphans)
+        {
+            Dictionary<(int, int), List<HullFace>> byEdge = BuildEdgeMap(faces);
+
+            var pending = new Stack<HullFace>();
+            Consume(seed, visible, orphans, pending);
+
+            while (pending.Count > 0)
+            {
+                HullFace face = pending.Pop();
+                foreach ((int a, int b) in FaceEdges(face))
+                {
+                    if (!byEdge.TryGetValue(UndirectedEdge(a, b), out List<HullFace> shared)) continue;
+                    foreach (HullFace neighbour in shared)
+                        if (neighbour.Alive && neighbour.Dist(pts[apex]) > eps)
+                            Consume(neighbour, visible, orphans, pending);
+                }
+            }
+        }
+
+        static void Consume(HullFace face, List<HullFace> visible, List<int> orphans, Stack<HullFace> pending)
+        {
+            face.Alive = false;
+            visible.Add(face);
+            orphans.AddRange(face.Outside);
+            pending.Push(face);
+        }
+
+        static Dictionary<(int, int), List<HullFace>> BuildEdgeMap(List<HullFace> faces)
+        {
+            var byEdge = new Dictionary<(int, int), List<HullFace>>();
+            foreach (HullFace f in faces)
+            {
+                if (!f.Alive) continue;
+                foreach ((int a, int b) in FaceEdges(f))
+                {
+                    (int, int) key = UndirectedEdge(a, b);
+                    if (!byEdge.TryGetValue(key, out List<HullFace> shared))
+                        byEdge[key] = shared = new List<HullFace>();
+                    shared.Add(f);
+                }
+            }
+            return byEdge;
+        }
+
+        static (int, int)[] FaceEdges(HullFace f) => new[] { (f.A, f.B), (f.B, f.C), (f.C, f.A) };
+
+        static (int, int) UndirectedEdge(int a, int b) => a < b ? (a, b) : (b, a);
+
+        static bool IsClosedConvexTriangulation(List<int> tris)
+        {
+            var edgeUses = new Dictionary<(int, int), int>();
+            var vertices = new HashSet<int>();
+            for (int i = 0; i + 2 < tris.Count; i += 3)
+            {
+                vertices.Add(tris[i]);
+                vertices.Add(tris[i + 1]);
+                vertices.Add(tris[i + 2]);
+                CountEdge(edgeUses, tris[i], tris[i + 1]);
+                CountEdge(edgeUses, tris[i + 1], tris[i + 2]);
+                CountEdge(edgeUses, tris[i + 2], tris[i]);
+            }
+
+            foreach (int uses in edgeUses.Values)
+                if (uses != ManifoldEdgeUses) return false;
+
+            return tris.Count / 3 == 2 * (vertices.Count - 2);
+        }
+
+        static void CountEdge(Dictionary<(int, int), int> edgeUses, int a, int b)
+        {
+            (int, int) key = UndirectedEdge(a, b);
+            edgeUses.TryGetValue(key, out int uses);
+            edgeUses[key] = uses + 1;
+        }
+    }
+}

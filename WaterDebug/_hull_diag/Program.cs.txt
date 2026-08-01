@@ -1,0 +1,378 @@
+// Repro harness: feeds real ship sub-meshes + synthetic clouds through the ported quickhull
+// and validates the OUTPUT independently (closure, winding consistency, outwardness, containment).
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using UnityEngine;
+using HullRepro;
+
+static class Program
+{
+    sealed class Report
+    {
+        public string Name;
+        public int RawVerts, Welded;
+        public string Outcome;          // OK / NULL(reason)
+        public int HullV, HullF;
+        public int OpenEdges;           // undirected use != 2
+        public int WindingConflicts;    // directed edge used more than once (flipped tris)
+        public int InwardFaces;         // winding normal points toward hull centroid
+        public float MaxOutsideOverEps; // containment: worst point outside / eps
+        public bool GuardExhausted;
+        public float Volume;
+    }
+
+    static void Main(string[] args)
+    {
+        if (args.Length > 0 && args[0] == "dump") { DeepDive(); return; }
+        var reports = new List<Report>();
+
+        // ---- the EXACT failing input: csgo ski boat obj, per group + whole ----
+        var skiGroups = LoadObjGroups("/tmp/hull/ski.obj").ToList();
+        foreach (var (name, verts) in skiGroups)
+        {
+            if (verts.Count < 4) continue;
+            reports.Add(Run("ski/" + name, verts));
+        }
+        reports.Add(Run("ski/ALL", skiGroups.SelectMany(g => g.verts).ToList()));
+
+        // ---- real model, per group, two unit scales (raw fbx units, unity 0.01 import) ----
+        foreach (var (name, verts) in LoadObjGroups("/tmp/hull/nao.obj"))
+        {
+            if (verts.Count < 4) continue;
+            reports.Add(Run("nao/" + name, verts));
+            reports.Add(Run("nao001/" + name, verts.Select(v => v * 0.01f).ToList()));
+        }
+
+        // ---- whole-model cloud ----
+        var all = LoadObjGroups("/tmp/hull/nao.obj").SelectMany(g => g.verts).ToList();
+        reports.Add(Run("nao/ALL", all));
+        reports.Add(Run("nao001/ALL", all.Select(v => v * 0.01f).ToList()));
+
+        // ---- synthetic sweeps ----
+        for (int seed = 0; seed < 30; seed++)
+        {
+            var rng = new Random(seed);
+            reports.Add(Run($"synt/boatDeck{seed}", BoatWithFlatDeck(rng)));
+            reports.Add(Run($"synt/sphere{seed}", RandomSphere(rng, 800)));
+            reports.Add(Run($"synt/box{seed}", NoisyBox(rng, 600)));
+        }
+
+        // ---- summary ----
+        var bad = reports.Where(r => r.Outcome == "OK" &&
+                     (r.OpenEdges > 0 || r.WindingConflicts > 0 || r.InwardFaces > 0 ||
+                      r.MaxOutsideOverEps > 3f || r.GuardExhausted || r.Volume <= 0f)).ToList();
+        var nulls = reports.Where(r => r.Outcome != "OK").ToList();
+
+        Console.WriteLine($"runs={reports.Count}  ok={reports.Count - nulls.Count}  null={nulls.Count}  BAD-RETURNED={bad.Count}");
+        Console.WriteLine("\n--- NULL returns (box fallback) ---");
+        foreach (var r in nulls) Console.WriteLine($"{r.Name,-40} rawV={r.RawVerts,6} welded={r.Welded,6} {r.Outcome}");
+        Console.WriteLine("\n--- BAD meshes RETURNED as valid ---");
+        foreach (var r in bad)
+            Console.WriteLine($"{r.Name,-40} welded={r.Welded,6} V={r.HullV,4} F={r.HullF,4} open={r.OpenEdges} windingConf={r.WindingConflicts} inward={r.InwardFaces} maxOut/eps={r.MaxOutsideOverEps:0.0} guard={(r.GuardExhausted ? "EXHAUSTED" : "ok")} vol={r.Volume:0.###}");
+        Console.WriteLine("\n--- worst containment among OK runs ---");
+        foreach (var r in reports.Where(r => r.Outcome == "OK").OrderByDescending(r => r.MaxOutsideOverEps).Take(10))
+            Console.WriteLine($"{r.Name,-40} maxOut/eps={r.MaxOutsideOverEps:0.00} V={r.HullV} F={r.HullF} inward={r.InwardFaces} windingConf={r.WindingConflicts}");
+    }
+
+    static Report Run(string name, List<Vector3> raw)
+    {
+        var rep = new Report { Name = name, RawVerts = raw.Count };
+        var seen = new HashSet<Vector3Int>();
+        var pts = new List<Vector3>();
+        WaterBuildKit.WeldInto(raw.ToArray(), Matrix4x4.identity, seen, pts);
+        rep.Welded = pts.Count;
+        if (pts.Count < 4) { rep.Outcome = "NULL(<4 welded)"; return rep; }
+
+        List<int> tris = WaterBuildKit.QuickHull(pts);
+        rep.GuardExhausted = WaterBuildKit.LastGuardExhausted;
+        if (tris == null)
+        {
+            rep.Outcome = WaterBuildKit.LastValidatorRejected ? "NULL(validator)" : "NULL(degenerate)";
+            return rep;
+        }
+        rep.Outcome = "OK";
+        rep.HullF = tris.Count / 3;
+        rep.HullV = tris.Distinct().Count();
+
+        // independent validation
+        var edgeUses = new Dictionary<(int, int), int>();
+        var directedUses = new Dictionary<(int, int), int>();
+        for (int i = 0; i + 2 < tris.Count; i += 3)
+        {
+            foreach (var (a, b) in new[] { (tris[i], tris[i + 1]), (tris[i + 1], tris[i + 2]), (tris[i + 2], tris[i]) })
+            {
+                var uk = a < b ? (a, b) : (b, a);
+                edgeUses.TryGetValue(uk, out int u); edgeUses[uk] = u + 1;
+                directedUses.TryGetValue((a, b), out int d); directedUses[(a, b)] = d + 1;
+            }
+        }
+        rep.OpenEdges = edgeUses.Values.Count(u => u != 2);
+        rep.WindingConflicts = directedUses.Values.Count(d => d > 1);
+
+        // centroid of hull vertices
+        Vector3 c = Vector3.zero;
+        var hv = tris.Distinct().ToList();
+        foreach (int v in hv) c += pts[v];
+        c *= 1f / hv.Count;
+
+        double vol6 = 0;
+        for (int i = 0; i + 2 < tris.Count; i += 3)
+        {
+            Vector3 a = pts[tris[i]], b = pts[tris[i + 1]], d = pts[tris[i + 2]];
+            Vector3 n = Vector3.Cross(b - a, d - a);
+            if (Vector3.Dot(n, a - c) < 0f) rep.InwardFaces++;
+            vol6 += (double)Vector3.Dot(Vector3.Cross(b - c, d - c), a - c); // signed, outward-positive... sign checked below
+        }
+        rep.Volume = (float)(vol6 / 6.0);
+
+        // containment: worst signed distance of any welded point outside any... i.e. above ALL faces? A point
+        // is outside the hull if it is above at least one face plane; distance-to-hull is min over faces of
+        // signed dist when outside a single face is an overestimate near edges, fine as an indicator.
+        float eps = WaterBuildKit.LastEps;
+        float worst = 0f;
+        // precompute face planes from winding
+        var planes = new List<(Vector3 n, float d)>();
+        for (int i = 0; i + 2 < tris.Count; i += 3)
+        {
+            Vector3 a = pts[tris[i]], b = pts[tris[i + 1]], d3 = pts[tris[i + 2]];
+            Vector3 n = Vector3.Cross(b - a, d3 - a);
+            n.Normalize();
+            planes.Add((n, Vector3.Dot(n, a)));
+        }
+        foreach (Vector3 p in pts)
+        {
+            // signed distance to hull ≈ max over faces of dist above plane; inside gives negative for all
+            float above = float.MinValue;
+            foreach (var (n, d) in planes)
+                above = Math.Max(above, Vector3.Dot(n, p) - d);
+            if (above > worst) worst = above;
+        }
+        rep.MaxOutsideOverEps = worst / eps;
+        return rep;
+    }
+
+    static void DeepDive()
+    {
+        var g = LoadObjGroups("/tmp/hull/ski.obj").First(x => x.name == "Object_Model001_Material001");
+        var seen = new HashSet<Vector3Int>();
+        var pts = new List<Vector3>();
+        WaterBuildKit.WeldInto(g.verts.ToArray(), Matrix4x4.identity, seen, pts);
+
+        // ---- per-insertion audit in double precision ----
+        int firstBadIter = -1;
+        double firstBadDefect = 0;
+        string firstBadDetail = null;
+        int apexNotOutside = 0, sliverSeeds = 0;
+
+        double[] P(Vector3 v) => new double[] { v.x, v.y, v.z };
+        double[] Sub(double[] a, double[] b) => new[] { a[0] - b[0], a[1] - b[1], a[2] - b[2] };
+        double[] Crs(double[] a, double[] b) => new[] { a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0] };
+        double Dt(double[] a, double[] b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        double Len(double[] a) => Math.Sqrt(Dt(a, a));
+
+        WaterBuildKit.PreInsertionAudit = (iter, faces, ps, work, apex, eps) =>
+        {
+            // Is the chosen apex ACTUALLY outside the crust? (double precision, planes recomputed from vertices)
+            var snap = WaterBuildKit.SnapshotFaces(faces);
+            double trueMax = double.MinValue;
+            foreach (var f in snap)
+            {
+                if (!f.alive) continue;
+                double[] a = P(ps[f.A]);
+                double[] n = Crs(Sub(P(ps[f.B]), a), Sub(P(ps[f.C]), a));
+                double ln = Len(n);
+                if (ln < 1e-30) continue;
+                trueMax = Math.Max(trueMax, Dt(n, Sub(P(ps[apex]), a)) / ln);
+            }
+            if (trueMax <= eps) apexNotOutside++;
+
+            // Sliver metric of the seed face: area / longestEdge^2
+            double[] wa = P(ps[work.A]), wb = P(ps[work.B]), wc = P(ps[work.C]);
+            double area2 = Len(Crs(Sub(wb, wa), Sub(wc, wa)));
+            double e = Math.Max(Dt(Sub(wb, wa), Sub(wb, wa)), Math.Max(Dt(Sub(wc, wb), Sub(wc, wb)), Dt(Sub(wa, wc), Sub(wa, wc))));
+            if (area2 / e < 1e-3) sliverSeeds++;
+
+            if (firstBadIter < 0 && trueMax <= eps)
+                firstBadDetail = $"iter {iter}: APEX NOT OUTSIDE (true max dist {trueMax:E3} vs eps {eps:E3}); " +
+                                 $"seed sliver ratio {area2 / e:E3}; storedDist(work,apex)={work.Dist(ps[apex]):E3}";
+        };
+
+        int lastFaceCountBeforeIter = 0;
+        WaterBuildKit.PostInsertionAudit = (iter, faces, ps, apex, eps) =>
+        {
+            if (firstBadIter >= 0) return;
+            // convexity defect of the crust: max height of any crust VERTEX above any alive face (double)
+            var snap = WaterBuildKit.SnapshotFaces(faces);
+            var vertsUsed = new HashSet<int>();
+            foreach (var f in snap) if (f.alive) { vertsUsed.Add(f.A); vertsUsed.Add(f.B); vertsUsed.Add(f.C); }
+            double defect = 0; int badFace = -1, badVert = -1;
+            for (int i = 0; i < snap.Length; i++)
+            {
+                var f = snap[i];
+                if (!f.alive) continue;
+                double[] a = P(ps[f.A]);
+                double[] n = Crs(Sub(P(ps[f.B]), a), Sub(P(ps[f.C]), a));
+                double ln = Len(n);
+                if (ln < 1e-30) continue;
+                foreach (int v in vertsUsed)
+                {
+                    double d = Dt(n, Sub(P(ps[v]), a)) / ln;
+                    if (d > defect) { defect = d; badFace = i; badVert = v; }
+                }
+            }
+            if (defect > 5 * eps)
+            {
+                firstBadIter = iter; firstBadDefect = defect;
+                var bf = snap[badFace];
+                bool freshFace = badFace >= lastFaceCountBeforeIter;
+                // stored-plane distance of the bad vertex to the bad face
+                double storedDist = bf.normal[0] * ps[badVert].x + bf.normal[1] * ps[badVert].y + bf.normal[2] * ps[badVert].z - bf.planeD;
+                // face geometry quality
+                double[] fa = P(ps[bf.A]);
+                double[] fn = Crs(Sub(P(ps[bf.B]), fa), Sub(P(ps[bf.C]), fa));
+                double area = Len(fn) / 2;
+                double e1 = Len(Sub(P(ps[bf.B]), fa)), e2 = Len(Sub(P(ps[bf.C]), P(ps[bf.B]))), e3 = Len(Sub(fa, P(ps[bf.C])));
+                double maxE = Math.Max(e1, Math.Max(e2, e3));
+                // stored vs true normal angle
+                double[] tn = new[] { fn[0] / Len(fn), fn[1] / Len(fn), fn[2] / Len(fn) };
+                double dotNs = tn[0] * bf.normal[0] + tn[1] * bf.normal[1] + tn[2] * bf.normal[2];
+                firstBadDetail = (firstBadDetail ?? "") +
+                    $" || FIRST GEOMETRIC BREAK at iter {iter}: vertex {badVert} sits {defect / eps:0.0}x eps ({defect * 1000:0.00} mm) above face #{badFace} ({(freshFace ? "FRESH this iteration" : "old")}, apexIdx={apex}, vertIsApex={badVert == apex})" +
+                    $"; storedPlaneDist={storedDist / eps:0.0}x eps; faceArea={area:E2} maxEdge={maxE:E2} sliver={2 * area / (maxE * maxE):E2}; storedNormal·trueNormal={dotNs:0.000000}" +
+                    $"; faceVerts=({bf.A},{bf.B},{bf.C})";
+            }
+        };
+        WaterBuildKit.PreInsertionAudit += (iter, faces, ps, work, apex, eps) => lastFaceCountBeforeIter = faces.Count;
+
+        List<int> tris = WaterBuildKit.QuickHull(pts);
+        Console.WriteLine($"apexNotOutside={apexNotOutside} sliverSeeds={sliverSeeds}");
+        Console.WriteLine($"firstBad: iter={firstBadIter} defect={firstBadDefect:E3}");
+        Console.WriteLine($"detail: {firstBadDetail}");
+        Console.WriteLine($"welded={pts.Count} eps={WaterBuildKit.LastEps} tris={(tris == null ? -1 : tris.Count / 3)}");
+        Console.WriteLine($"apexInsertions={WaterBuildKit.LastApexInsertions} unreachableVisible={WaterBuildKit.LastUnreachableVisible} orphanEvents={WaterBuildKit.LastOrphanEvents} droppedOrphans={WaterBuildKit.LastDroppedOrphans} guardExhausted={WaterBuildKit.LastGuardExhausted}");
+        Console.WriteLine($"firstUnreachable at insertion #{WaterBuildKit.FirstUnreachableIteration} of {WaterBuildKit.LastApexInsertions}, crust reflex edges at that moment={WaterBuildKit.FirstUnreachableReflexEdges}, apex height above abandoned face={WaterBuildKit.FirstUnreachableApexDist} (eps={WaterBuildKit.LastEps})");
+        Console.WriteLine($"band-test: {WaterBuildKit.FirstUnreachableViaBand}");
+        if (tris == null) return;
+
+        using (var w = new StreamWriter("/tmp/hull/welded.xyz"))
+            foreach (var p in pts) w.WriteLine(FormattableString.Invariant($"{p.x} {p.y} {p.z}"));
+        using (var w = new StreamWriter("/tmp/hull/repro_hull.obj"))
+        {
+            foreach (var p in pts) w.WriteLine(FormattableString.Invariant($"v {p.x} {p.y} {p.z}"));
+            for (int i = 0; i + 2 < tris.Count; i += 3)
+                w.WriteLine(FormattableString.Invariant($"f {tris[i] + 1} {tris[i + 1] + 1} {tris[i + 2] + 1}"));
+        }
+        Console.WriteLine("dumped /tmp/hull/welded.xyz and /tmp/hull/repro_hull.obj");
+    }
+
+    // ---------------- inputs ----------------
+    static IEnumerable<(string name, List<Vector3> verts)> LoadObjGroups(string path)
+    {
+        var groups = new List<(string, List<Vector3>)>();
+        var allVerts = new List<Vector3>();
+        List<Vector3> cur = null; string curName = null;
+        var used = new List<HashSet<int>>();
+        HashSet<int> curUsed = null;
+        foreach (var line in File.ReadLines(path))
+        {
+            if (line.StartsWith("v "))
+            {
+                var t = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                allVerts.Add(new Vector3(
+                    float.Parse(t[1], CultureInfo.InvariantCulture),
+                    float.Parse(t[2], CultureInfo.InvariantCulture),
+                    float.Parse(t[3], CultureInfo.InvariantCulture)));
+            }
+            else if (line.StartsWith("g ") || line.StartsWith("o "))
+            {
+                curName = line.Substring(2).Trim();
+                curUsed = new HashSet<int>();
+                groups.Add((curName, null));
+                used.Add(curUsed);
+            }
+            else if (line.StartsWith("f ") && curUsed != null)
+            {
+                foreach (var t in line.Substring(2).Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var idx = t.Split('/')[0];
+                    int vi = int.Parse(idx, CultureInfo.InvariantCulture);
+                    curUsed.Add(vi > 0 ? vi - 1 : allVerts.Count + vi);
+                }
+            }
+        }
+        for (int g = 0; g < groups.Count; g++)
+        {
+            var list = used[g].Select(i => allVerts[i]).ToList();
+            yield return (groups[g].Item1, list);
+        }
+    }
+
+    static List<Vector3> BoatWithFlatDeck(Random rng)
+    {
+        // extruded boat profile with a DEAD FLAT deck panel + gunwale: the near-coplanar case
+        var pts = new List<Vector3>();
+        int sections = 40;
+        float length = 6f;
+        for (int s = 0; s <= sections; s++)
+        {
+            float z = -length / 2 + length * s / sections;
+            float t = Math.Abs(z) / (length / 2);
+            float halfW = 1.1f * (1f - t * t * 0.85f);
+            float keelY = -0.55f * (1f - t * t * 0.6f);
+            for (int k = 0; k <= 10; k++)
+            {
+                float u = (float)k / 10;
+                float x = halfW * (float)Math.Sin(u * Math.PI / 2);
+                float y = keelY * (float)Math.Cos(u * Math.PI / 2);
+                pts.Add(new Vector3(x, y, z));
+                pts.Add(new Vector3(-x, y, z));
+            }
+            // flat deck strip at y = 0.4 exactly (big coplanar panel)
+            for (int k = 0; k <= 8; k++)
+            {
+                float x = halfW * (k / 4f - 1f);
+                pts.Add(new Vector3(x, 0.4f, z));
+            }
+        }
+        // slight vertex noise on SOME points, as a real modelled mesh has
+        for (int i = 0; i < pts.Count; i += 7)
+            pts[i] += new Vector3((float)rng.NextDouble() - 0.5f, (float)rng.NextDouble() - 0.5f, (float)rng.NextDouble() - 0.5f) * 0.002f;
+        return pts;
+    }
+
+    static List<Vector3> RandomSphere(Random rng, int n)
+    {
+        var pts = new List<Vector3>();
+        for (int i = 0; i < n; i++)
+        {
+            double th = rng.NextDouble() * Math.PI * 2, ph = Math.Acos(2 * rng.NextDouble() - 1);
+            float r = 2f + (float)rng.NextDouble() * 0.01f;
+            pts.Add(new Vector3(
+                r * (float)(Math.Sin(ph) * Math.Cos(th)),
+                r * (float)(Math.Sin(ph) * Math.Sin(th)),
+                r * (float)Math.Cos(ph)));
+        }
+        return pts;
+    }
+
+    static List<Vector3> NoisyBox(Random rng, int n)
+    {
+        var pts = new List<Vector3>();
+        for (int i = 0; i < n; i++)
+        {
+            int face = rng.Next(6);
+            float u = (float)rng.NextDouble() * 2 - 1, v = (float)rng.NextDouble() * 2 - 1;
+            Vector3 p = face switch
+            {
+                0 => new Vector3(1, u, v), 1 => new Vector3(-1, u, v),
+                2 => new Vector3(u, 1, v), 3 => new Vector3(u, -1, v),
+                _ => new Vector3(u, v, face == 4 ? 1 : -1),
+            };
+            pts.Add(p * 1.5f);
+        }
+        return pts;
+    }
+}

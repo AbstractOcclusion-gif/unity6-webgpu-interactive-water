@@ -22,9 +22,11 @@
 #pragma kernel ClearDensity
 #pragma kernel RasterizeDensity
 
-// Ocean-only: adds the FFT whitecap cascade as a second spawn source (breaking-crest foam). Off for
-// pools/bounded bodies, so the cascade texture is never declared or bound on those dispatches.
-#pragma multi_compile _ OCEAN_CREST_FOAM
+// Ocean-only: FFT placement glue - SurfaceWorldY sums the spatial cascades so floating foam and the
+// density splat sit on the real swell. The variant also gates AMBIENT spawning off (open-sea sprite
+// foam reads as flat billboards; the surface shader's whitecaps own that look - only the surf lip
+// throws). Off for pools/bounded bodies, so the cascade texture is never declared or bound there.
+#pragma multi_compile _ OCEAN_FFT_GLUE
 
 #include "WaterShared.hlsl"     // OCEAN_FFT_* cascade layout (shared with generation/sampling)
 #include "WaterExclusion.hlsl"  // dry-interior volumes: particles inside are killed (uniforms set per dispatch)
@@ -270,7 +272,7 @@ static const float FOAM_NOISE_DRIFT   = 0.05;  // field drift speed (keeps clump
 static const float FOAM_CURL_SPEED    = 0.06;  // world units/sec of swirl
 static const float FOAM_CLUMP_SPEED   = 0.04;  // world units/sec of attraction
 
-#ifdef OCEAN_CREST_FOAM
+#ifdef OCEAN_FFT_GLUE
 // FFT spatial cascade (.y = height) + amplitude, so the density splat can place foam on the
 // real swell height the way FoamParticles.shader's vertex glue does with LargeBodyWaveHeight.
 Texture2DArray<float4> _OceanFftSpatial;
@@ -278,34 +280,12 @@ SamplerState sampler_OceanFftSpatial;
 float _OceanFftAmplitude;
 #endif
 
-#ifdef OCEAN_CREST_FOAM
-// Ocean whitecap cascade (bound per-frame from WaterFoamParticles.cs; same array the surface samples).
-Texture2DArray<float4> _OceanFftNormal;
-SamplerState sampler_OceanFftNormal;
+#ifdef OCEAN_FFT_GLUE
+// FFT cascade layout (bound per-frame from WaterFoamParticles.cs; same values the surface uses).
+// Read by SurfaceWorldY's cascade sum - swell placement is all this keyword drives now.
 float4 _OceanFftDomainSizes;   // metres per cascade
 float  _OceanFftCascadeCount;  // active cascades (<= 4)
-float2 _CrestRoll;             // world xz drift (m/s) along the wave direction: foam rolls with the crest
-// Weight of the FFT whitecap field as an ambient SPAWN source (crestFoamSpawn on the component).
-// 0 = breaking crests spawn no particles at all, leaving the whitecap look to the surface shader,
-// which covers the whole ocean while a fixed pool can only ever dust a fraction of it. The cascade
-// stays bound either way: the height glue and the crest roll below still read it.
-float _CrestFoamSpawn;
 // OCEAN_FFT_MAX_CASCADES comes from WaterShared.hlsl (via the include block above).
-
-// Sum the accumulated whitecap foam (.w) across cascades at a world xz. No distance fade here (the
-// spawn window is already near-camera): we want to emit wherever the surface is actually breaking.
-float OceanCrestFoamAt(float2 worldXZ)
-{
-    float foam = 0.0;
-    for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
-    {
-        float active = (c < (int)_OceanFftCascadeCount) ? 1.0 : 0.0;
-        float slice = min((float)c, _OceanFftCascadeCount - 1.0);
-        float2 uv = worldXZ / max(_OceanFftDomainSizes[c], 1e-3);
-        foam += active * _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), 0).w;
-    }
-    return saturate(foam);
-}
 #endif
 
 // ---------------------------------------------------------------- helpers
@@ -450,7 +430,7 @@ float SurfaceWorldY(float3 worldPos, float2 simNorm)
     float shoreInfluence;
     float2 toShoreUnused;
     SurfWaveSample surfGlue = SurfSampleAt(worldPos.xz, shoreDepth, shoreInfluence, toShoreUnused);
-#ifdef OCEAN_CREST_FOAM
+#ifdef OCEAN_FFT_GLUE
     float height = 0.0;
     for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
     {
@@ -501,14 +481,6 @@ void Spawn(uint3 id : SV_DispatchThreadID)
     int2 texel = int2(id.xy);
     float3 texelWorld = TexelToWorld(texel);
     float foam = FoamTex.Load(int3(texel, 0));
-#ifdef OCEAN_CREST_FOAM
-    // Add breaking-crest foam from the FFT cascade, sampled at this texel's world position. max() so a
-    // texel that is both interaction-foamy and on a crest still emits at the stronger of the two.
-    // Uniform branch: at weight 0 the cascade fetch is skipped entirely, so a body can drop
-    // whitecap-driven particles without losing its wake, interaction or shore-surf spawns.
-    if (_CrestFoamSpawn > 0.0)
-        foam = max(foam, OceanCrestFoamAt(texelWorld.xz) * _CrestFoamSpawn);
-#endif
     float excess = foam - _SpawnThreshold;
     if (excess <= 0.0) return;
 
@@ -568,6 +540,15 @@ void Spawn(uint3 id : SV_DispatchThreadID)
     float2 surfToShore = float2(0.0, 0.0);
     if (_ShoreFoamActive > 0.5)
         surfLip = SurfLipAt(texelWorld.xz, surfToShore);
+
+#ifdef OCEAN_FFT_GLUE
+    // Ocean bodies spawn NO ambient turbulence/wake foam: at open-sea scale the sprites read as
+    // flat billboards ("jumping fish") and the surface shader's whitecaps already own that look.
+    // Only the breaking surf lip's ballistic jet still throws from this kernel. Placed post-roll
+    // so the lip test keeps its evaluated-only-for-spawns cost; an unwritten claimed slot stays
+    // dead, so bailing here never strands a live particle.
+    if (surfLip <= SURF_SPRAY_MIN_LIP) return;
+#endif
 
     bool spray = r0 < _SprayChance;
     // The breaking lip always throws: lip spawns are ballistic jet, never floating foam.
@@ -794,14 +775,6 @@ void Update(uint3 id : SV_DispatchThreadID)
         float4 info = SampleSim(simNorm);
         float3 driven = mul(VolumeRot(), float3(info.b, 0.0, info.a)) * _FlowDrift
                       + float3(_WindDrift.x, 0.0, _WindDrift.y);
-#ifdef OCEAN_CREST_FOAM
-        // Roll the whitecap foam forward along the wave-travel direction so it moves WITH the
-        // breaking crest - but ONLY while the particle is riding an active whitecap. Applied
-        // as a constant field (v1) this conveyor-belted the ENTIRE floating population along
-        // the swell heading ("all the foam drifts off", worst near shore); gated by the local
-        // whitecap amount, foam rolls with the crest that made it, then parks and decays.
-        driven += float3(_CrestRoll.x, 0.0, _CrestRoll.y) * OceanCrestFoamAt(particle.worldPos.xz);
-#endif
         // Curl + clumping (KWS): a divergence-free swirl (gradient rotated 90 degrees) keeps
         // floating foam alive, and a gentle pull UP the noise gradient gathers it into
         // streaks/patches instead of a uniform sprinkle. The field drifts slowly so clumps

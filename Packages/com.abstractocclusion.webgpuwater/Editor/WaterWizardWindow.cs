@@ -129,6 +129,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         [SerializeField] bool _boatDryInterior = true;
         [SerializeField] Mesh _boatDryInteriorMesh;
         [SerializeField] bool _boatDryInteriorAuto;
+        [SerializeField] Mesh _boatInteractionMesh;
+
+        // Concavity of the assigned dry-interior mesh, and the mesh it was measured from. Not
+        // serialized: a domain reload re-measures rather than trusting a stale number.
+        [System.NonSerialized] Mesh _boatConcavityMeasured;
+        [System.NonSerialized] float _boatDryInteriorConcavity;
 
         [SerializeField] bool _createExpanded = true;
         [SerializeField] bool _objectsExpanded = true;
@@ -594,24 +600,41 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 _boatDryInterior);
             using (new EditorGUI.DisabledScope(!_boatDryInterior || _boatHullModel == null))
                 _boatDryInteriorMesh = (Mesh)EditorGUILayout.ObjectField(
-                    new GUIContent("Dry interior mesh", "Optional CONVEX proxy mesh, authored in the hull model's " +
-                                                        "own space, to carve the dry interior by SHAPE instead of a " +
-                                                        "box - a curved hull cuts the water along its real plating. " +
-                                                        "The build saves a normalised copy into the Generated folder " +
-                                                        "(the carve contract needs a -0.5..0.5 span; assigning a raw " +
-                                                        "mesh by hand carves at the wrong scale). Convex only: the " +
-                                                        "carve keeps one front and one back face per pixel. Needs " +
-                                                        "the WaterExclusionDepthFeature on your URP renderer."),
+                    new GUIContent("Dry interior mesh", "WHICH mesh the dry interior is cut from, authored in the " +
+                                                        "hull model's own space. Leave empty to use every mesh under " +
+                                                        "the model - which on a model split into several meshes " +
+                                                        "shapes the carve around ALL of them at once, so name the " +
+                                                        "hull here when that is not what you want. The build saves a " +
+                                                        "normalised copy into the Generated folder (the carve " +
+                                                        "contract needs a -0.5..0.5 span; assigning a raw mesh by " +
+                                                        "hand carves at the wrong scale). Used AS AUTHORED unless " +
+                                                        "Convexify is ticked, and the carve keeps one front and one " +
+                                                        "back face per pixel - so an as-authored mesh must be convex " +
+                                                        "or water leaks through its cavities. Needs the " +
+                                                        "WaterExclusionDepthFeature on your URP renderer."),
                     _boatDryInteriorMesh, typeof(Mesh), allowSceneObjects: false);
-            using (new EditorGUI.DisabledScope(!_boatDryInterior || _boatHullModel == null || _boatDryInteriorMesh != null))
+            using (new EditorGUI.DisabledScope(!_boatDryInterior || _boatHullModel == null))
                 _boatDryInteriorAuto = EditorGUILayout.Toggle(
-                    new GUIContent("Generate convex proxy", "No proxy mesh at hand: build a convex approximation " +
-                                                            "of the hull model's own vertices at create time - a " +
-                                                            "cabin-less hull is already nearly convex, so the " +
-                                                            "approximation IS the hull shape. An assigned mesh " +
-                                                            "above always wins. Falls back to the fitted box " +
-                                                            "(with a console warning) on degenerate geometry."),
+                    new GUIContent("Convexify", "Build a convex approximation at create time, which is what the " +
+                                                "carve needs. With a mesh named above it hulls THAT mesh alone; " +
+                                                "with none it hulls the whole model. A cabin-less hull is already " +
+                                                "nearly convex, so the approximation IS the hull shape - and a " +
+                                                "hull with a cockpit NEEDS this, or the cavity leaks water. Falls " +
+                                                "back with a console warning if the geometry is too degenerate to " +
+                                                "hull."),
                     _boatDryInteriorAuto);
+            using (new EditorGUI.DisabledScope(_boatHullModel == null))
+                _boatInteractionMesh = (Mesh)EditorGUILayout.ObjectField(
+                    new GUIContent("Interaction mesh", "WHICH of the model's meshes drives the water " +
+                                                       "interaction (submersion bounds, wake emission, " +
+                                                       "refract-shadow silhouette). Leave empty to " +
+                                                       "auto-resolve the first renderer found under the " +
+                                                       "model - fine for a single-mesh hull; on a model " +
+                                                       "split into several meshes name the HULL here so " +
+                                                       "a cabin or mast does not drive the water."),
+                    _boatInteractionMesh, typeof(Mesh), allowSceneObjects: false);
+
+            DrawDryInteriorConvexityWarning();
 
             if (GUILayout.Button("Create Boat", GUILayout.Height(26f)))
             {
@@ -619,13 +642,42 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 int undoGroup = Undo.GetCurrentGroup();
                 GameObject boat = CreateBoat(_boatHullModel, withSplash: _splash, withDryInterior: _boatDryInterior,
                                              modelForward: _boatModelForward, dryInteriorMesh: _boatDryInteriorMesh,
-                                             dryInteriorConvexAuto: _boatDryInteriorAuto);
+                                             dryInteriorConvexAuto: _boatDryInteriorAuto,
+                                             interactionMesh: _boatInteractionMesh);
                 if (boat == null) return;
                 if (_boatChaseCamera) FocusSceneOnBoat(boat);
                 Selection.activeObject = boat;
                 Undo.CollapseUndoOperations(undoGroup);
                 Debug.Log("[WebGpuWater] Boat created. Press Play - drive with W/S (throttle) and A/D (steer).");
             }
+        }
+
+        // A mesh used AS AUTHORED must be convex, because the carve keeps one front and one back face
+        // per pixel: a cavity ends the dry span early and water leaks into it. Measured rather than
+        // asserted, so the message can say how deep the cavity is - and it names the toggle that fixes it.
+        void DrawDryInteriorConvexityWarning()
+        {
+            if (!_boatDryInterior || _boatDryInteriorMesh == null || _boatDryInteriorAuto) return;
+
+            RefreshDryInteriorConcavity();
+            if (_boatDryInteriorConcavity <= 0f) return;
+
+            EditorGUILayout.HelpBox(
+                $"'{_boatDryInteriorMesh.name}' is CONCAVE - its deepest cavity is {_boatDryInteriorConcavity:0.###} " +
+                "units below its own convex envelope. The dry-interior carve keeps one front and one back face " +
+                "per pixel, so a cavity ends the dry span early and water leaks into it.\n\n" +
+                "Tick Convexify above to carve with the convex hull of this mesh instead.", MessageType.Warning);
+        }
+
+        // Measuring walks every vertex against the hull's faces, so it is cached against the mesh it
+        // was measured from rather than repeated on every repaint of the window.
+        void RefreshDryInteriorConcavity()
+        {
+            if (_boatDryInteriorMesh == _boatConcavityMeasured) return;
+
+            _boatConcavityMeasured = _boatDryInteriorMesh;
+            _boatDryInteriorConcavity =
+                WaterBuildKit.TryMeasureConcavity(_boatDryInteriorMesh, out float deepest) ? deepest : 0f;
         }
 
         void DrawObjectSlots()

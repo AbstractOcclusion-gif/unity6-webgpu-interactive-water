@@ -38,7 +38,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         SerializedProperty _sprayMaterial, _sprayLifeRange, _spraySizeRange, _sprayFlipbookGrid, _sprayFlipbookFps;
         SerializedProperty _depositLifeRange, _depositSizeRange;
         SerializedProperty _gravity, _flowDrift, _windDriftSpeed, _drag;
-        SerializedProperty _crestRollSpeed, _crestFoamSpawn, _flipbookGrid, _flipbookFps;
+        SerializedProperty _flipbookGrid, _flipbookFps;
 
         // Profile-driven state, refreshed each GUI pass: driven fields are DISABLED (not
         // just warned about) so users can't type into values the profile overwrites next frame.
@@ -51,7 +51,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         bool _dropletExpanded = true;
         bool _landedExpanded;
         bool _ambientSourceExpanded = true;
-        bool _crestSourceExpanded;
         bool _burstSourceExpanded;
 
         void OnEnable()
@@ -84,8 +83,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             _flowDrift = serializedObject.FindProperty("flowDrift");
             _windDriftSpeed = serializedObject.FindProperty("windDriftSpeed");
             _drag = serializedObject.FindProperty("drag");
-            _crestRollSpeed = serializedObject.FindProperty("crestRollSpeed");
-            _crestFoamSpawn = serializedObject.FindProperty("crestFoamSpawn");
             _flipbookGrid = serializedObject.FindProperty("flipbookGrid");
             _flipbookFps = serializedObject.FindProperty("flipbookFps");
         }
@@ -116,8 +113,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             _ambientSourceExpanded = WaterEditorUI.Section("Source - Ambient Turbulence",
                 _ambientSourceExpanded, DrawAmbientSource);
-            _crestSourceExpanded = WaterEditorUI.Section("Source - Ocean Crests",
-                _crestSourceExpanded, DrawCrestSource);
             _burstSourceExpanded = WaterEditorUI.Section("Source - Splash & Pump Bursts",
                 _burstSourceExpanded, DrawBurstSource);
 
@@ -320,8 +315,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             EditorGUILayout.HelpBox("The always-on foam the water makes for itself: wakes, interactor rims " +
                 "and shore whitewash raise a foam mask, and these decide how much of it becomes particles.\n\n" +
-                "ONLY this source reads them. Ocean crests and splash / pump bursts spawn regardless, so " +
-                "zeroing Spawn Rate does NOT stop a boat spraying.", MessageType.None);
+                "ONLY this source reads them. Splash / pump bursts spawn regardless, so zeroing Spawn Rate " +
+                "does NOT stop a boat spraying. On FFT ocean bodies this ambient source is fully OFF " +
+                "(the surface shader owns the whitecap look) - only the breaking surf lip throws.", MessageType.None);
 
             using (new EditorGUI.DisabledScope(_ambientDriven))
             {
@@ -346,18 +342,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 EditorGUILayout.PropertyField(_spraySizeRange, new GUIContent("Mist Size",
                     "Size of ambient mist droplets only, for the same reason."));
             }
-        }
-
-        void DrawCrestSource()
-        {
-            EditorGUILayout.HelpBox("Breaking ocean crests, from the FFT whitecap channel. Ocean bodies " +
-                "only - ignored on pools. Never overridden by a Foam Profile.", MessageType.None);
-
-            EditorGUILayout.PropertyField(_crestFoamSpawn, new GUIContent("Crest Foam Spawn",
-                "0 = crests spawn no particles at all and the surface shader keeps the whitecap look; " +
-                "1 = as before. Wakes, interactions and shore surf are unaffected either way."));
-            EditorGUILayout.PropertyField(_crestRollSpeed, new GUIContent("Crest Roll Speed",
-                "How fast whitecap foam rolls forward along the wave-travel direction. 0 = it sits still."));
         }
 
         void DrawBurstSource()

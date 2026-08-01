@@ -1,6 +1,8 @@
 // WebGpuWater - marker for objects that interact with the water (Unity 6 / URP).
-// Add this to any Renderer that should disturb the surface. It self-registers in a
-// static list, so detection is automatic: no manual wiring, no per-frame Find.
+// Add this to any object that should disturb the surface - its Renderer may live on a
+// CHILD (a boat keeps physics on a bare root with the visuals as children). It
+// self-registers in a static list, so detection is automatic: no manual wiring, no
+// per-frame Find.
 //
 // Two interaction modes, chosen on the WaterVolume (objectInteraction):
 // - MouseLikeDrops (default): this component emits analytic cosine drops CLONED from
@@ -14,7 +16,6 @@ using UnityEngine;
 
 namespace AbstractOcclusion.WebGpuWater
 {
-    [RequireComponent(typeof(Renderer))]
     public class WaterInteractable : MonoBehaviour
     {
         static readonly List<WaterInteractable> _active = new List<WaterInteractable>();
@@ -59,15 +60,41 @@ namespace AbstractOcclusion.WebGpuWater
         float _prevRelDepth;
         bool _tracking;
 
+        [Tooltip("Which renderer defines this object's water footprint (bounds for submersion, " +
+                 "wake emission, refract-shadow silhouette). Leave empty to auto-resolve: a " +
+                 "Renderer on this object, else the first one found in children - fine for a " +
+                 "single-mesh object. On a rig with SEVERAL meshes (hull + cabin + mast), set " +
+                 "the HULL here so the right mesh drives the water.")]
+        [SerializeField] internal Renderer rendererOverride; // internal: the boat creator wires it at build time
+
         public Renderer Renderer { get; private set; }
+
+        // Override first; then root, then children: rigs like the boat keep physics on a bare
+        // root and the visuals on child objects, so requiring a Renderer HERE (the old
+        // RequireComponent gate) made AddComponent fail on exactly the objects this component
+        // is built for - and on multi-mesh rigs the first child found may be the wrong mesh,
+        // which is what the explicit override is for.
+        void ResolveRenderer()
+        {
+            if (rendererOverride != null) { Renderer = rendererOverride; return; }
+            if (Renderer == null) Renderer = GetComponent<Renderer>();
+            if (Renderer == null) Renderer = GetComponentInChildren<Renderer>();
+        }
+
+        // Editor field edits re-resolve immediately (incl. clearing the override in play mode).
+        void OnValidate()
+        {
+            Renderer = null;
+            ResolveRenderer();
+        }
 
         void Awake()
         {
-            Renderer = GetComponent<Renderer>();
+            ResolveRenderer();
         }
         void OnEnable()
         {
-            if (Renderer == null) Renderer = GetComponent<Renderer>();
+            ResolveRenderer();
             if (!_active.Contains(this)) _active.Add(this);
         }
         void OnDisable() { _active.Remove(this); }

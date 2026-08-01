@@ -25,14 +25,14 @@ MonoBehaviour:
     spawnThreshold: 0.404
     spawnRate: 30
     maxSpawnPerFrame: 256
-    sprayChance: 0
-    sprayLaunchSpeed: 0
+    sprayChance: 0.686
+    sprayLaunchSpeed: 1.25
     lifeRange: {x: 1, y: 1.5}
     sizeRange: {x: 0.1, y: 0.2}
     spawnMaxDistance: 400
     sprayLifeRange: {x: 1, y: 2}
-    spraySizeRange: {x: 0.1, y: 0.2}
-    depositLifeRange: {x: 1, y: 1.2}
+    spraySizeRange: {x: 0.03, y: 0.06}
+    depositLifeRange: {x: 0.8, y: 1}
     depositSizeRange: {x: 0.1, y: 0.15}
   veil:
     drive: 1
@@ -47,10 +47,10 @@ MonoBehaviour:
     maxParticlesPerBurst: 18
     upwardBias: 1.06
     outwardSpread: 0.43
-    dropletSize: 0.1
+    dropletSize: 0.15
     lifetime: {x: 1, y: 1.5}
     crownMinStrength: 0
-    crownBaseSize: 0.3
+    crownBaseSize: 0.4
     crownLifetime: 0.2
     crownTint: {r: 1, g: 1, b: 1, a: 1}
-    crownOpacity: 0.531
+    crownOpacity: 0.471

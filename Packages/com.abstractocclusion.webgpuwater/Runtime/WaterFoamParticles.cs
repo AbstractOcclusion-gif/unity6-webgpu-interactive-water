@@ -181,11 +181,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FlowDrift = Shader.PropertyToID("_FlowDrift");
         static readonly int ID_WindDrift = Shader.PropertyToID("_WindDrift");
         static readonly int ID_Drag = Shader.PropertyToID("_Drag");
-        static readonly int ID_OceanFftNormal = WaterShaderProps.OceanFftNormal;
         static readonly int ID_OceanFftDomainSizes = WaterShaderProps.OceanFftDomainSizes;
         static readonly int ID_OceanFftCascadeCount = WaterShaderProps.OceanFftCascadeCount;
-        static readonly int ID_CrestRoll = Shader.PropertyToID("_CrestRoll");
-        static readonly int ID_CrestFoamSpawn = Shader.PropertyToID("_CrestFoamSpawn");
         static readonly int ID_DrawKind = Shader.PropertyToID("_DrawKind");
         static readonly int ID_SprayLifeMin = Shader.PropertyToID("_SprayLifeMin");
         static readonly int ID_SprayLifeMax = Shader.PropertyToID("_SprayLifeMax");
@@ -223,8 +220,9 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_BurstRequestCount = Shader.PropertyToID("_BurstRequestCount");
         static readonly int ID_FoamTime = Shader.PropertyToID("_FoamTime");
 
-        // Local compute keyword: turns on the FFT-crest spawn source for the ocean body only.
-        const string KeywordOceanCrest = "OCEAN_CREST_FOAM";
+        // Local compute keyword, ocean bodies only: FFT placement glue (particles ride the swell) and
+        // the ambient spawn gate (open-sea ambient sprite foam is OFF; only the surf lip throws).
+        const string KeywordOceanFftGlue = "OCEAN_FFT_GLUE";
 
         [Tooltip("Master switch for this foam-particle system: off skips ALL particles - simulation, " +
                  "spawning, splash bursts and drawing (no compute dispatch). Ambient foam and event " +
@@ -319,17 +317,7 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("How quickly foam velocity relaxes to the driven flow (1/sec).")]
         [Range(0f, 10f)] [SerializeField] internal float drag = 2f;
 
-        [Header("Wave particles (ocean crest only)")]
-        [Tooltip("How fast whitecap foam rolls forward along the wave-travel direction (world units/sec). " +
-                 "0 = foam sits still. Ocean bodies only; ignored on pools.")]
-        [Range(0f, 4f)] [SerializeField] internal float crestRollSpeed = 0.6f;
-        [Tooltip("How strongly the ocean's breaking-crest (FFT whitecap) field drives ambient " +
-                 "particle spawning. 1 = whitecaps spawn foam particles as they always have. " +
-                 "0 = they spawn none, leaving the whitecap look to the surface shader (which " +
-                 "covers the whole ocean, while a fixed particle pool can only ever dust a " +
-                 "fraction of it); wakes, interactions and shore surf keep spawning normally. " +
-                 "Ocean bodies only; ignored on pools, and never overridden by a Foam Profile.")]
-        [Range(0f, 1f)] [SerializeField] internal float crestFoamSpawn = 1f;
+        [Header("Foam flipbook")]
         [Tooltip("Foam sprite atlas layout (columns, rows). (1,1) = a plain foam texture (no flipbook); " +
                  "(2,2) = a 4-frame sheet, etc. Optional, like the surface foam's flipbook grid.")]
         [SerializeField] internal Vector2Int flipbookGrid = new Vector2Int(2, 2);
@@ -635,26 +623,21 @@ namespace AbstractOcclusion.WebGpuWater
             cs.SetTexture(_kSpawn, ID_Sim, volume.SimStateTexture);
             cs.SetTexture(_kSpawn, ID_FoamTex, volume.FoamMaskTexture);
 
-            // Ocean crest source: enable the keyword + bind the cascade whitecap array so the spawn
-            // kernel can emit foam on breaking FFT crests. Pools leave it off (no cascade binding).
-            // The spatial cascade is part of the gate: the OCEAN_CREST_FOAM variant's density glue
-            // reads _OceanFftSpatial, and dispatching that variant with the texture missing is an
-            // unbound-resource error on WebGPU (the old Sim fallback bound a texture the variant
-            // never reads).
-            bool oceanCrest = volume.OceanFftActive && volume.OceanFftNormalTexture != null
-                              && volume.OceanFftSpatialTexture != null;
-            if (oceanCrest)
+            // Ocean FFT glue: enable the keyword + bind the cascade layout so the kernels place
+            // particles on the real swell (SurfaceWorldY). The variant also gates ambient spawning
+            // OFF on ocean bodies - only the surf lip throws. Pools leave it off (no cascade
+            // binding); the spatial-texture check is part of the gate because dispatching the
+            // variant with the texture missing is an unbound-resource error on WebGPU.
+            bool oceanFftGlue = volume.OceanFftActive && volume.OceanFftSpatialTexture != null;
+            if (oceanFftGlue)
             {
-                cs.EnableKeyword(KeywordOceanCrest);
-                cs.SetTexture(_kSpawn, ID_OceanFftNormal, volume.OceanFftNormalTexture);
+                cs.EnableKeyword(KeywordOceanFftGlue);
                 cs.SetVector(ID_OceanFftDomainSizes, volume.OceanFftDomainSizes);
                 cs.SetFloat(ID_OceanFftCascadeCount, volume.OceanFftCascadeCount);
-                cs.SetVector(ID_CrestRoll, CrestRollWorld()); // foam rolls along the wave direction
-                cs.SetFloat(ID_CrestFoamSpawn, crestFoamSpawn);
             }
             else
             {
-                cs.DisableKeyword(KeywordOceanCrest);
+                cs.DisableKeyword(KeywordOceanFftGlue);
             }
 
             int spawnGroups = volume.SimResolution / SpawnThreadGroupSize;
@@ -680,16 +663,12 @@ namespace AbstractOcclusion.WebGpuWater
             // slot is a hard error on some backends.
             cs.SetBuffer(_kUpdate, ID_Particles, _particles);
             cs.SetTexture(_kUpdate, ID_Sim, volume.SimStateTexture);
-            // The whitecap-gated crest roll reads the cascade array in Update too (the
-            // OCEAN_CREST_FOAM variant only; the keyword state above already matches).
-            if (oceanCrest)
+            // Update places floating foam on the FFT swell (SurfaceWorldY), so the OCEAN_FFT_GLUE
+            // variant reads the spatial cascade + amplitude (a missing bind is a hard error on
+            // WebGPU). Amplitude is set here so Update reads the real swell height rather than
+            // RasterizeDensity's later value. Keyword state above already matches.
+            if (oceanFftGlue)
             {
-                cs.SetTexture(_kUpdate, ID_OceanFftNormal, volume.OceanFftNormalTexture);
-                // Update ALSO places crest foam on the FFT swell (the height/roll glue), so it reads the
-                // spatial cascade + amplitude too - not just the normal. Binding only the normal left
-                // _OceanFftSpatial unset -> "property not set" hard error on WebGPU. Amplitude is a global
-                // float (0 if unset), set here so Update reads the real swell height rather than
-                // RasterizeDensity's later value. Mirrors the RasterizeDensity binds below.
                 cs.SetTexture(_kUpdate, ID_OceanFftSpatial, volume.OceanFftSpatialTexture);
                 cs.SetFloat(ID_OceanFftAmplitude, volume.LargeWaveAmplitudeEffective);
             }
@@ -740,9 +719,8 @@ namespace AbstractOcclusion.WebGpuWater
             cs.SetBuffer(_kRasterizeDensity, ID_Particles, _particles);
             cs.SetBuffer(_kRasterizeDensity, ID_DensityBuffer, _density);
             cs.SetBuffer(_kRasterizeDensity, ID_DensityDepth, _densityDepth);
-            bool oceanCrest = volume.OceanFftActive && volume.OceanFftNormalTexture != null
-                              && volume.OceanFftSpatialTexture != null;
-            if (oceanCrest)
+            bool oceanFftGlue = volume.OceanFftActive && volume.OceanFftSpatialTexture != null;
+            if (oceanFftGlue)
             {
                 cs.SetTexture(_kRasterizeDensity, ID_OceanFftSpatial, volume.OceanFftSpatialTexture);
                 cs.SetFloat(ID_OceanFftAmplitude, volume.LargeWaveAmplitudeEffective);
@@ -825,16 +803,6 @@ namespace AbstractOcclusion.WebGpuWater
             float radians = volume.LargeWaveHeadingRad;
             Vector3 local = new Vector3(Mathf.Cos(radians), 0f, Mathf.Sin(radians));
             Vector3 world = volume.transform.rotation * local * windDriftSpeed;
-            return new Vector2(world.x, world.z);
-        }
-
-        // Same heading as the wind drift, scaled by the crest-roll speed: whitecap foam is carried along
-        // the wave-travel direction so it rolls forward with the breaking crest.
-        Vector2 CrestRollWorld()
-        {
-            float radians = volume.LargeWaveHeadingRad;
-            Vector3 local = new Vector3(Mathf.Cos(radians), 0f, Mathf.Sin(radians));
-            Vector3 world = volume.transform.rotation * local * crestRollSpeed;
             return new Vector2(world.x, world.z);
         }
 

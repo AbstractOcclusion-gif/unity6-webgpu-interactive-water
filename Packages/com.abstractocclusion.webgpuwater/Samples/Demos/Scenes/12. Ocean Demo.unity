@@ -6348,8 +6348,6 @@ MonoBehaviour:
   flowDrift: 0.25
   windDriftSpeed: 0.02
   drag: 2
-  crestRollSpeed: 0.6
-  crestFoamSpawn: 1
   flipbookGrid: {x: 2, y: 2}
   flipbookFps: 0
 --- !u!1 &1664045773
@@ -6654,7 +6652,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &1868404840
 MonoBehaviour:
   m_ObjectHideFlags: 0

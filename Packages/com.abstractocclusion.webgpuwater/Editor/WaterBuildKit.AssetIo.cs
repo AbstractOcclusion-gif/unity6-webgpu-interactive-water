@@ -10,11 +10,23 @@ namespace AbstractOcclusion.WebGpuWater.Editor
     internal static partial class WaterBuildKit
     {
 
+        // Overwrite-in-place via CopySerialized so scene references keep their GUID/fileID - but
+        // that copy lands IN MEMORY only, and nothing marked the asset dirty: the next asset
+        // refresh silently reloaded the STALE file and the "regenerated" mesh reverted to the old
+        // one (2026-08-01: a rebuilt boat hull kept carving with the broken morning asset while
+        // the preview showed the new vertex counts). SetDirty + SaveAssets persists immediately.
         internal static Mesh SaveAsset(Mesh m, string path)
         {
             var existing = AssetDatabase.LoadAssetAtPath<Mesh>(path);
-            if (existing != null) { EditorUtility.CopySerialized(m, existing); return existing; }
+            if (existing != null)
+            {
+                EditorUtility.CopySerialized(m, existing);
+                EditorUtility.SetDirty(existing);
+                AssetDatabase.SaveAssets();
+                return existing;
+            }
             AssetDatabase.CreateAsset(m, path);
+            AssetDatabase.SaveAssets();
             return m;
         }
 
@@ -73,11 +85,19 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             return m;
         }
 
+        // Same in-place idiom as SaveAsset, with the same persistence requirement.
         internal static Cubemap SaveCubemap(Cubemap c, string path)
         {
             var existing = AssetDatabase.LoadAssetAtPath<Cubemap>(path);
-            if (existing != null) { EditorUtility.CopySerialized(c, existing); return existing; }
+            if (existing != null)
+            {
+                EditorUtility.CopySerialized(c, existing);
+                EditorUtility.SetDirty(existing);
+                AssetDatabase.SaveAssets();
+                return existing;
+            }
             AssetDatabase.CreateAsset(c, path);
+            AssetDatabase.SaveAssets();
             return c;
         }
 

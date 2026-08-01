@@ -347,6 +347,7 @@ MonoBehaviour:
   windDriftSpeed: 0.02
   drag: 0.46
   crestRollSpeed: 0.6
+  crestFoamSpawn: 1
   flipbookGrid: {x: 2, y: 2}
   flipbookFps: 0
 --- !u!114 &78187644
@@ -403,6 +404,7 @@ MonoBehaviour:
     surfLean: 0.35
     surfAmbientFade: 0.8
     surfSwashAmplitude: 1
+    surfSwashMaxSlopeDegrees: 35
     surfFoamGain: 1.2
     surfWaterlineFoam: 0.5
     surfSmallWaveFoam: 0
@@ -462,7 +464,6 @@ MonoBehaviour:
     surfSwashFoam: 0.8
     surfSwashFoamWidth: 0.25
     surfSwashFoamDissolve: 0.6
-    surfSwashStreak: 0.5
     surfSwashDepositGain: 0
   simCompute: {fileID: 7200000, guid: a60aa7d5723d3024db489530955aad46, type: 3}
   oceanFftCompute: {fileID: 0}
@@ -475,7 +476,7 @@ MonoBehaviour:
   sun: {fileID: 381668470}
   tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
   sky: {fileID: 8900000, guid: 90846655472c1354b8fb1a3cb2a47920, type: 2}
-  foamPatternTexture: {fileID: 2800000, guid: 74ed02889dbed0e4096685ebafa011b6, type: 3}
+  foamPatternTexture: {fileID: 2800000, guid: 0df415d28a3d4b4449f218789bea2891, type: 3}
   foamPatternGrid: {x: 4, y: 4}
   foamPatternFps: 10
   foamReliefStrength: 1
@@ -515,24 +516,27 @@ MonoBehaviour:
     foam: 1
     foamGenRate: 1.33
     foamDecay: 0.9853
-    foamDecayResidual: 0.9135
-    foamDecayRate: 0.26
-    foamSpread: 0.833
+    foamDecayResidual: 0.9912
+    foamDecayRate: 0.95
+    wetnessMemory: 0
+    wetnessDryTime: 3
+    foamSpread: 0.95
     foamGenThreshold: 0.311
     foamMinWaveHeight: 0.0636
-    foamAdvect: 1.2
+    foamAdvect: 0.49
     foamFromSpeed: 10.52
     foamFromCurvature: 30
-    foamDeposit: 0.164
-    foamBreakStrength: 0
-    foamBreakRange: 0.1
-    foamCrestBias: 0
+    foamDeposit: 0.544
+    foamBreakStrength: 0.421
+    foamBreakRange: 4.34
+    foamCrestBias: 0.554
+    foamHeadroom: 0
     foamWakeStrength: 0
     foamWakeRadiusScale: 1.5
     foamColor: {r: 1, g: 1, b: 1, a: 1}
-    foamPatternSize: 1
+    foamPatternSize: 0.5
     foamStrength: 0.85
-    foamFeather: 0.341
+    foamFeather: 0.426
     foamCoreCut: 0.301
     foamBorderWidth: 0
     foamContactDepth: 0
@@ -556,6 +560,7 @@ MonoBehaviour:
     largeWaveChoppiness: 0
     swellHeight: 0
     swellWavelength: 140
+    oceanWindTurbulence: 0.25
     unboundedOcean: 0
     edgeFeatherMeters: 10
     clipmapGridResolution: 64
@@ -567,6 +572,7 @@ MonoBehaviour:
     largeGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
     largeGodRayDensity: 0
     largeGodRayFromAir: 0
+    largeGodRayLightScatter: 0
     largeGodRaySteps: 24
     largeGodRayAnisotropy: 0.6
     largeGodRayExtinction: 0
@@ -576,6 +582,7 @@ MonoBehaviour:
     largeCausticTimeScale: 0.5
     largeCausticRippleScale: 3
     largeCausticRippleStrength: 1
+    largeCausticProjectionSoften: 0
     oceanFoamWindThreshold: 4
     oceanFoamCoverage: 1
     oceanFoamStrength: 1
@@ -583,6 +590,13 @@ MonoBehaviour:
     oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
     oceanFoamTileSize: 8
     oceanFoamFeather: 0.25
+    oceanFoamStreakStretch: 3.5
+    oceanFoamTextureInfluence: 0.35
+    oceanFoamCrestAnisotropy: 1
+    oceanFoamCrestGate: 0.8
+    oceanFoamFaceBias: 0.6
+    oceanFoamDepthTint: 0.45
+    oceanFoamCascadeMix: 1
     oceanFoamDeposit: 0.85
     oceanFoamDrift: 0.08
     oceanFoamMaxBuildup: 1
@@ -627,6 +641,7 @@ MonoBehaviour:
     planarExcludeLayers:
       serializedVersion: 2
       m_Bits: 16
+    planarClipDepth: 0
     reflectionStrength: 1
     envReflectionIntensity: 1
     fresnelFloor: 0
@@ -645,11 +660,14 @@ MonoBehaviour:
     ssrMaxSteps: 24
     ssrThickness: 0.2
     refractionDistortion: 0.05
+    refractionStrength: 1
   detailNormalSettings:
     texture: {fileID: 2800000, guid: bfdc4d9124f106c4f97bb95ef3618340, type: 3}
     strength: 0.1
     tileMeters: 5
     scrollSpeed: 0.25
+    windResponse: 1
+    crestBoost: 0.5
   _legacyFoam: 1
   _legacyFoamGenRate: 0.6
   _legacyFoamDecay: 0.96
@@ -668,7 +686,7 @@ MonoBehaviour:
     waveSpeed: 1.5
     damping: 0.95
     stepsPerFrame: 1
-    rippleStrength: 0.04
+    rippleStrength: 0.06
     rippleRadius: 0.05
     rippleChoppiness: 0
     seedRipplesOnStart: 1
@@ -680,6 +698,7 @@ MonoBehaviour:
     fresnelFloor: 0
     reflectionStrength: 0.5
     mirrorWaterBlend: 0.926
+    mirrorShafts: 0
     foamSilhouetteDarken: 0.6
     foamSunGlow: 0.4
     detailNormalStrength: 0.2
@@ -692,6 +711,7 @@ MonoBehaviour:
   timeScale: 1
   lightDir: {x: 0.322428, y: 0.9327649, z: -0.1612137}
   causticResolution: 512
+  causticDetail: 1
   _legacyObjectInteraction: 0
   _legacyObstacleStrength: 0.25
   _legacyObstacleDeadband: 0.0006
@@ -703,6 +723,7 @@ MonoBehaviour:
     fogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
     fogDensity: 0.3
     waterOpacity: 0.2
+    lightScatter: 0
   _legacyWaterFog: 0
   _legacyFogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
   _legacyFogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
@@ -723,6 +744,9 @@ MonoBehaviour:
     sssPinchFalloff: 1.5
   refractShadows: 0
   refractShadowSoftness: 0.5
+  refractShadowLayers:
+    serializedVersion: 2
+    m_Bits: 4294967295
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
@@ -947,6 +971,7 @@ MonoBehaviour:
   horizontalEmitSpacing: 0.02
   rippleRadiusScale: 1
   reflectsWaves: 0
+  rendererOverride: {fileID: 0}
 --- !u!54 &243094303
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -1163,6 +1188,7 @@ MonoBehaviour:
   horizontalEmitSpacing: 0.02
   rippleRadiusScale: 1
   reflectsWaves: 0
+  rendererOverride: {fileID: 0}
 --- !u!54 &244299435
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -6738,6 +6764,7 @@ MonoBehaviour:
   horizontalEmitSpacing: 0.02
   rippleRadiusScale: 1
   reflectsWaves: 0
+  rendererOverride: {fileID: 0}
 --- !u!54 &1779352940
 Rigidbody:
   m_ObjectHideFlags: 0
