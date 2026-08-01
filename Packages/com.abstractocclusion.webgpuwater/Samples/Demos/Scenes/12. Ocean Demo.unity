@@ -259,6 +259,7 @@ GameObject:
   - component: {fileID: 230721766}
   - component: {fileID: 230721765}
   - component: {fileID: 230721769}
+  - component: {fileID: 230721770}
   m_Layer: 0
   m_Name: Cube transparent
   m_TagString: Untagged
@@ -312,7 +313,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: a9d5a616b98b9824d8187cd35a80beb4, type: 2}
+  - {fileID: 2100000, guid: a15612aca3bd720418c54355ee896cc0, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -371,6 +372,18 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a8922b00576b29b4eb483c75656fa879, type: 3}
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterFogTransparent
+--- !u!114 &230721770
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 230721764}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 26fbf81571b2cba4483f971ae5c25f86, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterMembership
 --- !u!1 &234566205
 GameObject:
   m_ObjectHideFlags: 0
@@ -5699,8 +5712,8 @@ Camera:
     y: 0
     width: 1
     height: 1
-  near clip plane: 0.01
-  far clip plane: 16852.113
+  near clip plane: 0.1
+  far clip plane: 10000
   field of view: 45
   orthographic: 0
   orthographic size: 5
@@ -6164,8 +6177,8 @@ MonoBehaviour:
     refractionStrength: 1
   detailNormalSettings:
     texture: {fileID: 2800000, guid: bfdc4d9124f106c4f97bb95ef3618340, type: 3}
-    strength: 0.3
-    tileMeters: 25
+    strength: 0.5
+    tileMeters: 15
     scrollSpeed: 0.25
     windResponse: 1
     crestBoost: 0.5
@@ -6223,7 +6236,7 @@ MonoBehaviour:
     fogColor: {r: 0.06773228, g: 0.16186923, b: 0.23773581, a: 1}
     fogExtinction: {r: 0.6627451, g: 0.4041608, b: 0.1764706, a: 1}
     fogDensity: 1
-    waterOpacity: 0.2
+    waterOpacity: 0.834
     lightScatter: 0.3
   _legacyWaterFog: 0
   _legacyFogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
@@ -6233,12 +6246,12 @@ MonoBehaviour:
   volumeScatterSettings:
     volumeScatter: 1
     scatterColor: {r: 0.09725167, g: 0.42649364, b: 0.5924529, a: 1}
-    scatterIntensity: 0.2
+    scatterIntensity: 0.77
     scatterAnisotropy: 0.5
     scatterAmbientTerm: 0.6
     scatterSunTerm: 1.07
-    crestScatter: 1
-    sssIntensity: 0.2
+    crestScatter: 0
+    sssIntensity: 2.2
     sssSunFalloff: 4.62
     sssPinchMin: 0
     sssPinchMax: 0.77
@@ -6314,6 +6327,7 @@ MonoBehaviour:
   windDriftSpeed: 0.02
   drag: 2
   crestRollSpeed: 0.6
+  crestFoamSpawn: 1
   flipbookGrid: {x: 2, y: 2}
   flipbookFps: 0
 --- !u!1 &1664045773

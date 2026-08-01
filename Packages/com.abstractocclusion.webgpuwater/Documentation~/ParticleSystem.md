@@ -101,8 +101,9 @@ into foam trails.
 **How the kind is chosen:**
 
 - In the **continuous** `Spawn` kernel: a random roll against `sprayChance` decides foam vs
-  spray. A breaking surf lip or ocean crest **forces** spray. If one screen tile already
-  has too much spray, the extra is demoted back to foam (a per-tile budget).
+  spray. A breaking **surf lip** (the coastline's own breaker signal) **forces** spray. An ocean
+  crest does not: the FFT whitecap field only raises the spawn *probability*. If one screen tile
+  already has too much spray, the extra is demoted back to foam (a per-tile budget).
 - In the **event** `SpawnBurst` kernel: droplets are **always** spray — that is the point of
   a splash.
 
@@ -235,6 +236,7 @@ On `WaterFoamParticles`:
 | `spawnMaxDistance` | distance LOD — how far foam reaches before thinning |
 | `flowDrift` · `windDriftSpeed` · `drag` | how floating foam is carried and how fast it settles |
 | `crestRollSpeed` | how fast ocean whitecap foam rolls along the wave direction |
+| `crestFoamSpawn` | how strongly ocean whitecaps drive ambient spawning; **0 = breaking crests spawn nothing**, leaving the whitecap look to the surface shader (wakes, interactions and shore surf are unaffected) |
 | `capacity` | pool size (pow2, tier-capped) — the ceiling on live particles |
 
 On the splash side (`WaterSplashEmitter`, or a `WaterFoamProfile` Splash section):

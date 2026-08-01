@@ -14,6 +14,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal const string WaterSurface = Root + "WaterSurface";
         internal const string AnalyticPool = Root + "AnalyticPool";
         internal const string WaterReceiver = Root + "WaterReceiver";
+        internal const string WaterTransparent = Root + "WaterTransparent";
         internal const string WaterTerrain = Root + "WaterTerrain";
         internal const string Caustics = Root + "Caustics";
         internal const string LargeBodyCaustics = Root + "LargeBodyCaustics";

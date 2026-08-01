@@ -25,7 +25,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         SerializedProperty _sprayMaterial, _sprayLifeRange, _spraySizeRange, _sprayFlipbookGrid, _sprayFlipbookFps;
         SerializedProperty _depositLifeRange, _depositSizeRange;
         SerializedProperty _gravity, _flowDrift, _windDriftSpeed, _drag;
-        SerializedProperty _crestRollSpeed, _flipbookGrid, _flipbookFps;
+        SerializedProperty _crestRollSpeed, _crestFoamSpawn, _flipbookGrid, _flipbookFps;
 
         // Profile-driven state, refreshed each GUI pass: driven fields are DISABLED (not
         // just warned about) so users can't type into values the profile overwrites next frame.
@@ -71,6 +71,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             _windDriftSpeed = serializedObject.FindProperty("windDriftSpeed");
             _drag = serializedObject.FindProperty("drag");
             _crestRollSpeed = serializedObject.FindProperty("crestRollSpeed");
+            _crestFoamSpawn = serializedObject.FindProperty("crestFoamSpawn");
             _flipbookGrid = serializedObject.FindProperty("flipbookGrid");
             _flipbookFps = serializedObject.FindProperty("flipbookFps");
         }
@@ -282,6 +283,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         void DrawOceanFlipbook()
         {
             EditorGUILayout.PropertyField(_crestRollSpeed);
+            EditorGUILayout.PropertyField(_crestFoamSpawn, new GUIContent("Crest Foam Spawn",
+                "0 = breaking ocean crests spawn no particles at all (the surface shader keeps the " +
+                "whitecap look); 1 = they spawn as before. Wakes, interactions and shore surf are " +
+                "unaffected either way."));
             using (new EditorGUI.DisabledScope(_lookDriven))
             {
                 EditorGUILayout.PropertyField(_flipbookGrid);

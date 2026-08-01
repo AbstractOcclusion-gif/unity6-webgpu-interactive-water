@@ -423,6 +423,216 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &231484908
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 231484909}
+  - component: {fileID: 231484910}
+  m_Layer: 0
+  m_Name: Dry Interior
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &231484909
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 231484908}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 603011594}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &231484910
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 231484908}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 915077c3dcbfd574299c2b79a0e61be4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterExclusionVolume
+  shape: 2
+  carveMesh: {fileID: 4300000, guid: c2d2d7e95b93bde4a803bdbe8cda5c28, type: 2}
+  meshProxy: 0
+  size: {x: 2.375, y: 0.507604, z: 0.7925964}
+  drawWaterWalls: 0
+  wallScatterBoost: 1.2
+  wallShader: {fileID: 0}
+  edgeColor: {r: 0, g: 0, b: 0, a: 1}
+  edgeIntensity: 0.55
+  edgeSpread: 0.12
+  castsSunShadow: 1
+  affectParticles: 1
+  particleFadeBand: 0.06
+  particleDissolveSpeed: 1
+--- !u!1 &232428233
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 232428239}
+  - component: {fileID: 232428238}
+  - component: {fileID: 232428237}
+  - component: {fileID: 232428236}
+  - component: {fileID: 232428235}
+  - component: {fileID: 232428234}
+  m_Layer: 0
+  m_Name: Boat
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &232428234
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 232428233}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2359f40ac11d5cc4a8a8c59039409a91, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterSplash
+  emitter: {fileID: 0}
+  minImpactSpeed: 0.4
+  maxImpactSpeed: 3
+  rippleStrength: 0.04
+--- !u!114 &232428235
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 232428233}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 33ebb635fbd88db458c33d033a8f5bc2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.BoatController
+  enginePower: 15
+  reverseCoefficient: 0.35
+  sternOffset: {x: 0, y: -0.13357997, z: -1.1250001}
+  turnAcceleration: 5
+  fullAuthoritySpeed: 3
+  reverseSteerWhenBackward: 1
+  forwardDrag: 0.06
+  lateralDrag: 0.8
+  yawDamping: 3
+  propellerDepth: 0.5
+  hullDepth: 0.6
+  throttleResponse: 2
+  steerResponse: 3
+--- !u!114 &232428236
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 232428233}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5ba7f08200b36e84d8c995dae6ad429c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterBuoyancy
+  buoyancy: 2.6
+  waterLinearDamping: 2
+  waterAngularDamping: 1
+  samplesPerAxis: 3
+  floatRadiusScale: 1.5
+  waveDriftStrength: 1
+  verticalSettleDamping: 1
+  objectWidth: 2.5000002
+  maxBuoyancyForce: 0
+  surfaceRelativeDrag: 1
+  dragCoefficients: {x: 1, y: 1, z: 1}
+  ignoreInteractiveRipples: 1
+  drawDebugGizmos: 1
+--- !u!54 &232428237
+Rigidbody:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 232428233}
+  serializedVersion: 5
+  m_Mass: 200
+  m_LinearDamping: 0
+  m_AngularDamping: 0.05
+  m_CenterOfMass: {x: 0, y: -0.13357997, z: 0}
+  m_InertiaTensor: {x: 1, y: 1, z: 1}
+  m_InertiaRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ImplicitCom: 0
+  m_ImplicitTensor: 1
+  m_UseGravity: 1
+  m_IsKinematic: 0
+  m_Interpolate: 1
+  m_Constraints: 0
+  m_CollisionDetection: 0
+--- !u!65 &232428238
+BoxCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 232428233}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Size: {x: 0.83431244, y: 0.5343199, z: 2.5000002}
+  m_Center: {x: 0, y: 0, z: 0}
+--- !u!4 &232428239
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 232428233}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 1, z: 0}
+  m_LocalScale: {x: 4, y: 4, z: 4}
+  m_ConstrainProportionsScale: 1
+  m_Children:
+  - {fileID: 1876797597}
+  - {fileID: 2097037568}
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &234566205
 GameObject:
   m_ObjectHideFlags: 0
@@ -577,6 +787,124 @@ Transform:
   m_CorrespondingSourceObject: {fileID: 3153054209135187227, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
   m_PrefabInstance: {fileID: 5632503593265976343}
   m_PrefabAsset: {fileID: 0}
+--- !u!1 &345654754
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 345654755}
+  - component: {fileID: 345654756}
+  m_Layer: 0
+  m_Name: Dry Interior
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &345654755
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 345654754}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0.000009000301, z: -0.0000020116568}
+  m_LocalScale: {x: 1, y: 1.1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1876797597}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &345654756
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 345654754}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 915077c3dcbfd574299c2b79a0e61be4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterExclusionVolume
+  shape: 2
+  carveMesh: {fileID: 4300000, guid: 6ed73847132c46146b425ea37c9ec4f9, type: 2}
+  meshProxy: 2
+  size: {x: 2.3750005, y: 0.5075869, z: 0.7925927}
+  drawWaterWalls: 0
+  wallScatterBoost: 1.2
+  wallShader: {fileID: 0}
+  edgeColor: {r: 0, g: 0, b: 0, a: 1}
+  edgeIntensity: 0.55
+  edgeSpread: 0.12
+  castsSunShadow: 1
+  affectParticles: 1
+  particleFadeBand: 0.06
+  particleDissolveSpeed: 1
+--- !u!1001 &394201335
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 699286998}
+    m_Modifications:
+    - target: {fileID: 5908852736677951941, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: m_Name
+      value: Hull
+      objectReference: {fileID: 0}
+    - target: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 0.7071068
+      objectReference: {fileID: 0}
+    - target: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: -0.7071068
+      objectReference: {fileID: 0}
+    - target: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects:
+    - targetCorrespondingSourceObject: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 231484909}
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
 --- !u!1 &409297631
 GameObject:
   m_ObjectHideFlags: 0
@@ -5588,6 +5916,11 @@ MonoBehaviour:
   crownLifetime: 0.5
   crownTint: {r: 0.95, g: 0.98, b: 1, a: 1}
   crownOpacity: 1
+--- !u!4 &603011594 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+  m_PrefabInstance: {fileID: 394201335}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1 &612971047
 GameObject:
   m_ObjectHideFlags: 0
@@ -5774,7 +6107,7 @@ MonoBehaviour:
   shape: 0
   carveMesh: {fileID: 0}
   meshProxy: 0
-  size: {x: 1.7, y: 2, z: 0.5}
+  size: {x: 1.7, y: 2, z: 0.7}
   drawWaterWalls: 1
   wallScatterBoost: 1.2
   wallShader: {fileID: 0}
@@ -5785,6 +6118,157 @@ MonoBehaviour:
   affectParticles: 1
   particleFadeBand: 0.06
   particleDissolveSpeed: 1
+--- !u!1 &699286992
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 699286998}
+  - component: {fileID: 699286997}
+  - component: {fileID: 699286996}
+  - component: {fileID: 699286995}
+  - component: {fileID: 699286994}
+  - component: {fileID: 699286993}
+  m_Layer: 0
+  m_Name: Boat
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 0
+--- !u!114 &699286993
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 699286992}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2359f40ac11d5cc4a8a8c59039409a91, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterSplash
+  emitter: {fileID: 0}
+  minImpactSpeed: 0.4
+  maxImpactSpeed: 3
+  rippleStrength: 0.04
+--- !u!114 &699286994
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 699286992}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 33ebb635fbd88db458c33d033a8f5bc2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.BoatController
+  enginePower: 9
+  reverseCoefficient: 0.35
+  sternOffset: {x: 0, y: -0.13357997, z: -1.1250001}
+  turnAcceleration: 2.5
+  fullAuthoritySpeed: 3
+  reverseSteerWhenBackward: 1
+  forwardDrag: 0.06
+  lateralDrag: 0.8
+  yawDamping: 3
+  propellerDepth: 0.5
+  hullDepth: 0.6
+  throttleResponse: 2
+  steerResponse: 3
+--- !u!114 &699286995
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 699286992}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5ba7f08200b36e84d8c995dae6ad429c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterBuoyancy
+  buoyancy: 2.6
+  waterLinearDamping: 2
+  waterAngularDamping: 1
+  samplesPerAxis: 3
+  floatRadiusScale: 1.5
+  waveDriftStrength: 1
+  verticalSettleDamping: 1
+  objectWidth: 2.5000002
+  maxBuoyancyForce: 0
+  surfaceRelativeDrag: 1
+  dragCoefficients: {x: 1, y: 1, z: 1}
+  ignoreInteractiveRipples: 1
+  drawDebugGizmos: 1
+--- !u!54 &699286996
+Rigidbody:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 699286992}
+  serializedVersion: 5
+  m_Mass: 200
+  m_LinearDamping: 0
+  m_AngularDamping: 0.05
+  m_CenterOfMass: {x: 0, y: -0.13357997, z: 0}
+  m_InertiaTensor: {x: 1, y: 1, z: 1}
+  m_InertiaRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ImplicitCom: 0
+  m_ImplicitTensor: 1
+  m_UseGravity: 1
+  m_IsKinematic: 0
+  m_Interpolate: 1
+  m_Constraints: 0
+  m_CollisionDetection: 0
+--- !u!65 &699286997
+BoxCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 699286992}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Size: {x: 0.83431244, y: 0.5343199, z: 2.5000002}
+  m_Center: {x: 0, y: 0, z: 0}
+--- !u!4 &699286998
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 699286992}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 1, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 603011594}
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &773898432
 GameObject:
   m_ObjectHideFlags: 0
@@ -5883,6 +6367,74 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1001 &833592551
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 232428239}
+    m_Modifications:
+    - target: {fileID: 1991791349445654628, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: 'm_Materials.Array.data[0]'
+      value: 
+      objectReference: {fileID: 2100000, guid: 387bed99f8bec814a8983b62a2bc9e13, type: 2}
+    - target: {fileID: 3504671443819199127, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: 'm_Materials.Array.data[0]'
+      value: 
+      objectReference: {fileID: 2100000, guid: dcfbc996eb3d7b54b87f8137fb6ec3a6, type: 2}
+    - target: {fileID: 5908852736677951941, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: m_Name
+      value: Hull
+      objectReference: {fileID: 0}
+    - target: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0.1
+      objectReference: {fileID: 0}
+    - target: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 0.7071068
+      objectReference: {fileID: 0}
+    - target: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: -0.7071068
+      objectReference: {fileID: 0}
+    - target: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects:
+    - targetCorrespondingSourceObject: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 345654755}
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
 --- !u!4 &838221596 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
@@ -6057,7 +6609,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0c2f11fcb19c4fd478b030ada99be5fb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.SimpleFollowCamera
-  target: {fileID: 1991186248}
+  target: {fileID: 232428239}
   localOffset: {x: 0, y: 4.5, z: -11}
   lookHeight: 1
   followSharpness: 4
@@ -11172,9 +11724,9 @@ MonoBehaviour:
   volumeExtent: {x: 500, y: 100, z: 500}
   enableLargeBodyWindow: 1
   largeBodyThreshold: 300
-  simWindowMeters: 50
+  simWindowMeters: 30
   clampWindowToShore: 0
-  simWindowFocus: {fileID: 1991186248}
+  simWindowFocus: {fileID: 232428239}
   simWindowOffset: {x: 0, y: 0}
   _legacyWaveSpeed: 0.6
   _legacyDamping: 0.99
@@ -11199,33 +11751,33 @@ MonoBehaviour:
   foamSettings:
     foam: 1
     foamGenRate: 1.7
-    foamDecay: 0.904
-    foamDecayResidual: 0.9104
-    foamDecayRate: 0.11
+    foamDecay: 0.802
+    foamDecayResidual: 0.9053
+    foamDecayRate: 0.05
     wetnessMemory: 0
     wetnessDryTime: 3
-    foamSpread: 0.944
-    foamGenThreshold: 0.026
-    foamMinWaveHeight: 0.085
-    foamAdvect: 2.21
-    foamFromSpeed: 8.1
-    foamFromCurvature: 13.2
-    foamDeposit: 0.427
-    foamBreakStrength: 0
-    foamBreakRange: 1.5
-    foamCrestBias: 0.088
-    foamHeadroom: 0
-    foamWakeStrength: 1.51
-    foamWakeRadiusScale: 0.83
+    foamSpread: 0.073
+    foamGenThreshold: 0.106
+    foamMinWaveHeight: 0.041
+    foamAdvect: 5.91
+    foamFromSpeed: 17
+    foamFromCurvature: 85.7
+    foamDeposit: 0.89
+    foamBreakStrength: 0.057
+    foamBreakRange: 0.71
+    foamCrestBias: 0.616
+    foamHeadroom: 1
+    foamWakeStrength: 1.75
+    foamWakeRadiusScale: 3.73
     foamColor: {r: 1, g: 1, b: 1, a: 1}
-    foamPatternSize: 5
-    foamStrength: 0.9
-    foamFeather: 0.108
-    foamCoreCut: 0.06
+    foamPatternSize: 4
+    foamStrength: 1.13
+    foamFeather: 0.486
+    foamCoreCut: 0.988
     foamBorderWidth: 0
     foamContactDepth: 0.06
   objectInteractionSettings:
-    objectInteraction: 0
+    objectInteraction: 1
     obstacleStrength: 0.5
     obstacleDeadband: 0.0006
     obstacleSmoothing: 0.65
@@ -11367,12 +11919,12 @@ MonoBehaviour:
   _legacyFoamBorderWidth: 0.08
   _legacyFoamContactDepth: 0.06
   rippleSettings:
-    waveSpeed: 0.6
-    damping: 0.99
+    waveSpeed: 1.5
+    damping: 0.997
     stepsPerFrame: 1
-    rippleStrength: 0.0727
-    rippleRadius: 0.089
-    rippleChoppiness: 0.03
+    rippleStrength: 0.061
+    rippleRadius: 0.1411
+    rippleChoppiness: 0.422
     seedRipplesOnStart: 0
     conserveVolume: 1
     conserveMaxCorrection: 0.05
@@ -11497,6 +12049,7 @@ MonoBehaviour:
   windDriftSpeed: 0.02
   drag: 2
   crestRollSpeed: 0.6
+  crestFoamSpawn: 1
   flipbookGrid: {x: 2, y: 2}
   flipbookFps: 0
 --- !u!1 &1734502736
@@ -11532,6 +12085,11 @@ Transform:
   - {fileID: 1990666714}
   m_Father: {fileID: 773898433}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!4 &1876797597 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+  m_PrefabInstance: {fileID: 833592551}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1 &1990666713
 GameObject:
   m_ObjectHideFlags: 0
@@ -11579,13 +12137,14 @@ GameObject:
   - component: {fileID: 1991186245}
   - component: {fileID: 1991186244}
   - component: {fileID: 1991186243}
+  - component: {fileID: 1991186249}
   m_Layer: 0
   m_Name: Boat
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &1991186243
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -11640,15 +12199,15 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterBuoyancy
   buoyancy: 2.6
-  waterLinearDamping: 3
+  waterLinearDamping: 1
   waterAngularDamping: 1
   samplesPerAxis: 3
   floatRadiusScale: 1.5
   waveDriftStrength: 1
   verticalSettleDamping: 1
-  objectWidth: 6
+  objectWidth: 3
   maxBuoyancyForce: 50
-  surfaceRelativeDrag: 1
+  surfaceRelativeDrag: 0
   dragCoefficients: {x: 1, y: 1, z: 1}
   ignoreInteractiveRipples: 1
   drawDebugGizmos: 1
@@ -11717,6 +12276,47 @@ Transform:
   - {fileID: 301113208}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1991186249
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1991186242}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3bd8fb958cdc9ff49ac1ae4c67a90547, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterSprayPump
+  probes:
+  - localOffset: {x: -0.41715622, y: -0.25, z: -1}
+    mode: 1
+    amountBoost: 0
+  - localOffset: {x: -0.27810413, y: -0.25, z: 0}
+    mode: 1
+    amountBoost: 0
+  - localOffset: {x: -0.13905206, y: -0.25, z: 0.75}
+    mode: 1
+    amountBoost: 0
+  - localOffset: {x: 0, y: -0.25, z: 1}
+    mode: 1
+    amountBoost: 0
+  - localOffset: {x: 0.1390521, y: -0.25, z: 0.75}
+    mode: 1
+    amountBoost: 0
+  - localOffset: {x: 0.27810413, y: -0.25, z: 0}
+    mode: 1
+    amountBoost: 0
+  - localOffset: {x: 0.41715622, y: -0.25, z: -1}
+    mode: 1
+    amountBoost: 0
+  surfaceBand: 0.25
+  minImpactSpeed: 0.6
+  maxImpactSpeed: 4
+  horizontalPlowWeight: 0.8
+  emitCooldownSeconds: 0.06
+  sprayRadius: 0.25
+  emitter: {fileID: 0}
 --- !u!1 &2008084941 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 3456765701327585525, guid: c43eb890f99b24940873b963fe9970a3, type: 3}
@@ -11739,6 +12339,73 @@ MonoBehaviour:
   strength: 0.2
   maxStepDistance: 5
   wakeFadeSpeed: 25
+--- !u!1 &2097037567
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 2097037568}
+  - component: {fileID: 2097037570}
+  - component: {fileID: 2097037569}
+  m_Layer: 0
+  m_Name: GameObject
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &2097037568
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2097037567}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 232428239}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &2097037569
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2097037567}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9bfdcd1456389194089e8807e41596d2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterSphereInteractor
+  centerOffset: {x: 0, y: -0.1, z: -1.59}
+  radius: 0.25
+  strength: 0.05
+  maxStepDistance: 5
+  wakeFadeSpeed: 15
+--- !u!114 &2097037570
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2097037567}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9bfdcd1456389194089e8807e41596d2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterSphereInteractor
+  centerOffset: {x: 0, y: -0.1, z: 1}
+  radius: 0.4
+  strength: 0.07
+  maxStepDistance: 5
+  wakeFadeSpeed: 15
 --- !u!1001 &5632503593265976343
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -12153,3 +12820,5 @@ SceneRoots:
   - {fileID: 1000572587}
   - {fileID: 1991186248}
   - {fileID: 409297635}
+  - {fileID: 699286998}
+  - {fileID: 232428239}

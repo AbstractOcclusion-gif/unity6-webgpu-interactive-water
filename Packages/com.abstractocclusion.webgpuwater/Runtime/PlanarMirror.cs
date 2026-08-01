@@ -23,6 +23,18 @@ namespace AbstractOcclusion.WebGpuWater
         const int MinReflectionSize = 8;    // don't allocate a sub-8px reflection target
         const int ReflectionDepthBits = 24; // depth buffer for the mirrored scene render
 
+        // Absolute floor on the eye-to-clip-plane distance for the oblique projection, used when the
+        // source camera's own near clip is smaller. CalculateObliqueMatrix REPLACES the near plane with
+        // that clip plane, and its scale factor is singular as the plane reaches the eye: z explodes and
+        // Unity reports "Screen position out of view frustum (screen pos ..., 16852.11)". The mirror
+        // camera sits at 2*waterHeight - camY, so the plane reaches it at
+        //     camY = waterHeight - clipPlaneOffset  =  waterHeight - 0.02 + planarClipDepth
+        // - AT THE WATERLINE with the default knobs, and (worse) at an arbitrary height ABOVE the water
+        // once planarClipDepth is raised to a sea's wave height, where nobody would look for it.
+        // The clamp below is geometric, not a tuned epsilon: a clip plane nearer than the camera's own
+        // near clip cannot affect anything visible, so moving it out to there costs no correctness.
+        const float MinClipPlaneStandoffFloor = 0.05f;
+
         readonly string _rtName;
 
         internal PlanarMirror(string renderTextureName)
@@ -59,6 +71,9 @@ namespace AbstractOcclusion.WebGpuWater
             _reflectionCamera.worldToCameraMatrix = src.worldToCameraMatrix * reflection;
 
             Vector4 clipPlane = CameraSpacePlane(_reflectionCamera, new Vector3(0f, waterHeight, 0f), normal, clipPlaneOffset);
+            // Push the plane off the eye, KEEPING ITS SIGN. The sign is which side the crop keeps, so
+            // clamping the magnitude alone moves the plane away without ever flipping the mirror over.
+            clipPlane.w = ClampPlaneStandoff(clipPlane.w, src.nearClipPlane);
             _reflectionCamera.projectionMatrix = src.CalculateObliqueMatrix(clipPlane);
 
             // CULL WITH THE NON-OBLIQUE PROJECTION. Unity's default culling frustum is
@@ -178,6 +193,19 @@ namespace AbstractOcclusion.WebGpuWater
             m.m20 = -2f * plane.z * plane.x; m.m21 = -2f * plane.z * plane.y; m.m22 = 1f - 2f * plane.z * plane.z; m.m23 = -2f * plane.z * plane.w;
             m.m30 = 0f; m.m31 = 0f; m.m32 = 0f; m.m33 = 1f;
             return m;
+        }
+
+        // The plane's w IS the signed eye-to-plane distance: CameraSpacePlane returns
+        // -dot(cpos, cnormal) with a UNIT normal, so for the eye at the camera-space origin the plane
+        // equation evaluates to exactly w. Floor its magnitude, preserve its sign - see the constant.
+        // w == 0 is the singular case itself and has no correct side; it resolves positive, which is
+        // deterministic rather than left to a NaN downstream. Crossing the singular height therefore
+        // snaps the crop by one standoff in a single frame - at the exact moment the surface is
+        // edge-on to the eye and the mirror contributes nothing, so it cannot be seen.
+        static float ClampPlaneStandoff(float w, float nearClip)
+        {
+            float standoff = Mathf.Max(MinClipPlaneStandoffFloor, nearClip);
+            return w < 0f ? Mathf.Min(w, -standoff) : Mathf.Max(w, standoff);
         }
 
         // Plane in the reflection camera's space, for the oblique near clip.

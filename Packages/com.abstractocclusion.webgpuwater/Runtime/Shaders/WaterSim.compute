@@ -294,7 +294,9 @@ float _UseBedDepth;        // 1 = bed active
 // whitewash. The Layer A shore fields are bound EXPLICITLY here (Texture2D form - the sampler2D
 // header would clash in compute), with the same uv frame the shaders use. Pushed by
 // WaterVolume.PushShoreFoam just before StepFoam; inactive = the whole block is skipped.
-float  _ShoreFoamActive;        // 1 = inject surf foam this step
+float  _ShoreFoamInject;        // 1 = inject surf foam this step (an injection gain is non-zero).
+                                // The companion _ShoreFoamActive ("the front field is live") is
+                                // read by the PARTICLE compute only, so it is not declared here.
 float  _ShoreFoamGain;          // master gain on breaker + whitewash injection
 float  _ShoreWaterlineFoamGain; // standing waterline lace gain
 float  _ShoreSwashDepositGain;  // FOAM-5: persistent swash-deposit injection gain (0 = off)
@@ -693,7 +695,7 @@ void Foam(uint3 id : SV_DispatchThreadID)
     // Surf breaker-front foam (coastline): whitewash where fronts have broken, a thin line at the
     // cresting lip, and standing lace hugging the waterline - all injected as generation so the
     // sim advects and decays them into organic trails. Same pattern as the hero wave above.
-    if (_ShoreFoamActive > 0.5)
+    if (_ShoreFoamInject > 0.5)
     {
         float2 uvShore = ((float2)p + 0.5) * _Delta;
         float2 shoreWorldXZ = _ShoreSimUvToWorldOrigin.xy

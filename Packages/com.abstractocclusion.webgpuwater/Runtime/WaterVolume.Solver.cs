@@ -202,8 +202,16 @@ namespace AbstractOcclusion.WebGpuWater
         {
             WaterShoreDepthField shore = ShoreDepth;
             var state = new WaterSimulation.ShoreFoamState();
-            state.Active = shore.SurfLayerActive
-                           && surfFoamGain + surfWaterlineFoam + surfSwashDepositGain > 0f;
+            // TWO consumers, TWO questions - do not fold them back into one flag. Active = "the
+            // surf FRONT FIELD is live and readable", which is all the foam PARTICLES need: their
+            // plunging-lip spray gate and their surf-height glue read the FRONT, never the
+            // injection. InjectionActive = "some injection gain is non-zero", the only thing the
+            // ripple sim's Foam kernel cares about. While these shared one flag, zeroing the
+            // injection gains to stop double-drawn shore foam also silently switched off the one
+            // breaking-crest particle path in the package.
+            state.Active = shore.SurfLayerActive;
+            state.InjectionActive =
+                surfFoamGain + surfWaterlineFoam + surfSwashDepositGain > 0f;
             if (state.Active)
             {
                 // The sim domain is the scrolling window on windowed bodies, the whole footprint

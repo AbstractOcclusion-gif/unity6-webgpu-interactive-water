@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebGpuWater — Particle Schemes</title>
+<style>
+  :root{
+    --bg:#08111c; --panel:#0e1b29; --edge:#1c3247;
+    --ink:#d6e6f2; --dim:#7e97ab;
+    --cyan:#4dd8e8; --amber:#f0b45a; --green:#6fd08c; --violet:#b78bea; --rose:#f07a8c;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:34px 26px 90px;background:var(--bg);color:var(--ink);
+       font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:1180px;margin:0 auto}
+  h1{font-size:22px;font-weight:600;margin:0 0 6px}
+  .sub{color:var(--dim);font-size:14px;margin:0 0 8px}
+  .sub b{color:var(--cyan);font-weight:500}
+  h2{font-size:15px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--cyan);
+     margin:48px 0 4px;border-bottom:1px solid var(--edge);padding-bottom:9px}
+  h2 span{color:var(--dim);font-weight:400;letter-spacing:0;text-transform:none;font-size:13px;margin-left:10px}
+  .card{background:var(--panel);border:1px solid var(--edge);border-radius:9px;padding:18px;margin:18px 0 0}
+  svg{display:block;width:100%;height:auto}
+  code{font-family:var(--mono);font-size:12.5px;color:var(--cyan)}
+  .key{display:flex;flex-wrap:wrap;gap:9px 22px;margin:14px 2px 0;font-size:12.5px;color:var(--dim)}
+  .key i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:7px;vertical-align:-1px;font-style:normal}
+  .cap{color:var(--dim);font-size:13px;margin:11px 2px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>WebGpuWater — Particle Schemes</h1>
+<p class="sub">Drawn companion to <b>ParticleSystem.md</b>. Pictures only: where particles are born, and what happens to them.</p>
+
+<div class="key">
+  <span><i style="background:#f0b45a"></i>1a · ambient foam threshold</span>
+  <span><i style="background:#6fd08c"></i>1b · ocean whitecap crest</span>
+  <span><i style="background:#b78bea"></i>1c · surf plunging lip</span>
+  <span><i style="background:#4dd8e8"></i>1d · event burst</span>
+</div>
+
+<!-- ================================================== 1 -->
+<h2>1 — Where they are born <span>every birth site in one body of water</span></h2>
+
+<div class="card">
+<svg viewBox="0 0 1140 540" role="img" aria-label="Cross-section of a water body showing every particle birth site">
+
+  <!-- bed -->
+  <path d="M0 470 L700 470 L1010 300 L1140 300 L1140 540 L0 540 Z" fill="#2a2418" stroke="#4a3f2a" stroke-width="2"/>
+  <text x="1062" y="360" fill="#8a7a56" font-size="12" font-family="ui-monospace,monospace">beach</text>
+
+  <!-- water fill -->
+  <path d="M0 300 L0 470 L700 470 L980 316 L980 300 Z" fill="#123a52" opacity=".5"/>
+
+  <!-- surface -->
+  <path d="M0 300
+           C 46 274, 92 322, 140 296
+           C 176 277, 200 286, 232 300
+           C 280 320, 320 292, 366 300
+           C 420 309, 450 292, 500 300
+           C 560 309, 600 290, 652 300
+           C 700 309, 740 300, 790 296
+           C 840 292, 880 282, 906 276
+           C 926 271, 946 282, 950 292
+           L 980 300"
+        fill="none" stroke="#4dd8e8" stroke-width="2.6"/>
+
+  <!-- ===== 1b : ocean whitecap on the crest ===== -->
+  <path d="M116 288 C 132 278, 150 284, 158 294" fill="none" stroke="#6fd08c" stroke-width="3"/>
+  <g fill="#6fd08c">
+    <circle cx="126" cy="272" r="3"/><circle cx="146" cy="264" r="2.4"/>
+    <circle cx="162" cy="276" r="2.6"/><circle cx="110" cy="280" r="2.2"/>
+    <circle cx="176" cy="268" r="2"/>
+  </g>
+  <line x1="140" y1="262" x2="140" y2="176" stroke="#6fd08c" stroke-width="1.2"/>
+  <g font-family="ui-monospace,monospace">
+    <text x="140" y="164" fill="#6fd08c" font-size="12.5" text-anchor="middle">1b · WHITECAP CREST</text>
+    <text x="140" y="148" fill="#4d8f65" font-size="11" text-anchor="middle">FFT cascade .w channel</text>
+    <text x="140" y="134" fill="#4d8f65" font-size="11" text-anchor="middle">raises spawn probability only</text>
+  </g>
+
+  <!-- ===== boat + wake ===== -->
+  <g transform="translate(400,296)">
+    <path d="M-44 0 L44 0 L32 20 L-32 20 Z" fill="#3a4a58" stroke="#8fb6c9" stroke-width="1.6"/>
+    <rect x="-12" y="-18" width="24" height="18" fill="#3a4a58" stroke="#8fb6c9" stroke-width="1.4"/>
+  </g>
+  <!-- wake edges -->
+  <path d="M356 302 C 320 316, 276 330, 232 340" fill="none" stroke="#f0b45a" stroke-width="2.4" opacity=".8"/>
+  <path d="M356 300 C 320 288, 276 276, 232 268" fill="none" stroke="#f0b45a" stroke-width="2.4" opacity=".8"/>
+  <g fill="#f0b45a">
+    <circle cx="330" cy="312" r="2.6"/><circle cx="300" cy="322" r="2.2"/>
+    <circle cx="268" cy="332" r="2.6"/><circle cx="242" cy="338" r="2"/>
+    <circle cx="330" cy="292" r="2.4"/><circle cx="298" cy="282" r="2.6"/>
+    <circle cx="266" cy="274" r="2.2"/><circle cx="240" cy="268" r="2.4"/>
+  </g>
+  <line x1="286" y1="336" x2="286" y2="410" stroke="#f0b45a" stroke-width="1.2"/>
+  <g font-family="ui-monospace,monospace">
+    <text x="286" y="428" fill="#f0b45a" font-size="12.5" text-anchor="middle">1a · WAKE EDGE</text>
+    <text x="286" y="444" fill="#b8874a" font-size="11" text-anchor="middle">shear boost &times;4 — fast water beside still</text>
+  </g>
+
+  <!-- ===== 1d : hull impact ===== -->
+  <g fill="#4dd8e8">
+    <circle cx="424" cy="266" r="3"/><circle cx="446" cy="250" r="2.6"/>
+    <circle cx="466" cy="262" r="2.4"/><circle cx="410" cy="252" r="2.2"/>
+    <circle cx="484" cy="248" r="2"/><circle cx="438" cy="236" r="2.4"/>
+  </g>
+  <ellipse cx="448" cy="292" rx="34" ry="7" fill="none" stroke="#4dd8e8" stroke-width="2"/>
+  <line x1="452" y1="234" x2="452" y2="176" stroke="#4dd8e8" stroke-width="1.2"/>
+  <g font-family="ui-monospace,monospace">
+    <text x="452" y="164" fill="#4dd8e8" font-size="12.5" text-anchor="middle">1d · IMPACT BURST</text>
+    <text x="452" y="148" fill="#3a92a1" font-size="11" text-anchor="middle">WaterSplash &rarr; EmitSplash</text>
+    <text x="452" y="134" fill="#3a92a1" font-size="11" text-anchor="middle">crossing the line, downward</text>
+  </g>
+
+  <!-- ===== 1d : mouse click ===== -->
+  <g transform="translate(636,214)">
+    <path d="M0 0 L0 22 L6 17 L10 27 L15 25 L11 15 L18 15 Z" fill="#d6e6f2" stroke="#0e1b29" stroke-width="1"/>
+  </g>
+  <line x1="644" y1="240" x2="652" y2="286" stroke="#4dd8e8" stroke-width="1.2" stroke-dasharray="4 4"/>
+  <ellipse cx="654" cy="298" rx="26" ry="6" fill="none" stroke="#4dd8e8" stroke-width="1.8"/>
+  <ellipse cx="654" cy="298" rx="42" ry="9" fill="none" stroke="#4dd8e8" stroke-width="1.2" opacity=".5"/>
+  <g fill="#4dd8e8"><circle cx="640" cy="280" r="2.2"/><circle cx="668" cy="276" r="2"/></g>
+  <g font-family="ui-monospace,monospace">
+    <text x="662" y="200" fill="#4dd8e8" font-size="12.5" text-anchor="middle">1d · DRAG / TAP</text>
+    <text x="662" y="185" fill="#3a92a1" font-size="11" text-anchor="middle">WaterInputRouter · primary body</text>
+  </g>
+
+  <!-- ===== 1c : plunging lip ===== -->
+  <path d="M906 276 C 928 268, 946 282, 938 300 C 932 312, 916 314, 906 308"
+        fill="none" stroke="#b78bea" stroke-width="3"/>
+  <g fill="#b78bea">
+    <circle cx="956" cy="250" r="3.2"/><circle cx="978" cy="238" r="2.6"/>
+    <circle cx="998" cy="254" r="2.8"/><circle cx="1018" cy="236" r="2.2"/>
+    <circle cx="948" cy="272" r="2.4"/><circle cx="1038" cy="252" r="2.4"/>
+  </g>
+  <path d="M928 274 Q 1000 220 1054 262" fill="none" stroke="#b78bea" stroke-width="1.3" opacity=".55" stroke-dasharray="4 5"/>
+  <line x1="972" y1="230" x2="972" y2="150" stroke="#b78bea" stroke-width="1.2"/>
+  <g font-family="ui-monospace,monospace">
+    <text x="972" y="138" fill="#b78bea" font-size="12.5" text-anchor="middle">1c · PLUNGING LIP</text>
+    <text x="972" y="122" fill="#7d5fa5" font-size="11" text-anchor="middle">lip &gt; 0.3 FORCES spray</text>
+    <text x="972" y="108" fill="#7d5fa5" font-size="11" text-anchor="middle">+ ballistic throw toward shore</text>
+  </g>
+
+  <!-- ===== shore lace feeds 1a ===== -->
+  <ellipse cx="880" cy="286" rx="34" ry="6" fill="#ffffff" opacity=".4"/>
+  <line x1="856" y1="292" x2="800" y2="404" stroke="#f0b45a" stroke-width="1.2"/>
+  <g font-family="ui-monospace,monospace">
+    <text x="782" y="422" fill="#f0b45a" font-size="12.5" text-anchor="middle">1a · SHORE WHITEWASH</text>
+    <text x="782" y="438" fill="#b8874a" font-size="11" text-anchor="middle">injected into the same foam buffer</text>
+  </g>
+
+  <!-- bottom rule -->
+  <line x1="20" y1="486" x2="1120" y2="486" stroke="#1c3247" stroke-width="1"/>
+  <text x="20" y="508" fill="#7e97ab" font-size="12" font-family="ui-monospace,monospace">1a · 1b · 1c read a FIELD every frame, everywhere &nbsp;&nbsp;|&nbsp;&nbsp; 1d is a QUEUED EVENT, once</text>
+</svg>
+</div>
+<p class="cap">Nothing spawns at the boat. The boat writes foam; the foam spawns particles. Only 1d skips that and injects droplets directly.</p>
+
+<!-- ================================================== 2 -->
+<h2>2 — The two doors <span>a continuous field, and a queue of events</span></h2>
+
+<div class="card">
+<svg viewBox="0 0 1140 430" role="img" aria-label="The two spawn kernels feeding one pool">
+
+  <!-- LEFT: texel grid -->
+  <text x="20" y="26" fill="#f0b45a" font-size="12.5" font-family="ui-monospace,monospace">DOOR 1 — the field · one thread per SIM TEXEL, every frame</text>
+  <g>
+    <!-- grid -->
+    <g stroke="#1c3247" stroke-width="1" fill="#0d1a26">
+      <rect x="20" y="46" width="238" height="170"/>
+    </g>
+    <g stroke="#1c3247" stroke-width=".8">
+      <line x1="54" y1="46" x2="54" y2="216"/><line x1="88" y1="46" x2="88" y2="216"/>
+      <line x1="122" y1="46" x2="122" y2="216"/><line x1="156" y1="46" x2="156" y2="216"/>
+      <line x1="190" y1="46" x2="190" y2="216"/><line x1="224" y1="46" x2="224" y2="216"/>
+      <line x1="20" y1="80" x2="258" y2="80"/><line x1="20" y1="114" x2="258" y2="114"/>
+      <line x1="20" y1="148" x2="258" y2="148"/><line x1="20" y1="182" x2="258" y2="182"/>
+    </g>
+    <!-- hot texels -->
+    <g fill="#f0b45a">
+      <rect x="88" y="80" width="34" height="34" opacity=".75"/>
+      <rect x="122" y="80" width="34" height="34" opacity=".45"/>
+      <rect x="122" y="114" width="34" height="34" opacity=".85"/>
+      <rect x="156" y="114" width="34" height="34" opacity=".35"/>
+      <rect x="156" y="148" width="34" height="34" opacity=".6"/>
+      <rect x="190" y="148" width="34" height="34" opacity=".3"/>
+    </g>
+    <text x="139" y="238" fill="#b8874a" font-size="11.5" text-anchor="middle" font-family="ui-monospace,monospace">FoamMaskTexture — brighter = more foam</text>
+  </g>
+
+  <!-- gauntlet -->
+  <g font-family="ui-monospace,monospace" font-size="11.5">
+    <text x="20" y="272" fill="#7e97ab">each hot texel runs the gauntlet:</text>
+    <g fill="#0d1a26" stroke="#3d5a70" stroke-width="1.2">
+      <rect x="20" y="284" width="86" height="30" rx="4"/>
+      <rect x="118" y="284" width="86" height="30" rx="4"/>
+      <rect x="216" y="284" width="86" height="30" rx="4"/>
+      <rect x="20" y="326" width="86" height="30" rx="4"/>
+      <rect x="118" y="326" width="86" height="30" rx="4"/>
+      <rect x="216" y="326" width="86" height="30" rx="4"/>
+    </g>
+    <text x="63" y="303" fill="#cfe2ee" text-anchor="middle">&gt; threshold</text>
+    <text x="161" y="303" fill="#cfe2ee" text-anchor="middle">distance LOD</text>
+    <text x="259" y="303" fill="#cfe2ee" text-anchor="middle">probability</text>
+    <text x="63" y="345" fill="#cfe2ee" text-anchor="middle">frame budget</text>
+    <text x="161" y="345" fill="#cfe2ee" text-anchor="middle">claim a slot</text>
+    <text x="259" y="345" fill="#cfe2ee" text-anchor="middle">spray or foam</text>
+    <g stroke="#3d5a70" stroke-width="1.4" fill="none">
+      <path d="M106 299 L118 299"/><path d="M204 299 L216 299"/>
+      <path d="M259 314 L259 320 L63 320 L63 326"/>
+      <path d="M106 341 L118 341"/><path d="M204 341 L216 341"/>
+    </g>
+    <text x="20" y="384" fill="#b8874a">probability = excess &times; (1 + shear&times;4) &times; spawnRate &times; texelArea &times; dt</text>
+    <text x="20" y="402" fill="#54707f">normalised by real world area — a lake and a pond get the same foam per m&sup2;</text>
+  </g>
+
+  <!-- RIGHT: event queue -->
+  <text x="704" y="26" fill="#4dd8e8" font-size="12.5" font-family="ui-monospace,monospace" text-anchor="end" transform="translate(416,0)">DOOR 2 — the queue · one thread GROUP per request</text>
+  <g font-family="ui-monospace,monospace" font-size="11.5">
+    <g fill="#0d2231" stroke="#4dd8e8" stroke-width="1.4">
+      <rect x="820" y="46" width="290" height="26" rx="4"/>
+      <rect x="820" y="80" width="290" height="26" rx="4"/>
+      <rect x="820" y="114" width="290" height="26" rx="4"/>
+    </g>
+    <text x="834" y="64" fill="#9fd8ea">boat impact &nbsp;· strength 0.8 · 64 droplets</text>
+    <text x="834" y="98" fill="#9fd8ea">spray pump &nbsp;· strength 0.3 · 22 droplets</text>
+    <text x="834" y="132" fill="#9fd8ea">mouse drag &nbsp;· strength 0.5 · 38 droplets</text>
+    <text x="820" y="162" fill="#3a92a1">queue drained ONCE per frame · max 16 requests · max 64 droplets each</text>
+    <text x="820" y="182" fill="#8a5560">17th request in a frame is DROPPED, not deferred</text>
+  </g>
+
+  <!-- arrows to pool -->
+  <g stroke="#3d5a70" stroke-width="1.8" fill="none">
+    <path d="M302 299 C 360 299, 400 262, 448 262"/>
+    <path d="M818 93 C 760 93, 700 210, 692 240"/>
+  </g>
+
+  <!-- POOL -->
+  <g transform="translate(448,222)">
+    <rect x="0" y="0" width="244" height="86" rx="8" fill="#0d2231" stroke="#4dd8e8" stroke-width="2.2"/>
+    <text x="122" y="24" fill="#4dd8e8" font-size="13" text-anchor="middle" font-family="ui-monospace,monospace">ONE POOL</text>
+    <!-- slots -->
+    <g>
+      <rect x="18" y="38" width="16" height="18" rx="2" fill="#f0b45a" opacity=".8"/>
+      <rect x="38" y="38" width="16" height="18" rx="2" fill="#4dd8e8" opacity=".8"/>
+      <rect x="58" y="38" width="16" height="18" rx="2" fill="#b78bea" opacity=".8"/>
+      <rect x="78" y="38" width="16" height="18" rx="2" fill="#6fd08c" opacity=".8"/>
+      <rect x="98" y="38" width="16" height="18" rx="2" fill="#1c3247"/>
+      <rect x="118" y="38" width="16" height="18" rx="2" fill="#f0b45a" opacity=".5"/>
+      <rect x="138" y="38" width="16" height="18" rx="2" fill="#4dd8e8" opacity=".5"/>
+      <rect x="158" y="38" width="16" height="18" rx="2" fill="#1c3247"/>
+      <rect x="178" y="38" width="16" height="18" rx="2" fill="#b78bea" opacity=".5"/>
+      <rect x="198" y="38" width="16" height="18" rx="2" fill="#1c3247"/>
+    </g>
+    <text x="122" y="74" fill="#3a92a1" font-size="11" text-anchor="middle" font-family="ui-monospace,monospace">fixed size · pow2 · tier-capped</text>
+  </g>
+  <text x="570" y="336" fill="#8a5560" font-size="11.5" text-anchor="middle" font-family="ui-monospace,monospace">FULL &rarr; the new spawn is DROPPED</text>
+  <text x="570" y="352" fill="#54707f" font-size="11" text-anchor="middle" font-family="ui-monospace,monospace">live foam is never overwritten</text>
+</svg>
+</div>
+<p class="cap">Both doors write into the same buffer. A particle carries no memory of which door it came through — only its <code>kind</code>.</p>
+
+<!-- ================================================== 3 -->
+<h2>3 — One particle's life <span>spray becomes foam, always</span></h2>
+
+<div class="card">
+<svg viewBox="0 0 1140 400" role="img" aria-label="Life of a particle from spray to surface foam to fade">
+
+  <!-- water -->
+  <rect x="0" y="268" width="1140" height="132" fill="#123a52" opacity=".5"/>
+  <path d="M0 268 q40 -7 80 0 t80 0 t80 0 t80 0 t80 0 t80 0 t80 0 t80 0 t80 0 t80 0 t80 0 t80 0 t80 0 t80 0"
+        fill="none" stroke="#4dd8e8" stroke-width="2.4"/>
+
+  <!-- birth -->
+  <circle cx="120" cy="262" r="6" fill="#b78bea"/>
+  <line x1="120" y1="250" x2="120" y2="168" stroke="#b78bea" stroke-width="1.2"/>
+  <g font-family="ui-monospace,monospace">
+    <text x="120" y="156" fill="#b78bea" font-size="12.5" text-anchor="middle">BORN — KIND_SPRAY</text>
+    <text x="120" y="141" fill="#7d5fa5" font-size="11" text-anchor="middle">just above the surface</text>
+    <text x="120" y="127" fill="#7d5fa5" font-size="11" text-anchor="middle">launched at sprayLaunchSpeed</text>
+  </g>
+
+  <!-- ballistic arc -->
+  <path d="M120 262 C 200 120, 340 118, 434 258" fill="none" stroke="#b78bea" stroke-width="2.6" stroke-dasharray="7 5"/>
+  <g fill="#b78bea" opacity=".85">
+    <circle cx="176" cy="184" r="3.4"/><circle cx="240" cy="140" r="3.4"/>
+    <circle cx="308" cy="140" r="3.4"/><circle cx="380" cy="188" r="3.4"/>
+  </g>
+  <text x="278" y="106" fill="#7d5fa5" font-size="11.5" text-anchor="middle" font-family="ui-monospace,monospace">arcs under gravity · drag</text>
+
+  <!-- landing -->
+  <circle cx="440" cy="266" r="9" fill="none" stroke="#f07a8c" stroke-width="2.4"/>
+  <line x1="440" y1="278" x2="440" y2="336" stroke="#f07a8c" stroke-width="1.2"/>
+  <g font-family="ui-monospace,monospace">
+    <text x="440" y="354" fill="#f07a8c" font-size="12.5" text-anchor="middle">LANDING CONVERSION</text>
+    <text x="440" y="370" fill="#8a5560" font-size="11" text-anchor="middle">y &le; surface AND falling &rarr; becomes KIND_SURFACE</text>
+    <text x="440" y="385" fill="#8a5560" font-size="11" text-anchor="middle">life and size RE-ROLLED from the deposit ranges</text>
+  </g>
+
+  <!-- drifting foam -->
+  <g>
+    <ellipse cx="510" cy="264" rx="17" ry="7" fill="#4dd8e8" opacity=".85"/>
+    <ellipse cx="590" cy="266" rx="19" ry="8" fill="#4dd8e8" opacity=".7"/>
+    <ellipse cx="676" cy="263" rx="21" ry="8" fill="#4dd8e8" opacity=".55"/>
+    <ellipse cx="768" cy="266" rx="22" ry="9" fill="#4dd8e8" opacity=".4"/>
+    <ellipse cx="862" cy="264" rx="23" ry="9" fill="#4dd8e8" opacity=".26"/>
+    <ellipse cx="956" cy="266" rx="24" ry="9" fill="#4dd8e8" opacity=".14"/>
+    <ellipse cx="1048" cy="264" rx="24" ry="9" fill="#4dd8e8" opacity=".06"/>
+  </g>
+  <path d="M520 244 L1040 244" fill="none" stroke="#2f5f78" stroke-width="1.4" stroke-dasharray="5 5"/>
+  <polygon points="1040,244 1030,240 1030,248" fill="#2f5f78"/>
+  <g font-family="ui-monospace,monospace">
+    <text x="640" y="232" fill="#4dd8e8" font-size="12.5">KIND_SURFACE — drifts with flow + wind, spreads, decays</text>
+    <text x="1000" y="232" fill="#3a92a1" font-size="11.5" text-anchor="end">gone</text>
+  </g>
+
+  <!-- demotion branch -->
+  <path d="M120 262 C 160 240, 200 236, 250 250" fill="none" stroke="#8a5560" stroke-width="1.6" stroke-dasharray="4 4"/>
+  <circle cx="252" cy="251" r="5" fill="#8a5560"/>
+  <g font-family="ui-monospace,monospace">
+    <text x="252" y="290" fill="#8a5560" font-size="11.5" text-anchor="middle">screen tile already full of spray?</text>
+    <text x="252" y="305" fill="#54707f" font-size="11" text-anchor="middle">born as FOAM instead — demoted, not dropped</text>
+  </g>
+</svg>
+</div>
+<p class="cap">Every airborne droplet ends as floating foam. That is why spray leaves trails rather than disappearing.</p>
+
+<!-- ================================================== 4 -->
+<h2>4 — One splash, three outcomes <span>the fork every trigger passes through</span></h2>
+
+<div class="card">
+<svg viewBox="0 0 1140 400" role="img" aria-label="The routing fork inside EmitSplash">
+
+  <!-- triggers -->
+  <g font-family="ui-monospace,monospace" font-size="12">
+    <g fill="#0d1a26" stroke="#3d5a70" stroke-width="1.4">
+      <rect x="20" y="70" width="176" height="34" rx="5"/>
+      <rect x="20" y="118" width="176" height="34" rx="5"/>
+      <rect x="20" y="166" width="176" height="34" rx="5"/>
+    </g>
+    <text x="34" y="92" fill="#cfe2ee">WaterSplash</text>
+    <text x="34" y="140" fill="#cfe2ee">WaterSprayPump</text>
+    <text x="34" y="188" fill="#cfe2ee">WaterInputRouter</text>
+    <text x="20" y="224" fill="#54707f" font-size="11">each computes only  point · strength · radius</text>
+  </g>
+  <g stroke="#3d5a70" stroke-width="1.6" fill="none">
+    <path d="M196 87 C 230 87, 240 128, 268 133"/>
+    <path d="M196 135 L268 135"/>
+    <path d="M196 183 C 230 183, 240 142, 268 137"/>
+  </g>
+
+  <!-- EmitSplash -->
+  <g transform="translate(270,108)">
+    <rect x="0" y="0" width="150" height="56" rx="7" fill="#0d2231" stroke="#4dd8e8" stroke-width="2"/>
+    <text x="75" y="26" fill="#4dd8e8" font-size="13" text-anchor="middle" font-family="ui-monospace,monospace">EmitSplash</text>
+    <text x="75" y="44" fill="#3a92a1" font-size="11" text-anchor="middle" font-family="ui-monospace,monospace">the only entry point</text>
+  </g>
+
+  <!-- fork diamond -->
+  <g transform="translate(500,136)">
+    <polygon points="0,-46 96,0 0,46 -96,0" fill="#12222f" stroke="#f0b45a" stroke-width="1.8"/>
+    <text x="0" y="-6" fill="#f0b45a" font-size="11.5" text-anchor="middle" font-family="ui-monospace,monospace">WaterFoamParticles</text>
+    <text x="0" y="10" fill="#f0b45a" font-size="11.5" text-anchor="middle" font-family="ui-monospace,monospace">on this body?</text>
+  </g>
+  <line x1="420" y1="136" x2="404" y2="136" stroke="#3d5a70" stroke-width="1.6"/>
+  <line x1="404" y1="136" x2="404" y2="136" stroke="#3d5a70" stroke-width="1.6"/>
+
+  <!-- three lanes -->
+  <g stroke="#3d5a70" stroke-width="1.6" fill="none">
+    <path d="M596 120 C 640 120, 650 62, 700 62"/>
+    <path d="M596 140 C 640 140, 650 176, 700 176"/>
+    <path d="M500 182 C 500 250, 620 292, 700 292"/>
+  </g>
+
+  <g font-family="ui-monospace,monospace" font-size="12">
+    <!-- lane 1 : present, on -->
+    <rect x="700" y="34" width="420" height="58" rx="6" fill="#0d2231" stroke="#4dd8e8" stroke-width="1.6"/>
+    <text x="714" y="55" fill="#4dd8e8">present + Use Particles ON</text>
+    <text x="714" y="74" fill="#9fd8ea" font-size="11.5">GPU burst (door 2) &nbsp;+&nbsp; crown ring &nbsp;&mdash;&nbsp; Shuriken droplets SKIPPED</text>
+    <text x="1108" y="55" fill="#6fd08c" font-size="11.5" text-anchor="end">the normal path</text>
+
+    <!-- lane 2 : absent -->
+    <rect x="700" y="148" width="420" height="58" rx="6" fill="#0d1a26" stroke="#8fb6c9" stroke-width="1.6"/>
+    <text x="714" y="169" fill="#cfe2ee">no GPU system on the body</text>
+    <text x="714" y="188" fill="#8fb6c9" font-size="11.5">Shuriken droplet burst &nbsp;+&nbsp; crown ring &nbsp;&mdash;&nbsp; the CPU fallback</text>
+
+    <!-- lane 3 : master off -->
+    <rect x="700" y="264" width="420" height="58" rx="6" fill="#2a1519" stroke="#f07a8c" stroke-width="1.6"/>
+    <text x="714" y="285" fill="#f07a8c">present + Use Particles OFF</text>
+    <text x="714" y="304" fill="#c98a95" font-size="11.5">NOTHING &mdash; early return kills the crown too</text>
+    <text x="1108" y="285" fill="#f07a8c" font-size="11.5" text-anchor="end">the surprising one</text>
+  </g>
+
+  <text x="500" y="368" fill="#54707f" font-size="11.5" text-anchor="middle" font-family="ui-monospace,monospace">the crown is Shuriken in every lane — it is not the fallback, the DROPLETS are</text>
+</svg>
+</div>
+<p class="cap">Unticking <code>Use Particles</code> does not fall back to Shuriken. It silences the body completely.</p>
+
+<!-- ================================================== 5 -->
+<h2>5 — The frame <span>when each thing happens</span></h2>
+
+<div class="card">
+<svg viewBox="0 0 1140 250" role="img" aria-label="Per-frame ordering of particle work">
+  <!-- rail -->
+  <line x1="40" y1="128" x2="1100" y2="128" stroke="#2f5f78" stroke-width="2.4"/>
+  <polygon points="1100,128 1088,122 1088,134" fill="#2f5f78"/>
+
+  <g font-family="ui-monospace,monospace" font-size="11.5">
+    <!-- ticks -->
+    <g stroke="#4dd8e8" stroke-width="2">
+      <line x1="120" y1="112" x2="120" y2="144"/>
+      <line x1="330" y1="112" x2="330" y2="144"/>
+      <line x1="560" y1="112" x2="560" y2="144"/>
+      <line x1="790" y1="112" x2="790" y2="144"/>
+      <line x1="1010" y1="112" x2="1010" y2="144"/>
+    </g>
+
+    <text x="120" y="100" fill="#4dd8e8" font-size="12.5" text-anchor="middle">FixedUpdate</text>
+    <text x="120" y="166" fill="#7e97ab" text-anchor="middle">WaterSplash</text>
+    <text x="120" y="181" fill="#54707f" text-anchor="middle">under/over edge test</text>
+
+    <text x="330" y="100" fill="#4dd8e8" font-size="12.5" text-anchor="middle">Update</text>
+    <text x="330" y="166" fill="#7e97ab" text-anchor="middle">WaterInputRouter</text>
+    <text x="330" y="181" fill="#54707f" text-anchor="middle">drag / tap</text>
+
+    <text x="560" y="100" fill="#4dd8e8" font-size="12.5" text-anchor="middle">LateUpdate</text>
+    <text x="560" y="166" fill="#7e97ab" text-anchor="middle">WaterSprayPump &middot; sim step</text>
+    <text x="560" y="181" fill="#54707f" text-anchor="middle">queue fills here</text>
+
+    <text x="790" y="100" fill="#4dd8e8" font-size="12.5" text-anchor="middle">dispatch</text>
+    <text x="790" y="166" fill="#7e97ab" text-anchor="middle">Spawn &middot; SpawnBurst &middot; Update</text>
+    <text x="790" y="181" fill="#54707f" text-anchor="middle">the queue drains ONCE, here</text>
+
+    <text x="1010" y="100" fill="#4dd8e8" font-size="12.5" text-anchor="middle">render</text>
+    <text x="1010" y="166" fill="#7e97ab" text-anchor="middle">quads / density</text>
+    <text x="1010" y="181" fill="#54707f" text-anchor="middle">queue-time, or after the fog</text>
+  </g>
+
+  <text x="40" y="222" fill="#b8874a" font-size="11.5" font-family="ui-monospace,monospace">particles spawn from THIS frame's surface — the sim steps before the dispatch, not after</text>
+  <text x="40" y="240" fill="#8a5560" font-size="11.5" font-family="ui-monospace,monospace">pump and pool share default execution order, so a pump burst may land in this dispatch or the next</text>
+</svg>
+</div>
+
+<!-- ================================================== 6 -->
+<h2>6 — What thins them out <span>three separate budgets, three different behaviours</span></h2>
+
+<div class="card">
+<svg viewBox="0 0 1140 300" role="img" aria-label="Distance LOD, pool saturation and per-tile spray budget">
+
+  <!-- panel A : distance -->
+  <text x="20" y="24" fill="#6fd08c" font-size="12.5" font-family="ui-monospace,monospace">DISTANCE — thinned</text>
+  <g transform="translate(20,44)">
+    <rect x="0" y="0" width="340" height="180" rx="6" fill="#0d1a26" stroke="#1c3247"/>
+    <!-- eye -->
+    <circle cx="26" cy="90" r="11" fill="none" stroke="#d6e6f2" stroke-width="1.8"/>
+    <circle cx="26" cy="90" r="3.6" fill="#d6e6f2"/>
+    <!-- cone -->
+    <path d="M38 90 L322 32 L322 148 Z" fill="#6fd08c" opacity=".07" stroke="#6fd08c" stroke-width="1" stroke-dasharray="4 4"/>
+    <!-- dots thinning -->
+    <g fill="#6fd08c">
+      <circle cx="86" cy="72" r="3"/><circle cx="86" cy="90" r="3"/><circle cx="86" cy="108" r="3"/>
+      <circle cx="140" cy="66" r="2.8"/><circle cx="140" cy="94" r="2.8"/><circle cx="140" cy="118" r="2.8"/>
+      <circle cx="198" cy="58" r="2.6"/><circle cx="198" cy="104" r="2.6"/>
+      <circle cx="254" cy="72" r="2.4"/><circle cx="254" cy="122" r="2.4"/>
+      <circle cx="306" cy="96" r="2.2"/>
+    </g>
+    <text x="170" y="168" fill="#4d8f65" font-size="11" text-anchor="middle" font-family="ui-monospace,monospace">stochastic roll — fewer spawns, same look</text>
+  </g>
+
+  <!-- panel B : pool full -->
+  <text x="400" y="24" fill="#f07a8c" font-size="12.5" font-family="ui-monospace,monospace">POOL FULL — dropped</text>
+  <g transform="translate(400,44)">
+    <rect x="0" y="0" width="340" height="180" rx="6" fill="#0d1a26" stroke="#1c3247"/>
+    <!-- slots -->
+    <g>
+      <rect x="26" y="62" width="22" height="56" rx="3" fill="#4dd8e8" opacity=".8"/>
+      <rect x="54" y="62" width="22" height="56" rx="3" fill="#4dd8e8" opacity=".8"/>
+      <rect x="82" y="62" width="22" height="56" rx="3" fill="#4dd8e8" opacity=".8"/>
+      <rect x="110" y="62" width="22" height="56" rx="3" fill="#4dd8e8" opacity=".8"/>
+      <rect x="138" y="62" width="22" height="56" rx="3" fill="#4dd8e8" opacity=".8"/>
+      <rect x="166" y="62" width="22" height="56" rx="3" fill="#4dd8e8" opacity=".8"/>
+      <rect x="194" y="62" width="22" height="56" rx="3" fill="#4dd8e8" opacity=".8"/>
+    </g>
+    <text x="121" y="140" fill="#3a92a1" font-size="11" text-anchor="middle" font-family="ui-monospace,monospace">all slots hold LIVE foam</text>
+    <!-- bouncing spawn -->
+    <path d="M300 52 L246 84" stroke="#f07a8c" stroke-width="2"/>
+    <path d="M246 84 L292 116" stroke="#f07a8c" stroke-width="2" stroke-dasharray="5 4"/>
+    <circle cx="300" cy="52" r="5" fill="#f07a8c"/>
+    <text x="272" y="160" fill="#8a5560" font-size="11" text-anchor="middle" font-family="ui-monospace,monospace">new spawn rejected</text>
+    <text x="272" y="174" fill="#8a5560" font-size="11" text-anchor="middle" font-family="ui-monospace,monospace">live foam never stomped</text>
+  </g>
+
+  <!-- panel C : tile -->
+  <text x="780" y="24" fill="#f0b45a" font-size="12.5" font-family="ui-monospace,monospace">TILE FULL — demoted</text>
+  <g transform="translate(780,44)">
+    <rect x="0" y="0" width="340" height="180" rx="6" fill="#0d1a26" stroke="#1c3247"/>
+    <!-- screen tiles -->
+    <g stroke="#1c3247" stroke-width="1" fill="none">
+      <rect x="30" y="26" width="180" height="126"/>
+      <line x1="90" y1="26" x2="90" y2="152"/><line x1="150" y1="26" x2="150" y2="152"/>
+      <line x1="30" y1="68" x2="210" y2="68"/><line x1="30" y1="110" x2="210" y2="110"/>
+    </g>
+    <rect x="90" y="68" width="60" height="42" fill="#f0b45a" opacity=".22"/>
+    <g fill="#b78bea">
+      <circle cx="100" cy="78" r="2.6"/><circle cx="118" cy="76" r="2.6"/><circle cx="136" cy="80" r="2.6"/>
+      <circle cx="104" cy="96" r="2.6"/><circle cx="122" cy="100" r="2.6"/><circle cx="140" cy="94" r="2.6"/>
+    </g>
+    <text x="120" y="166" fill="#b8874a" font-size="11" text-anchor="middle" font-family="ui-monospace,monospace">6 spray already in this tile</text>
+    <!-- demote arrow -->
+    <path d="M216 88 L262 88" stroke="#f0b45a" stroke-width="2"/>
+    <polygon points="262,88 252,83 252,93" fill="#f0b45a"/>
+    <circle cx="292" cy="88" r="9" fill="#4dd8e8" opacity=".8"/>
+    <text x="292" y="118" fill="#3a92a1" font-size="11" text-anchor="middle" font-family="ui-monospace,monospace">born as</text>
+    <text x="292" y="132" fill="#3a92a1" font-size="11" text-anchor="middle" font-family="ui-monospace,monospace">floating foam</text>
+  </g>
+
+  <text x="20" y="268" fill="#7e97ab" font-size="12" font-family="ui-monospace,monospace">The three failure modes are deliberately different: distance thins, the pool refuses, the tile converts.</text>
+  <text x="20" y="288" fill="#54707f" font-size="11.5" font-family="ui-monospace,monospace">Only the middle one loses a particle outright — and it protects what is already on screen.</text>
+</svg>
+</div>
+
+</div>
+</body>
+</html>

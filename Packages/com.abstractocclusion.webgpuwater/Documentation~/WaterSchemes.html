@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebGpuWater — waterline, shore, foam patch</title>
+<style>
+  :root{
+    --bg:#08111c;
+    --panel:#0e1b29;
+    --edge:#1c3247;
+    --ink:#d6e6f2;
+    --dim:#7e97ab;
+    --cyan:#4dd8e8;
+    --amber:#f0b45a;
+    --green:#6fd08c;
+    --violet:#b78bea;
+    --rose:#f07a8c;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:34px 26px 90px;
+    background:var(--bg); color:var(--ink);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  }
+  .wrap{max-width:1180px;margin:0 auto}
+  h1{font-size:22px;font-weight:600;letter-spacing:.02em;margin:0 0 6px}
+  .sub{color:var(--dim);font-size:14px;margin:0 0 34px}
+  h2{
+    font-size:15px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--cyan);margin:46px 0 4px;
+    border-bottom:1px solid var(--edge);padding-bottom:9px;
+  }
+  h2 span{color:var(--dim);font-weight:400;letter-spacing:0;text-transform:none;font-size:13px;margin-left:10px}
+  .lede{color:var(--dim);font-size:14px;margin:12px 0 20px;max-width:860px}
+  .card{background:var(--panel);border:1px solid var(--edge);border-radius:9px;padding:18px;margin-bottom:16px}
+  svg{display:block;width:100%;height:auto}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  code,.m{font-family:var(--mono);font-size:12.5px;color:var(--cyan)}
+  .note{
+    border-left:3px solid var(--amber);background:rgba(240,180,90,.07);
+    padding:11px 15px;border-radius:0 6px 6px 0;margin:16px 0;font-size:13.5px;color:#e8d5b6;
+  }
+  .note b{color:var(--amber)}
+  .key{display:flex;flex-wrap:wrap;gap:9px 20px;margin:14px 0 0;font-size:12.5px;color:var(--dim)}
+  .key i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:6px;vertical-align:-1px;font-style:normal}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:6px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--edge);vertical-align:top}
+  th{color:var(--dim);font-weight:500;font-size:12px;letter-spacing:.05em;text-transform:uppercase}
+  td.f{font-family:var(--mono);font-size:12.5px;color:var(--cyan);white-space:nowrap}
+  @media (max-width:860px){ .grid2{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>WebGpuWater — three schemes</h1>
+<p class="sub">Waterline · Shore &amp; surf zone · The foam patch. Cross-sections, drawn to the code.</p>
+
+<!-- ============================================================ 1 -->
+<h2>1 — The waterline <span>which terms a fragment gets, by where the eye and the fragment sit</span></h2>
+<p class="lede">
+  Everything the water does to a surface is decided by one segment: the part of the
+  camera&rarr;fragment ray that is <b>under</b> the line. <code>WaterPathLength()</code> returns its
+  length; zero means the water never touches that pixel.
+</p>
+
+<div class="grid2">
+
+  <!-- A: eye above, prop under -->
+  <div class="card">
+  <svg viewBox="0 0 540 250" role="img" aria-label="Eye above water, prop under water">
+    <rect x="0" y="0" width="540" height="250" fill="none"/>
+    <!-- water body -->
+    <rect x="0" y="112" width="540" height="138" fill="#123a52" opacity=".55"/>
+    <!-- surface -->
+    <path d="M0 112 q30 -8 60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0"
+          fill="none" stroke="#4dd8e8" stroke-width="2.5"/>
+    <!-- eye -->
+    <g transform="translate(66,52)">
+      <circle cx="0" cy="0" r="15" fill="none" stroke="#d6e6f2" stroke-width="2"/>
+      <circle cx="0" cy="0" r="5" fill="#d6e6f2"/>
+      <text x="0" y="-24" fill="#d6e6f2" font-size="12" text-anchor="middle" font-family="ui-monospace,monospace">eye</text>
+    </g>
+    <!-- ray: dry part -->
+    <line x1="80" y1="60" x2="238" y2="112" stroke="#7e97ab" stroke-width="2" stroke-dasharray="5 4"/>
+    <!-- ray: wet part -->
+    <line x1="238" y1="112" x2="430" y2="176" stroke="#f0b45a" stroke-width="4"/>
+    <!-- crossing marker -->
+    <circle cx="238" cy="112" r="5" fill="#f0b45a"/>
+    <text x="238" y="102" fill="#f0b45a" font-size="11.5" text-anchor="middle" font-family="ui-monospace,monospace">crossing</text>
+    <!-- prop -->
+    <g transform="translate(430,176)">
+      <rect x="-26" y="-20" width="52" height="40" rx="4" fill="#b78bea" opacity=".35" stroke="#b78bea" stroke-width="2"/>
+      <text x="0" y="38" fill="#b78bea" font-size="12" text-anchor="middle" font-family="ui-monospace,monospace">prop</text>
+    </g>
+    <!-- depth arrow -->
+    <line x1="492" y1="112" x2="492" y2="176" stroke="#6fd08c" stroke-width="1.6"/>
+    <line x1="486" y1="112" x2="498" y2="112" stroke="#6fd08c" stroke-width="1.6"/>
+    <line x1="486" y1="176" x2="498" y2="176" stroke="#6fd08c" stroke-width="1.6"/>
+    <text x="505" y="150" fill="#6fd08c" font-size="11.5" font-family="ui-monospace,monospace">depth</text>
+    <text x="14" y="26" fill="#7e97ab" font-size="12.5" font-family="ui-monospace,monospace">A · eye above, prop under</text>
+    <text x="14" y="238" fill="#f0b45a" font-size="12.5" font-family="ui-monospace,monospace">all four terms</text>
+  </svg>
+  </div>
+
+  <!-- B: eye under, prop above -->
+  <div class="card">
+  <svg viewBox="0 0 540 250" role="img" aria-label="Eye under water, prop above water">
+    <rect x="0" y="138" width="540" height="112" fill="#123a52" opacity=".55"/>
+    <path d="M0 138 q30 -8 60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0"
+          fill="none" stroke="#4dd8e8" stroke-width="2.5"/>
+    <g transform="translate(66,196)">
+      <circle cx="0" cy="0" r="15" fill="none" stroke="#d6e6f2" stroke-width="2"/>
+      <circle cx="0" cy="0" r="5" fill="#d6e6f2"/>
+      <text x="0" y="32" fill="#d6e6f2" font-size="12" text-anchor="middle" font-family="ui-monospace,monospace">eye</text>
+    </g>
+    <line x1="82" y1="190" x2="266" y2="138" stroke="#f0b45a" stroke-width="4"/>
+    <line x1="266" y1="138" x2="428" y2="92" stroke="#7e97ab" stroke-width="2" stroke-dasharray="5 4"/>
+    <circle cx="266" cy="138" r="5" fill="#f0b45a"/>
+    <text x="266" y="128" fill="#f0b45a" font-size="11.5" text-anchor="middle" font-family="ui-monospace,monospace">crossing</text>
+    <g transform="translate(428,92)">
+      <rect x="-26" y="-20" width="52" height="40" rx="4" fill="#b78bea" opacity=".35" stroke="#b78bea" stroke-width="2"/>
+      <text x="0" y="-28" fill="#b78bea" font-size="12" text-anchor="middle" font-family="ui-monospace,monospace">prop</text>
+    </g>
+    <text x="14" y="26" fill="#7e97ab" font-size="12.5" font-family="ui-monospace,monospace">B · eye under, prop above</text>
+    <text x="14" y="238" fill="#f0b45a" font-size="12.5" font-family="ui-monospace,monospace">extinction + glow + opacity · no depth (prop is dry)</text>
+  </svg>
+  </div>
+
+  <!-- C: both above -->
+  <div class="card">
+  <svg viewBox="0 0 540 250" role="img" aria-label="Eye and prop both above water">
+    <rect x="0" y="176" width="540" height="74" fill="#123a52" opacity=".55"/>
+    <path d="M0 176 q30 -8 60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0"
+          fill="none" stroke="#4dd8e8" stroke-width="2.5"/>
+    <g transform="translate(66,84)">
+      <circle cx="0" cy="0" r="15" fill="none" stroke="#d6e6f2" stroke-width="2"/>
+      <circle cx="0" cy="0" r="5" fill="#d6e6f2"/>
+      <text x="0" y="-24" fill="#d6e6f2" font-size="12" text-anchor="middle" font-family="ui-monospace,monospace">eye</text>
+    </g>
+    <line x1="82" y1="88" x2="404" y2="112" stroke="#7e97ab" stroke-width="2" stroke-dasharray="5 4"/>
+    <g transform="translate(430,112)">
+      <rect x="-26" y="-20" width="52" height="40" rx="4" fill="#b78bea" opacity=".35" stroke="#b78bea" stroke-width="2"/>
+      <text x="0" y="-28" fill="#b78bea" font-size="12" text-anchor="middle" font-family="ui-monospace,monospace">prop</text>
+    </g>
+    <text x="14" y="26" fill="#7e97ab" font-size="12.5" font-family="ui-monospace,monospace">C · both above</text>
+    <text x="14" y="238" fill="#7e97ab" font-size="12.5" font-family="ui-monospace,monospace">nothing · wet = 0, the pair is identity</text>
+  </svg>
+  </div>
+
+  <!-- D: both under -->
+  <div class="card">
+  <svg viewBox="0 0 540 250" role="img" aria-label="Eye and prop both under water">
+    <rect x="0" y="66" width="540" height="184" fill="#123a52" opacity=".55"/>
+    <path d="M0 66 q30 -8 60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0"
+          fill="none" stroke="#4dd8e8" stroke-width="2.5"/>
+    <g transform="translate(66,132)">
+      <circle cx="0" cy="0" r="15" fill="none" stroke="#d6e6f2" stroke-width="2"/>
+      <circle cx="0" cy="0" r="5" fill="#d6e6f2"/>
+      <text x="0" y="-24" fill="#d6e6f2" font-size="12" text-anchor="middle" font-family="ui-monospace,monospace">eye</text>
+    </g>
+    <line x1="82" y1="136" x2="404" y2="182" stroke="#f0b45a" stroke-width="4"/>
+    <g transform="translate(430,184)">
+      <rect x="-26" y="-20" width="52" height="40" rx="4" fill="#b78bea" opacity=".35" stroke="#b78bea" stroke-width="2"/>
+      <text x="0" y="38" fill="#b78bea" font-size="12" text-anchor="middle" font-family="ui-monospace,monospace">prop</text>
+    </g>
+    <line x1="492" y1="66" x2="492" y2="184" stroke="#6fd08c" stroke-width="1.6"/>
+    <line x1="486" y1="66" x2="498" y2="66" stroke="#6fd08c" stroke-width="1.6"/>
+    <line x1="486" y1="184" x2="498" y2="184" stroke="#6fd08c" stroke-width="1.6"/>
+    <text x="505" y="128" fill="#6fd08c" font-size="11.5" font-family="ui-monospace,monospace">depth</text>
+    <text x="14" y="26" fill="#7e97ab" font-size="12.5" font-family="ui-monospace,monospace">D · both under</text>
+    <text x="14" y="238" fill="#f0b45a" font-size="12.5" font-family="ui-monospace,monospace">extinction + glow + depth · no opacity (no crossing)</text>
+  </svg>
+  </div>
+
+</div>
+
+<div class="key">
+  <span><i style="background:#f0b45a"></i>wet segment — the only part that counts</span>
+  <span><i style="background:#7e97ab"></i>dry segment — ignored</span>
+  <span><i style="background:#6fd08c"></i>downwelling depth, measured straight down</span>
+</div>
+
+<div class="note">
+  <b>Why C and D differ from A and B.</b> Water Opacity is the <i>sheet's</i> turbidity — the murk you
+  see looking <i>through</i> the surface. It applies only when the ray crosses the line, which is why
+  panel D has none: two points on the same side never had a sheet between them, and the fullscreen fog
+  doesn't apply the knob either, so a rerouted prop matches whatever is behind it. Depth is the
+  opposite: it depends only on <i>where the fragment sits</i>, so panel B has none (the prop is in air)
+  and panel D has it in full.
+</div>
+
+<table>
+  <tr><th>Term</th><th>Gate</th><th>Panels</th></tr>
+  <tr><td class="f">extinction + in-scatter</td><td>wet segment &gt; 0, fog feature on</td><td>A B D</td></tr>
+  <tr><td class="f">DownwellingAttenuation</td><td>fragment below the line (own master switch)</td><td>A D</td></tr>
+  <tr><td class="f">scene-lamp glow</td><td>wet segment &gt; 0, lamp count &gt; 0</td><td>A B D</td></tr>
+  <tr><td class="f">_WaterOpacity</td><td>eye and fragment on opposite sides</td><td>A B</td></tr>
+</table>
+
+<!-- ============================================================ 2 -->
+<h2>2 — The shore <span>one wave, from shoaling to dry sand</span></h2>
+<p class="lede">
+  Cross-section, deep water on the left. Each labelled band is a separate knob in
+  <b>Foam &rsaquo; Shore &amp; Swash</b>. They fire in this order as the front travels, and they are
+  additive — which is why the near-shore foam saturates before anything else does.
+</p>
+
+<div class="card">
+<svg viewBox="0 0 1140 430" role="img" aria-label="Shore cross-section from deep water to dry beach">
+
+  <!-- beach bed -->
+  <path d="M0 372 L560 372 L1000 196 L1140 196 L1140 430 L0 430 Z" fill="#2a2418" stroke="#4a3f2a" stroke-width="2"/>
+  <text x="1055" y="290" fill="#8a7a56" font-size="13" font-family="ui-monospace,monospace">dry beach</text>
+
+  <!-- still water level -->
+  <line x1="0" y1="250" x2="1010" y2="250" stroke="#2f5f78" stroke-width="1.4" stroke-dasharray="6 6"/>
+  <text x="10" y="243" fill="#4b7e97" font-size="11.5" font-family="ui-monospace,monospace">still level</text>
+
+  <!-- water body -->
+  <path d="M0 250 L0 372 L560 372 L940 220 L940 250 Z" fill="#123a52" opacity=".5"/>
+
+  <!-- wave profile: shoaling -> peaking -> plunging lip -> bore -> swash -->
+  <path d="M0 250
+           C 70 236, 110 264, 180 250
+           C 250 236, 285 258, 350 244
+           C 410 232, 440 210, 480 196
+           C 512 185, 540 190, 556 208
+           C 568 222, 566 236, 552 244
+           L 700 244
+           C 740 244, 760 238, 800 236
+           L 940 220"
+        fill="none" stroke="#4dd8e8" stroke-width="3"/>
+
+  <!-- plunging lip curl -->
+  <path d="M556 208 C 578 200, 596 214, 588 232 C 582 244, 566 246, 556 240"
+        fill="none" stroke="#ffffff" stroke-width="2.6" opacity=".85"/>
+
+  <!-- lip spray particles -->
+  <g fill="#ffffff" opacity=".9">
+    <circle cx="608" cy="182" r="3"/><circle cx="632" cy="170" r="2.4"/>
+    <circle cx="654" cy="186" r="2.8"/><circle cx="676" cy="166" r="2"/>
+    <circle cx="600" cy="204" r="2.2"/><circle cx="700" cy="184" r="2.4"/>
+    <circle cx="720" cy="200" r="1.9"/>
+  </g>
+  <path d="M578 206 Q 660 152 736 196" fill="none" stroke="#ffffff" stroke-width="1.3" opacity=".45" stroke-dasharray="4 5"/>
+
+  <!-- bore head -->
+  <ellipse cx="620" cy="244" rx="52" ry="11" fill="#ffffff" opacity=".55"/>
+  <!-- trailing deposit -->
+  <path d="M672 244 L 830 240 L 830 250 L 672 252 Z" fill="#ffffff" opacity=".26"/>
+  <!-- waterline lace -->
+  <ellipse cx="900" cy="226" rx="40" ry="7" fill="#ffffff" opacity=".4"/>
+  <!-- swash uprush film -->
+  <path d="M940 220 L 1000 196 L 1000 202 L 940 228 Z" fill="#9fd8ea" opacity=".55"/>
+  <!-- strand line -->
+  <ellipse cx="1000" cy="197" rx="17" ry="4.5" fill="#ffffff" opacity=".7"/>
+  <!-- wet sand band -->
+  <path d="M1000 196 L1052 175 L1052 183 L1000 204 Z" fill="#000000" opacity=".38"/>
+
+  <!-- ==== labels ==== -->
+  <g font-family="ui-monospace,monospace" font-size="12">
+
+    <!-- shoaling -->
+    <line x1="180" y1="250" x2="180" y2="316" stroke="#7e97ab" stroke-width="1.2"/>
+    <text x="180" y="334" fill="#7e97ab" text-anchor="middle">shoaling</text>
+    <text x="180" y="350" fill="#54707f" text-anchor="middle" font-size="11">bed rises, wave steepens</text>
+
+    <!-- small wave foam -->
+    <line x1="350" y1="244" x2="350" y2="180" stroke="#6fd08c" stroke-width="1.2"/>
+    <text x="350" y="170" fill="#6fd08c" text-anchor="middle">surfSmallWaveFoam</text>
+    <text x="350" y="155" fill="#4d8f65" text-anchor="middle" font-size="11">crest + short tail, gentle waves</text>
+
+    <!-- lip -->
+    <line x1="576" y1="196" x2="576" y2="120" stroke="#f0b45a" stroke-width="1.2"/>
+    <text x="576" y="110" fill="#f0b45a" text-anchor="middle">PLUNGING LIP</text>
+    <text x="576" y="95" fill="#b8874a" text-anchor="middle" font-size="11">SurfLipAt &gt; 0.3 &rarr; ballistic spray</text>
+    <text x="576" y="80" fill="#b8874a" text-anchor="middle" font-size="11">particle trigger 1c</text>
+
+    <!-- bore -->
+    <line x1="620" y1="256" x2="620" y2="316" stroke="#ffffff" stroke-width="1.2" opacity=".6"/>
+    <text x="620" y="334" fill="#cfe2ee" text-anchor="middle">surfFoamBoreGain</text>
+    <text x="620" y="350" fill="#7e97ab" text-anchor="middle" font-size="11">the churned mound riding the front</text>
+
+    <!-- trail -->
+    <line x1="756" y1="254" x2="756" y2="300" stroke="#ffffff" stroke-width="1.2" opacity=".45"/>
+    <text x="756" y="318" fill="#cfe2ee" text-anchor="middle">surfFoamTrailGain</text>
+    <text x="756" y="333" fill="#7e97ab" text-anchor="middle" font-size="11">&times; TrailLength &middot; TrailDissolve</text>
+
+    <!-- waterline lace -->
+    <line x1="900" y1="219" x2="900" y2="150" stroke="#4dd8e8" stroke-width="1.2"/>
+    <text x="900" y="140" fill="#4dd8e8" text-anchor="middle">surfWaterlineFoam</text>
+    <text x="900" y="125" fill="#3a92a1" text-anchor="middle" font-size="11">standing lace — no front needed</text>
+
+    <!-- swash -->
+    <line x1="968" y1="212" x2="968" y2="300" stroke="#9fd8ea" stroke-width="1.2"/>
+    <text x="968" y="318" fill="#9fd8ea" text-anchor="middle">surfSwashFoam</text>
+    <text x="968" y="333" fill="#5f92a4" text-anchor="middle" font-size="11">rides the uprush film</text>
+
+    <!-- strand -->
+    <line x1="1010" y1="192" x2="1044" y2="112" stroke="#b78bea" stroke-width="1.2"/>
+    <text x="1050" y="104" fill="#b78bea" text-anchor="middle">surfSwashDepositGain</text>
+    <text x="1050" y="89" fill="#7d5fa5" text-anchor="middle" font-size="11">strands at the top of the run</text>
+
+    <!-- wet sand -->
+    <text x="1076" y="200" fill="#8a7a56" font-size="11">wet sand</text>
+    <text x="1076" y="215" fill="#6b5d40" font-size="11">wetnessDryTime</text>
+  </g>
+
+  <!-- master gain bracket -->
+  <line x1="556" y1="392" x2="1000" y2="392" stroke="#f07a8c" stroke-width="1.6"/>
+  <line x1="556" y1="386" x2="556" y2="398" stroke="#f07a8c" stroke-width="1.6"/>
+  <line x1="1000" y1="386" x2="1000" y2="398" stroke="#f07a8c" stroke-width="1.6"/>
+  <text x="778" y="412" fill="#f07a8c" font-size="12" text-anchor="middle" font-family="ui-monospace,monospace">surfFoamGain — master weight of everything injected into the foam sim</text>
+</svg>
+</div>
+
+<div class="note">
+  <b>The trap on this picture.</b> <code>surfFoamGain</code>, <code>surfWaterlineFoam</code> and
+  <code>surfSwashDepositGain</code> control what is <i>written into the foam buffer</i>. The plunging-lip
+  spray does <b>not</b> read those — it reads whether the surf layer is <i>active at all</i>. Zero every
+  gain on this diagram and the white shapes vanish while the lip keeps throwing particles.
+</div>
+
+<!-- ============================================================ 3 -->
+<h2>3 — The foam patch <span>one saturating buffer, four writers, three readers</span></h2>
+<p class="lede">
+  A foam patch is a value in <b>one</b> texture. Everything on the left adds into the same scalar and
+  it clips at 1 — which is why shore whitewash and turbulence foam appear to fight: they are not two
+  layers, they are one number.
+</p>
+
+<div class="card">
+<svg viewBox="0 0 1140 470" role="img" aria-label="Foam buffer writers and readers">
+
+  <!-- ===== writers ===== -->
+  <text x="20" y="26" fill="#7e97ab" font-size="12.5" font-family="ui-monospace,monospace">WRITERS — all additive, into the same scalar</text>
+
+  <g font-family="ui-monospace,monospace" font-size="12.5">
+    <g>
+      <rect x="20" y="46" width="250" height="52" rx="6" fill="#1a2c1f" stroke="#6fd08c" stroke-width="1.6"/>
+      <text x="34" y="70" fill="#6fd08c">turbulence generation</text>
+      <text x="34" y="88" fill="#4d8f65" font-size="11">speed · curvature · crest bias</text>
+    </g>
+    <g>
+      <rect x="20" y="112" width="250" height="52" rx="6" fill="#1a2c1f" stroke="#6fd08c" stroke-width="1.6"/>
+      <text x="34" y="136" fill="#6fd08c">wake stamp</text>
+      <text x="34" y="154" fill="#4d8f65" font-size="11">foamWakeStrength · RadiusScale</text>
+    </g>
+    <g>
+      <rect x="20" y="178" width="250" height="52" rx="6" fill="#1a2c1f" stroke="#6fd08c" stroke-width="1.6"/>
+      <text x="34" y="202" fill="#6fd08c">breaking deposit</text>
+      <text x="34" y="220" fill="#4d8f65" font-size="11">foamDeposit · BreakStrength</text>
+    </g>
+    <g>
+      <rect x="20" y="244" width="250" height="66" rx="6" fill="#2d2216" stroke="#f0b45a" stroke-width="1.6"/>
+      <text x="34" y="268" fill="#f0b45a">shore whitewash injection</text>
+      <text x="34" y="286" fill="#b8874a" font-size="11">bore · trail · lace · swash</text>
+      <text x="34" y="302" fill="#b8874a" font-size="11">&times; surfFoamGain</text>
+    </g>
+    <g>
+      <rect x="20" y="324" width="250" height="52" rx="6" fill="#241c2f" stroke="#b78bea" stroke-width="1.6"/>
+      <text x="34" y="348" fill="#b78bea">wetness mark</text>
+      <text x="34" y="366" fill="#7d5fa5" font-size="11">stored here, decays on DryTime</text>
+    </g>
+  </g>
+
+  <!-- arrows into buffer -->
+  <g stroke="#3d5a70" stroke-width="1.8" fill="none">
+    <path d="M270 72  C 320 72, 340 190, 392 205"/>
+    <path d="M270 138 C 320 138, 344 196, 392 210"/>
+    <path d="M270 204 C 320 204, 350 208, 392 215"/>
+    <path d="M270 277 C 320 277, 344 232, 392 222"/>
+    <path d="M270 350 C 320 350, 340 250, 392 230"/>
+  </g>
+
+  <!-- ===== the buffer ===== -->
+  <g>
+    <rect x="396" y="150" width="180" height="140" rx="9" fill="#0d2231" stroke="#4dd8e8" stroke-width="2.4"/>
+    <text x="486" y="178" fill="#4dd8e8" font-size="13" text-anchor="middle" font-family="ui-monospace,monospace">FOAM BUFFER</text>
+    <text x="486" y="196" fill="#3a92a1" font-size="11" text-anchor="middle" font-family="ui-monospace,monospace">FoamMaskTexture</text>
+    <!-- saturation bar -->
+    <rect x="416" y="212" width="140" height="16" rx="3" fill="#12303f" stroke="#2f5f78" stroke-width="1"/>
+    <rect x="416" y="212" width="140" height="16" rx="3" fill="#4dd8e8" opacity=".85"/>
+    <text x="486" y="246" fill="#f07a8c" font-size="11.5" text-anchor="middle" font-family="ui-monospace,monospace">CLIPS AT 1.0</text>
+    <text x="486" y="264" fill="#8a5560" font-size="11" text-anchor="middle" font-family="ui-monospace,monospace">shore alone can fill it</text>
+    <text x="486" y="282" fill="#8a5560" font-size="11" text-anchor="middle" font-family="ui-monospace,monospace">advect · spread · decay</text>
+  </g>
+
+  <!-- arrows out -->
+  <g stroke="#3d5a70" stroke-width="1.8" fill="none">
+    <path d="M576 190 C 630 190, 650 92, 704 92"/>
+    <path d="M576 220 C 630 220, 650 205, 704 205"/>
+    <path d="M576 252 C 630 252, 650 318, 704 318"/>
+  </g>
+
+  <!-- ===== readers ===== -->
+  <text x="704" y="26" fill="#7e97ab" font-size="12.5" font-family="ui-monospace,monospace">READERS</text>
+  <g font-family="ui-monospace,monospace" font-size="12.5">
+    <g>
+      <rect x="704" y="66" width="270" height="52" rx="6" fill="#0e1b29" stroke="#4dd8e8" stroke-width="1.6"/>
+      <text x="718" y="90" fill="#4dd8e8">surface shading</text>
+      <text x="718" y="108" fill="#3a92a1" font-size="11">Foam &rsaquo; Turbulence &rsaquo; Shading</text>
+    </g>
+    <g>
+      <rect x="704" y="179" width="270" height="52" rx="6" fill="#0e1b29" stroke="#4dd8e8" stroke-width="1.6"/>
+      <text x="718" y="203" fill="#4dd8e8">particle spawn 1a</text>
+      <text x="718" y="221" fill="#3a92a1" font-size="11">foam &gt; spawnThreshold &rarr; probability</text>
+    </g>
+    <g>
+      <rect x="704" y="292" width="270" height="52" rx="6" fill="#0e1b29" stroke="#b78bea" stroke-width="1.6"/>
+      <text x="718" y="316" fill="#b78bea">wetness on receivers</text>
+      <text x="718" y="334" fill="#7d5fa5" font-size="11">terrain, props, sand</text>
+    </g>
+  </g>
+
+  <!-- ===== the separate buffers ===== -->
+  <line x1="20" y1="404" x2="1120" y2="404" stroke="#1c3247" stroke-width="1"/>
+  <text x="20" y="428" fill="#7e97ab" font-size="12.5" font-family="ui-monospace,monospace">NOT in this buffer — separate fields, which is why they never saturate together:</text>
+  <g font-family="ui-monospace,monospace" font-size="12">
+    <rect x="20" y="440" width="330" height="24" rx="4" fill="#0e1b29" stroke="#2f5f78" stroke-width="1.2"/>
+    <text x="34" y="457" fill="#8fb6c9">ocean whitecaps — FFT cascade .w channel</text>
+    <rect x="366" y="440" width="360" height="24" rx="4" fill="#0e1b29" stroke="#2f5f78" stroke-width="1.2"/>
+    <text x="380" y="457" fill="#8fb6c9">analytic whitewash — drawn by the surf shader itself</text>
+    <rect x="742" y="440" width="330" height="24" rx="4" fill="#0e1b29" stroke="#2f5f78" stroke-width="1.2"/>
+    <text x="756" y="457" fill="#8fb6c9">surf front field — read directly by lip spray</text>
+  </g>
+</svg>
+</div>
+
+<div class="note">
+  <b>Why foam looks right with Foam OFF.</b> Turning Foam off does not remove a layer — it swaps the
+  render path. With the write mask at 0 only the <i>analytic</i> whitewash survives, and that one was
+  never competing for headroom. Turning Foam on doesn't fight the shore engine; it re-routes through a
+  buffer the shore engine has already filled.
+</div>
+
+</div>
+</body>
+</html>

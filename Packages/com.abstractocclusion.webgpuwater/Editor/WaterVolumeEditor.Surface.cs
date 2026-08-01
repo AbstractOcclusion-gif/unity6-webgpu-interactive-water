@@ -179,7 +179,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             });
         }
 
-        // ---- foam: one section, four independent engines -------------------------------------
+        // ---- foam: one section, three independent engines -------------------------------------
         void DrawFoamSection()
         {
             _showFoam = WaterEditorUI.Section("Foam", _showFoam, () =>
@@ -188,11 +188,13 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 DrawFoamTurbulenceBlock();
                 DrawFoamWhitecapsBlock();
                 DrawFoamShoreBlock();
-                DrawFoamShadingBlock();
             });
         }
 
-        // Engine 1: the interactive sim's turbulence foam (advect + generate + decay).
+        // Engine 1: the interactive sim's turbulence foam (advect + generate + decay), with the
+        // shading of its mask nested inside. The mask and the look of that mask are ONE engine;
+        // side by side at the same level they read as two, and the shading block's fields are
+        // dead without the mask above them.
         void DrawFoamTurbulenceBlock()
         {
             _showFoamTurbulence = WaterEditorUI.SubSection("Turbulence (generation & decay)",
@@ -205,6 +207,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "foamSettings.foamDecay",
                     "foamSettings.foamSpread",
                     "foamSettings.foamAdvect");
+
+                // Look before deep tuning: colour and pattern are reached for far more often than
+                // the generation-source knobs, so Shading sits above Advanced.
+                DrawFoamShadingBlock();
 
                 // Everything below tunes WHICH water generates foam rather than how much or how
                 // long it lasts - the four above are the ones reached for first.
@@ -263,8 +269,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         }
 
         // Engine 2: ocean whitecaps, driven by the FFT wave field. Ocean-only, own colour + tiling
-        // (deliberately NOT shared with the turbulence shading below - different look, different
-        // source, and merging them would silently retune every existing ocean).
+        // (deliberately NOT shared with the turbulence shading nested in Engine 1 above - different
+        // look, different source, and merging them would silently retune every existing ocean).
         void DrawFoamWhitecapsBlock()
         {
             _showFoamWhitecaps = WaterEditorUI.SubSection("Whitecaps (ocean)", _showFoamWhitecaps, () =>
@@ -326,10 +332,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             contentEnabled: UsesBedDepth && Prop(WaterVolumePropertyPaths.SurfEnabled).boolValue);
         }
 
-        // Engine 4: how the turbulence foam mask is SHADED (the mask itself comes from block 1).
+        // How the turbulence foam mask is SHADED. Nested inside block 1 because the mask it
+        // shades is generated there - the title needs no qualifier at that depth.
         void DrawFoamShadingBlock()
         {
-            _showFoamShading = WaterEditorUI.SubSection("Shading (turbulence foam)", _showFoamShading, () =>
+            _showFoamShading = WaterEditorUI.SubSection("Shading", _showFoamShading, () =>
             {
                 DrawFields(
                     "foamSettings.foamColor",
@@ -356,9 +363,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             "Skybox/Cubemap material; panoramic HDRI, 6-sided and procedural skyboxes expose no " +
             "samplable cube, so for those this slot is the FALLBACK that actually gets reflected.";
         const string FoamFamiliesHelp =
-            "Four independent foam engines, grouped so they can be compared - not merged. Each has " +
-            "its own switch and its own source: the sim's turbulence, the ocean's FFT crests, the " +
-            "surf fronts' whitewash, and the shading of the turbulence mask.";
+            "Three independent foam engines, grouped so they can be compared - not merged. Each has " +
+            "its own switch and its own source: the sim's turbulence, the ocean's FFT crests, and " +
+            "the surf fronts' whitewash. How the turbulence mask is SHADED lives inside its own " +
+            "engine; the ocean and the surf each carry their own colour and tiling on purpose.";
     }
 }
 #endif

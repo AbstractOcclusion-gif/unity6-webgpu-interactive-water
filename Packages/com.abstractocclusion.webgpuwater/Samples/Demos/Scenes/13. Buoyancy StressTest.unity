@@ -605,7 +605,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 961739749}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: db95254d7fef3c3479d701adbd938abb, type: 3}
   m_Name: 
@@ -613,7 +613,7 @@ MonoBehaviour:
   pivot: {x: 0, y: 0, z: 0}
   pivotTarget: {fileID: 0}
   yaw: -200
-  pitch: -22
+  pitch: -35
   minPitch: -89.99
   maxPitch: 89.99
   rotateSpeed: 0.5
@@ -709,6 +709,7 @@ MonoBehaviour:
     surfLean: 0.35
     surfAmbientFade: 0.8
     surfSwashAmplitude: 1
+    surfSwashMaxSlopeDegrees: 35
     surfFoamGain: 1.2
     surfWaterlineFoam: 0.5
     surfSmallWaveFoam: 0
@@ -768,7 +769,6 @@ MonoBehaviour:
     surfSwashFoam: 0.8
     surfSwashFoamWidth: 0.25
     surfSwashFoamDissolve: 0.6
-    surfSwashStreak: 0.5
     surfSwashDepositGain: 0
   simCompute: {fileID: 7200000, guid: a60aa7d5723d3024db489530955aad46, type: 3}
   oceanFftCompute: {fileID: 7200000, guid: a72790f9172cdc8418a85c91acdb0a2d, type: 3}
@@ -823,6 +823,8 @@ MonoBehaviour:
     foamDecay: 0.96
     foamDecayResidual: 0.993
     foamDecayRate: 1
+    wetnessMemory: 0
+    wetnessDryTime: 3
     foamSpread: 0.2
     foamGenThreshold: 0.15
     foamMinWaveHeight: 0.01
@@ -833,6 +835,7 @@ MonoBehaviour:
     foamBreakStrength: 0
     foamBreakRange: 1.5
     foamCrestBias: 0
+    foamHeadroom: 0
     foamWakeStrength: 0
     foamWakeRadiusScale: 1.5
     foamColor: {r: 1, g: 1, b: 1, a: 1}
@@ -862,6 +865,7 @@ MonoBehaviour:
     largeWaveChoppiness: 0
     swellHeight: 0.5
     swellWavelength: 140
+    oceanWindTurbulence: 0.25
     unboundedOcean: 1
     edgeFeatherMeters: 10
     clipmapGridResolution: 64
@@ -873,6 +877,7 @@ MonoBehaviour:
     largeGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
     largeGodRayDensity: 1
     largeGodRayFromAir: 0
+    largeGodRayLightScatter: 0
     largeGodRaySteps: 24
     largeGodRayAnisotropy: 0.6
     largeGodRayExtinction: 0
@@ -882,15 +887,23 @@ MonoBehaviour:
     largeCausticTimeScale: 0.5
     largeCausticRippleScale: 3
     largeCausticRippleStrength: 1
+    largeCausticProjectionSoften: 0
     oceanFoamWindThreshold: 4
-    oceanFoamCoverage: 0.92
-    oceanFoamStrength: 1
+    oceanFoamCoverage: 1.01
+    oceanFoamStrength: 0.96
     oceanFoamFadeRate: 2
     oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
     oceanFoamTileSize: 7
     oceanFoamFeather: 0.7
+    oceanFoamStreakStretch: 1.98
+    oceanFoamTextureInfluence: 0.793
+    oceanFoamCrestAnisotropy: 0.508
+    oceanFoamCrestGate: 0.8
+    oceanFoamFaceBias: 0.297
+    oceanFoamDepthTint: 0.45
+    oceanFoamCascadeMix: 1
     oceanFoamDeposit: 0.3
-    oceanFoamDrift: 0.1
+    oceanFoamDrift: 0.251
     oceanFoamMaxBuildup: 1
   _legacyOpenWater: 0
   _legacyLargeWaveAmplitude: 1
@@ -933,6 +946,7 @@ MonoBehaviour:
     planarExcludeLayers:
       serializedVersion: 2
       m_Bits: 16
+    planarClipDepth: 0
     reflectionStrength: 0.4
     envReflectionIntensity: 1
     fresnelFloor: 0
@@ -951,11 +965,14 @@ MonoBehaviour:
     ssrMaxSteps: 24
     ssrThickness: 0.2
     refractionDistortion: 0.05
+    refractionStrength: 1
   detailNormalSettings:
     texture: {fileID: 2800000, guid: bfdc4d9124f106c4f97bb95ef3618340, type: 3}
     strength: 0.11
     tileMeters: 18.4
     scrollSpeed: 0.25
+    windResponse: 1
+    crestBoost: 0.5
   _legacyFoam: 0
   _legacyFoamGenRate: 0.6
   _legacyFoamDecay: 0.96
@@ -974,7 +991,7 @@ MonoBehaviour:
     waveSpeed: 0.6
     damping: 0.99
     stepsPerFrame: 2
-    rippleStrength: 0.025
+    rippleStrength: 0.001
     rippleRadius: 0.05
     rippleChoppiness: 0
     seedRipplesOnStart: 1
@@ -986,6 +1003,7 @@ MonoBehaviour:
     fresnelFloor: 0
     reflectionStrength: 1
     mirrorWaterBlend: 0.5
+    mirrorShafts: 0
     foamSilhouetteDarken: 0.6
     foamSunGlow: 0.4
     detailNormalStrength: 0
@@ -998,6 +1016,7 @@ MonoBehaviour:
   timeScale: 0.7
   lightDir: {x: 0.6666666, y: 0.6666666, z: -0.3333334}
   causticResolution: 1024
+  causticDetail: 1
   _legacyObjectInteraction: 0
   _legacyObstacleStrength: 0.25
   _legacyObstacleDeadband: 0.0006
@@ -1009,6 +1028,7 @@ MonoBehaviour:
     fogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
     fogDensity: 0.1
     waterOpacity: 0
+    lightScatter: 0
   _legacyWaterFog: 0
   _legacyFogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
   _legacyFogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
@@ -1029,6 +1049,9 @@ MonoBehaviour:
     sssPinchFalloff: 1.28
   refractShadows: 1
   refractShadowSoftness: 0.5
+  refractShadowLayers:
+    serializedVersion: 2
+    m_Bits: 4294967295
   depthAttenuation:
     depthDarken: 0
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
@@ -1095,6 +1118,7 @@ MonoBehaviour:
   windDriftSpeed: 0.02
   drag: 2
   crestRollSpeed: 0.6
+  crestFoamSpawn: 1
   flipbookGrid: {x: 2, y: 2}
   flipbookFps: 0
 --- !u!1 &1346425472
@@ -1181,7 +1205,7 @@ MonoBehaviour:
   dropHeight: 1.5
   floaterSize: {x: 0.8, y: 0.8, z: 0.8}
   mass: 20
-  buoyancy: 2.5
+  buoyancy: 2.1
   samplesPerAxis: 1
   objectWidth: 0.8
   surfaceRelativeDrag: 1

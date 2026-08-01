@@ -267,6 +267,11 @@ SamplerState sampler_OceanFftNormal;
 float4 _OceanFftDomainSizes;   // metres per cascade
 float  _OceanFftCascadeCount;  // active cascades (<= 4)
 float2 _CrestRoll;             // world xz drift (m/s) along the wave direction: foam rolls with the crest
+// Weight of the FFT whitecap field as an ambient SPAWN source (crestFoamSpawn on the component).
+// 0 = breaking crests spawn no particles at all, leaving the whitecap look to the surface shader,
+// which covers the whole ocean while a fixed pool can only ever dust a fraction of it. The cascade
+// stays bound either way: the height glue and the crest roll below still read it.
+float _CrestFoamSpawn;
 // OCEAN_FFT_MAX_CASCADES comes from WaterShared.hlsl (via the include block above).
 
 // Sum the accumulated whitecap foam (.w) across cascades at a world xz. No distance fade here (the
@@ -481,7 +486,10 @@ void Spawn(uint3 id : SV_DispatchThreadID)
 #ifdef OCEAN_CREST_FOAM
     // Add breaking-crest foam from the FFT cascade, sampled at this texel's world position. max() so a
     // texel that is both interaction-foamy and on a crest still emits at the stronger of the two.
-    foam = max(foam, OceanCrestFoamAt(texelWorld.xz));
+    // Uniform branch: at weight 0 the cascade fetch is skipped entirely, so a body can drop
+    // whitecap-driven particles without losing its wake, interaction or shore-surf spawns.
+    if (_CrestFoamSpawn > 0.0)
+        foam = max(foam, OceanCrestFoamAt(texelWorld.xz) * _CrestFoamSpawn);
 #endif
     float excess = foam - _SpawnThreshold;
     if (excess <= 0.0) return;

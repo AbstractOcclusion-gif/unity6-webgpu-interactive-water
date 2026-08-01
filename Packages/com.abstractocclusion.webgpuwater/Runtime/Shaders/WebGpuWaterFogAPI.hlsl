@@ -1,11 +1,16 @@
 // WebGpuWater - PUBLIC underwater fog API for user transparent materials.
 //
 // Include this ONE header in your transparent shader (hand-written URP HLSL or a Shader Graph
-// Custom Function node) and your material picks up the water medium exactly as the package's
-// own particles do: per-channel extinction toward the water's lit in-scatter colour over the
-// camera->fragment WET path, plus the scene-lamp glow (the Light Scatter family) along that
-// same path. One implementation, shared with the fullscreen fog, the water surface and the
-// sprites - your transparent can never drift from the water it sits in.
+// Custom Function node) and your material picks up the whole water medium, in four terms:
+//   1. per-channel extinction toward the water's lit in-scatter colour over the camera->fragment
+//      WET path - the same maths the package's own particles price,
+//   2. downwelling depth darkening, so the prop dims and shifts blue the DEEPER it sits: the
+//      Depth Attenuation block, identical to what an opaque WaterReceiver applies,
+//   3. the scene-lamp glow (the Light Scatter family) along that same wet path,
+//   4. Water Opacity turbidity toward the body colour on rays that cross the waterline - the
+//      tint the water sheet used to supply before this renderer was rerouted past it.
+// One implementation, shared with the fullscreen fog, the water surface and the sprites - your
+// transparent can never drift from the water it sits in.
 //
 // USAGE (fragment or vertex stage - pure ALU, no textures):
 //     float3 fogMul, fogAdd;
@@ -39,6 +44,16 @@
 //    pure-ALU loop, not the kind of texture march the fence rule exists for.
 //  * Exclusion volumes do not shadow the glow (same as every scatter consumer), and on Simple
 //    fog tiers the glow is off (count publishes 0) while extinction/in-scatter still apply.
+//  * Downwelling darkening uses the FRAGMENT's own depth for both halves of the pair. The
+//    fullscreen fog instead darkens its in-scatter at the transmittance-weighted MEAN depth of
+//    the ray (WaterUnderwaterFog.shader's downwellTMean), machinery this pure-ALU header has no
+//    ray integral for. The mul half - your prop's own light, the term the eye actually reads -
+//    is exact and matches WaterReceiver; only the added haze on a prop far deeper than the eye
+//    darkens slightly early.
+//  * Water Opacity applies only when the camera->fragment ray CROSSES the waterline, because
+//    that is exactly the case the sheet's own turbidity used to cover and the reroute removed.
+//    Two points on the same side of the surface are the fullscreen fog's business, and it does
+//    not apply the knob either - so the rerouted prop matches whatever is behind it.
 #ifndef WEBGPU_WATER_FOG_API_INCLUDED
 #define WEBGPU_WATER_FOG_API_INCLUDED
 
@@ -46,9 +61,60 @@
 #include "WaterParticleFog.hlsl" // ParticleUnderwaterFog + WaterFog.hlsl + the armed/surface globals
 
 #define WEBGPU_WATER_FOG_API_MIN_RAY 1e-4 // camera-on-fragment guard for the ray normalisation
+// Depth clarity is a bed-depth field (WaterShore.hlsl) this header deliberately does not include,
+// so the turbidity curve is evaluated at "clear" - which recovers the body's base _WaterOpacity
+// exactly, the same value a body with no baked bed gets everywhere else.
+#define WEBGPU_WATER_FOG_API_CLEAR_CLARITY 1.0
+
+// True when the eye and the fragment sit on opposite sides of the waterline. Uses the same
+// <= convention as WaterPathLength so a fragment exactly ON the line is classified once.
+bool WebGpuWaterFogViewCrossesSurface(float3 worldPos)
+{
+    bool camUnder = _WorldSpaceCameraPos.y <= _UnderwaterSurfaceY;
+    bool fragUnder = worldPos.y <= _UnderwaterSurfaceY;
+    return camUnder != fragUnder;
+}
+
+// Scene-lamp glow (the A1 family): the SAME closed-form integral the fullscreen fog and the
+// water surface evaluate, over the wet segment of the camera->fragment ray, so a lamp's glow on
+// your transparent matches its glow in the fog behind it - and like the surface's own from-above
+// term it carries NO armed gate (the published light count and the knob are the whole switch).
+// Uniform-gated by design - see the header note. Returns black when there is nothing to add.
+float3 WebGpuWaterFogSceneLampGlow(float3 worldPos)
+{
+    if (_WaterSceneLightCount < 0.5 || _UnderwaterLightScatter <= 0.0) return float3(0.0, 0.0, 0.0);
+    float wet = WaterPathLength(worldPos, _WorldSpaceCameraPos.xyz, _UnderwaterSurfaceY);
+    if (wet <= 0.0) return float3(0.0, 0.0, 0.0); // fragment and camera both in air
+
+    float3 toFrag = worldPos - _WorldSpaceCameraPos.xyz;
+    float len = max(length(toFrag), WEBGPU_WATER_FOG_API_MIN_RAY);
+    float3 dirToFrag = toFrag / len;
+    // Water begins where the ray dips under: extinction is measured from there, so an
+    // above-water eye does not extinguish the glow through air (the integral's contract).
+    float tWaterStart = len - min(wet, len);
+    return WaterSceneLightsInscatter(_WorldSpaceCameraPos.xyz, dirToFrag, tWaterStart,
+                                     len, tWaterStart, _VolumeCenter.y)
+         * _UnderwaterLightScatter;
+}
+
+// Turbidity toward the body colour, folded into the mul/add pair. Reuses the sheet's own
+// function instead of restating its formula: it is LINEAR in its colour argument, so evaluating
+// it at the two basis colours recovers the exact pair it would have produced - white against a
+// black body colour gives (1 - opacity), black against the real body colour gives inscatter *
+// opacity. One source of truth, and the compiler folds both calls.
+void WebGpuWaterFogApplyTurbidity(float3 inscatter, inout float3 fogMul, inout float3 fogAdd)
+{
+    float3 keep = ApplyWaterOpacityTintedClarity(float3(1.0, 1.0, 1.0), float3(0.0, 0.0, 0.0),
+                                                 WEBGPU_WATER_FOG_API_CLEAR_CLARITY);
+    float3 tint = ApplyWaterOpacityTintedClarity(float3(0.0, 0.0, 0.0), inscatter,
+                                                 WEBGPU_WATER_FOG_API_CLEAR_CLARITY);
+    fogMul *= keep;
+    fogAdd = fogAdd * keep + tint;
+}
 
 // The medium for one transparent fragment/vertex at 'worldPos'. Outputs the mul/add pair
-// described in the header; identity whenever the underwater fog is not armed this frame.
+// described in the header. Each of the four terms carries its own gate, so the pair collapses to
+// identity exactly when every water feature the fragment sits in is off or it is out of the water.
 void WebGpuWaterFogTransparent(float3 worldPos, float3 lightDir, float3 sunColor,
                                out float3 fogMul, out float3 fogAdd)
 {
@@ -59,23 +125,28 @@ void WebGpuWaterFogTransparent(float3 worldPos, float3 lightDir, float3 sunColor
     // otherwise have provided it); the sprites keep their armed-gated wrapper untouched.
     ParticleUnderwaterFogAlways(worldPos, lightDir, sunColor, fogMul, fogAdd);
 
-    // Scene-lamp glow (the A1 family): the SAME closed-form integral the fullscreen fog and
-    // the water surface evaluate, over the wet segment of the camera->fragment ray, so a
-    // lamp's glow on your transparent matches its glow in the fog behind it - and like the
-    // surface's own from-above term it carries NO armed gate (the published light count and
-    // the knob are the whole switch). Uniform-gated by design - see the header note.
-    if (_WaterSceneLightCount < 0.5 || _UnderwaterLightScatter <= 0.0) return;
-    float3 toFrag = worldPos - _WorldSpaceCameraPos.xyz;
-    float len = max(length(toFrag), WEBGPU_WATER_FOG_API_MIN_RAY);
-    float wet = WaterPathLength(worldPos, _WorldSpaceCameraPos.xyz, _UnderwaterSurfaceY);
-    if (wet <= 0.0) return; // fragment and camera both in air
-    float3 dirToFrag = toFrag / len;
-    // Water begins where the ray dips under: extinction is measured from there, so an
-    // above-water eye does not extinguish the glow through air (the integral's contract).
-    float tWaterStart = len - min(wet, len);
-    fogAdd += WaterSceneLightsInscatter(_WorldSpaceCameraPos.xyz, dirToFrag, tWaterStart,
-                                        len, tWaterStart, _VolumeCenter.y)
-            * _UnderwaterLightScatter;
+    // Light lost travelling straight DOWN from the surface - the term every OTHER consumer of a
+    // submerged point applies (WaterReceiver, WaterTerrain, the chunk/exclusion walls, and the
+    // fullscreen fog on both its passes). It is NOT gated on the fog feature: it has its own
+    // master switch inside DownwellingAttenuation, which also returns identity above the line,
+    // so an unlit-but-submerged prop still sinks into the dark exactly like the terrain beside it.
+    // Multiplies BOTH halves, mirroring the fog's absorb pass (scene * pathTrans * depthAtten)
+    // and its in-scatter pass (inscatter * depthAtten).
+    float3 downwelling = DownwellingAttenuation(worldPos.y, _UnderwaterSurfaceY);
+    fogMul *= downwelling;
+    fogAdd *= downwelling;
+
+    // Lamp glow is added AFTER the downwelling multiply and BEFORE turbidity, the same order the
+    // fullscreen fog and the sheet use: a local lamp never crossed the surface, so the sun's
+    // depth darkening does not apply to it - but murk still swallows it.
+    fogAdd += WebGpuWaterFogSceneLampGlow(worldPos);
+
+    // Turbidity last, on the whole medium, exactly where the sheet applies it to its refracted
+    // view (WaterSurfaceFragStages' from-above and from-below stages both close on this call).
+    if (!WebGpuWaterFogViewCrossesSurface(worldPos)) return;
+    float3 viewDirWS = normalize(_WorldSpaceCameraPos.xyz - worldPos);
+    float3 inscatter = WaterInscatterColor(viewDirWS, lightDir, sunColor, 0.0);
+    WebGpuWaterFogApplyTurbidity(inscatter, fogMul, fogAdd);
 }
 
 // Convenience: apply the pair to a lit colour.

@@ -136,6 +136,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_OceanFftDomainSizes = WaterShaderProps.OceanFftDomainSizes;
         static readonly int ID_OceanFftCascadeCount = WaterShaderProps.OceanFftCascadeCount;
         static readonly int ID_CrestRoll = Shader.PropertyToID("_CrestRoll");
+        static readonly int ID_CrestFoamSpawn = Shader.PropertyToID("_CrestFoamSpawn");
         static readonly int ID_DrawKind = Shader.PropertyToID("_DrawKind");
         static readonly int ID_SprayLifeMin = Shader.PropertyToID("_SprayLifeMin");
         static readonly int ID_SprayLifeMax = Shader.PropertyToID("_SprayLifeMax");
@@ -273,6 +274,13 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("How fast whitecap foam rolls forward along the wave-travel direction (world units/sec). " +
                  "0 = foam sits still. Ocean bodies only; ignored on pools.")]
         [Range(0f, 4f)] [SerializeField] internal float crestRollSpeed = 0.6f;
+        [Tooltip("How strongly the ocean's breaking-crest (FFT whitecap) field drives ambient " +
+                 "particle spawning. 1 = whitecaps spawn foam particles as they always have. " +
+                 "0 = they spawn none, leaving the whitecap look to the surface shader (which " +
+                 "covers the whole ocean, while a fixed particle pool can only ever dust a " +
+                 "fraction of it); wakes, interactions and shore surf keep spawning normally. " +
+                 "Ocean bodies only; ignored on pools, and never overridden by a Foam Profile.")]
+        [Range(0f, 1f)] [SerializeField] internal float crestFoamSpawn = 1f;
         [Tooltip("Foam sprite atlas layout (columns, rows). (1,1) = a plain foam texture (no flipbook); " +
                  "(2,2) = a 4-frame sheet, etc. Optional, like the surface foam's flipbook grid.")]
         [SerializeField] internal Vector2Int flipbookGrid = new Vector2Int(2, 2);
@@ -593,6 +601,7 @@ namespace AbstractOcclusion.WebGpuWater
                 cs.SetVector(ID_OceanFftDomainSizes, volume.OceanFftDomainSizes);
                 cs.SetFloat(ID_OceanFftCascadeCount, volume.OceanFftCascadeCount);
                 cs.SetVector(ID_CrestRoll, CrestRollWorld()); // foam rolls along the wave direction
+                cs.SetFloat(ID_CrestFoamSpawn, crestFoamSpawn);
             }
             else
             {

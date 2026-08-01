@@ -336,7 +336,8 @@ namespace AbstractOcclusion.WebGpuWater
         // Foam dispatch. Default (inactive) keeps the kernel's surf branch entirely skipped.
         internal struct ShoreFoamState
         {
-            public bool Active;
+            public bool Active;            // the surf FRONT FIELD is live - what the foam particles read
+            public bool InjectionActive;   // an injection gain is non-zero - what the Foam kernel needs
             public Texture DepthTex;       // Layer A column-depth field (half float)
             public Texture SdfTex;         // Layer A shoreline SDF field
             public Vector4 FieldCenter;    // xy = world XZ centre of the Layer A field
@@ -366,6 +367,7 @@ namespace AbstractOcclusion.WebGpuWater
             public float SwashDepositGain; // deposit injection gain (0 = off, no injection)
 
             static readonly int ID_ShoreFoamActive = Shader.PropertyToID("_ShoreFoamActive");
+            static readonly int ID_ShoreFoamInject = Shader.PropertyToID("_ShoreFoamInject");
             static readonly int ID_ShoreFoamGain = Shader.PropertyToID("_ShoreFoamGain");
             static readonly int ID_ShoreWaterlineFoamGain = Shader.PropertyToID("_ShoreWaterlineFoamGain");
             static readonly int ID_ShoreFoamTime = Shader.PropertyToID("_ShoreFoamTime");
@@ -412,6 +414,10 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 bool active = Active && DepthTex != null && SdfTex != null;
                 cs.SetFloat(ID_ShoreFoamActive, active ? 1f : 0f);
+                // Written unconditionally, ABOVE the inactive early-out below: these are
+                // per-ComputeShader uniforms shared by every body's dispatch, so a body that
+                // returns early must not leave the previous body's value standing.
+                cs.SetFloat(ID_ShoreFoamInject, active && InjectionActive ? 1f : 0f);
                 cs.SetTexture(kernel, ID_ShoreDepthTexSim,
                               DepthTex != null ? DepthTex : Texture2D.blackTexture);
                 cs.SetTexture(kernel, ID_ShoreSDFTexSim,
