@@ -389,19 +389,32 @@ float LargeBodyWaveMinWavelength(float2 worldXZ)
 // knob still scales the swell so the inspector stays live. Both paths carry the shore transform:
 // per-cascade/per-component shoal attenuation, ambient fade under the surf fronts, and the fronts
 // themselves on top (the FFT keeps the deep-water texture; the front layer owns the coastline).
+// Height from a PRE-SAMPLED shore + surf pair. Any caller that needs the height AND something
+// else off the same field - the tilt, or a second evaluation at another xz - must hoist one
+// ShoreSample + one EvaluateSurfWaves and use this: the wrapper below re-samples both, so two
+// wrapper calls pay the shore, the surf fronts and the cascade fetch twice over (the ~2.5x
+// this file's LargeBodyWaveHeightDispShore comment already warns about).
+float LargeBodyWaveHeightShore(float2 worldXZ, ShoreData shore, SurfWaveSample surf)
+{
+    // Edge guard scales the WHOLE composite (surf fronts included): a breaker cresting exactly on
+    // the border would rebuild the wall the feather exists to remove.
+    float edge = LbwEdgeWeight(worldXZ);
+    float height;
+    if (_OceanFftActive > 0.5)
+        height = OceanFftDisplacementShore(worldXZ, shore).y * _LargeWaveAmplitude
+                 * SurfAmbientWeight(surf.mask) + surf.height;
+    else
+        height = EvaluateLargeBodyWaveShore(worldXZ, LargeBodyWaveMinWavelength(worldXZ),
+                                            shore, surf).height;
+    return height * edge;
+}
+
 float LargeBodyWaveHeight(float2 worldXZ)
 {
     ShoreData shore = ShoreSample(worldXZ);
     SurfWaveSample surf = EvaluateSurfWaves(worldXZ, shore.depth, shore.sdfDist, shore.toShore,
                                             shore.slopeTan, shore.influence, _SurfBeatTime);
-    // Edge guard scales the WHOLE composite (surf fronts included): a breaker cresting exactly on
-    // the border would rebuild the wall the feather exists to remove.
-    float edge = LbwEdgeWeight(worldXZ);
-    if (_OceanFftActive > 0.5)
-        return (OceanFftDisplacementShore(worldXZ, shore).y * _LargeWaveAmplitude
-                * SurfAmbientWeight(surf.mask) + surf.height) * edge;
-    return EvaluateLargeBodyWaveShore(worldXZ, LargeBodyWaveMinWavelength(worldXZ), shore, surf).height
-           * edge;
+    return LargeBodyWaveHeightShore(worldXZ, shore, surf);
 }
 
 
@@ -422,7 +435,13 @@ void LargeBodyWaveHeightDispShore(float2 worldXZ, ShoreData shore, SurfWaveSampl
         float3 fft = OceanFftDisplacementShore(worldXZ, shore);
         float ambient = SurfAmbientWeight(surf.mask);
         height = (fft.y * _LargeWaveAmplitude * ambient + surf.height) * edge;
-        disp = fft.xz * (_LargeWaveChoppiness * _LargeWaveAmplitude * ambient * edge);
+        // NO _LargeWaveChoppiness here: the FFT branch bakes chop into the spectrum itself
+        // (OceanFft.compute's SpectrumUpdate scales the horizontal spectra by OceanChoppiness), so
+        // applying it again would square it. Doing it in the compute is the correct place, because
+        // the whitecap Jacobian is measured from the displacement AFTER chop - which is what finally
+        // makes the foam respond to the chop slider at all. The analytic branch below still applies
+        // it here, since its generator has no such stage.
+        disp = fft.xz * (_LargeWaveAmplitude * ambient * edge);
         return;
     }
     LargeBodyWaveField f = EvaluateLargeBodyWaveShore(worldXZ, LargeBodyWaveMinWavelength(worldXZ),

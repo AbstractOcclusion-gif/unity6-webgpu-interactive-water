@@ -15,14 +15,9 @@
 // SunSpecular below.
 #define SUN_GLINT_TINT          float3(10.0, 8.0, 6.0)
 #define SUN_GLINT_SHARPNESS     5000.0
-// Above-water Fresnel is physical Schlick (1994): F0 derived from the air/water
-// IOR (~0.02), grazing exponent 5. The old artistic curve (pow 3 lerped from a
-// 0.25 floor) reflected a quarter of the sky looking straight DOWN, which
-// flattened the surface; _FresnelFloor (default 0) keeps that override
-// available as an opt-in. The underwater branch keeps the legacy curve.
-#define FRESNEL_F0_WATER        (((IOR_WATER - IOR_AIR) * (IOR_WATER - IOR_AIR)) \
-                               / ((IOR_WATER + IOR_AIR) * (IOR_WATER + IOR_AIR)))
-#define FRESNEL_SCHLICK_POWER   5.0
+// Above-water Fresnel is physical Schlick (1994). FRESNEL_F0_WATER and FRESNEL_SCHLICK_POWER
+// are hoisted into WaterShared.hlsl, next to the IORs they derive from, so the sprites drawn
+// THROUGH the surface price the same interface.
 #define FRESNEL_POWER           3.0    // legacy curve - underwater branch only
 #define FRESNEL_MIN_BELOW       0.5    // legacy curve's floor - underwater branch only
 // GGX sun specular (above water): the lobe's roughness grows with view distance

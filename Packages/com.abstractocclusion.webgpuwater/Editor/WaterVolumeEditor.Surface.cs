@@ -40,7 +40,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 DrawFieldsIf(hasDetailNormal,
                     "detailNormalSettings.strength",
                     "detailNormalSettings.windResponse",
-                    "detailNormalSettings.crestBoost");
+                    "detailNormalSettings.crestBoost",
+                    "detailNormalSettings.distanceBoost",
+                    "detailNormalSettings.hexTiling");
 
                 WaterEditorUI.SubHeading("Surface foam pattern");
                 EditorGUILayout.HelpBox("Empty keeps the water material's own foam texture. Assign here to " +
@@ -59,9 +61,23 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 _showTexturesAdvanced = WaterEditorUI.SubSection("Advanced", _showTexturesAdvanced, () =>
                 {
                     WaterEditorUI.SubHeading("Detail normal layout");
+                    // Both ends of the octave ladder, together: the tile climbs from the near size
+                    // toward the far one with view distance and stops there. Judging one without the
+                    // other is guesswork, so they are never drawn apart.
                     DrawFieldsIf(hasDetailNormal,
                         "detailNormalSettings.tileMeters",
-                        "detailNormalSettings.scrollSpeed");
+                        "detailNormalSettings.farTileMeters",
+                        "detailNormalSettings.farTileDistance",
+                        "detailNormalSettings.scrollSpeed",
+                        "detailNormalSettings.farScrollSpeed");
+                    // What deep-water dispersion says the far speed should be for the authored tile
+                    // step. Printed rather than enforced: past the tile cap the far water's screen
+                    // motion falls off as 1/distance, so outrunning dispersion is often the readable
+                    // choice - but it should be a decision, not an accident.
+                    if (hasDetailNormal && target is WaterVolume detailVolume)
+                        EditorGUILayout.LabelField(" ",
+                            $"Dispersion-correct far speed: {detailVolume.DetailNormalDispersionFarSpeed:0.##} m/s",
+                            EditorStyles.miniLabel);
                     WaterEditorUI.SubHeading("Foam pattern flipbook");
                     DrawFieldsIf(Prop("foamPatternTexture").objectReferenceValue != null,
                         "foamPatternGrid", "foamPatternFps");

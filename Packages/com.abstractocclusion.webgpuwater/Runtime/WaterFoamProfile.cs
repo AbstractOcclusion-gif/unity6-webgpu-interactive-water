@@ -2,7 +2,7 @@
 //
 // A body's whole foam story in one asset: a shared look block (tint, sprite atlas,
 // flipbook, hero-size bias, opacity) plus one section per foam element (ambient
-// foam/spray, screen-space veil, splash). Every foam component takes an
+// foam/spray, screen-space veil, splash, bubbles). Every foam component takes an
 // OPTIONAL profile reference:
 //   - null profile          -> the component behaves exactly as before (zero migration);
 //   - section 'drive' off   -> that section keeps the component's own inspector values;
@@ -104,6 +104,24 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0f, 1f)] public float crownOpacity = 1f;
         }
 
+        [System.Serializable]
+        public sealed class BubbleSection
+        {
+            [Tooltip("Drive the bubble-plume fields on WaterFoamParticles from this profile.")]
+            public bool drive = true;
+            // Defaults MATCH WaterFoamParticles' own field defaults - zero drift on assign.
+            [Tooltip("Bubbles injected DOWNWARD per droplet a splash burst throws (0 = none).")]
+            [Range(0f, 1f)] public float bubbleAmount = 0.5f;
+            [Tooltip("Terminal rise speed of the LARGEST bubbles (world units/sec).")]
+            [Range(0.05f, 0.6f)] public float bubbleRiseSpeed = 0.25f;
+            [Tooltip("Bubble lifetime range (seconds); surfacing pops one first.")]
+            public Vector2 bubbleLifeRange = new Vector2(2f, 4f);
+            [Tooltip("Bubble sprite half-size range (world units), skewed small on spawn.")]
+            public Vector2 bubbleSizeRange = new Vector2(0.015f, 0.05f);
+            [Tooltip("Sideways wobble while rising; amplitude scales with bubble size.")]
+            [Range(0f, 2f)] public float bubbleWobble = 1f;
+        }
+
         [Tooltip("Shared look for every foam element under the body.")]
         public SharedLook look = new SharedLook();
         [Tooltip("Ambient floating foam + ballistic spray (WaterFoamParticles).")]
@@ -112,6 +130,8 @@ namespace AbstractOcclusion.WebGpuWater
         public VeilSection veil = new VeilSection();
         [Tooltip("Impact splashes: crown + droplet burst shaping (WaterSplashEmitter).")]
         public SplashSection splash = new SplashSection();
+        [Tooltip("Underwater bubble plumes injected by splash bursts (WaterFoamParticles).")]
+        public BubbleSection bubbles = new BubbleSection();
 
         // ---- Field application (enable/validate time) --------------------------------
 
@@ -132,6 +152,14 @@ namespace AbstractOcclusion.WebGpuWater
                 foam.spraySizeRange = ambient.spraySizeRange;
                 foam.depositLifeRange = ambient.depositLifeRange;
                 foam.depositSizeRange = ambient.depositSizeRange;
+            }
+            if (bubbles.drive)
+            {
+                foam.bubbleAmount = bubbles.bubbleAmount;
+                foam.bubbleRiseSpeed = bubbles.bubbleRiseSpeed;
+                foam.bubbleLifeRange = bubbles.bubbleLifeRange;
+                foam.bubbleSizeRange = bubbles.bubbleSizeRange;
+                foam.bubbleWobble = bubbles.bubbleWobble;
             }
             if (look.drive)
             {

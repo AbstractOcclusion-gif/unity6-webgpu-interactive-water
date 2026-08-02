@@ -53,6 +53,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const string SharedHlslAssetName = "WaterShared";
         const string OceanFftComputeAssetName = "OceanFft";
         const string OceanFftAssetName = "WaterOceanFft";
+        const string OceanSpectrumAssetName = "WaterOceanSpectrum";
         // The scene-lights family (2026-07-31): WATER_SCENE_LIGHT_MAX sizes the HLSL uniform
         // arrays, MaxSceneLights sizes the C# staging arrays and the publisher's cap. Drift =
         // a SetVectorArray over-run or lamps silently dropped. Was a KEEP-IN-SYNC comment.
@@ -268,6 +269,23 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             ("OCEAN_FFT_MAX_CASCADES", "MaxCascades"),
         };
 
+        // The JONSWAP/TMA shape and the directional spreading are evaluated TWICE - once per k-lattice
+        // cell on the GPU (OceanFft.compute) and once over the same lattice on the CPU
+        // (WaterOceanSpectrum) to normalise the field to the authored significant height. A drift here
+        // does not crash or warn: the gain is simply computed against a different spectrum than the one
+        // rendered, so "Significant Height" silently stops meaning metres.
+        static readonly (string Hlsl, string CSharp)[] OceanSpectrumConstantPairs =
+        {
+            ("OCEAN_JONSWAP_PEAK_DECAY",      "JonswapPeakDecay"),
+            ("OCEAN_JONSWAP_SIGMA_LOW",       "JonswapSigmaLow"),
+            ("OCEAN_JONSWAP_SIGMA_HIGH",      "JonswapSigmaHigh"),
+            ("OCEAN_TMA_SLOPE",               "TmaSlope"),
+            ("OCEAN_TMA_OFFSET",              "TmaOffset"),
+            ("OCEAN_SWELL_WIDTH",             "SwellWidth"),
+            ("OCEAN_SWELL_DIR_POWER",         "SwellDirPower"),
+            ("OCEAN_GRAVITY",                 "Gravity"),
+        };
+
         // FFT_SIZE pairs with FftSize, NOT DefaultResolution: the RESOLUTION is already checked at
         // runtime (WaterOceanFft warns and disables the FFT ocean when they disagree), while FftSize
         // is the compile-time copy nothing checks. FFT_STAGES is log2(FFT_SIZE) - changing the size
@@ -339,6 +357,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 !TryReadPackageAsset(SharedHlslAssetName, HlslExtension, out string sharedHlslSource, out readError) ||
                 !TryReadPackageAsset(OceanFftComputeAssetName, ComputeExtension, out string oceanFftComputeSource, out readError) ||
                 !TryReadPackageAsset(OceanFftAssetName, CSharpExtension, out string oceanFftSource, out readError) ||
+                !TryReadPackageAsset(OceanSpectrumAssetName, CSharpExtension, out string oceanSpectrumSource, out readError) ||
                 !TryReadPackageAsset(FogHlslAssetName, HlslExtension, out string fogHlslSource, out readError) ||
                 !TryReadPackageAsset(UniformPublisherAssetName, CSharpExtension, out string uniformPublisherSource, out readError))
             {
@@ -365,6 +384,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                             OceanFftAssetName, oceanFftSource, OceanFftCascadeConstantPairs);
             CollectProblems(problems, OceanFftComputeAssetName, ComputeExtension, oceanFftComputeSource,
                             OceanFftAssetName, oceanFftSource, OceanFftSizeConstantPairs);
+            CollectProblems(problems, OceanFftComputeAssetName, ComputeExtension, oceanFftComputeSource,
+                            OceanSpectrumAssetName, oceanSpectrumSource, OceanSpectrumConstantPairs);
             CollectProblems(problems, FoamParticlesAssetName, ComputeExtension, foamComputeSource,
                             FoamParticlesAssetName, foamParticlesSource, FoamThreadGroupConstantPairs);
             CollectProblems(problems, FogHlslAssetName, HlslExtension, fogHlslSource,

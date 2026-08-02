@@ -53,7 +53,14 @@
 // P1 shoal-transform knobs (published by WaterShoreDepthField.Publish from the body settings).
 // Declared here - not in WaterShore.hlsl - because the functions below read them and computes
 // must be able to call those functions against the same uniform names.
-float _ShoreShoalDepth;   // depth (m) over which waves shoal; full strength beyond it (0 = no shoaling)
+float _ShoreShoalDepth;   // depth (m) over which waves ATTENUATE; full strength beyond it (0 = no shoaling)
+// The band Green's law amplifies over, kept SEPARATE from the attenuation band above. They were one
+// value until the attenuation band started following the sea state (WaterVolume.ShoreShoalDepthEffective
+// floors it at twice the offshore significant height, so a big sea begins flattening further out). That
+// floor is a request to flatten SOONER - but the same number also drives ShoreGreenGain as (band/depth)^0.25,
+// so deepening it silently amplified the near-shore waves as well, which is the exact opposite. This one
+// stays on the authored coastal profile so the two jobs can no longer drag each other.
+float _ShoreGreenBandDepth;
 float _ShoreCompression;  // phase-compression gain near shore (crests bunch as waves slow)
 float _ShoreGreens;       // Green's-law amplification cap (1 = off; shoaling waves GROW before dying)
 float _ShoreWarpReach;    // compression e-folding reach (m) = 2 x the surf front wavelength - ONE
@@ -140,7 +147,7 @@ float ShoalWeight(float depth, float wavelength)
 // the breaking/whitewash layer takes over. 1 offshore / off-field: pure amplification-only term.
 float ShoreGreenGain(ShoreData shore)
 {
-    float band = max(_ShoreShoalDepth, SHORE_BAND_EPSILON);
+    float band = max(_ShoreGreenBandDepth, SHORE_BAND_EPSILON);
     if (shore.influence <= 0.0 || shore.depth >= band) return 1.0;
     float d = max(shore.depth, SHORE_GREEN_MIN_DEPTH);
     float green = min(pow(band / d, SHORE_GREEN_EXPONENT), max(_ShoreGreens, SHORE_MIN_GREENS));

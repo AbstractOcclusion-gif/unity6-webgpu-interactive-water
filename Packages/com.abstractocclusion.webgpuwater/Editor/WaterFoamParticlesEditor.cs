@@ -38,18 +38,23 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         SerializedProperty _sprayMaterial, _sprayLifeRange, _spraySizeRange, _sprayFlipbookGrid, _sprayFlipbookFps;
         SerializedProperty _depositLifeRange, _depositSizeRange;
         SerializedProperty _gravity, _flowDrift, _windDriftSpeed, _drag;
+        SerializedProperty _bubbleAmount, _bubbleRiseSpeed, _bubbleLifeRange, _bubbleSizeRange,
+            _bubbleWobble;
         SerializedProperty _flipbookGrid, _flipbookFps;
 
         // Profile-driven state, refreshed each GUI pass: driven fields are DISABLED (not
         // just warned about) so users can't type into values the profile overwrites next frame.
         bool _ambientDriven;
         bool _lookDriven;
+        bool _bubbleDriven;
 
         bool _wiringExpanded = true;
         bool _poolExpanded;
+        bool _motionExpanded = true;
         bool _foamExpanded = true;
         bool _dropletExpanded = true;
         bool _landedExpanded;
+        bool _bubbleExpanded;
         bool _ambientSourceExpanded = true;
         bool _burstSourceExpanded;
 
@@ -83,6 +88,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             _flowDrift = serializedObject.FindProperty("flowDrift");
             _windDriftSpeed = serializedObject.FindProperty("windDriftSpeed");
             _drag = serializedObject.FindProperty("drag");
+            _bubbleAmount = serializedObject.FindProperty("bubbleAmount");
+            _bubbleRiseSpeed = serializedObject.FindProperty("bubbleRiseSpeed");
+            _bubbleLifeRange = serializedObject.FindProperty("bubbleLifeRange");
+            _bubbleSizeRange = serializedObject.FindProperty("bubbleSizeRange");
+            _bubbleWobble = serializedObject.FindProperty("bubbleWobble");
             _flipbookGrid = serializedObject.FindProperty("flipbookGrid");
             _flipbookFps = serializedObject.FindProperty("flipbookFps");
         }
@@ -101,15 +111,18 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var profile = _profile.objectReferenceValue as WaterFoamProfile;
             _ambientDriven = profile != null && profile.ambient.drive;
             _lookDriven = profile != null && profile.look.drive;
+            _bubbleDriven = profile != null && profile.bubbles.drive;
 
             DrawStatusAndRepair();
 
             _wiringExpanded = WaterEditorUI.Section("Wiring & Assets", _wiringExpanded, DrawWiring);
             _poolExpanded = WaterEditorUI.Section("Pool (shared by everything)", _poolExpanded, DrawPool);
+            _motionExpanded = WaterEditorUI.Section("Motion (all particles)", _motionExpanded, DrawMotion);
 
             _foamExpanded = WaterEditorUI.Section("1 - Floating Foam", _foamExpanded, DrawFloatingFoam);
             _dropletExpanded = WaterEditorUI.Section("2 - Airborne Droplets", _dropletExpanded, DrawAirborneDroplets);
             _landedExpanded = WaterEditorUI.Section("3 - Landed Foam", _landedExpanded, DrawLandedFoam);
+            _bubbleExpanded = WaterEditorUI.Section("4 - Bubbles", _bubbleExpanded, DrawBubbles);
 
             _ambientSourceExpanded = WaterEditorUI.Section("Source - Ambient Turbulence",
                 _ambientSourceExpanded, DrawAmbientSource);
@@ -261,13 +274,27 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "How fast a foam particle churns through its atlas over its life. 0 = one fixed cell."));
             }
 
-            WaterEditorUI.SubHeading("Drift");
+        }
+
+        // ---- motion shared across the pool ---------------------------------------------------------
+
+        void DrawMotion()
+        {
+            EditorGUILayout.HelpBox("Physics shared across the pool. Gravity pulls every airborne " +
+                "droplet (mist, splash, pump, lip, cascade); drift and damping steer floating foam " +
+                "and the sideways motion of bubbles. Not profile-driven.", MessageType.None);
+
+            EditorGUILayout.PropertyField(_gravity, new GUIContent("Gravity",
+                "Downward acceleration on every airborne droplet, whatever threw it. Floating foam " +
+                "sits on the surface and bubbles use their own buoyancy, so neither falls."));
             EditorGUILayout.PropertyField(_flowDrift, new GUIContent("Flow Drift",
-                "Speed foam is carried along the surface flow, per unit of surface slope. Floating foam only."));
+                "Speed floating foam (and bubbles, sideways) are carried along the surface flow, " +
+                "per unit of surface slope."));
             EditorGUILayout.PropertyField(_windDriftSpeed, new GUIContent("Wind Drift",
                 "Constant downwind drift of floating foam, in world units per second."));
             EditorGUILayout.PropertyField(_drag, new GUIContent("Drift Damping",
-                "How quickly a foam particle's velocity relaxes to the driven flow. Floating foam only."));
+                "How quickly a particle's velocity relaxes to the driven flow (floating foam and " +
+                "bubble sideways motion)."));
         }
 
         // ---- 2. everything airborne (KIND_SPRAY), whatever threw it -------------------------------
@@ -287,9 +314,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 "sheet authored for foam is never forced onto the spray."));
             EditorGUILayout.PropertyField(_sprayFlipbookFps, new GUIContent("Droplet Flipbook FPS",
                 "Droplet flipbook speed. 0 = a static droplet sprite."));
-            EditorGUILayout.PropertyField(_gravity, new GUIContent("Droplet Gravity",
-                "Downward acceleration on airborne droplets. Applies to every droplet, whatever threw it; " +
-                "floating foam is unaffected."));
         }
 
         // ---- 3. what a droplet becomes when it lands ----------------------------------------------
@@ -343,6 +367,32 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "Size of ambient mist droplets only, for the same reason."));
             }
         }
+
+        void DrawBubbles()
+        {
+            EditorGUILayout.HelpBox("Underwater bubble plumes: every splash / pump burst also injects " +
+                "bubbles DOWNWARD under the impact; buoyancy rises them back and they pop into landed " +
+                "foam at the waterline. Drawn as analytic rim circles - no texture slot to wire.",
+                MessageType.None);
+
+            using (new EditorGUI.DisabledScope(_bubbleDriven))
+            {
+                EditorGUILayout.PropertyField(_bubbleAmount, new GUIContent("Bubble Amount",
+                    "Bubbles injected per droplet thrown (0 = no bubbles, and the bubble pass is skipped)."));
+                EditorGUILayout.PropertyField(_bubbleRiseSpeed, new GUIContent("Rise Speed",
+                    "Terminal rise of the LARGEST bubbles (world units/sec). Physical band: 0.20-0.30."));
+                EditorGUILayout.PropertyField(_bubbleLifeRange, new GUIContent("Lifetime",
+                    "Seconds. Surfacing pops a bubble first; ageing out dissolves it underwater."));
+                EditorGUILayout.PropertyField(_bubbleSizeRange, new GUIContent("Size",
+                    "World half-size range, skewed toward small."));
+                EditorGUILayout.PropertyField(_bubbleWobble, new GUIContent("Wobble",
+                    "Sideways zigzag while rising; amplitude scales with bubble size (only mm+ bubbles " +
+                    "wobble in reality)."));
+            }
+            if (_bubbleDriven)
+                EditorGUILayout.HelpBox("Driven by the Foam Profile's Bubbles section.", MessageType.None);
+        }
+
 
         void DrawBurstSource()
         {

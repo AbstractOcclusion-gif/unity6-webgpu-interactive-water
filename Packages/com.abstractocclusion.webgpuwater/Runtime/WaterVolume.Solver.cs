@@ -246,7 +246,7 @@ namespace AbstractOcclusion.WebGpuWater
                 state.Compression = shoreCompression;
                 state.Greens = shoreGreens;
                 state.AmbientFade = surfAmbientFade;
-                state.ShoalDepth = shoreShoalDepth;
+                state.ShoalDepth = ShoreShoalDepthEffective;
                 // FOAM-1/2: the pop-curve LUT + repartition weights, so the sim's injected foam
                 // pops and repartitions exactly like the rendered whitewash.
                 state.CrestFoamLutActive = SurfCrestFoamLutActive;

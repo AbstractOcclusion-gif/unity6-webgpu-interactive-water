@@ -43,11 +43,17 @@ namespace AbstractOcclusion.WebGpuWater
 
         // ---- CPU-event splash bursts (spray unification). MUST match BurstRequest in
         // WaterFoamParticles.compute (64 bytes) and MAX_BURST_DROPLETS there. ----
-        // Internal so authoring tools QUOTE this cap instead of carrying a copy of the number: a hull
-        // outline wants 20-40 probes, and requests past the cap in one frame are DROPPED by
-        // QueueSplashBurst - always the probes late in the array, i.e. one side of the boat.
+        // Internal so authoring tools QUOTE these caps instead of carrying copies of the numbers.
+        // Per-frame GPU upload cap. Overflow CARRIES OVER to later frames (FIFO) instead of being
+        // dropped: a hull outline wants 20-40 probes firing together, and the old drop always ate
+        // the probes late in the array, i.e. one side of the boat.
         internal const int MaxBurstsPerFrame = 16;
+        // Pending-queue bound across frames. Past it the OLDEST request is retired, because the
+        // newest events carry the freshest positions - on a moving boat a stale burst would
+        // spawn behind the hull.
+        internal const int MaxPendingBursts = 64;
         const int MaxBurstDroplets = 64;
+
 
         [StructLayout(LayoutKind.Sequential)]
         struct BurstRequest
@@ -192,9 +198,17 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_DepositLifeMax = Shader.PropertyToID("_DepositLifeMax");
         static readonly int ID_DepositSizeMin = Shader.PropertyToID("_DepositSizeMin");
         static readonly int ID_DepositSizeMax = Shader.PropertyToID("_DepositSizeMax");
-        // _DrawKind values for the foam/spray two-pass split (MUST match FoamParticles.shader).
+        static readonly int ID_BubbleAmount = Shader.PropertyToID("_BubbleAmount");
+        static readonly int ID_BubbleRiseSpeed = Shader.PropertyToID("_BubbleRiseSpeed");
+        static readonly int ID_BubbleLifeMin = Shader.PropertyToID("_BubbleLifeMin");
+        static readonly int ID_BubbleLifeMax = Shader.PropertyToID("_BubbleLifeMax");
+        static readonly int ID_BubbleSizeMin = Shader.PropertyToID("_BubbleSizeMin");
+        static readonly int ID_BubbleSizeMax = Shader.PropertyToID("_BubbleSizeMax");
+        static readonly int ID_BubbleWobble = Shader.PropertyToID("_BubbleWobble");
+        // _DrawKind values for the foam/spray/bubble pass split (MUST match FoamParticles.shader).
         const float DrawKindFoam = 1f;
         const float DrawKindSpray = 2f;
+        const float DrawKindBubble = 3f;
 
         // Density foam + spawn quality (compute + composite shader).
         static readonly int ID_DensityBuffer = Shader.PropertyToID("DensityBuffer");
@@ -317,6 +331,24 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("How quickly foam velocity relaxes to the driven flow (1/sec).")]
         [Range(0f, 10f)] [SerializeField] internal float drag = 2f;
 
+        [Header("Bubbles (underwater, from splash bursts)")]
+        [Tooltip("Bubble plume share of every splash/pump burst: bubbles injected DOWNWARD per droplet " +
+                 "thrown up (0 = none, and the bubble draw pass is skipped). The same impact that " +
+                 "throws spray drives air under the surface; the plume decelerates, then buoyancy " +
+                 "rises it back to pop at the waterline as landed foam.")]
+        [Range(0f, 1f)] [SerializeField] internal float bubbleAmount = 0.5f;
+        [Tooltip("Terminal rise speed of the LARGEST bubbles (world units/sec). The measured band " +
+                 "for mm-to-cm bubbles is 0.20-0.30; smaller bubbles rise proportionally slower.")]
+        [Range(0.05f, 0.6f)] [SerializeField] internal float bubbleRiseSpeed = 0.25f;
+        [Tooltip("Bubble lifetime range (seconds). A bubble that reaches the surface pops into a " +
+                 "deposited foam fleck; one that ages out first dissolves underwater.")]
+        [SerializeField] internal Vector2 bubbleLifeRange = new Vector2(2f, 4f);
+        [Tooltip("Bubble sprite half-size range (world units), skewed toward small on spawn.")]
+        [SerializeField] internal Vector2 bubbleSizeRange = new Vector2(0.015f, 0.05f);
+        [Tooltip("Sideways wobble while rising. Physically only bubbles above ~2 mm zigzag, so the " +
+                 "amplitude scales with bubble size.")]
+        [Range(0f, 2f)] [SerializeField] internal float bubbleWobble = 1f;
+
         [Header("Foam flipbook")]
         [Tooltip("Foam sprite atlas layout (columns, rows). (1,1) = a plain foam texture (no flipbook); " +
                  "(2,2) = a 4-frame sheet, etc. Optional, like the surface foam's flipbook grid.")]
@@ -350,6 +382,7 @@ namespace AbstractOcclusion.WebGpuWater
         Matrix4x4 _densityViewProjThisFrame; // approx VP for the composite's breakup pattern only
         MaterialPropertyBlock _mpb;
         MaterialPropertyBlock _sprayMpb;
+        MaterialPropertyBlock _bubbleMpb;
         MaterialPropertyBlock _densityMpb;
 
         bool DensityModeActive => renderMode == FoamRenderMode.ScreenSpaceDensity
@@ -439,6 +472,7 @@ namespace AbstractOcclusion.WebGpuWater
 
             _mpb = new MaterialPropertyBlock();
             _sprayMpb = new MaterialPropertyBlock();
+            _bubbleMpb = new MaterialPropertyBlock();
             _densityMpb = new MaterialPropertyBlock();
 
             // The density splat runs right before its camera renders (final matrices - see
@@ -569,6 +603,14 @@ namespace AbstractOcclusion.WebGpuWater
             cs.SetFloat(ID_DepositLifeMax, Mathf.Max(depositLifeRange.x, depositLifeRange.y));
             cs.SetFloat(ID_DepositSizeMin, depositSizeRange.x);
             cs.SetFloat(ID_DepositSizeMax, Mathf.Max(depositSizeRange.x, depositSizeRange.y));
+            // Bubble plume tuning (KIND_BUBBLE: injected by SpawnBurst, risen/popped in Update).
+            cs.SetFloat(ID_BubbleAmount, bubbleAmount);
+            cs.SetFloat(ID_BubbleRiseSpeed, bubbleRiseSpeed);
+            cs.SetFloat(ID_BubbleLifeMin, bubbleLifeRange.x);
+            cs.SetFloat(ID_BubbleLifeMax, Mathf.Max(bubbleLifeRange.x, bubbleLifeRange.y));
+            cs.SetFloat(ID_BubbleSizeMin, bubbleSizeRange.x);
+            cs.SetFloat(ID_BubbleSizeMax, Mathf.Max(bubbleSizeRange.x, bubbleSizeRange.y));
+            cs.SetFloat(ID_BubbleWobble, bubbleWobble);
             cs.SetFloat(ID_TexelWorldArea, volume.SimTexelWorldArea);
 
             cs.SetFloat(ID_Gravity, gravity);
@@ -648,9 +690,12 @@ namespace AbstractOcclusion.WebGpuWater
             // on one tech path (the Shuriken emitter keeps only the crown flipbook).
             if (_pendingBursts.Count > 0)
             {
+                // FIFO carry-over: upload the oldest MaxBurstsPerFrame requests and KEEP the
+                // rest for the next frame - a caller past the frame cap is delayed, never
+                // dropped (the bound lives at enqueue time, MaxPendingBursts).
                 int burstCount = Mathf.Min(_pendingBursts.Count, MaxBurstsPerFrame);
                 for (int i = 0; i < burstCount; i++) _burstUpload[i] = _pendingBursts[i];
-                _pendingBursts.Clear();
+                _pendingBursts.RemoveRange(0, burstCount);
                 _burstRequests.SetData(_burstUpload, 0, 0, burstCount);
                 cs.SetInt(ID_BurstRequestCount, burstCount);
                 cs.SetBuffer(_kSpawnBurst, ID_Particles, _particles);
@@ -733,8 +778,9 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         /// <summary>Queue a splash burst of ballistic spray droplets at a surface point (world).
-        /// Consumed next simulation dispatch; requests beyond the per-frame cap are dropped
-        /// (soft budget, like the turbulence spawns). Droplet look/motion is this system's
+        /// Uploaded to the GPU at MaxBurstsPerFrame per frame, FIFO; overflow CARRIES OVER to
+        /// later frames (bounded by MaxPendingBursts, oldest retired first). The burst also
+        /// injects its bubble-plume share (bubbleAmount). Droplet look/motion is this system's
         /// spray path, so event splashes match turbulence-thrown spray exactly.</summary>
         /// <param name="petalDirection">World XZ direction the wedge is centred on. ZERO (the default)
         /// is the legacy full ring, and every caller that omits it behaves exactly as before.</param>
@@ -761,13 +807,15 @@ namespace AbstractOcclusion.WebGpuWater
 #endif
                 return;
             }
-            if (_pendingBursts.Count >= MaxBurstsPerFrame)
+            if (_pendingBursts.Count >= MaxPendingBursts)
             {
+                // Queue saturated across frames: retire the OLDEST request instead of refusing
+                // the newest (fresh events carry a moving emitter's current position/energy).
+                _pendingBursts.RemoveAt(0);
 #if UNITY_EDITOR
                 BurstsDroppedThisFrame++;
                 BurstsDroppedTotal++;
 #endif
-                return;
             }
             _pendingBursts.Add(new BurstRequest
             {
@@ -788,9 +836,13 @@ namespace AbstractOcclusion.WebGpuWater
                 arcHalfRadians = Mathf.Max(0f, arcHalfRadians),
                 elevationRadians = elevationRadians
             });
-            // Keep the sim/draw alive (even with ambient foam OFF) until these droplets
-            // have fully lived: airborne life + the deposited-foam life they roll on landing.
-            float burstLifeSpan = Mathf.Max(dropletLifeRange.x, dropletLifeRange.y)
+            // Keep the sim/draw alive (even with ambient foam OFF) until everything this burst
+            // made has fully lived: the longer of airborne-droplet or bubble-plume life, plus
+            // the deposited-foam life both convert into.
+            float airborneOrBubbleLife = Mathf.Max(
+                Mathf.Max(dropletLifeRange.x, dropletLifeRange.y),
+                Mathf.Max(bubbleLifeRange.x, bubbleLifeRange.y));
+            float burstLifeSpan = airborneOrBubbleLife
                                 + Mathf.Max(depositLifeRange.x, depositLifeRange.y)
                                 + BurstSimPadSeconds;
             _burstSimActiveUntil = Mathf.Max(_burstSimActiveUntil, Time.time + burstLifeSpan);
@@ -865,6 +917,27 @@ namespace AbstractOcclusion.WebGpuWater
                 Graphics.RenderPrimitives(sprayRp, MeshTopology.Triangles, vertexCount);
             }
 
+            // Bubble pass (_DrawKind = bubble-only): underwater plume sprites on the foam
+            // material - the shader draws them as analytic rim circles, so no atlas and no
+            // extra material asset. Skipped entirely while the body injects no bubbles.
+            if (bubbleAmount > 0f)
+            {
+                volume.WriteBodyProps(_bubbleMpb);
+                _bubbleMpb.SetBuffer(ID_ParticlesShader, _particles);
+                if (profile != null) profile.WriteLook(_bubbleMpb); // tint/opacity ride over bubbles too
+                _bubbleMpb.SetFloat(ID_DrawKind, DrawKindBubble);
+
+                if (!reroute)
+                {
+                    var bubbleRp = new RenderParams(particleMaterial)
+                    {
+                        worldBounds = volume.SimWorldBounds,
+                        matProps = _bubbleMpb
+                    };
+                    Graphics.RenderPrimitives(bubbleRp, MeshTopology.Triangles, vertexCount);
+                }
+            }
+
             // Arm the after-fog pass with THIS frame's decision (LateUpdate disarmed it, so a
             // frame that never reaches Draw leaves nothing to re-submit).
             _afterFogArmed = reroute;
@@ -899,6 +972,11 @@ namespace AbstractOcclusion.WebGpuWater
             Material sprayDrawMaterial = sprayMaterial != null ? sprayMaterial : particleMaterial;
             cmd.DrawProcedural(Matrix4x4.identity, sprayDrawMaterial, 0,
                                MeshTopology.Triangles, vertexCount, 1, _sprayMpb);
+
+            // Bubble pass rides the reroute like the others; its block was filled in Draw().
+            if (bubbleAmount > 0f)
+                cmd.DrawProcedural(Matrix4x4.identity, particleMaterial, 0,
+                                   MeshTopology.Triangles, vertexCount, 1, _bubbleMpb);
         }
 
         // Fullscreen triangle that shades the splatted density as connected foam. The bounds

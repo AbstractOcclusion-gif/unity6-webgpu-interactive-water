@@ -39,9 +39,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         bool _showRipple = false;
         bool _showRippleAdvanced = false;
+        bool _showWind = true;
         bool _showWindWaves = false;
         bool _showWindWavesAdvanced = false;
         bool _showOceanSwell = false;
+        bool _showSwell = false;
         bool _showOceanSwellAdvanced = false;
         bool _showSurf = false;
         bool _showSurfAdvanced = false;
@@ -115,9 +117,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             Sync(ref _showRipple, nameof(_showRipple), load);
             Sync(ref _showRippleAdvanced, nameof(_showRippleAdvanced), load);
+            Sync(ref _showWind, nameof(_showWind), load);
             Sync(ref _showWindWaves, nameof(_showWindWaves), load);
             Sync(ref _showWindWavesAdvanced, nameof(_showWindWavesAdvanced), load);
             Sync(ref _showOceanSwell, nameof(_showOceanSwell), load);
+            Sync(ref _showSwell, nameof(_showSwell), load);
             Sync(ref _showOceanSwellAdvanced, nameof(_showOceanSwellAdvanced), load);
             Sync(ref _showSurf, nameof(_showSurf), load);
             Sync(ref _showSurfAdvanced, nameof(_showSurfAdvanced), load);
@@ -203,9 +207,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
                 case InspectorTab.Motion:
                     DrawMotionGlobals();
+                    DrawWindSection();
                     DrawRippleSection();
-                    DrawWindWavesSection();
                     DrawOceanSwellSection();
+                    DrawWindWavesSection();
                     DrawSurfFrontsSection();
                     break;
 

@@ -54,3 +54,10 @@ MonoBehaviour:
     crownLifetime: 0.2
     crownTint: {r: 1, g: 1, b: 1, a: 1}
     crownOpacity: 0.471
+  bubbles:
+    drive: 1
+    bubbleAmount: 1
+    bubbleRiseSpeed: 0.25
+    bubbleLifeRange: {x: 1, y: 2}
+    bubbleSizeRange: {x: 0.005, y: 0.008}
+    bubbleWobble: 1

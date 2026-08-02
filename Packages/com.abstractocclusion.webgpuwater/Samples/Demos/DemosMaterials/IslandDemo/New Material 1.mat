@@ -162,8 +162,8 @@ Material:
     - _Parallax: 0.005
     - _QueueOffset: 0
     - _ReceiveShadows: 1
-    - _RockSlope: 0.26
-    - _RockSmoothness: 0.25
+    - _RockSlope: 0.416
+    - _RockSmoothness: 0.512
     - _RockTiling: 0.02
     - _RockWetDarken: 0.65
     - _RockWetSmoothness: 0.8
@@ -172,14 +172,14 @@ Material:
     - _SeabedTop: -0.15
     - _SeabedWetDarken: 0.55
     - _SeabedWetSmoothness: 0.6
-    - _SlopeFeather: 0.038
+    - _SlopeFeather: 0.136
     - _Smoothness: 0.5
     - _SmoothnessTextureChannel: 0
     - _SpecularHighlights: 1
     - _SrcBlend: 1
     - _SrcBlendAlpha: 1
     - _Surface: 0
-    - _TriplanarSharpness: 9.8
+    - _TriplanarSharpness: 10.2
     - _WetBandHeight: 0.25
     - _WetFoamStrength: 0.5
     - _WetNormalFlatten: 0.6

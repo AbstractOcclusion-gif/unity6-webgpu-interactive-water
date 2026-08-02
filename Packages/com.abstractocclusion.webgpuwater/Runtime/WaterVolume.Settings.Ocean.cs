@@ -28,19 +28,56 @@ namespace AbstractOcclusion.WebGpuWater
                      "replaces them). OFF = the original pool / small-body look, byte-for-byte unchanged. " +
                      "Publishes the _LargeBody shader flag; the clipmap + FFT modules read the same flag.")]
             public bool openWater = false;
-            [Tooltip("Open-water SWELL height multiplier. The big waves' scale and direction come from " +
-                     "the Wind Waves section (wind speed scales the swell, wind heading steers it); " +
-                     "this is an artistic multiplier on top, like Wave Amplitude Scale is for the small " +
-                     "waves. 0 = no big swell (small wind waves remain).")]
+            [Tooltip("Artistic multiplier on the whole wave field, applied AFTER the sea state is " +
+                     "normalised to its Significant Height. Leave at 1 to keep the authored heights " +
+                     "honest in metres; push it for a stylised sea. 0 = flat water.")]
             [Min(0f)] public float largeWaveAmplitude = 1f;
-            [Tooltip("Open-water CHOPPINESS: horizontal Gerstner displacement that sharpens wave crests. " +
-                     "0 = smooth sine swell (byte-for-byte the previous look); higher = sharper, more " +
-                     "ocean-like peaks. Buoyancy inverts it, so floaters still ride the visible crest.")]
-            [Range(0f, LargeWaveChoppinessMax)] public float largeWaveChoppiness = 0f;
-            [Tooltip("Long-period SWELL height (metres): tall, slow, rolling waves that keep the open sea " +
-                     "moving toward the horizon, layered on top of the wind chop. 0 = no long swell.")]
+            [Tooltip("CHOPPINESS: horizontal Gerstner displacement that sharpens crests and broadens " +
+                     "troughs. 0 = round sine humps; 1 = a realistic sea; past ~1 the surface folds " +
+                     "through itself, which is what breeds whitecaps. Buoyancy inverts it, so floaters " +
+                     "still ride the visible crest.")]
+            [Range(0f, LargeWaveChoppinessMax)] public float largeWaveChoppiness = DefaultLargeWaveChoppiness;
+
+            [Header("Ocean sea state (FFT spectrum)")]
+            [Tooltip("SIGNIFICANT WAVE HEIGHT (metres): the average height of the biggest third of the " +
+                     "waves, which is what 'a 2 m sea' means. This is the honest amount of water the " +
+                     "spectrum carries - independent of wavelength, so raising it makes the SAME waves " +
+                     "steeper rather than bigger-and-longer.")]
+            [Min(0f)] public float significantWaveHeight = DefaultSignificantWaveHeight;
+            [Tooltip("PEAK WAVELENGTH (metres): the crest-to-crest distance of the dominant wave. This is " +
+                     "the sea's SCALE - and, with Significant Height, its steepness. A short peak with a " +
+                     "tall height is a small agitated chop; a long peak with the same height is a lazy " +
+                     "ocean swell. The whole cascade layout is derived from it, so this is also what " +
+                     "makes a pond-sized or a giant ocean.")]
+            [Min(OceanPeakWavelengthMin)] public float peakWavelength = DefaultPeakWavelength;
+            [Tooltip("PEAK SHARPNESS (JONSWAP gamma): how much of the energy is concentrated at the peak " +
+                     "wavelength. 1 = a broad Pierson-Moskowitz spectrum - many scales at once, confused " +
+                     "and choppy. 3.3 = the classic storm sea. 5-7 = one narrow band, long organised " +
+                     "corduroy rollers. Does NOT change the wave height: the spectrum is renormalised.")]
+            [Range(OceanPeakSharpnessMin, OceanPeakSharpnessMax)] public float peakSharpness = DefaultPeakSharpness;
+            [Tooltip("WAVE SCALE: multiplies the Peak Wavelength (and therefore the whole cascade set) " +
+                     "without touching the height, so it changes the sea's SIZE at constant steepness. " +
+                     "Below 1 for a miniature, Gulliver-scale sea; above 1 for a giant one. 1 = the " +
+                     "Peak Wavelength exactly as authored.")]
+            [Min(OceanWaveScaleMin)] public float waveScale = 1f;
+            [Tooltip("SEA DEPTH (metres) for the shallow-water (TMA) correction, which drains the " +
+                     "long-wave end and makes a coastal sea read shorter and steeper than the same wind " +
+                     "offshore. 0 = deep water, correction off. This is the OPEN-SEA depth, not the " +
+                     "shoreline bathymetry - the shoreline has its own shoaling in Bed Depth.")]
+            [Min(0f)] public float seaDepth = 0f;
+            [Tooltip("WAVE REACH: how far out the wave detail keeps being drawn, as a multiple of " +
+                     "the automatic per-cascade range. Past a cascade's range it fades to nothing, " +
+                     "so too low a value leaves the far sea a flat mirror; too high makes distant " +
+                     "waves finer than the mesh can carry and they crawl. 1 = the strict automatic " +
+                     "rule; the default trades a little far-field shimmer for an ocean that reaches " +
+                     "the horizon.")]
+            [Range(OceanCascadeReachMin, OceanCascadeReachMax)] public float cascadeReach = DefaultCascadeReach;
+            [Tooltip("Long-period SWELL height (metres, significant height like the sea state's): tall, " +
+                     "slow rollers layered on top of the wind sea. 0 = no long swell.")]
             [Min(0f)] public float swellHeight = 0f;
-            [Tooltip("Wavelength (metres) of the longest swell component. Bigger = longer, slower rolls.")]
+            [Tooltip("Wavelength (metres) of the swell. Bigger = longer, slower rolls. Only the part of " +
+                     "it that falls inside the cascade bands is rendered, so keep it below about twice " +
+                     "the Peak Wavelength.")]
             [Min(1f)] public float swellWavelength = DefaultSwellWavelength;
             [Tooltip("How much of the FFT ocean's energy travels ACROSS and AGAINST the wind instead of " +
                      "with it. 0 = a perfectly ordered sea marching downwind; 1 = fully isotropic, no net " +
@@ -341,7 +378,34 @@ namespace AbstractOcclusion.WebGpuWater
         const float OceanFoamMaxBuildupMin = 0.25f;
         const float OceanFoamMaxBuildupMax = 3f;
         internal float LargeWaveHeadingRad => windFromDegrees * Mathf.Deg2Rad;
-        internal float LargeWaveAmplitudeEffective => largeWaveAmplitude * (windSpeed / LargeWaveReferenceWind);
+        // The FFT sea state is normalised to an authored Significant Height in METRES, so scaling it by
+        // the wind on top would make that number a lie. The wind coupling survives only on the ANALYTIC
+        // generator, whose amplitude is a shape rather than a height and which has no spectrum to
+        // normalise - i.e. on pools and bounded lakes, whose look is unchanged.
+        internal float LargeWaveAmplitudeEffective => IsOceanClipmap
+            ? largeWaveAmplitude
+            : largeWaveAmplitude * (windSpeed / LargeWaveReferenceWind);
+        internal float SignificantWaveHeight => ocean.significantWaveHeight;
+        /// <summary>Authored peak wavelength AFTER the Gulliver/giant scale multiplier.</summary>
+        internal float PeakWavelengthEffective => Mathf.Max(OceanPeakWavelengthMin,
+                                                            ocean.peakWavelength * Mathf.Max(OceanWaveScaleMin, ocean.waveScale));
+        internal float PeakSharpness => ocean.peakSharpness;
+        internal float SeaDepth => ocean.seaDepth;
+        internal float OceanCascadeReach => ocean.cascadeReach;
+
+        /// <summary>Significant height (metres) of the whole open-water field, wind sea and swell together.</summary>
+        /// <remarks>
+        /// ONE definition of "how big is this sea", because more than one thing has to agree with it:
+        /// the shoal band has to start outside it and the surf fronts cannot be smaller than it. The two
+        /// trains have independent phases, so their variances add and the heights combine in quadrature -
+        /// the same rule WaterOceanSpectrum applies when it normalises them.
+        ///
+        /// Only the FFT ocean carries an authored height in metres; on analytic bodies the long swell is
+        /// still the only thing with a metre height, so it stands in unchanged there.
+        /// </remarks>
+        internal float OffshoreSignificantHeight => IsOceanClipmap
+            ? Mathf.Sqrt(SignificantWaveHeight * SignificantWaveHeight + SwellHeight * SwellHeight)
+            : SwellHeight;
         internal float LargeWaveChoppiness => largeWaveChoppiness;
         // Edge guard is a BOUNDED-body concept: an unbounded ocean's clipmap has no footprint border,
         // so the feather is forced off there (and pools never read it - _LargeBody gates the field).
@@ -367,6 +431,28 @@ namespace AbstractOcclusion.WebGpuWater
         internal float OceanFoamDrift => oceanFoamDrift;
         internal float OceanFoamMaxBuildup => oceanFoamMaxBuildup;
         const float DefaultSwellWavelength = 140f;
+        // Sea-state defaults + guard rails. A 1.5 m / 60 m sea is a moderate open ocean (steepness ~1/40,
+        // a plausible mid-fetch swell) and gamma 3.3 is JONSWAP's own nominal peak enhancement.
+        const float DefaultSignificantWaveHeight = 1.5f;
+        const float DefaultPeakWavelength = 60f;
+        const float DefaultPeakSharpness = 3.3f;
+        // The finest cascade's tile is the coarsest band times CascadeBandRatio^3 times the oversample;
+        // below ~0.1 m of peak wavelength that tile is under a centimetre and the FFT is resolving
+        // surface tension, which this dispersion relation does not model.
+        const float OceanPeakWavelengthMin = 0.1f;
+        // Gamma 1 IS Pierson-Moskowitz (no enhancement); the observed upper end in the literature is ~7.
+        const float OceanPeakSharpnessMin = 1f;
+        const float OceanPeakSharpnessMax = 7f;
+        const float OceanWaveScaleMin = 0.001f;
+        // 3 puts a 60 m sea's ranges at roughly 38 / 160 / 680 / 2880 m, which is within a hair of the
+        // 40 / 160 / 800 / 4800 the hardcoded arrays gave before the cascades were derived - i.e. it
+        // restores the reach the asset shipped with rather than inventing a new one.
+        const float DefaultCascadeReach = 3f;
+        const float OceanCascadeReachMin = 0.25f;
+        const float OceanCascadeReachMax = 8f;
+        // Chop now reaches the FFT, where it was previously hardwired to 1. Defaulting to 1 keeps a fresh
+        // ocean looking like the one that shipped; MigrateSeaStateV10 lifts authored 0s for the same reason.
+        const float DefaultLargeWaveChoppiness = 1f;
         // KWS's shipped WindTurbulence (KWS_Ocean.cs:16). At this value the downwind:upwind ENERGY ratio
         // is 6.7:1 - a sea that clearly marches while still crossing enough to read as natural.
         const float DefaultOceanWindTurbulence = 0.25f;

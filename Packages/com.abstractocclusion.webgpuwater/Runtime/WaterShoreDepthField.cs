@@ -38,6 +38,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SdfDebug = Shader.PropertyToID("_ShoreSDFDebug");
         static readonly int ID_WaterLevel = Shader.PropertyToID("_ShoreWaterLevel");
         static readonly int ID_ShoalDepth = WaterShaderProps.ShoreShoalDepth;
+        static readonly int ID_GreenBandDepth = WaterShaderProps.ShoreGreenBandDepth;
         // P1 shoal-transform + P2 surf-front knobs (all live-tunable; no rebake needed).
         static readonly int ID_Refraction = Shader.PropertyToID("_ShoreRefraction");
         static readonly int ID_Compression = Shader.PropertyToID("_ShoreCompression");
@@ -441,7 +442,11 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalFloat(ID_Valid, depthLive ? 1f : 0f);
             Shader.SetGlobalFloat(ID_Debug, _depthDebugEnabled ? 1f : 0f);
             Shader.SetGlobalFloat(ID_WaterLevel, _waterLevel);
-            Shader.SetGlobalFloat(ID_ShoalDepth, _body.shoreShoalDepth); // live-tunable; no rebake needed
+            // Two bands, one authored: the ATTENUATION band follows the sea state (so a big sea starts
+            // flattening further out), while Green's-law amplification stays on the authored coastal
+            // profile. Both live-tunable; no rebake needed.
+            Shader.SetGlobalFloat(ID_ShoalDepth, _body.ShoreShoalDepthEffective);
+            Shader.SetGlobalFloat(ID_GreenBandDepth, _body.shoreShoalDepth);
 
             Shader.SetGlobalTexture(ID_SdfTex, sdfLive ? (Texture)_sdfTex : Texture2D.blackTexture);
             Shader.SetGlobalFloat(ID_SdfValid, sdfLive ? 1f : 0f);

@@ -27,15 +27,45 @@ namespace AbstractOcclusion.WebGpuWater
         [System.Serializable]
         public sealed class DetailNormalSettings
         {
-            [Tooltip("Tiling water-normal texture, sampled as two crossing scrolling layers at two " +
-                     "world scales. None = feature off (surface unchanged).")]
+            [Tooltip("Tiling water-normal texture, sampled as two crossing scrolling layers on an " +
+                     "OCTAVE LADDER: the world tile grows with view distance so the pattern keeps a " +
+                     "steady size on screen instead of repeating into the horizon. None = feature " +
+                     "off (surface unchanged).")]
             public Texture2D texture = null;
-            [Tooltip("Tilt strength of the detail layer on the surface normal.")]
-            [Range(0f, 2f)] public float strength = 0.6f;
-            [Tooltip("World size of one texture tile, metres (the far layer runs at twice this).")]
+            [Tooltip("Tilt strength of the detail layer on the surface normal. This is the main dial " +
+                     "for how much micro-ripple the water carries; Crest Boost below adds more on " +
+                     "steep wave faces on top of it.")]
+            [Range(0f, DetailNormalStrengthMax)] public float strength = 0.6f;
+            [Tooltip("World size of ONE texture tile at the camera, in metres. Only the NEAR end - " +
+                     "each octave further out multiplies it by about 2.6, so this sets how fine the " +
+                     "detail is at your feet without deciding how big the tile is at the horizon.")]
             [Range(1f, 100f)] public float tileMeters = 18f;
-            [Tooltip("Scroll speed of the crossing layers, metres per second.")]
+            [Tooltip("World size the tile GROWS TO at distance, in metres. The ladder climbs from " +
+                     "Tile Meters toward this and stops - past a few times the near size the texture " +
+                     "reads as blotches rather than ripple. About 4x the near tile is a good start. " +
+                     "Set it at or below Tile Meters to pin a single fixed tile (the old behaviour).")]
+            [Range(1f, 400f)] public float farTileMeters = DefaultFarTileMeters;
+            [Tooltip("View distance (metres) at which the tile has grown to Far Tile Meters. This is " +
+                     "the climb RATE - shorter reaches the big tile sooner, which is what you want " +
+                     "when the camera sits high or looks along the water. Far Tile Meters alone only " +
+                     "TRIMS the climb, so on its own it appears to stop mattering past a point.")]
+            [Range(50f, 3000f)] public float farTileDistance = DefaultFarTileDistance;
+            [Tooltip("Scroll speed of the crossing layers at the near tile, metres per second. Each " +
+                     "octave further out scrolls about 1.6x faster, which is the deep-water " +
+                     "dispersion relation for its longer wavelength.")]
             [Range(0f, 2f)] public float scrollSpeed = 0.25f;
+            [Tooltip("Scroll speed at the FAR tile, metres per second. Screen motion is speed over " +
+                     "distance, so once the tile stops growing the far water keeps slowing and ends " +
+                     "up looking frozen - this is the dial that keeps the horizon alive. The " +
+                     "dispersion-correct value is printed below the field; going above it is a " +
+                     "readability cheat and usually the right call.")]
+            [Range(0f, FarScrollSpeedMax)] public float farScrollSpeed = DefaultFarScrollSpeed;
+            [Tooltip("HEX TILING: resample the texture on a random hexagonal lattice so its own " +
+                     "repeat stops existing - the last tiling you can see once the wave cascades and " +
+                     "the octave ladder are doing their job. Costs THREE taps per layer instead of " +
+                     "one, so it is off by default; turn it on for hero water and leave it off on " +
+                     "mobile. A featureless, isotropic normal map needs it least.")]
+            public bool hexTiling = false;
             [Tooltip("How much the wind drives this layer. The crossing directions ALWAYS rotate with " +
                      "Wind Heading; this scales the AMPLITUDE response to Wind Speed, so calm water " +
                      "flattens and a blow roughens it. 0 = amplitude ignores wind (legacy).")]
@@ -44,7 +74,35 @@ namespace AbstractOcclusion.WebGpuWater
                      "capillary ripple actually concentrates, instead of an even film everywhere. " +
                      "0 = uniform over the whole surface (legacy).")]
             [Range(0f, 2f)] public float crestBoost = 0.5f;
+            [Tooltip("Extra ripple strength FAR AWAY, past the point where the tile stops growing. " +
+                     "Beyond there the normal map keeps mipping toward flat, so the detail washes " +
+                     "out just where you are looking when you scan the horizon. This adds it back " +
+                     "without touching the water at your feet. 0 = off.")]
+            [Range(0f, DetailNormalDistanceBoostMax)] public float distanceBoost = DefaultDistanceBoost;
         }
+
+        // Raised from 2 once the octave ladder made the layer usable at every distance rather than
+        // fading out by 600 m. The old ceiling was set when pushing the strength up mostly bought
+        // near-field noise; now it buys micro-ripple all the way to the horizon, so the useful range
+        // genuinely extends further. Authored values are untouched - this only opens headroom.
+        const float DetailNormalStrengthMax = 4f;
+        // Four times the near tile's default - the ratio that reads well on a typical water normal
+        // map, and the one the two-layer scheme was hand-tuned to before the ladder replaced it.
+        const float DefaultFarTileMeters = 72f;
+        // Roughly restores what one octave of mip coarsening takes off the tilt, so the far field
+        // holds its strength instead of fading as you look out. Raise for a deliberately crisp horizon.
+        // Chosen so the default near/far pair reproduces the pre-knob climb rate almost exactly.
+        const float DefaultFarTileDistance = 200f;
+        // Twice the near speed = sqrt(4), the dispersion-correct ratio for the default 4x tile step,
+        // so the defaults reproduce the fixed golden-ratio-per-octave climb this replaced.
+        const float DefaultFarScrollSpeed = 0.5f;
+        // Deliberately far above the dispersion-correct ratio (2x the near speed at the default tile
+        // step). Screen motion falls off as 1/distance past the tile cap, so the far layer has to
+        // outrun physics by a wide margin before it reads as moving at all - and driving it well past
+        // that turns the horizon into glitter, which is a look worth being able to reach on purpose.
+        const float FarScrollSpeedMax = 10f;
+        const float DefaultDistanceBoost = 0.35f;
+        const float DetailNormalDistanceBoostMax = 2f;
 
         internal Texture2D DetailNormalTexture => detailNormalSettings.texture;
         // Amplitude response to wind speed, shared by the top and the underside so ONE wind drives
@@ -60,6 +118,16 @@ namespace AbstractOcclusion.WebGpuWater
             => detailNormalSettings.texture != null
                  ? detailNormalSettings.strength * DetailNormalWindFactor : 0f;
         internal float DetailNormalScale => detailNormalSettings.tileMeters;
+        internal float DetailNormalFarScale => detailNormalSettings.farTileMeters;
+        internal float DetailNormalFarDistance => detailNormalSettings.farTileDistance;
+        internal float DetailNormalFarSpeed => detailNormalSettings.farScrollSpeed;
+        internal bool DetailNormalHexTiling => detailNormalSettings.hexTiling;
+        /// <summary>Scroll speed the far tile would run at under deep-water dispersion, c ~ sqrt(lambda).</summary>
+        /// <remarks>Shown in the inspector so a deliberate cheat can be told apart from a mistake.</remarks>
+        internal float DetailNormalDispersionFarSpeed
+            => DetailNormalSpeed * Mathf.Sqrt(Mathf.Max(DetailNormalFarScale, 1e-3f)
+                                              / Mathf.Max(DetailNormalScale, 1e-3f));
+        internal float DetailNormalDistanceBoost => detailNormalSettings.distanceBoost;
         internal float DetailNormalSpeed => detailNormalSettings.scrollSpeed;
         internal float DetailNormalCrestBoost => detailNormalSettings.crestBoost;
         // (cos, sin) of the wind heading in the XZ plane - the SAME convention

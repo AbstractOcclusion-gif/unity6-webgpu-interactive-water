@@ -41,19 +41,29 @@ float _UnderwaterSurfaceY;   // wave-aware surface height at the camera xz (the 
 //    behaviour: their reroute keys on the SAME armed gate, so fog-off frames stay the
 //    untouched queue-time look (and armed implies _WaterFogEnabled - UnderwaterFogActive
 //    requires the body's waterFog - so the inner gate never fires for them).
-void ParticleUnderwaterFogAlways(float3 worldPos, float3 lightDir, float3 sunColor,
-                                 out float3 fogMul, out float3 fogAdd)
+// The wet path against an EXPLICIT waterline. A sprite that is GLUED to the surface knows its
+// own local surface height and must use it: the flat _UnderwaterSurfaceY is sampled at the
+// CAMERA xz, which on waves is a different height entirely from the one the sprite crosses.
+void ParticleUnderwaterFogAtLevel(float3 worldPos, float surfaceLevel,
+                                  float3 lightDir, float3 sunColor,
+                                  out float3 fogMul, out float3 fogAdd)
 {
     fogMul = float3(1.0, 1.0, 1.0);
     fogAdd = float3(0.0, 0.0, 0.0);
     if (_WaterFogEnabled < 0.5) return; // fog feature off for this body: identity
-    float wet = WaterPathLength(worldPos, _WorldSpaceCameraPos.xyz, _UnderwaterSurfaceY);
+    float wet = WaterPathLength(worldPos, _WorldSpaceCameraPos.xyz, surfaceLevel);
     if (wet <= 0.0) return; // fragment and camera both in air (spray above a pond seen from above)
     float3 transmittance = exp(-_WaterExtinction.rgb * (_WaterFogDensity * wet));
     float3 viewDirWS = normalize(_WorldSpaceCameraPos.xyz - worldPos);
     float3 inscatter = WaterInscatterColor(viewDirWS, lightDir, sunColor, 0.0);
     fogMul = transmittance;
     fogAdd = inscatter * (1.0 - transmittance);
+}
+
+void ParticleUnderwaterFogAlways(float3 worldPos, float3 lightDir, float3 sunColor,
+                                 out float3 fogMul, out float3 fogAdd)
+{
+    ParticleUnderwaterFogAtLevel(worldPos, _UnderwaterSurfaceY, lightDir, sunColor, fogMul, fogAdd);
 }
 
 void ParticleUnderwaterFog(float3 worldPos, float3 lightDir, float3 sunColor,

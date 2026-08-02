@@ -117,7 +117,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             float furthest = 0f;
             for (int i = 0; i < probes.arraySize; i++)
             {
-                Vector3 local = probes.GetArrayElementAtIndex(i).FindPropertyRelative("localOffset").vector3Value;
+                SerializedProperty element = probes.GetArrayElementAtIndex(i);
+                // A probe that opted out of the height gate can never be silenced by placement.
+                if (element.FindPropertyRelative("ignoreSurfaceBand").boolValue) continue;
+                Vector3 local = element.FindPropertyRelative("localOffset").vector3Value;
                 float distance = Mathf.Abs(pump.transform.TransformPoint(local).y - waterY);
                 furthest = Mathf.Max(furthest, distance);
                 if (distance > band) offBand++;

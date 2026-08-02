@@ -36,6 +36,13 @@ namespace AbstractOcclusion.WebGpuWater
         Rock, // the water rising toward a (near-)static point; interactive ripples included
     }
 
+    /// <summary>How a probe emits once its trigger holds. See <see cref="WaterSprayPump"/>.</summary>
+    public enum WaterSprayEmission
+    {
+        Burst,      // default: discrete splashes paced by the emit cooldown
+        Continuous, // steady stream while the trigger holds, rate scaling with the trigger speed
+    }
+
     /// <summary>Why a probe did or did not spray on a given frame.</summary>
     /// <remarks>Every one of these reads as the same thing on screen - no spray - so they are named and
     /// counted rather than inferred. Returned unconditionally (an enum return costs nothing over void)
@@ -47,6 +54,7 @@ namespace AbstractOcclusion.WebGpuWater
         NoHistory,     // fewer than two frames of motion to difference
         OutOfBand,     // further than surfaceBand from the waterline
         CoolingDown,
+        Accumulating,  // continuous probe: trigger holds, fractional emit budget below one emit
         NoEmitter,
         BelowMinSpeed,
     }
@@ -61,6 +69,13 @@ namespace AbstractOcclusion.WebGpuWater
         const float DefaultEmitCooldownSeconds = 0.06f;
         const float DefaultSprayRadius = 0.25f;
         const float DefaultPlowWeight = 0.5f;
+        // Continuous emission defaults + shaping. The rate floor keeps a just-triggered probe
+        // audible instead of one emit every few seconds; the accumulator cap stops a hitched
+        // frame from banking a machine-gun volley.
+        const float DefaultContinuousRate = 10f;          // emits/sec at full trigger strength
+        const float DefaultContinuousAmountScale = 0.35f; // droplet-count scale of each continuous emit
+        const float ContinuousRateAtThreshold = 0.25f;    // fraction of the rate right at min speed
+        const float ContinuousAccumulatorMax = 2f;        // most emits a single frame can owe
         // Petal defaults chosen so ADDING these fields changes nothing: a full ring, no rake, no spin.
         // The arc bounds are internal so the Water Wizard's hull fit offers the same range this
         // inspector accepts, instead of a copy of the numbers that could drift out of it.
@@ -106,6 +121,18 @@ namespace AbstractOcclusion.WebGpuWater
                      "at a static point (ripples included); Both = either.")]
             public WaterSprayMode mode;
 
+            [Tooltip("Burst = discrete splashes paced by the emit cooldown (impacts, wave slams). " +
+                     "Continuous = a steady stream while the trigger holds, its rate scaling with " +
+                     "speed - a planing bow sheet, a rock in a standing bore. The crown flipbook " +
+                     "plays only on the FIRST emit of each continuous run.")]
+            public WaterSprayEmission emission;
+
+            [Tooltip("Emit even while this probe sits outside Surface Band - for probes that ride " +
+                     "above the waterline (spray rails, a planing bow lifting out) or plunge deep. " +
+                     "The spray still spawns AT the waterline under the probe; only the height gate " +
+                     "is skipped, so the trigger speeds keep working unchanged.")]
+            public bool ignoreSurfaceBand;
+
             [Tooltip("Extra spray VOLUME for THIS probe: scales the droplet count only - launch speed, " +
                      "droplet size and spread stay identical, so the spray flies the same at any boost. " +
                      "0 = base, 0.5 = +50% droplets (e.g. a denser bow row), -1 mutes this probe.")]
@@ -145,6 +172,15 @@ namespace AbstractOcclusion.WebGpuWater
         [Header("Spray")]
         [Tooltip("World radius of each spray burst passed to the emitter.")]
         [Min(0f)] [SerializeField] float sprayRadius = DefaultSprayRadius;
+
+        [Header("Continuous emission (probes set to Continuous)")]
+        [Tooltip("Emits per second from a Continuous probe at FULL trigger strength; right at the " +
+                 "trigger threshold the rate falls to a quarter of this. Each emit is a small burst, " +
+                 "so the stream reads as a sheet, not a strobe.")]
+        [Range(1f, 30f)] [SerializeField] float continuousRatePerSecond = DefaultContinuousRate;
+        [Tooltip("Droplet-count scale of EACH continuous emit (multiplies the probe's own Amount " +
+                 "Boost). Small values at a steady rate spread a burst's volume through time.")]
+        [Range(0.05f, 1f)] [SerializeField] float continuousAmountScale = DefaultContinuousAmountScale;
 
         [Header("Petals")]
         [Tooltip("Width of each burst's wedge. 360 is the full ring every splash threw before hull " +
@@ -274,6 +310,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (!sample.Valid)
             {
                 _states[index].HasHistory = false; // no reading this frame: don't diff across the gap
+                _states[index].ContinuousRunActive = false;
 #if UNITY_EDITOR
                 _probeGates[index] = SprayProbeGate.OutsideBody;
 #endif
@@ -297,9 +334,20 @@ namespace AbstractOcclusion.WebGpuWater
                                float surfaceHeight, float deltaSeconds, WaterSplashEmitter activeEmitter)
         {
             ref ProbeState state = ref _states[index];
-            if (!state.HasHistory) return SprayProbeGate.NoHistory;    // need two frames to measure a speed
-            if (Mathf.Abs(world.y - surfaceHeight) > surfaceBand) return SprayProbeGate.OutOfBand;
-            if (Time.time < state.NextEmitTime) return SprayProbeGate.CoolingDown;
+            bool continuous = probes[index].emission == WaterSprayEmission.Continuous;
+            if (!state.HasHistory)
+            {
+                state.ContinuousRunActive = false;
+                return SprayProbeGate.NoHistory;    // need two frames to measure a speed
+            }
+            if (!probes[index].ignoreSurfaceBand && Mathf.Abs(world.y - surfaceHeight) > surfaceBand)
+            {
+                state.ContinuousRunActive = false;
+                return SprayProbeGate.OutOfBand;
+            }
+            // The cooldown paces BURST probes only; a continuous probe is paced by its rate
+            // accumulator below and must not be silenced between emits.
+            if (!continuous && Time.time < state.NextEmitTime) return SprayProbeGate.CoolingDown;
             if (activeEmitter == null) return SprayProbeGate.NoEmitter; // body has no emitter, or opts out
 
             Vector3 previous = state.PreviousProbePosition;
@@ -311,10 +359,26 @@ namespace AbstractOcclusion.WebGpuWater
             float horizontalSpeed = horizontalStep.magnitude / deltaSeconds;
 
             float signal = TriggerSignal(mode, surfaceRise, probeDescent, horizontalPlowWeight * horizontalSpeed);
-            if (signal < minImpactSpeed) return SprayProbeGate.BelowMinSpeed;
+            if (signal < minImpactSpeed)
+            {
+                state.ContinuousRunActive = false;
+                return SprayProbeGate.BelowMinSpeed;
+            }
 
             float span = Mathf.Max(MinImpactSpeedSpan, maxImpactSpeed - minImpactSpeed);
             float strength = Mathf.Clamp01((signal - minImpactSpeed) / span);
+
+            // Continuous pacing: a fractional emit budget accrues at a strength-scaled rate and one
+            // emit is spent per whole unit. The fraction persists between frames, so low rates add
+            // up instead of never firing; the cap keeps a hitched frame from owing a volley.
+            if (continuous)
+            {
+                float rate = continuousRatePerSecond * Mathf.Lerp(ContinuousRateAtThreshold, 1f, strength);
+                state.EmitAccumulator = Mathf.Min(state.EmitAccumulator + rate * deltaSeconds,
+                                                  ContinuousAccumulatorMax);
+                if (state.EmitAccumulator < 1f) return SprayProbeGate.Accumulating;
+                state.EmitAccumulator -= 1f;
+            }
 
             // Per-probe volume: a denser sheet at chosen points (a bow row) with IDENTICAL motion.
             // The boost rides EmitSplash's amountScale, which multiplies only the droplet COUNT.
@@ -323,13 +387,18 @@ namespace AbstractOcclusion.WebGpuWater
             // old wiring - made droplet SPEED change with volume, quadratically and through a
             // Clamp01 saturation, which is why the boost felt untunable.
             float amountScale = Mathf.Max(MinAmountScale, BaseAmountScale + probes[index].amountBoost);
+            if (continuous) amountScale *= continuousAmountScale; // small per-emit volume, steady stream
             Vector3 surfacePoint = new Vector3(world.x, surfaceHeight, world.z);
             // strength IS the normalised trigger speed. Reusing it rather than normalising the speed a
             // second time keeps the rake tied to maxImpactSpeed instead of drifting from it.
             Vector3 petalDirection = ResolvePetalDirection(index, horizontalStep, strength);
+            // A steady sheet flashing its crown ring at emit rate reads as a strobe: a continuous
+            // run plays the crown on its FIRST emit only, then again on the next fresh run.
+            bool allowCrown = !continuous || !state.ContinuousRunActive;
             activeEmitter.EmitSplash(surfacePoint, strength, sprayRadius, amountScale,
-                                     petalDirection, petalArcDegrees, petalElevationDegrees);
-            state.NextEmitTime = Time.time + StaggeredCooldown(ref state, index, probeCount);
+                                     petalDirection, petalArcDegrees, petalElevationDegrees, allowCrown);
+            if (continuous) state.ContinuousRunActive = true;
+            else state.NextEmitTime = Time.time + StaggeredCooldown(ref state, index, probeCount);
 #if UNITY_EDITOR
             _probeEmitCounts[index]++;
 #endif
@@ -427,6 +496,10 @@ namespace AbstractOcclusion.WebGpuWater
             // Whether this probe has ever fired, so the one-off cooldown stagger is applied exactly once
             // and every burst after it keeps the plain cooldown.
             public bool HasEmitted;
+            // Continuous emission: the fractional emit budget (whole units are spent as emits), and
+            // whether a run is in flight - its first emit played the crown, later ones must not.
+            public float EmitAccumulator;
+            public bool ContinuousRunActive;
         }
     }
 }

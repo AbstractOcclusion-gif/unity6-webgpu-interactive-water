@@ -10,10 +10,12 @@
 //     filterable on WebGPU),
 //   - fixed-capacity pool; dead slots are skipped by the vertex shader.
 //
-// Two particle kinds share one pool:
+// Three particle kinds share one pool:
 //   KIND_SURFACE: floats on the water, dragged by the local flow + wind.
 //   KIND_SPRAY:   ballistic droplets thrown off strong turbulence; on landing they
 //                 convert to KIND_SURFACE and keep drifting as foam.
+//   KIND_BUBBLE:  underwater plume injected DOWNWARD by splash bursts; buoyancy turns it
+//                 around and it pops into KIND_SURFACE at the waterline (or dissolves).
 
 #pragma kernel BeginFrame
 #pragma kernel Spawn
@@ -46,6 +48,25 @@
 
 static const float KIND_SURFACE = 0.0;
 static const float KIND_SPRAY   = 1.0;
+static const float KIND_BUBBLE  = 2.0; // MUST match KIND_BUBBLE in FoamParticles.shader
+
+// ---- KIND_BUBBLE tuning (physics-anchored; see docs/PLAN_bubbles_v1.md) ----
+// Injection: the plume enters just under the surface moving DOWN at a fraction of the
+// burst's up-throw; buoyancy then turns it around, so plume depth EMERGES from the two.
+static const float BUBBLE_SPAWN_DEPTH = 0.06;      // metres below the surface at birth
+static const float BUBBLE_PLUNGE_FACTOR = 0.9;     // down-speed = burst upSpeed * this
+static const float BUBBLE_LATERAL_FACTOR = 0.25;   // sideways speed = burst outSpeed * this
+static const float BUBBLE_SIZE_SKEW = 2.0;         // pow() on the size roll: mostly small
+// Rise: exponential relax toward a size-scaled terminal speed (measured band 0.2-0.3 m/s
+// for mm-class bubbles; smaller bubbles are slower).
+static const float BUBBLE_BUOYANCY_RESPONSE = 2.0;     // 1/sec relax toward terminal rise
+static const float BUBBLE_RISE_SIZE_MIN_FACTOR = 0.55; // smallest bubbles rise at this fraction
+// Wobble: only mm+ bubbles zigzag (path instability), so amplitude is size-gated; the noise
+// track drifts with age PER PARTICLE so neighbours never wobble in lockstep.
+static const float BUBBLE_WOBBLE_SCALE = 9.0;      // noise features per world metre
+static const float BUBBLE_WOBBLE_RATE = 1.5;       // track drift per second of age
+static const float BUBBLE_WOBBLE_SPEED = 0.06;     // world units/sec at full size, wobble 1
+
 
 // Counters buffer layout. MUST match WaterFoamParticles.CounterCount (C#).
 static const uint COUNTER_RING_CURSOR = 0; // ever-increasing spawn cursor (ring index)
@@ -150,6 +171,12 @@ float _SpraySizeMin, _SpraySizeMax; // world units (KIND_SPRAY only)
 // landing so the surface patch tunes apart from the airborne droplet that made it.
 float _DepositLifeMin, _DepositLifeMax; // seconds
 float _DepositSizeMin, _DepositSizeMax; // world units
+// Bubble plume (KIND_BUBBLE): what a splash burst injects under the surface.
+float _BubbleAmount;                    // bubbles per droplet thrown (0..1 share of burst.count)
+float _BubbleRiseSpeed;                 // terminal rise of the LARGEST bubbles (world units/sec)
+float _BubbleLifeMin, _BubbleLifeMax;   // seconds (dissolve timer; surfacing pops first)
+float _BubbleSizeMin, _BubbleSizeMax;   // world units, skewed small on spawn
+float _BubbleWobble;                    // sideways wobble amplitude scale (size-gated in Update)
 float _TexelWorldArea;    // world-space area covered by one sim texel
 
 // Update tuning
@@ -200,8 +227,6 @@ static const float SPAWN_SHEAR_BOOST = 4.0;
 // breaker signal (cresting-lip line, plunge-amplified, surge-killed - WaterSurfWaves.hlsl), so
 // spilling shelves and surging cliffs throw nothing. The whitewash the shore injection already
 // writes into the foam buffer covers spawn PROBABILITY; these only shape what spawns there.
-static const float SURF_SPRAY_MIN_LIP = 0.3;
-static const float SURF_SPRAY_THROW_SPEED = 6.0;
 // (Shore border feather + deep sentinel now come from WaterShoreMath.hlsl - via
 // WaterParticleCommon.hlsl - as SHORE_BORDER_FEATHER / SHORE_DEEP_SENTINEL: the ONE copy
 // shared with the surface shaders and the foam sim.)
@@ -407,14 +432,6 @@ SurfWaveSample SurfSampleAt(float2 worldXZ, out float shoreDepth, out float shor
                              _ShoreFoamTime);
 }
 
-// The surf front's breaker-lip weight + local toward-shore direction at a world xz.
-float SurfLipAt(float2 worldXZ, out float2 toShore)
-{
-    float depthUnused;
-    float influenceUnused;
-    return SurfSampleAt(worldXZ, depthUnused, influenceUnused, toShore).breaker;
-}
-
 // World-space surface height under a floating particle: the same "glue to the animated
 // surface" the quad vertex does, minus the small analytic wind-wave layer (cm-scale;
 // compute has no wave globals). Pond: sim heightfield. Ocean: summed FFT cascades.
@@ -533,26 +550,16 @@ void Spawn(uint3 id : SV_DispatchThreadID)
     float r1 = Rand01(id.xy, _FrameSeed ^ 0x85EBCA6Bu);
     float r2 = Rand01(id.xy, _FrameSeed ^ 0xC2B2AE35u);
 
-    // Surf plunging-lip weight: driven by the coastline's own breaker signal. Evaluated post-roll
-    // (after the probability roll) so the transcendental terms run only for the handful of texels
-    // that actually spawn this frame.
-    float surfLip = 0.0;
-    float2 surfToShore = float2(0.0, 0.0);
-    if (_ShoreFoamActive > 0.5)
-        surfLip = SurfLipAt(texelWorld.xz, surfToShore);
-
 #ifdef OCEAN_FFT_GLUE
-    // Ocean bodies spawn NO ambient turbulence/wake foam: at open-sea scale the sprites read as
-    // flat billboards ("jumping fish") and the surface shader's whitecaps already own that look.
-    // Only the breaking surf lip's ballistic jet still throws from this kernel. Placed post-roll
-    // so the lip test keeps its evaluated-only-for-spawns cost; an unwritten claimed slot stays
-    // dead, so bailing here never strands a live particle.
-    if (surfLip <= SURF_SPRAY_MIN_LIP) return;
+    // Ocean/shore bodies spawn NOTHING from this ambient kernel - by request: no turbulence-foam
+    // sprites on the swell or on shore waves (they read as flat billboards), and the procedural
+    // surf-lip droplets are gone too - the breaking-wave look waits for authored splash sprites
+    // in the droplet material slot. Splash / pump BURSTS (and their bubbles) still spawn.
+    // An unwritten claimed slot stays dead, so bailing here never strands a live particle.
+    return;
 #endif
 
     bool spray = r0 < _SprayChance;
-    // The breaking lip always throws: lip spawns are ballistic jet, never floating foam.
-    if (surfLip > SURF_SPRAY_MIN_LIP) spray = true;
 
     // Per-screen-tile spray budget (KWS): spray clumping in one screen region is capped by
     // reserving a slot in a coarse tile grid; over-budget spawns demote to floating foam
@@ -579,9 +586,6 @@ void Spawn(uint3 id : SV_DispatchThreadID)
     if (spray) particle.velocity.y = _SprayLaunchSpeed * (0.6 + 0.4 * r1);
     // Surf lip jet: throw shoreward along the point's own toward-shore direction; gravity arcs
     // the droplets onto the splash-down zone, where landing converts them to floating churn.
-    if (spray && surfLip > SURF_SPRAY_MIN_LIP)
-        particle.velocity += float3(surfToShore.x, 0.0, surfToShore.y)
-                           * (SURF_SPRAY_THROW_SPEED * surfLip);
     particle.age = 0.0;
     // Spray and floating foam draw their lifetime/size from separate ranges (KIND split).
     float lifeMin = spray ? _SprayLifeMin : _LifeMin;
@@ -683,10 +687,51 @@ void SpawnBurst(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID)
     particle.kind = KIND_SPRAY;
     particle.strength = saturate(burst.strength);
     Particles[slot] = particle;
+
+    // ---- Bubble plume (KIND_BUBBLE): the same impact that throws droplets UP drives air
+    // DOWN. The first _BubbleAmount fraction of the droplet threads also injects a bubble
+    // just under the surface, moving downward; Update's buoyancy turns it around and pops
+    // it back through the waterline as a deposited fleck. Shares the burst budget and the
+    // droplet's ring position, so the plume sits under the splash that made it. ----
+    if ((float)tid.x >= burst.count * _BubbleAmount) return;
+
+    InterlockedAdd(Counters[COUNTER_BURST_SPAWNS], 1, burstSpawns);
+    if (burstSpawns >= _Capacity / BURST_FRAME_CAP_DIVISOR) return;
+
+    uint bubbleSlot;
+    if (!ClaimPoolSlot(bubbleSlot)) return;
+
+    FoamParticle bubble;
+    bubble.worldPos = float3(spawnXZ.x, -BUBBLE_SPAWN_DEPTH, spawnXZ.y);
+    bubble.velocity = float3(dir.x, 0.0, dir.y) * (outSpeed * BUBBLE_LATERAL_FACTOR);
+    bubble.velocity.y = -upSpeed * BUBBLE_PLUNGE_FACTOR;
+    bubble.age = 0.0;
+    bubble.life = lerp(_BubbleLifeMin, _BubbleLifeMax, r1);
+    bubble.size = lerp(_BubbleSizeMin, _BubbleSizeMax, pow(r3, BUBBLE_SIZE_SKEW));
+    bubble.seed = r2;
+    bubble.kind = KIND_BUBBLE;
+    bubble.strength = saturate(burst.strength);
+    Particles[bubbleSlot] = bubble;
 }
 
-// One thread per pool slot: integrate, convert landed spray to surface foam, and
-// kill particles that age out or leave the active sim frame.
+
+// Convert an airborne droplet or a surfaced bubble into a deposited surface fleck: the
+// deposit is its OWN foam element, so the age restarts and life/size re-roll from the
+// deposit ranges - tuned independently of the particle that made it. ONE implementation
+// for both conversions (spray landing + bubble pop), per the reuse-never-rewrite rule.
+void DepositFrom(inout FoamParticle particle, uint slot)
+{
+    uint2 depositKey = uint2(slot, asuint(particle.seed));
+    particle.kind = KIND_SURFACE;
+    particle.age = 0.0;
+    particle.life = lerp(_DepositLifeMin, _DepositLifeMax,
+                         Rand01(depositKey, _FrameSeed));
+    particle.size = lerp(_DepositSizeMin, _DepositSizeMax,
+                         Rand01(depositKey, _FrameSeed ^ 0x9E3779B9u));
+}
+
+// One thread per pool slot: integrate, convert landed spray (or a surfaced bubble) to
+// surface foam, and kill particles that age out or leave the active sim frame.
 [numthreads(UPDATE_THREAD_GROUP_SIZE, 1, 1)]
 void Update(uint3 id : SV_DispatchThreadID)
 {
@@ -756,16 +801,37 @@ void Update(uint3 id : SV_DispatchThreadID)
         {
             particle.worldPos.y = 0.0;
             particle.velocity = float3(particle.velocity.x, 0.0, particle.velocity.z) * SPRAY_LANDING_KEEP;
-            particle.kind = KIND_SURFACE;
-            // The deposit is its OWN foam element: restart the age and re-roll life + size
-            // from the deposit ranges, so the landed patch is tuned independently of the
-            // airborne droplet that made it (which kept its spray life/size until now).
-            uint2 depositKey = uint2(slot, asuint(particle.seed));
-            particle.age = 0.0;
-            particle.life = lerp(_DepositLifeMin, _DepositLifeMax,
-                                 Rand01(depositKey, _FrameSeed));
-            particle.size = lerp(_DepositSizeMin, _DepositSizeMax,
-                                 Rand01(depositKey, _FrameSeed ^ 0x9E3779B9u));
+            DepositFrom(particle, slot);
+        }
+    }
+    else if (particle.kind == KIND_BUBBLE)
+    {
+        // Buoyancy: exponential relax toward a size-scaled terminal rise (largest bubbles
+        // fastest). A fresh plume is moving DOWN, so the same relax first brakes the plunge,
+        // then rises it - the plume depth emerges from injection speed vs this response.
+        float sizeNorm = saturate(particle.size / max(_BubbleSizeMax, 1e-4));
+        float terminalRise = _BubbleRiseSpeed * lerp(BUBBLE_RISE_SIZE_MIN_FACTOR, 1.0, sizeNorm);
+        particle.velocity.y = lerp(particle.velocity.y, terminalRise,
+                                   saturate(BUBBLE_BUOYANCY_RESPONSE * _DeltaTime));
+        // Sideways: relax toward the local surface flow (a bubble has next to no inertia)...
+        float4 info = SampleSim(simNorm);
+        float3 driven = mul(VolumeRot(), float3(info.b, 0.0, info.a)) * _FlowDrift;
+        particle.velocity.xz = lerp(particle.velocity.xz, driven.xz, saturate(_Drag * _DeltaTime));
+        particle.worldPos += particle.velocity * _DeltaTime;
+        // ...plus the size-gated wobble, applied to POSITION so the amplitude is a real
+        // speed instead of compounding through the velocity relax above.
+        float2 wobbleGrad = FoamNoiseGrad(particle.worldPos.xz * BUBBLE_WOBBLE_SCALE
+                                          + particle.seed * 37.0
+                                          + particle.age * BUBBLE_WOBBLE_RATE);
+        particle.worldPos.xz += wobbleGrad
+                              * (_BubbleWobble * BUBBLE_WOBBLE_SPEED * sizeNorm * _DeltaTime);
+        // Surfacing: the bubble's top breaks the waterline -> pop into a deposited fleck
+        // (salt-water behavior; the fresh-water regime is a planned increment).
+        if (particle.worldPos.y >= -particle.size)
+        {
+            particle.worldPos.y = 0.0;
+            particle.velocity.y = 0.0;
+            DepositFrom(particle, slot);
         }
     }
     else
@@ -815,7 +881,7 @@ void RasterizeDensity(uint3 id : SV_DispatchThreadID)
 
     FoamParticle particle = Particles[slot];
     if (particle.life <= 0.0 || particle.age >= particle.life) return;
-    if (particle.kind == KIND_SPRAY) return;
+    if (particle.kind != KIND_SURFACE) return; // the density veil is floating foam only
 
     float2 simNorm = WorldToSimNorm(particle.worldPos);
     float3 world = particle.worldPos;

@@ -20,7 +20,8 @@ namespace AbstractOcclusion.WebGpuWater
     internal struct ShoreWaveContext
     {
         public WaterShoreDepthField Field; // null = no shore (open water everywhere)
-        public float ShoalDepth;           // _ShoreShoalDepth
+        public float ShoalDepth;           // _ShoreShoalDepth (attenuation band; follows the sea state)
+        public float GreenBandDepth;       // _ShoreGreenBandDepth (authored band; Green's-law amplification)
         public float Refraction;           // _ShoreRefraction
         public float Compression;          // _ShoreCompression / _SurfCompression (one knob)
         public float Greens;               // _ShoreGreens / _SurfGreens (one knob)
@@ -226,7 +227,9 @@ namespace AbstractOcclusion.WebGpuWater
         // Mirrors ShoreGreenGain() in WaterShore.hlsl.
         static float GreenGain(in ShoreWaveContext ctx, in ShoreSampleCpu shore)
         {
-            float band = Mathf.Max(ctx.ShoalDepth, ShoreBandEpsilon);
+            // The AUTHORED band, not the sea-state-floored one - see _ShoreGreenBandDepth in
+            // WaterShoreMath.hlsl for why amplification and attenuation stopped sharing a number.
+            float band = Mathf.Max(ctx.GreenBandDepth, ShoreBandEpsilon);
             if (shore.Influence <= 0f || shore.Depth >= band) return 1f;
             float d = Mathf.Max(shore.Depth, ShoreGreenMinDepth);
             float green = Mathf.Min(Mathf.Pow(band / d, ShoreGreenExponent),

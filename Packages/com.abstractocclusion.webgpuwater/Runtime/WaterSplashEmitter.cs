@@ -272,10 +272,12 @@ namespace AbstractOcclusion.WebGpuWater
         /// <param name="elevationDegrees">Lifts the whole burst toward vertical, on top of the angle
         /// Upward Bias and Outward Spread already imply. ZERO (the default) changes nothing, and it
         /// applies to full rings as readily as to petals.</param>
+        /// <param name="allowCrown">False suppresses the crown flipbook for THIS emit - a continuous
+        /// stream plays the crown on its first emit only. Droplets are unaffected.</param>
         public void EmitSplash(Vector3 surfacePos, float strength, float radius,
                                float amountScale = BaseAmountScale,
                                Vector3 petalDirection = default, float arcDegrees = FullRingDegrees,
-                               float elevationDegrees = 0f)
+                               float elevationDegrees = 0f, bool allowCrown = true)
         {
             if (particles == null) return;
             // Master profile: applied at emit time (splashes are event-driven; there is no
@@ -312,7 +314,7 @@ namespace AbstractOcclusion.WebGpuWater
                 // component (or the profile's Splash section), not the ambient-mist ranges.
                 gpuSpray.QueueSplashBurst(surfacePos, strength, radius, count, upSpeed, outSpeed,
                                           lifetime, dropletSize, petal, arcHalfRadians, elevationRadians);
-                EmitCrown(surfacePos, strength, radius);
+                if (allowCrown) EmitCrown(surfacePos, strength, radius);
                 return;
             }
 
@@ -343,7 +345,7 @@ namespace AbstractOcclusion.WebGpuWater
                 particles.Emit(ep, 1);
             }
 
-            EmitCrown(surfacePos, strength, radius);
+            if (allowCrown) EmitCrown(surfacePos, strength, radius);
         }
 
         // A caller's direction flattened to horizontal and normalised, or ZERO when there isn't one.

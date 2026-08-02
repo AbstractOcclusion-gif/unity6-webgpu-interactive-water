@@ -94,9 +94,12 @@ namespace AbstractOcclusion.WebGpuWater
                                                         1f - OceanFoamDeposit, OceanFoamDrift, OceanFoamMaxBuildup,
                                                         OceanFoamCrestAnisotropy, OceanFoamCrestGate,
                                                         OceanFoamFaceBias, OceanFoamCascadeMix);
-                _oceanFft?.Dispatch(_waveTime, windSpeed, LargeWaveHeadingRad, OceanWindTurbulence,
-                                    LargeWaveAmplitudeEffective, SwellWavelength, SwellHeight,
-                                    camXZ, foam);
+                var sea = new WaterOceanFft.SeaParams(windSpeed, LargeWaveHeadingRad, OceanWindTurbulence,
+                                                     SignificantWaveHeight, PeakWavelengthEffective,
+                                                     PeakSharpness, SeaDepth, LargeWaveChoppiness,
+                                                     SwellWavelength, SwellHeight,
+                                                     OceanCascadeReach);
+                _oceanFft?.Dispatch(_waveTime, sea, LargeWaveAmplitudeEffective, camXZ, foam);
             }
             if (_simulate && Time.frameCount % _causticInterval == 0)
                 RenderCausticsForThisBody();

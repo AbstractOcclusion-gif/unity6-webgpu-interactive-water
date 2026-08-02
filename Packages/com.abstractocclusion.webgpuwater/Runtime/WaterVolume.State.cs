@@ -20,11 +20,13 @@ namespace AbstractOcclusion.WebGpuWater
         float _waveTime;
         // Bank-generation inputs baked into the current bank, compared field-by-field. (A
         // packed signature could alias two distinct states and silently keep stale amplitudes.)
-        float _waveGenWindSpeed = float.NaN;
-        float _waveGenWindFrom;
+        float _waveGenWindFrom = float.NaN;
         float _waveGenExtentMeters;
         int _waveGenCount;
-        float _waveGenAmpScale;
+        float _waveGenLength = float.NaN;
+        float _waveGenHeight = float.NaN;
+        float _waveGenGrouping = float.NaN;
+        float _waveGenSharpness = float.NaN;
         float _waveGenSpread = float.NaN;
         float _waveGenVerticalExtent = float.NaN; // volume y-extent baked into the current bank
         bool _waveGenEnabled;

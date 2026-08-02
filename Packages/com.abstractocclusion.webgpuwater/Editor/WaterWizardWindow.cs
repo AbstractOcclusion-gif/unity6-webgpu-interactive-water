@@ -372,9 +372,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const float DefaultFogDensity = 0.2f;
         const float DefaultDetailNormalStrength = 0.2f;
         const float OceanGodRayDepthFade = 0.05f; // per metre; ocean-scale reach (pool default is 0.5)
-        // Wind-wave scale limits: KEEP in sync with WindWaveSettings.waveScaleMeters' [Range].
-        const float WaveScaleMetersMin = 1f;
-        const float WaveScaleMetersMax = 500f;
         // Default texture files under WaterBuildKit.DefaultTexturesRoot. Note the deliberate
         // crossover: the Foam2 sheet reads best as the ocean WHITECAP and the OceanWhitecap
         // sheet as the turbulence FOAM pattern (chosen by eye, not by filename).
@@ -393,11 +390,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var serialized = new SerializedObject(body);
             serialized.FindProperty(WaterVolumePropertyPaths.RealRefraction).boolValue = true;
             serialized.FindProperty(WaterVolumePropertyPaths.FogDensity).floatValue = DefaultFogDensity;
-            // Wind-wave scale follows the body's real horizontal half-extent (the wizard's extent
-            // IS metres: pool [-1,1] maps to +/-extent), so a 100 m lake gets 100 m wave fetch
-            // instead of the fixed 10 m default that made big bodies ripple like ponds.
-            serialized.FindProperty(WaterVolumePropertyPaths.WaveScaleMeters).floatValue =
-                Mathf.Clamp(Mathf.Max(_extent.x, _extent.z), WaveScaleMetersMin, WaveScaleMetersMax);
             serialized.FindProperty(WaterVolumePropertyPaths.DetailNormalTexture).objectReferenceValue =
                 LoadDefaultTexture(DetailNormalTextureFile);
             serialized.FindProperty(WaterVolumePropertyPaths.DetailNormalStrength).floatValue =

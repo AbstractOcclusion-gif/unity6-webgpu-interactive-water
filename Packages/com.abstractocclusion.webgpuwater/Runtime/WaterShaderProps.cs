@@ -47,6 +47,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         // ---- WaterShoreDepthField.cs <-> WaterSimulation.cs ----
         internal const string ShoreShoalDepthName = "_ShoreShoalDepth";
+        internal const string ShoreGreenBandDepthName = "_ShoreGreenBandDepth";
         internal const string ShoreSwashDepositGainName = "_ShoreSwashDepositGain";
         internal const string SurfActiveName = "_SurfActive";
         internal const string SurfAmbientFadeName = "_SurfAmbientFade";
@@ -72,6 +73,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal const string SurfWindDirXZName = "_SurfWindDirXZ";
 
         internal static readonly int ShoreShoalDepth = Shader.PropertyToID(ShoreShoalDepthName);
+        internal static readonly int ShoreGreenBandDepth = Shader.PropertyToID(ShoreGreenBandDepthName);
         internal static readonly int ShoreSwashDepositGain = Shader.PropertyToID(ShoreSwashDepositGainName);
         internal static readonly int SurfActive = Shader.PropertyToID(SurfActiveName);
         internal static readonly int SurfAmbientFade = Shader.PropertyToID(SurfAmbientFadeName);

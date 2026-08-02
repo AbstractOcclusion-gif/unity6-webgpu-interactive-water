@@ -27,7 +27,8 @@ namespace AbstractOcclusion.WebGpuWater
                 if (!useBedDepth || !shore.DepthBaked) return ShoreWaveContext.Inactive;
                 ShoreWaveContext ctx = default;
                 ctx.Field = shore;
-                ctx.ShoalDepth = shoreShoalDepth;
+                ctx.ShoalDepth = ShoreShoalDepthEffective;
+                ctx.GreenBandDepth = shoreShoalDepth;
                 ctx.Refraction = shoreRefraction;
                 ctx.Compression = shoreCompression;
                 ctx.Greens = shoreGreens;
@@ -93,7 +94,14 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         // ---- wind-wave layer -----------------------------------------------
-        internal float WaveMetersPerUnit => Mathf.Max(MinWaveMetersPerUnit, waveScaleMeters);
+        // Pool [-1,1] -> metres, for the wave PHASE only. DERIVED from the body, not authored: the
+        // layer's wavelength is now given in metres, and that promise only holds if this conversion
+        // matches the body's real footprint. It used to be a hand-entered field that also pretended to
+        // be a fetch, so a 50 m lake with the default 10 left every wavelength stretched five times.
+        // A non-square footprint still stretches the pattern on its short axis - pool space is
+        // normalised per axis - which is a pre-existing property of sampling in pool space.
+        internal float WaveMetersPerUnit =>
+            Mathf.Max(MinWaveMetersPerUnit, Mathf.Max(VolumeExtentSafe.x, VolumeExtentSafe.z));
 
         // Regenerate the bank only when a wind/scale parameter actually changes, so
         // the phases stay stable frame-to-frame (a fresh bank would pop the surface).
@@ -101,24 +109,31 @@ namespace AbstractOcclusion.WebGpuWater
         {
             int count = EffectiveWaveCount;
             float verticalExtent = VolumeExtentSafe.y;
+            float metersPerUnit = WaveMetersPerUnit;
             bool dirty = windWaves != _waveGenEnabled
-                         || windSpeed != _waveGenWindSpeed
                          || windFromDegrees != _waveGenWindFrom
-                         || waveScaleMeters != _waveGenExtentMeters
+                         || metersPerUnit != _waveGenExtentMeters
                          || count != _waveGenCount
-                         || waveAmplitudeScale != _waveGenAmpScale
+                         || waveLengthMeters != _waveGenLength
+                         || waveHeightMeters != _waveGenHeight
+                         || waveGrouping != _waveGenGrouping
+                         || waveCrestSharpness != _waveGenSharpness
                          || waveDirectionSpread != _waveGenSpread
                          || verticalExtent != _waveGenVerticalExtent;
             if (!dirty) return;
 
-            _waveBank.Generate(windSpeed, windFromDegrees, 2f * waveScaleMeters,
-                               count, waveAmplitudeScale, waveDirectionSpread, WaveMetersPerUnit,
-                               verticalExtent);
-            _waveGenWindSpeed = windSpeed;
+            // Wind SPEED is deliberately absent: it steers direction and gates foam, but the layer's
+            // size is authored in metres now, so a wind change no longer forces a bank rebuild.
+            _waveBank.Generate(windFromDegrees, waveLengthMeters, waveHeightMeters, count,
+                               waveDirectionSpread, waveGrouping, waveCrestSharpness,
+                               metersPerUnit, verticalExtent);
             _waveGenWindFrom = windFromDegrees;
-            _waveGenExtentMeters = waveScaleMeters;
+            _waveGenExtentMeters = metersPerUnit;
             _waveGenCount = count;
-            _waveGenAmpScale = waveAmplitudeScale;
+            _waveGenLength = waveLengthMeters;
+            _waveGenHeight = waveHeightMeters;
+            _waveGenGrouping = waveGrouping;
+            _waveGenSharpness = waveCrestSharpness;
             _waveGenSpread = waveDirectionSpread;
             _waveGenVerticalExtent = verticalExtent;
             _waveGenEnabled = windWaves;

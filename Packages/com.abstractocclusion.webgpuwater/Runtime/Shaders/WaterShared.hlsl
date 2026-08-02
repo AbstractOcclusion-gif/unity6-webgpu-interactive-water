@@ -8,6 +8,14 @@
 #define IOR_AIR   1.0
 #define IOR_WATER 1.333
 
+// Schlick (1994) Fresnel for the air/water interface: F0 derived from the IOR pair (~0.02),
+// grazing exponent 5. Lives here, next to the IORs it is derived from, because TWO sides need
+// the same number: the surface's own reflection ladder, and the particle sprites that are seen
+// THROUGH the surface (a submerged bubble's apparent image is only the transmitted share).
+#define FRESNEL_F0_WATER      (((IOR_WATER - IOR_AIR) * (IOR_WATER - IOR_AIR)) \
+                             / ((IOR_WATER + IOR_AIR) * (IOR_WATER + IOR_AIR)))
+#define FRESNEL_SCHLICK_POWER 5.0
+
 // Squared-length floor under which a direction has cancelled to ~zero and normalize()
 // would return NaN (0/0). Shared by every degenerate-direction guard (specular taps,
 // foam tangent frames, particle axes); well under any visually meaningful vector.

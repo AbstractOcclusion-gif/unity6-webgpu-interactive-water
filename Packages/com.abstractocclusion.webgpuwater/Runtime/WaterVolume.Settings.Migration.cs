@@ -26,7 +26,7 @@ namespace AbstractOcclusion.WebGpuWater
         // Bumped by one for each feature whose flat fields move into a nested Settings block. A scene
         // serialized before a given version has its old (FormerlySerializedAs) legacy fields copied into
         // the new block once, on load, so tuned values are never lost. The copies are idempotent.
-        const int CurrentSettingsVersion = 9;
+        const int CurrentSettingsVersion = 11;
         [SerializeField, HideInInspector] int _settingsVersion = 0;
 
         void ISerializationCallbackReceiver.OnBeforeSerialize() { }
@@ -43,6 +43,8 @@ namespace AbstractOcclusion.WebGpuWater
             if (_settingsVersion < 7) MigrateReflectionsV7();
             if (_settingsVersion < 8) MigrateBedDepthV8();
             if (_settingsVersion < 9) MigrateBodyTypeV9();
+            if (_settingsVersion < 10) MigrateSeaStateV10();
+            if (_settingsVersion < 11) MigrateWindWaveRigV11();
             _settingsVersion = CurrentSettingsVersion;
         }
 
@@ -86,6 +88,39 @@ namespace AbstractOcclusion.WebGpuWater
             ocean.oceanFoamFeather = _legacyOceanFoamFeather;
         }
 
+        // v10: the FFT ocean moved from a wind-only Phillips spectrum to JONSWAP/TMA authored as
+        // (Significant Height, Peak Wavelength, Peak Sharpness). There is nothing to copy - the old
+        // parameterisation had no height and no wavelength to copy FROM - so this migrates the one field
+        // whose MEANING changed: choppiness.
+        //
+        // Chop used to reach the analytic generator only; the FFT path ran a hardwired 1.0 whatever the
+        // slider said. Now that the slider is live on both, a scene that left it at the old 0 default
+        // would suddenly render round sine humps where it used to have crests. Lifting a stored 0 to 1
+        // preserves what the ocean actually looked like. A deliberately authored non-zero value is left
+        // exactly as it is.
+        void MigrateSeaStateV10()
+        {
+            if (ocean.largeWaveChoppiness <= 0f) ocean.largeWaveChoppiness = DefaultLargeWaveChoppiness;
+        }
+
+        // v11: the small wind-wave layer moved from (wind speed, fetch, amplitude scale) to an
+        // authored (length, height) rig - see WaterWaveBank's header for why the old three could not
+        // express what they claimed. The legacy fields are still serialized at this point, so the
+        // scene's ACTUAL rendered look is recoverable rather than guessed: WaterWaveBank exposes the
+        // closed forms of what the old path really produced, and they are copied straight across.
+        //
+        void MigrateWindWaveRigV11()
+        {
+            windWaveSettings.waveHeightMeters = WaterWaveBank.LegacySignificantHeight(
+                windWaveSettings.windSpeed, windWaveSettings.legacyAmplitudeScale);
+            windWaveSettings.waveLengthMeters = WaterWaveBank.LegacyWavelength(
+                windWaveSettings.windSpeed, windWaveSettings.legacyFetchMeters);
+            // The old layer had neither, and both are shape-only, so starting them at zero keeps a
+            // migrated scene byte-identical until the sliders are touched.
+            windWaveSettings.waveGrouping = 0f;
+            windWaveSettings.waveCrestSharpness = 0f;
+        }
+
         // v3: the "Water fog (Beer-Lambert)" fields moved into WaterFogSettings.
         void MigrateWaterFogV3()
         {
@@ -102,9 +137,9 @@ namespace AbstractOcclusion.WebGpuWater
             windWaveSettings.windWaves = _legacyWindWaves;
             windWaveSettings.windSpeed = _legacyWindSpeed;
             windWaveSettings.windFromDegrees = _legacyWindFromDegrees;
-            windWaveSettings.waveScaleMeters = _legacyPoolHalfExtentMeters;
+            windWaveSettings.legacyFetchMeters = _legacyPoolHalfExtentMeters;
             windWaveSettings.waveCount = _legacyWaveCount;
-            windWaveSettings.waveAmplitudeScale = _legacyWaveAmplitudeScale;
+            windWaveSettings.legacyAmplitudeScale = _legacyWaveAmplitudeScale;
             windWaveSettings.waveDirectionSpread = _legacyWaveDirectionSpread;
             windWaveSettings.waveNormalStrength = _legacyWaveNormalStrength;
         }

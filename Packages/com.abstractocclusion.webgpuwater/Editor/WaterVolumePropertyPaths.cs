@@ -43,6 +43,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string EdgeFeatherMeters = "ocean.edgeFeatherMeters";
         internal const string LargeWaveAmplitude = "ocean.largeWaveAmplitude";
         internal const string LargeWaveChoppiness = "ocean.largeWaveChoppiness";
+        internal const string SignificantWaveHeight = "ocean.significantWaveHeight";
+        internal const string PeakWavelength = "ocean.peakWavelength";
+        internal const string PeakSharpness = "ocean.peakSharpness";
+        internal const string WaveScale = "ocean.waveScale";
+        internal const string SeaDepth = "ocean.seaDepth";
         internal const string SwellHeight = "ocean.swellHeight";
         internal const string SwellWavelength = "ocean.swellWavelength";
         internal const string OceanWindTurbulence = "ocean.oceanWindTurbulence";
@@ -50,8 +55,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         // Wind-wave block.
         internal const string WindSpeed = "windWaveSettings.windSpeed";
-        internal const string WaveScaleMeters = "windWaveSettings.waveScaleMeters";
-        internal const string WaveAmplitudeScale = "windWaveSettings.waveAmplitudeScale";
+        internal const string WaveLengthMeters = "windWaveSettings.waveLengthMeters";
+        internal const string WaveHeightMeters = "windWaveSettings.waveHeightMeters";
+        internal const string WaveGrouping = "windWaveSettings.waveGrouping";
+        internal const string WaveCrestSharpness = "windWaveSettings.waveCrestSharpness";
 
         // Foam block.
         internal const string FoamGenRate = "foamSettings.foamGenRate";

@@ -212,7 +212,29 @@ namespace AbstractOcclusion.WebGpuWater
         /// height, so the fronts never carry LESS energy than the ambient swell they replace at
         /// the hand-over line - otherwise waves visibly "grow then shrink" at the surf-band edge
         /// instead of continuing in. One definition for the publisher, foam push and CPU mirror.</summary>
+        // REVERTED to the swell-only floor. Flooring this on the whole offshore field was correct in
+        // spirit - a bigger sea should arrive as bigger surf - and wrong in practice: surfAmplitude is
+        // authored on a 0-3 m slider, so an 8 m sea state drove the fronts to 8 m, nearly three times
+        // the largest value the front renderer was ever built for, and overrode a hand-tuned coast
+        // outright. Coupling the two is still worth doing, but as a proportional term the artist keeps
+        // control of, not as a hard floor that silently wins.
         internal float SurfAmplitudeEffective => Mathf.Max(surfAmplitude, SwellHeight);
+
+        // Depth (metres) over which the open-water field shoals, floored so that it always starts
+        // FURTHER OUT than the sea can survive. A wave breaks at roughly H = 0.78 * depth, so a wave of
+        // height H needs about 1.3 H of water to still exist; the largest waves in a sea run near twice
+        // the significant height, which puts the last surviving crest at somewhere over 2 Hs of depth.
+        // Flooring the band there means "shoaling flattens the sea before it reaches the beach" holds at
+        // ANY sea state, instead of only at the ~2 m sea the fixed 4 m default was tuned against - which
+        // is how a 3 m ocean ended up standing at full height in 3 m of water.
+        //
+        // A FLOOR, not a replacement: a hand-authored deeper band still wins, so a gently shelving coast
+        // can start its shoaling as far out as it likes.
+        internal float ShoreShoalDepthEffective
+            => Mathf.Max(shoreShoalDepth, ShoalBandSignificantHeightMultiple * OffshoreSignificantHeight);
+
+        // See ShoreShoalDepthEffective: 2 x Hs is where the biggest waves of a sea have broken.
+        const float ShoalBandSignificantHeightMultiple = 2f;
         internal float surfWavelength => bedDepthSettings.surfWavelength;
         internal float surfPeriod => bedDepthSettings.surfPeriod;
 

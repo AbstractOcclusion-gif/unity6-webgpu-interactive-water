@@ -108,6 +108,12 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_WaveTime = Shader.PropertyToID("_WaveTime");
         static readonly int ID_WaveMeters = Shader.PropertyToID("_WaveMetersPerUnit");
         static readonly int ID_WaveNormal = Shader.PropertyToID("_WaveNormalStrength");
+        // Wind-wave SHAPING (group envelopes + Stokes crest term). Precomputed by the bank, so these
+        // are plain uploads - see WaterWaves.hlsl for what each lane means.
+        static readonly int ID_WaveGroupA = Shader.PropertyToID("_WaveGroupA");
+        static readonly int ID_WaveGroupB = Shader.PropertyToID("_WaveGroupB");
+        static readonly int ID_WaveShape = Shader.PropertyToID("_WaveShape");
+        static readonly int ID_WaveStokesNorm = Shader.PropertyToID("_WaveStokesNorm");
         static readonly int ID_VolumeCenter = WaterShaderProps.VolumeCenter;
         static readonly int ID_VolumeExtent = WaterShaderProps.VolumeExtent;
         static readonly int ID_VolumeRot = WaterShaderProps.VolumeRot;
@@ -189,6 +195,11 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_DetailNormalTex = Shader.PropertyToID("_DetailNormalTex");
         static readonly int ID_DetailNormalStrength = Shader.PropertyToID("_DetailNormalStrength");
         static readonly int ID_DetailNormalScale = Shader.PropertyToID("_DetailNormalScale");
+        static readonly int ID_DetailNormalFarScale = Shader.PropertyToID("_DetailNormalFarScale");
+        static readonly int ID_DetailNormalFarDistance = Shader.PropertyToID("_DetailNormalFarDistance");
+        static readonly int ID_DetailNormalFarSpeed = Shader.PropertyToID("_DetailNormalFarSpeed");
+        static readonly int ID_DetailNormalHexTiling = Shader.PropertyToID("_DetailNormalHexTiling");
+        static readonly int ID_DetailNormalDistanceBoost = Shader.PropertyToID("_DetailNormalDistanceBoost");
         static readonly int ID_DetailNormalSpeed = Shader.PropertyToID("_DetailNormalSpeed");
         static readonly int ID_DetailNormalCrestBoost = Shader.PropertyToID("_DetailNormalCrestBoost");
         static readonly int ID_WindDirection = Shader.PropertyToID("_WindDirection");
@@ -368,6 +379,10 @@ namespace AbstractOcclusion.WebGpuWater
             material.SetFloat(ID_WaveCount, _body.WindWaves ? _body.WaveBank.Count : 0f);
             material.SetFloat(ID_WaveMeters, _body.WaveMetersPerUnit);
             material.SetFloat(ID_WaveNormal, _body.waveNormalStrength);
+            material.SetVector(ID_WaveGroupA, _body.WaveBank.GroupA);
+            material.SetVector(ID_WaveGroupB, _body.WaveBank.GroupB);
+            material.SetVector(ID_WaveShape, _body.WaveBank.Shape);
+            material.SetFloat(ID_WaveStokesNorm, _body.WaveBank.StokesNorm);
         }
 
         /// <summary>Camera-submerged flag + flat surface Y for the underwater fog pass. Global only
@@ -589,6 +604,10 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_WaveCount, _body.WindWaves ? _body.WaveBank.Count : 0f);
             sink.SetFloat(ID_WaveMeters, _body.WaveMetersPerUnit);
             sink.SetFloat(ID_WaveNormal, _body.waveNormalStrength);
+            sink.SetVector(ID_WaveGroupA, _body.WaveBank.GroupA);
+            sink.SetVector(ID_WaveGroupB, _body.WaveBank.GroupB);
+            sink.SetVector(ID_WaveShape, _body.WaveBank.Shape);
+            sink.SetFloat(ID_WaveStokesNorm, _body.WaveBank.StokesNorm);
 
             sink.SetColor(ID_FogColor, _body.fogColor);
             sink.SetColor(ID_FogExt, _body.fogExtinction);
@@ -653,6 +672,11 @@ namespace AbstractOcclusion.WebGpuWater
             if (detailNormalTex != null) sink.SetTexture(ID_DetailNormalTex, detailNormalTex);
             sink.SetFloat(ID_DetailNormalStrength, _body.DetailNormalStrength);
             sink.SetFloat(ID_DetailNormalScale, _body.DetailNormalScale);
+            sink.SetFloat(ID_DetailNormalFarScale, _body.DetailNormalFarScale);
+            sink.SetFloat(ID_DetailNormalFarDistance, _body.DetailNormalFarDistance);
+            sink.SetFloat(ID_DetailNormalFarSpeed, _body.DetailNormalFarSpeed);
+            sink.SetFloat(ID_DetailNormalHexTiling, _body.DetailNormalHexTiling ? 1f : 0f);
+            sink.SetFloat(ID_DetailNormalDistanceBoost, _body.DetailNormalDistanceBoost);
             sink.SetFloat(ID_DetailNormalSpeed, _body.DetailNormalSpeed);
             sink.SetFloat(ID_DetailNormalCrestBoost, _body.DetailNormalCrestBoost);
             // One wind for the surface. Published unconditionally (like the fog coefficients) so the

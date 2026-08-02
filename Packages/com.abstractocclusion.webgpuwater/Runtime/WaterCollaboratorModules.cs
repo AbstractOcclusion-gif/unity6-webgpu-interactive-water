@@ -109,9 +109,12 @@ namespace AbstractOcclusion.WebGpuWater
         // analytic large-wave path — byte-for-byte the original condition in TryInitialize.
         public bool Enabled => _owner.IsOceanClipmap && _owner.oceanFftCompute != null;
 
+        // No cascade bands passed in any more: they are DERIVED from the authored peak wavelength on
+        // every sea-state change (WaterOceanFft.RebuildSpectrumInputs), so a fixed set handed over once
+        // at construction could only ever describe one size of ocean.
         public void Initialize(WaterContext context)
             => OceanFft = new WaterOceanFft(_owner.oceanFftCompute, WaterOceanFft.DefaultResolution,
-                                            WaterOceanFft.DefaultCascadeCount, WaterOceanFft.DefaultCascadeBands);
+                                            WaterOceanFft.DefaultCascadeCount);
 
         public void Dispose()
         {
