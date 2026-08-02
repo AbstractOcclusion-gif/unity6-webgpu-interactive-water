@@ -130,7 +130,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 DrawFields(
                     "depthAttenuation.causticDepthFade",
                     "depthAttenuation.screenSpaceCaustics",
-                    "depthAttenuation.screenCausticIntensity");
+                    "depthAttenuation.screenCausticIntensity",
+                    "depthAttenuation.causticWindWaveStrength");
                 WaterEditorUI.SubHeading("Ocean caustics");
                 DrawFieldsIf(IsOcean, "ocean.largeGodRayCausticStrength");
                 _showCausticsAdvanced = WaterEditorUI.SubSection("Advanced", _showCausticsAdvanced, () =>

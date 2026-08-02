@@ -74,8 +74,18 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 DrawFields(
                     WaterVolumePropertyPaths.WaveHeightMeters,
                     WaterVolumePropertyPaths.WaveLengthMeters,
+                    "windWaveSettings.windResponse",
+                    "windWaveSettings.waveAnimationSpeed",
                     WaterVolumePropertyPaths.WaveGrouping,
                     WaterVolumePropertyPaths.WaveCrestSharpness);
+                // The authored metres describe the reference breeze; show what the wind is actually
+                // making of them, so "my pond ignores the wind" and "why is it bigger than I typed"
+                // are both answered on the spot.
+                if (target is WaterVolume rippleVolume && rippleVolume.WindWaveResponseActive)
+                    EditorGUILayout.LabelField(" ",
+                        $"At this wind: {rippleVolume.WaveHeightEffective:0.###} m high, "
+                        + $"{rippleVolume.WaveLengthEffective:0.##} m long",
+                        EditorStyles.miniLabel);
                 // waveCount is a cost/quality trade, the other two shape the spectrum once.
                 _showWindWavesAdvanced = WaterEditorUI.SubSection("Advanced", _showWindWavesAdvanced, () =>
                     DrawFields(

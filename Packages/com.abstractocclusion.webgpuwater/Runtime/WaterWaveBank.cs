@@ -75,10 +75,16 @@ namespace AbstractOcclusion.WebGpuWater
         //
         // TWO crossing envelopes, not one: a single envelope makes the whole surface breathe in
         // unison, which reads as pulsing rather than as sets. Two at different lengths and angles
-        // interfere into patches. The lengths are non-commensurate so the pattern does not re-align.
+        // interfere into patches.
+        //
+        // ⚠️ THE LENGTHS MUST BE IRRATIONALLY RELATED, and 7 and 11 were not - being integers, they
+        // share a common period at 77 wavelengths, so the envelope pattern REPEATS on that grid. The
+        // carrier's own motion normally hides it; slow the layer down and that static structure is
+        // exactly what surfaces, as lines. B is now A times the golden ratio, which has no common
+        // period with A at all, so there is nothing left to re-align.
         // HLSL pair: none - the envelopes are precomputed here and uploaded as _WaveGroupA/B.
         const float GroupLengthWavesA = 7f;
-        const float GroupLengthWavesB = 11f;
+        const float GroupLengthWavesB = 11.3262379f;   // 7 * golden ratio
         const float GroupAngleARadians = 0.35f;   // ~20 deg off the wind, one either side
         const float GroupAngleBRadians = -0.52f;  // ~30 deg the other way
         // Deep-water group velocity is half the phase velocity: cg = 0.5 * sqrt(g / k_carrier).
@@ -147,19 +153,24 @@ namespace AbstractOcclusion.WebGpuWater
         /// <param name="directionSpreadExponent">Higher = tighter alignment to the wind.</param>
         /// <param name="grouping">0 = a uniform field, 1 = strongly grouped into sets.</param>
         /// <param name="crestSharpness">0 = pure sines, 1 = full second-order Stokes crests.</param>
+        /// <param name="animationSpeed">Multiplier on every component's angular speed AND on the group
+        /// envelope, so the whole layer keeps its internal timing and only its overall pace changes.
+        /// 1 = the physical rate for the authored wavelength; below that is a deliberate cheat.</param>
         /// <param name="metersPerPoolUnit">Pool-unit -> metre conversion for the phase.</param>
         /// <param name="verticalWorldPerUnit">World units per pool unit VERTICALLY (the volume's
         /// y extent). Crest height is pre-divided by this so a deeper pool doesn't render taller
         /// waves: PoolToWorld later multiplies surface height by it.</param>
         public void Generate(float windFromDegrees, float waveLengthMeters, float significantHeightMeters,
                              int waveCount, float directionSpreadExponent, float grouping,
-                             float crestSharpness, float metersPerPoolUnit, float verticalWorldPerUnit)
+                             float crestSharpness, float animationSpeed,
+                             float metersPerPoolUnit, float verticalWorldPerUnit)
         {
             _count = Mathf.Clamp(waveCount, 1, MaxWaves);
 
             float peakWavelength = Mathf.Max(waveLengthMeters, MinWavelength);
             float significantHeight = Mathf.Max(significantHeightMeters, 0f);
             float verticalExtent = Mathf.Max(MinVerticalExtent, verticalWorldPerUnit);
+            float timeScale = Mathf.Max(0f, animationSpeed);
             float omegaPeak = OmegaFromWavelength(peakWavelength);
 
             float windRadians = windFromDegrees * Mathf.Deg2Rad;
@@ -176,7 +187,16 @@ namespace AbstractOcclusion.WebGpuWater
                 float bandT = _count == 1 ? 0.5f : (i + 0.5f) / _count;
                 float wavelength = Mathf.Exp(Mathf.Lerp(logLow, logHigh, bandT));
                 float k = TwoPi / wavelength;
-                float omega = Mathf.Sqrt(Gravity * k);
+                // The dispersion frequency and the CLOCK are two different things. Jonswap below must
+                // weight the band by the PHYSICAL frequency: omegaPeak is derived from the authored
+                // wavelength and is not scaled, so feeding it a timeScale'd omega slides the whole band
+                // off the peak - and the Pierson-Moskowitz factor exp(-1.25*(omegaPeak/omega)^4) is a
+                // QUARTIC in that ratio, so the slide is violent: at animation speed 0.5 one component
+                // carried 95% of the energy and at 0.3 the other eleven had underflowed to zero. A single
+                // surviving sinusoid is a set of perfectly straight parallel crests, which is exactly what
+                // slowing the layer used to produce. The cheat belongs on the phase clock only.
+                float omegaPhysical = Mathf.Sqrt(Gravity * k);
+                float omega = omegaPhysical * timeScale;
 
                 // Stratify the heading across the fan with a golden-ratio sequence so the
                 // directions are spread evenly rather than clustering on the wind axis.
@@ -188,7 +208,7 @@ namespace AbstractOcclusion.WebGpuWater
 
                 // Weight relative to the subset centre so the fan is actually populated.
                 float directionWeight = Mathf.Pow(Mathf.Max(0f, Mathf.Cos(offset)), 2f * directionSpreadExponent);
-                float spectral = Mathf.Sqrt(Mathf.Max(0f, Jonswap(omega, omegaPeak)));
+                float spectral = Mathf.Sqrt(Mathf.Max(0f, Jonswap(omegaPhysical, omegaPeak)));
                 float amp = spectral * directionWeight * (upwind ? UpwindAmplitudeFactor : 1f);
 
                 _waves[i] = new Wave
@@ -203,7 +223,8 @@ namespace AbstractOcclusion.WebGpuWater
             }
 
             float poolVariance = NormalizeAmplitudes(sumAmpSquared, significantHeight, verticalExtent);
-            BuildShaping(peakWavelength, windDir, grouping, crestSharpness, poolVariance, verticalExtent);
+            BuildShaping(peakWavelength, windDir, grouping, crestSharpness, poolVariance, verticalExtent,
+                         timeScale);
             Pack();
         }
 
@@ -242,14 +263,16 @@ namespace AbstractOcclusion.WebGpuWater
         // authored state - the per-sample cost is two sines for the envelope and one multiply-add
         // for the crest, whatever the component count.
         void BuildShaping(float peakWavelength, Vector2 windDir, float grouping, float crestSharpness,
-                          float poolVariance, float verticalExtent)
+                          float poolVariance, float verticalExtent, float timeScale)
         {
             float depth = Mathf.Clamp01(grouping);
             float carrierK = TwoPi / peakWavelength;
             // The envelope of a group travels at the CARRIER's group velocity, not its own phase
             // speed - that is what makes individual crests appear at the back of a set and die at
             // the front instead of the whole pattern sliding rigidly.
-            float groupSpeed = GroupVelocityFraction * Mathf.Sqrt(Gravity / carrierK);
+            // Scaled by the same time factor as the components: slowing the waves without slowing the
+            // sets would leave the envelope sliding through a field that is no longer keeping up with it.
+            float groupSpeed = GroupVelocityFraction * Mathf.Sqrt(Gravity / carrierK) * timeScale;
             GroupA = BuildGroup(windDir, GroupAngleARadians, peakWavelength * GroupLengthWavesA, groupSpeed);
             GroupB = BuildGroup(windDir, GroupAngleBRadians, peakWavelength * GroupLengthWavesB, groupSpeed);
 

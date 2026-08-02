@@ -184,6 +184,12 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0f, 2f)] public float screenCausticIntensity = 1f;
             [Tooltip("How fast god-ray shafts fade with depth, per world unit of depth.")]
             [Range(0f, 8f)] public float godRayDepthFade = 0.5f;
+            [Tooltip("How much the small wind-wave layer drives the caustic GENERATOR - and through " +
+                     "it the god rays, which sample the caustic map. 1 = mirrors the surface's ripple " +
+                     "normals exactly (unchanged), 0 = wind waves generate no caustics at all. The " +
+                     "visible surface ripples are untouched either way; this only decouples the " +
+                     "projected light pattern from them. (Oceans: use Large Caustic Ripple Strength.)")]
+            [Range(0f, 1f)] public float causticWindWaveStrength = 1f;
             [Tooltip("Mirror the fog extinction into the depth extinction each frame, so one dial " +
                      "drives fog + depth darkening. Off = the depth colour is fully independent.")]
             public bool linkDepthToFog = false;
@@ -197,6 +203,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal bool screenSpaceCaustics => depthAttenuation.screenSpaceCaustics;
         internal float screenCausticIntensity => depthAttenuation.screenCausticIntensity;
         internal float godRayDepthFade => depthAttenuation.godRayDepthFade;
+        internal float causticWindWaveStrength => depthAttenuation.causticWindWaveStrength;
         internal bool linkDepthToFog => depthAttenuation.linkDepthToFog;
     }
 }

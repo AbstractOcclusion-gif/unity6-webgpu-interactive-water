@@ -110,30 +110,36 @@ namespace AbstractOcclusion.WebGpuWater
             int count = EffectiveWaveCount;
             float verticalExtent = VolumeExtentSafe.y;
             float metersPerUnit = WaveMetersPerUnit;
+            // Wind is back in the dirty set - not as the old hidden amplitude coupling, but because
+            // Wind Response now scales the authored length and height through it (see
+            // WindWaveGrowth). At response 0 those two are constant, so the bank simply never
+            // rebuilds on a wind change, which is the old cheap behaviour without the old lie.
+            float lengthEffective = WaveLengthEffective;
+            float heightEffective = WaveHeightEffective;
             bool dirty = windWaves != _waveGenEnabled
                          || windFromDegrees != _waveGenWindFrom
                          || metersPerUnit != _waveGenExtentMeters
                          || count != _waveGenCount
-                         || waveLengthMeters != _waveGenLength
-                         || waveHeightMeters != _waveGenHeight
+                         || lengthEffective != _waveGenLength
+                         || heightEffective != _waveGenHeight
                          || waveGrouping != _waveGenGrouping
                          || waveCrestSharpness != _waveGenSharpness
+                         || waveAnimationSpeed != _waveGenAnimationSpeed
                          || waveDirectionSpread != _waveGenSpread
                          || verticalExtent != _waveGenVerticalExtent;
             if (!dirty) return;
 
-            // Wind SPEED is deliberately absent: it steers direction and gates foam, but the layer's
-            // size is authored in metres now, so a wind change no longer forces a bank rebuild.
-            _waveBank.Generate(windFromDegrees, waveLengthMeters, waveHeightMeters, count,
+            _waveBank.Generate(windFromDegrees, lengthEffective, heightEffective, count,
                                waveDirectionSpread, waveGrouping, waveCrestSharpness,
-                               metersPerUnit, verticalExtent);
+                               waveAnimationSpeed, metersPerUnit, verticalExtent);
             _waveGenWindFrom = windFromDegrees;
             _waveGenExtentMeters = metersPerUnit;
             _waveGenCount = count;
-            _waveGenLength = waveLengthMeters;
-            _waveGenHeight = waveHeightMeters;
+            _waveGenLength = lengthEffective;
+            _waveGenHeight = heightEffective;
             _waveGenGrouping = waveGrouping;
             _waveGenSharpness = waveCrestSharpness;
+            _waveGenAnimationSpeed = waveAnimationSpeed;
             _waveGenSpread = waveDirectionSpread;
             _waveGenVerticalExtent = verticalExtent;
             _waveGenEnabled = windWaves;

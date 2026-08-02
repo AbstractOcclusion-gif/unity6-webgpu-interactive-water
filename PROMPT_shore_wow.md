@@ -166,6 +166,22 @@ Ordered by (visible impact ÷ risk). None of these are worth starting before §2
   pairs — add to it when adding constants.
 - **Grep the DEVICE, not a staged copy.** A stale grep missed `WaterWizardWindow.cs` this session and
   cost a compile error.
+- 🪤 **A derived ratio inherits whatever the thing it derives from did.** Cost an hour this session:
+  the cascade visible ranges were derived as `8 x band top`, faithfully copying the shipped ratio
+  (4800/600 = 8) - but the shipped arrays sat on a FIXED 600 m top band while the derived one is
+  `2 x peak wavelength`. On a 60 m sea that is 120 m, so the same "correct" ratio silently cut the
+  ocean's drawn reach from 4800 m to 960 m and the far field went mirror-flat. The fix was an authored
+  multiplier the fixed arrays had been carrying invisibly. **This applies directly here**: deriving
+  `surfBandDepth` from the breaker height, or the surf period from the peak wavelength, replaces a
+  hand-tuned absolute with something that scales - check what the old absolute was implicitly worth
+  at a typical sea state before trusting the ratio.
+- 🪤 **Crossfading two independent fields LOSES amplitude.** `lerp(a, b, f)` of two uncorrelated
+  fields carries variance `(1-f)^2 + f^2`, which bottoms out at HALF mid-blend - a 29% dip that reads
+  as the detail pulsing as the blend moves. Fixed in the detail-normal octave ladder by dividing by
+  the blend's own RMS (Burley's variance-preserving operator; the same one the hex tiling uses).
+  **Worth auditing `SurfAmbientWeight`**: it fades the ambient sea out and adds `surf.height` in, which
+  is not a plain lerp - but if the hand-over ever becomes one, or if fronts get blended across a
+  band, the same correction applies.
 - **Profile a Development Build, not the editor.** Editor shader-variant compilation shows up as
   render-thread spikes with an idle GPU and cost an hour this session. **The water's real GPU cost is
   ~5 ms** — diff against that.

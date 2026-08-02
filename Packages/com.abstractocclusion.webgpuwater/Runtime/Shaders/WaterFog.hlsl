@@ -172,15 +172,25 @@ float  _ShorelineStrength;   // 0..1 max tint toward the deep colour
 float4 _DepthClarityRange;    // x = shallow depth (m), y = deep depth (m), z = clarity@shallow, w = clarity@deep
 float  _DepthClarityStrength; // 0 = off (flat per-body look); 1 = full depth-driven clarity
 
+// The RAW clarity curve at a world column depth - the range mapping alone, WITHOUT the strength
+// fold. For consumers that need "how murky is this column at full clarity" and blend by the
+// strength themselves (the deep-water tint): folding the strength in first and then inverting
+// (1 - clarity) collapses BELOW both endpoints at partial strength - the shipped "water turns
+// transparent between 0 and 1" dial bug. Density/turbidity consumers keep WaterDepthClarity
+// below, whose correct strength-0 limit is identity.
+float WaterDepthClarityCurve(float columnDepthWorld)
+{
+    float span = max(_DepthClarityRange.y - _DepthClarityRange.x, 1e-3);
+    float t = saturate((columnDepthWorld - _DepthClarityRange.x) / span);
+    return lerp(_DepthClarityRange.z, _DepthClarityRange.w, t);
+}
+
 // Clarity at a world column depth. 1 = clear (identity), 0 = murky. Returns 1 when the feature is
 // off (strength 0) so every caller is a no-op until a body opts in.
 float WaterDepthClarity(float columnDepthWorld)
 {
     if (_DepthClarityStrength <= 0.0) return 1.0;
-    float span = max(_DepthClarityRange.y - _DepthClarityRange.x, 1e-3);
-    float t = saturate((columnDepthWorld - _DepthClarityRange.x) / span);
-    float clarity = lerp(_DepthClarityRange.z, _DepthClarityRange.w, t);
-    return lerp(1.0, clarity, saturate(_DepthClarityStrength));
+    return lerp(1.0, WaterDepthClarityCurve(columnDepthWorld), saturate(_DepthClarityStrength));
 }
 
 // Water-column depth (world units) from the bed's pool height up to the surface's pool height.

@@ -27,6 +27,7 @@ namespace AbstractOcclusion.WebGpuWater
         float _waveGenHeight = float.NaN;
         float _waveGenGrouping = float.NaN;
         float _waveGenSharpness = float.NaN;
+        float _waveGenAnimationSpeed = float.NaN;
         float _waveGenSpread = float.NaN;
         float _waveGenVerticalExtent = float.NaN; // volume y-extent baked into the current bank
         bool _waveGenEnabled;

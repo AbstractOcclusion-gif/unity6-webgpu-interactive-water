@@ -64,6 +64,18 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(1f, 12f)] public float waveDirectionSpread = 2f;
             [Tooltip("Scales how strongly the wind waves tilt the surface normal.")]
             [Range(0f, 3f)] public float waveNormalStrength = 1f;
+            [Tooltip("WIND RESPONSE: how much Wind Speed drives this layer's size and pace. 0 = the " +
+                     "authored Height and Length are used exactly as typed whatever the wind does; " +
+                     "1 = they follow the wind the way a real fetch-limited sea does, so a gust " +
+                     "raises, lengthens AND speeds up the ripples together. Your authored values are " +
+                     "what you get at the reference breeze of " + WindWaveReferenceSpeedLabel + ".")]
+            [Range(0f, 1f)] public float windResponse = 1f;
+            [Tooltip("ANIMATION SPEED: overall pace of the ripple layer. 1 is the physical rate for " +
+                     "the wavelength in play - short waves genuinely are quick, which can read as " +
+                     "twitchy on a calm pond, so slowing them is a common and reasonable cheat. " +
+                     "Scales the wave sets with the waves, so the layer keeps its internal timing. " +
+                     "0 freezes it.")]
+            [Range(0f, WaveAnimationSpeedMax)] public float waveAnimationSpeed = 1f;
 
             // Legacy captures for the pre-v11 (wind, fetch, amplitude scale) rig. They have to live
             // INSIDE this block, not as top-level WaterVolume fields: that is where the values were
@@ -79,6 +91,17 @@ namespace AbstractOcclusion.WebGpuWater
             [FormerlySerializedAs("waveAmplitudeScale")]
             internal float legacyAmplitudeScale = 4f;
         }
+
+        // Wind response, from the fetch-limited growth laws at FIXED fetch (the same ones the ocean
+        // spectrum work verified). Peak angular frequency goes as (U*F)^(-1/3), so wavelength - which
+        // is 2*pi*g/omega^2 - goes as U^(2/3); significant height goes as U. Phase speed is
+        // sqrt(g*lambda/2pi), so it follows the wavelength and comes out at U^(1/3) for free. That is
+        // why one knob moves size AND pace: they are not independent in real water.
+        const float WaveAnimationSpeedMax = 3f;
+        const float WindWaveReferenceSpeed = 3f;   // the authored values describe THIS wind
+        const string WindWaveReferenceSpeedLabel = "3 m/s";
+        const float WindWaveLengthExponent = 2f / 3f;
+        const float WindWaveHeightExponent = 1f;
 
         // Sea-state defaults for the ripple layer. 5 cm on a 1.2 m wavelength is a light lake chop:
         // clearly visible in the specular, still small enough to sit under an ocean swell. Both are
@@ -104,6 +127,22 @@ namespace AbstractOcclusion.WebGpuWater
         internal float waveHeightMeters => windWaveSettings.waveHeightMeters;
         internal float waveGrouping => windWaveSettings.waveGrouping;
         internal float waveCrestSharpness => windWaveSettings.waveCrestSharpness;
+        internal float windWaveResponse => windWaveSettings.windResponse;
+        internal float waveAnimationSpeed => windWaveSettings.waveAnimationSpeed;
+
+        // Authored size scaled by the wind, blended by the response knob. At response 0 the authored
+        // metres are used verbatim; at the reference wind BOTH factors are 1, so a scene sitting at
+        // the default breeze is unaffected either way.
+        float WindWaveGrowth(float exponent)
+        {
+            float ratio = Mathf.Max(windSpeed, 0f) / WindWaveReferenceSpeed;
+            return Mathf.Lerp(1f, Mathf.Pow(ratio, exponent), Mathf.Clamp01(windWaveResponse));
+        }
+        internal float WaveLengthEffective => waveLengthMeters * WindWaveGrowth(WindWaveLengthExponent);
+        internal float WaveHeightEffective => waveHeightMeters * WindWaveGrowth(WindWaveHeightExponent);
+        /// <summary>True when the wind is actually moving the authored values (readout gate).</summary>
+        internal bool WindWaveResponseActive
+            => windWaveResponse > 0f && !Mathf.Approximately(windSpeed, WindWaveReferenceSpeed);
         internal float waveDirectionSpread => windWaveSettings.waveDirectionSpread;
         internal float waveNormalStrength => windWaveSettings.waveNormalStrength;
 

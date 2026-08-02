@@ -26,6 +26,7 @@ namespace AbstractOcclusion.WebGpuWater
         // not the sim texture, which merely happens to share its resolution today.
         static readonly int ID_CausticGridStep = Shader.PropertyToID("_CausticGridStepNorm");
         static readonly int ID_CausticRippleStrength = Shader.PropertyToID("_LargeCausticRippleStrength");
+        static readonly int ID_WaveNormalStrength = Shader.PropertyToID("_WaveNormalStrength");
 
         // Green channel of the caustic RT starts at 1 (unshadowed) so floor fragments that sample
         // outside the drawn caustic footprint read "lit", not black, now that green drives the
@@ -120,6 +121,13 @@ namespace AbstractOcclusion.WebGpuWater
             // this pass runs before the owner applies its per-body block, so the wave params aren't on
             // the material otherwise. Inert when Wind Waves is off (_WaveCount == 0 -> no change).
             _owner.ApplyCausticWaveUniforms(_material);
+            // Caustic-only wind-wave weight, OVERRIDING the mirror-of-the-surface value the call
+            // above just set: the generator's use of the wind-wave layer becomes art-directable
+            // without touching the visible ripples (1 = mirror the surface exactly, byte-identical;
+            // 0 = wind waves stop generating caustics). God rays follow for free - they sample the
+            // caustic RT this pass writes. The ocean path has its own knob (LargeCausticRippleStrength).
+            _material.SetFloat(ID_WaveNormalStrength,
+                               _owner.waveNormalStrength * _owner.causticWindWaveStrength);
             _material.SetFloat(ID_CausticGridStep, CausticGridStepNorm());
 
             _cb.Clear();

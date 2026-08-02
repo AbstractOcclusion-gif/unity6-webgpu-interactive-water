@@ -690,14 +690,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // Returns the coverage weight AND the signed gap it was derived from, so the caller can
         // take the hard "does this ray start in water" decision from the SAME number the soft
         // weight feathers - the two can then never disagree about where the line is.
+        // Entry face of the top of the pool water box, in pool-space units: an entry with
+        // pool y at or above -epsilon came in THROUGH THE RENDERED SHEET, not a wall/floor.
+        #define POND_TOP_FACE_EPSILON 1e-3
+
         float ArmWeight(float2 uv, out float classifyGap, out float classifyPushDist)
         {
-            // Bounded bodies are a finite fog VOLUME meant to be seen from OUTSIDE (circle a pond
-            // and look into the murk), so they are never masked by the eye's own waterline; their
-            // rays always start inside the box the pond path clips to.
-            classifyGap = -1.0;
-            classifyPushDist = 0.0;
-            if (_UnderwaterUnbounded < 0.5) return 1.0;
             float3 classifyPoint = WaterlineClassifyPoint(uv, classifyPushDist);
 #ifdef WATER_FOG_SIMPLE
             classifyGap = classifyPoint.y - _UnderwaterSurfaceY;
@@ -706,7 +704,37 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
 #endif
             float overCoverPixels = (_CameraDryVolume > 0.5) ? WATERLINE_CARVE_OVER_COVER_PIXELS
                                                              : 0.0;
-            return WaterlineCoverage(classifyGap, fwidth(classifyGap), overCoverPixels);
+            // Derivative taken BEFORE the per-pixel top-face select below: fwidth needs its
+            // neighbours on the same code path, and the bounded/unbounded split alone is a
+            // uniform global so the gap is now computed for BOTH body kinds unconditionally.
+            float coverage = WaterlineCoverage(classifyGap, fwidth(classifyGap), overCoverPixels);
+            if (_UnderwaterUnbounded > 0.5) return coverage;
+            // Bounded body. A finite fog VOLUME meant to be seen from OUTSIDE (stand at the
+            // aquarium glass and look into the murk) - so a ray entering through a WALL or the
+            // floor keeps full weight regardless of the eye's own waterline.
+            //
+            // THROUGH THE TOP is different (the pond ghost fix): from the air the rendered
+            // sheet owns that column - its refracted sample already carries the water
+            // absorption and the body opacity. This pass composites AFTER the sheet from the
+            // OPAQUE unrefracted depth, so painting those pixels too re-exposed every
+            // submerged object as an UNREFRACTED silhouette stamped over the sheet's
+            // refracted image (worst on a floating hull: short fog column over the hull, long
+            // beside it, opacity powerless because the fog draws last). Air-side top-entry
+            // pixels therefore take the SAME per-pixel waterline coverage the ocean uses:
+            // zero above the line, full fog the moment the near plane dips below it (the
+            // crossing strip is near-clipped out of the sheet, so the fog must own it - the
+            // transition fix stays intact). A submerged eye sits inside the box, its rays
+            // have no entry face (tEnter 0), and the top-face test skips by construction.
+            float3 originPool = WorldToPool(_WorldSpaceCameraPos);
+            float3 rayPool = WorldToPool(classifyPoint) - originPool;
+            rayPool /= max(length(rayPool), CLASSIFY_DIR_EPSILON);
+            float2 boxHit = IntersectCube(originPool, rayPool,
+                                          POOL_WATER_BOX_MIN, POOL_WATER_BOX_MAX);
+            float tEnter = max(boxHit.x, 0.0);
+            float entryPoolY = originPool.y + rayPool.y * tEnter;
+            bool entersThroughTop = boxHit.y > tEnter && tEnter > 0.0
+                                 && entryPoolY >= -POND_TOP_FACE_EPSILON;
+            return entersThroughTop ? coverage : 1.0;
         }
 
         // Per-channel path transmittance for this pixel; also returns the depth-darkening term,

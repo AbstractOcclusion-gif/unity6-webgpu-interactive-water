@@ -661,6 +661,43 @@ float ChunkRefractionSpan(float3 poolPos, float3 refractedRayWS)
     return max(ChunkIntersect(_ChunkShape, poolPos, poolDir).y, 0.0);
 }
 
+// Guard for the closed-form mean-depth denominators below (mirrors the fullscreen fog's
+// DOWNWELL_MEAN_SIGMA_MIN): below it the sigma*L -> 0 limit (L/2) is taken explicitly.
+#define REFRACTED_DOWNWELL_SIGMA_MIN 1e-4
+// Floor on the ray/forward cosine when converting an eye-depth difference into a slant
+// distance (below): keeps a grazing ray from blowing the span - and the fog on it - up.
+#define REFRACTION_SPAN_COS_MIN 0.2
+
+// Downwelling depth-darkening of the transmitted (refracted) column - the term the fullscreen
+// underwater fog applies to every submerged pixel and the sheet's from-above view was MISSING.
+// With the fullscreen pass masked off on air-side pond pixels (the pond-ghost fix: the sheet
+// owns the from-air column, ocean-style), the sheet must price the whole look itself, or ponds
+// read washed-out and flat the moment that mask lands. Same math as the fog pass: the light
+// this span delivers in-scatters about one mean free path in, so the darkening is evaluated at
+// the transmittance-weighted MEAN depth of the span (closed form), never the abyssal endpoint -
+// the per-channel colour stays inside DownwellingAttenuation. Identity when the depth-darken
+// feature is off (DownwellingAttenuation returns 1), so bodies not using it are byte-identical.
+float3 RefractedColumnDownwelling(float3 sheetWorldPos, float3 refractedRayWS, float spanLen,
+                                  float clarity)
+{
+    float density = _WaterFogDensity * lerp(CLARITY_FOG_DENSITY_MAX, 1.0, saturate(clarity));
+    float sigma = dot(_WaterExtinction.rgb, float3(1.0/3.0, 1.0/3.0, 1.0/3.0)) * density;
+    float sigmaL = sigma * spanLen;
+    // Denominators clamped BEFORE the select: an HLSL ternary evaluates both lanes, so a zero
+    // sigma (fog density slid to 0) must not divide by zero in the dead lane.
+    float spanExp = exp(-sigmaL);
+    float meanT = (sigmaL > REFRACTED_DOWNWELL_SIGMA_MIN)
+        ? (1.0 / max(sigma, REFRACTED_DOWNWELL_SIGMA_MIN * 1e-3)
+           - spanLen * spanExp / max(1.0 - spanExp, REFRACTED_DOWNWELL_SIGMA_MIN * 1e-3))
+        : (0.5 * spanLen);
+    // Safety clamp mirroring the fog's deepestY rule: the mean sits on the span, so for the
+    // down-going transmitted ray this max() is a no-op; it only guards degenerate spans.
+    float downwellY = max(sheetWorldPos.y + refractedRayWS.y * meanT,
+                          sheetWorldPos.y + refractedRayWS.y * spanLen);
+    // The sheet fragment IS the surface above this column, so it is its own depth reference.
+    return DownwellingAttenuation(downwellY, sheetWorldPos.y);
+}
+
 // Refraction: analytic pool trace or real screen-space refraction, fogged by
 // the traversed water and pulled toward the body in-scatter by the clarity curve.
 // bodyInscatter is handed OUT rather than left local: ShorelineStage needs the same value for the
@@ -720,9 +757,29 @@ float3 RefractionStage(v2f i, WaterGeomStage g, float waterClarity, out float3 b
         // (scene eye-depth - surface eye-depth), so heavy fog reads through too.
         // Chunk bodies cap the span at the primitive exit (the scene behind is DRY space).
         float waterSpan = max(0.0, sceneEyeR - surfEyeR);
+        // The eye-depth difference above is measured along the camera FORWARD axis, not along
+        // this pixel's ray, so an oblique look under-reports the traversed water by the
+        // ray/forward cosine - a large share of "ponds read clearer from above than the same
+        // water reads from underwater" (the fullscreen fog integrates true world chords).
+        // Divide by that cosine to recover the slant distance. SMALL BODIES ONLY: the ocean's
+        // from-above look was tuned on the raw difference and stays byte-identical.
+        if (_LargeBody < 0.5)
+        {
+            float3 cameraForward = -UNITY_MATRIX_V[2].xyz;
+            waterSpan /= max(dot(incomingRay, cameraForward), REFRACTION_SPAN_COS_MIN);
+        }
         if (_ChunkFogClamp > 0.5)
             waterSpan = min(waterSpan, ChunkRefractionSpan(i.position, refractedRay));
         refractedColor = ApplyWaterVolumeClarity(refractedColor, waterSpan, bodyInscatter, waterClarity);
+        // Depth darkening on the transmitted view (fullscreen-fog parity - see the helper
+        // above). SMALL BODIES ONLY: the ocean sheet was tuned without this term and its
+        // from-air column was never double-painted by the fullscreen pass, so large bodies
+        // stay byte-identical. Applied BEFORE the scene-light glow below, mirroring the fog
+        // pass: local lights never crossed the surface, so the sun's depth darkening does
+        // not apply to them.
+        if (_LargeBody < 0.5)
+            refractedColor *= RefractedColumnDownwelling(i.worldPos, refractedRay, waterSpan,
+                                                         waterClarity);
 #ifdef WATER_FOG_POINT_LIGHTS
         // Scene-light glow in the transmitted column: the SAME published list and closed-form
         // integral the fullscreen fog uses below the waterline (WaterSceneLightsInscatter), so
@@ -758,6 +815,10 @@ float3 RefractionStage(v2f i, WaterGeomStage g, float waterClarity, out float3 b
         float3 exitWorld = PoolToWorld(i.position + pdFog * exitTFog);
         float poolChord = length(exitWorld - i.worldPos);
         refractedColor = ApplyWaterVolumeClarity(refractedColor, poolChord, bodyInscatter, waterClarity);
+        // Same depth darkening for the analytic-pool transmitted view (this branch is already
+        // small-bodies-only); before the light glow for the same reason as the real path.
+        refractedColor *= RefractedColumnDownwelling(i.worldPos, refractedRay, poolChord,
+                                                     waterClarity);
 #ifdef WATER_FOG_POINT_LIGHTS
         // Same scene-light glow for the analytic-pool transmitted view (a lamp in a night pool
         // seen from the deck) - the chord through the box is this branch's water span.
@@ -1131,11 +1192,16 @@ float3 ShorelineStage(v2f i, WaterGeomStage g, float3 outColor, float3 refracted
         }
         clip(colDepth + SHORE_CLIP_BIAS + shoreKeep);
         // Depth clarity ties the deep tint to the SAME curve as turbidity/fog: murkier
-        // (lower clarity) = more deep tint. Falls back to the plain depth gradient when
-        // clarity is off (WaterDepthClarity = 1 -> tint = shore), so bodies not using it
-        // are byte-identical.
+        // (lower clarity) = more deep tint. BLENDED from the plain depth gradient toward the
+        // RAW clarity curve by the strength - never the strength-folded WaterDepthClarity: the
+        // old ternary read that fold through (1 - clarity), which at partial strength collapses
+        // BELOW both endpoints (strength 0.5 halved the deep fill that both 0 and 1 deliver),
+        // so the moment the dial left zero the bed showed through ("water becomes transparent
+        // between 0 and 1", worst with Volume Scattering dimming the fill colour). Strength 0 =
+        // the shore gradient (byte-identical), 1 = the full clarity look, monotonic between.
         float shore = 1.0 - exp(-_ShorelineDepthScale * colDepth);
-        float tint = (_DepthClarityStrength > 0.0) ? (1.0 - WaterDepthClarity(colDepth)) : shore;
+        float tint = lerp(shore, 1.0 - WaterDepthClarityCurve(colDepth),
+                          saturate(_DepthClarityStrength));
         // DEEP WATER MUST NOT CONVERGE TO AN UNLIT CONSTANT. This used to lerp toward
         // _DeepWaterColor directly, so as the column deepened the surface approached a fixed dark
         // colour that ignored sun, ambient and view angle entirely - which is why deep ocean read as
