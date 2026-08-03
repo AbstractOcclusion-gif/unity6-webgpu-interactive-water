@@ -234,8 +234,20 @@
                                 geomReach = beachRise; // hold the film onto the sand under the deposit
                         }
                         if (geomReach > 1e-3)
-                            worldPos.y = max(worldPos.y, _ShoreWaterLevel
-                                             + min(beachRise, geomReach) + SURF_FILM_THICKNESS);
+                        {
+                            // Both joins were hard clamps, and each printed its own crease running
+                            // parallel to the beach. INNER: min(beachRise, geomReach) is where the
+                            // sand-hugging film flattens into the wet-line plateau. OUTER: max()
+                            // against the wave surface is where the sea's slope meets the beach's -
+                            // the "angle" between the open water and the swash. Both are C0 but not
+                            // C1, and a slope discontinuity is exactly what the eye reads as an
+                            // edge. Smoothing them over SURF_FILM_BLEND joins sea, film and plateau
+                            // into one continuous surface; a blend of 0 restores the hard clamps.
+                            float filmTop = _ShoreWaterLevel
+                                          + SmoothMin(beachRise, geomReach, SURF_FILM_BLEND)
+                                          + SURF_FILM_THICKNESS;
+                            worldPos.y = SmoothMax(worldPos.y, filmTop, SURF_FILM_BLEND);
+                        }
                     }
                 }
                 o.worldPos = worldPos;

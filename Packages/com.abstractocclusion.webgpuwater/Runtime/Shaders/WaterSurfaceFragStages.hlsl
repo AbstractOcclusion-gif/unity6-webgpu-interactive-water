@@ -26,6 +26,11 @@
 // beach), and the drying glaze behind it mixes darkened ground + a sky sheen.
 #define WET_FILM_MIN_TRANSPARENCY 0.6    // film pull toward the ground at the waterline
 #define WET_FILM_DEPTH_GAIN       0.3    // extra pull as the film thins up-beach
+// Half-width (m of height above/below the still level) of the sea-to-film cross-fade. The film
+// pull is a large constant that used to appear the instant the bed crossed the water level, which
+// printed a razor line along the waterline; this is the band it ramps over instead. Height, not
+// ground distance: on a gentle beach a few centimetres of height is a metre or so of sand.
+#define WET_FILM_WATERLINE_BAND   0.15
 #define WET_GLAZE_EDGE            0.25   // smoothstep width of the drying wet edge
 #define WET_GLAZE_REFRACT         0.7    // refracted-ground weight in the wet look
 #define WET_GLAZE_REFLECT         0.12   // reflected-sky weight in the wet look
@@ -1225,26 +1230,55 @@ float3 ShorelineStage(v2f i, WaterGeomStage g, float3 outColor, float3 refracted
         // against the old behaviour read far too dark until it is raised toward the 0..1 range.
         float3 deepTarget = bodyInscatter * _DeepWaterColor.rgb;
         outColor = lerp(outColor, deepTarget, saturate(tint * _ShorelineStrength));
-        // Wet-sand glaze: fragments above the CURRENT film but under the drying wet line
-        // show the darkened scene through a thin glossy sheet - wet sand with zero state.
         float beachRise = -colDepth;                    // metres above the still level
-        if (beachRise > 0.0 && wetLevel > 0.0)
+        // Thin-film transparency: the swash sheet is centimetres of water ON the
+        // sand, not ocean - pull HARD toward the refracted ground so the film
+        // reads wet-and-clear ("swash amplitude causes the blue water line" -
+        // the band must never look like blue ocean sitting on the beach).
+        //
+        // This pull used to live inside the beachRise > 0 glaze gate below, so it went from 0 to
+        // WET_FILM_MIN_TRANSPARENCY across ONE texel of the depth field: the sea turned 60% into
+        // sand along a single hard line, which is the sharpest edge in the whole sea-to-swash
+        // junction. It gets its own block and its own waterline feather now - the glaze and the
+        // swash foam keep the original gate, since both already fall to zero on their own at the
+        // waterline and neither wants to reach seaward of it.
+        if (wetLevel > 0.0 && beachRise > -WET_FILM_WATERLINE_BAND)
         {
-            // Thin-film transparency: the swash sheet is centimetres of water ON the
-            // sand, not ocean - pull HARD toward the refracted ground so the film
-            // reads wet-and-clear ("swash amplitude causes the blue water line" -
-            // the band must never look like blue ocean sitting on the beach).
             float filmT = saturate(beachRise / max(wetLevel, 1e-3));
+            float waterlineFade = smoothstep(-WET_FILM_WATERLINE_BAND,
+                                             WET_FILM_WATERLINE_BAND, beachRise);
             outColor = lerp(outColor, refractedColor,
-                            WET_FILM_MIN_TRANSPARENCY + WET_FILM_DEPTH_GAIN * filmT);
-            float aboveFilm = saturate((beachRise - swashLevel)
-                                       / max(wetLevel - swashLevel, 1e-3));
-            float glaze = aboveFilm * smoothstep(0.0, WET_GLAZE_EDGE,
-                                                 (wetLevel - beachRise)
-                                                 / max(wetLevel, 1e-3));
-            float3 wetLook = refractedColor * WET_GLAZE_REFRACT
-                           + reflectedColor * WET_GLAZE_REFLECT;
-            outColor = lerp(outColor, wetLook, glaze * WET_GLAZE_STRENGTH);
+                            (WET_FILM_MIN_TRANSPARENCY + WET_FILM_DEPTH_GAIN * filmT)
+                            * waterlineFade);
+        }
+        // The swash zone. The glaze is wet SAND, so it belongs strictly landward of the waterline -
+        // but the swash FOAM band is centred on the film edge and straddles it, and the two used to
+        // share one beachRise > 0 gate. That amputated the foam band's entire seaward half - up to
+        // _SurfSwashFoamWidth, 0.25 m by default - along a dead-straight line, which is the seam
+        // where the shore-wave foam visibly stopped and the swash foam started.
+        //
+        // The zone now opens ONE BAND-WIDTH OFFSHORE, so the swash foam reaches back into the
+        // whitewash's own fade-out (SurfFieldMask's wet term is finished ~5 cm up the sand) instead
+        // of starting where it ends. Nothing else is needed to make that seamless: the band's own
+        // falloff already takes it to zero, and the final composite maxes the foam layers' alphas
+        // over a shared pattern, so the overlap BLENDS the two lines rather than stacking them.
+        // Only the glaze keeps the dry-side gate.
+        float swashBand = max(_SurfSwashFoamWidth, 0.01);
+        if (wetLevel > 0.0 && beachRise > -swashBand)
+        {
+            // Wet-sand glaze: fragments above the CURRENT film but under the drying wet line
+            // show the darkened scene through a thin glossy sheet - wet sand with zero state.
+            if (beachRise > 0.0)
+            {
+                float aboveFilm = saturate((beachRise - swashLevel)
+                                           / max(wetLevel - swashLevel, 1e-3));
+                float glaze = aboveFilm * smoothstep(0.0, WET_GLAZE_EDGE,
+                                                     (wetLevel - beachRise)
+                                                     / max(wetLevel, 1e-3));
+                float3 wetLook = refractedColor * WET_GLAZE_REFRACT
+                               + reflectedColor * WET_GLAZE_REFLECT;
+                outColor = lerp(outColor, wetLook, glaze * WET_GLAZE_STRENGTH);
+            }
 
             // ---- FOAM-3: swash foam. A foamy line rides the film's leading edge
             // up the beach, is STRANDED at the wash border (the wet line) at the
@@ -1255,16 +1289,19 @@ float3 ShorelineStage(v2f i, WaterGeomStage g, float3 outColor, float3 refracted
             // beach is byte-identical. ----
             if (_SurfSwashFoam > 0.0 && _SurfActive > 0.5)
             {
-                float swashT = max(_SurfPeriod, 0.5);
+                // SURF_MIN_PERIOD, not a literal 0.5: this is the SAME clock EvaluateSurfSwash
+                // floors with, and a hand-copied floor would silently desync the foam from the
+                // film it rides the moment the define is retuned.
+                float swashT = max(_SurfPeriod, SURF_MIN_PERIOD);
                 // Same phase convention as EvaluateSurfSwash: 0 = crest arrival.
                 float swashPhase = frac(_SurfBeatTime / swashT - 0.5);
                 // Backwash age: 0 at the apex (film just turned), 1 at full reflux. Drives the
                 // deposit's hole-erosion and the drain-streak stretch, which both intensify as
                 // the stranded line dries.
                 float refluxAge = smoothstep(SURF_SWASH_UPRUSH, 1.0, swashPhase);
-                float swashBand = max(_SurfSwashFoamWidth, 0.01);
                 // Bore edge: foam hugging the film's leading edge (rides up with
-                // the uprush, retreats with the film - a thin working line).
+                // the uprush, retreats with the film - a thin working line). swashBand is
+                // hoisted to the zone gate above - it is what sets the zone's seaward reach.
                 float edgeFoamW = saturate(1.0 - abs(beachRise - swashLevel) / swashBand);
                 // Deposit VISIBILITY envelope. The line is LAID when the film turns (apex ~ UPRUSH)
                 // and then DISSOLVES back to ~0 across the rest of the cycle, so it fades out
@@ -1280,7 +1317,24 @@ float3 ShorelineStage(v2f i, WaterGeomStage g, float3 outColor, float3 refracted
                                  * (1.0 - smoothstep(SURF_SWASH_DEPOSIT_PEAK, 1.0, swashPhase));
                 float depositW = saturate(1.0 - abs(beachRise - wetLevel) / swashBand)
                                * depositEnv;
-                float swashCoverage = saturate(max(edgeFoamW, depositW) * _SurfSwashFoam);
+                float rawCoverage = max(edgeFoamW, depositW);
+                float swashCoverage = saturate(rawCoverage * _SurfSwashFoam);
+                // Reflux age is the STRANDED DEPOSIT'S clock, so only the deposit may be eroded by
+                // it. It used to erode the whole coverage - the live bore edge included - and that
+                // is what popped the foam once per wave: refluxAge is a frac()-driven SAWTOOTH that
+                // snaps 1 -> 0 at the wrap, the wrap IS crest arrival, and edgeFoamW is at its
+                // MAXIMUM there (the band sits on the waterline while swashLevel is 0). So the
+                // dissolve threshold fell ~0.42 in one frame over bright coverage and eroded lace
+                // became solid foam: pop, then drift. depositEnv is already 0 at the wrap, so
+                // weighting the erosion by the deposit's share of the coverage multiplies the
+                // sawtooth by something that vanishes exactly where it jumps - continuous across
+                // the wrap, and unchanged mid-backwash where the deposit owns the coverage anyway.
+                //
+                // The bore edge is fresh foam BY DEFINITION (it is the film's leading edge, renewed
+                // every frame), so it never had any business carrying an age in the first place.
+                float depositShare = depositW / max(rawCoverage, FOAM_MASK_EPSILON);
+                float swashErode = refluxAge * depositShare * _SurfSwashFoamDissolve
+                                 * SURF_SWASH_ERODE_MAX;
                 if (swashCoverage > FOAM_MASK_EPSILON)
                 {
                     // Plain world XZ with the hoisted gradients. This used to be warped by an
@@ -1300,9 +1354,7 @@ float3 ShorelineStage(v2f i, WaterGeomStage g, float3 outColor, float3 refracted
                     // reflux hole-erosion: age raises the dissolve threshold, so
                     // the stranded line rots into lace patches, then filaments.
                     float swashFoam = FoamDissolve(swashPattern.r, swashCoverage,
-                                                   _SurfFoamFeather,
-                                                   refluxAge * _SurfSwashFoamDissolve
-                                                   * SURF_SWASH_ERODE_MAX);
+                                                   _SurfFoamFeather, swashErode);
                     if (swashFoam > FOAM_MASK_EPSILON)
                     {
                         // Lit like the whitewash (wrapped sun over the surface

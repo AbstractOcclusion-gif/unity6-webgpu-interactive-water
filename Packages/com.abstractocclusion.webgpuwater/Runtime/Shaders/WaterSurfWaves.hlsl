@@ -156,6 +156,12 @@ float _SurfFoamTrailLength;  // trailing-deposit length multiplier (1 = legacy)
 // The swash film rides this far (m) proud of the sand, so the film/glaze fragments WIN the depth
 // test against the opaque beach (a flat plane under the terrain would be entirely occluded).
 #define SURF_FILM_THICKNESS    0.03
+// Vertical band (m) the film's two geometry joins are smoothed over (WaterSurfaceVertStage's
+// SmoothMin/SmoothMax): the film-to-wet-line plateau, and the film-to-open-sea junction. Hard
+// min/max there left two slope discontinuities running parallel to the beach - visible dihedral
+// creases. MUST stay under 4 x SURF_FILM_THICKNESS: SmoothMin dips blend/4 below the true minimum
+// where the two arguments meet, and that dip eats into the film's clearance over the sand.
+#define SURF_FILM_BLEND        0.05
 // Lifecycle x-axis span of the crest-foam pop LUT (FOAM-1): overCap 0..this maps to LUT u 0..1.
 // LOCKSTEP with WaterVolume.SurfCrestLutOverCapMax (the C# curve bake) - render-only foam, so it
 // is NOT a validator-guarded height pair; the comment is the contract.

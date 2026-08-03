@@ -21,6 +21,30 @@
 // foam tangent frames, particle axes); well under any visually meaningful vector.
 #define DEGENERATE_DIR_EPSILON 1e-8
 
+// C1 replacements for min()/max(). A hard min/max is continuous in VALUE but not in SLOPE, so
+// wherever two surfaces are joined by one the seam prints as a crease - a dihedral "angle" the eye
+// reads instantly even when the two sides differ by millimetres. These blend the switch-over across
+// a band of `blend` (same units as a and b), which is exactly the width the crease is spread over.
+//
+// Quilez's polynomial smooth-min: the blend term blend*h*(1-h) is 0 at both ends - so far from the
+// crossing the result is EXACTLY min/max, with no bias - and peaks at blend/4 where a == b. A caller
+// that needs a floor on the result must keep blend/4 inside the headroom it has there.
+//
+// blend <= 0 returns the hard min/max, so the smoothing is always switchable off.
+float SmoothMin(float a, float b, float blend)
+{
+    if (blend <= 0.0) return min(a, b);
+    float h = saturate(0.5 + 0.5 * (b - a) / blend);
+    return lerp(b, a, h) - blend * h * (1.0 - h);
+}
+
+float SmoothMax(float a, float b, float blend)
+{
+    if (blend <= 0.0) return max(a, b);
+    float h = saturate(0.5 + 0.5 * (a - b) / blend);
+    return lerp(b, a, h) + blend * h * (1.0 - h);
+}
+
 #define POOL_HEIGHT     1.0          // pool floor sits at y = -POOL_HEIGHT
 #define POOL_RIM_HEIGHT (2.0 / 12.0) // top of the pool walls, in pool units
 
