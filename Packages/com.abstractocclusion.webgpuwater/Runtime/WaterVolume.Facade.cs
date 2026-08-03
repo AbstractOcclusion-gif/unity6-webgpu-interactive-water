@@ -37,16 +37,20 @@ namespace AbstractOcclusion.WebGpuWater
             if (_water == null) return;
             if (!AllFinite(worldX, worldZ, radius, strength)) { WarnNonFiniteInjection(); return; }
 
+            // Chop inversion, same reason as AddSphereInteraction below: the sim is sampled at
+            // undisplaced lattice xz, so a drop stamped at the query xz appears chop-metres away.
+            Vector2 dropAt = InvertLargeWaveChopXZ(worldX, worldZ);
+
             // Windowed bodies inject into the sim WINDOW frame; ripples outside it are dropped.
             if (_windowed)
             {
-                Vector3 sim = WorldToSim(new Vector3(worldX, SimWindowCenter.y, worldZ));
+                Vector3 sim = WorldToSim(new Vector3(dropAt.x, SimWindowCenter.y, dropAt.y));
                 if (sim.x < -1f || sim.x > 1f || sim.z < -1f || sim.z > 1f) return;
                 _water.AddDrop(sim.x, sim.z, radius / SimHorizontalExtent, strength / VolumeExtentSafe.y);
                 return;
             }
 
-            Vector3 probe = new Vector3(worldX, VolumeCenter.y, worldZ);
+            Vector3 probe = new Vector3(dropAt.x, VolumeCenter.y, dropAt.y);
             if (!WorldToPoolXZ(probe, out float px, out float pz)) return;
             _water.AddDrop(px, pz, radius / VolumeHorizontalExtent, strength / VolumeExtentSafe.y);
         }
@@ -73,23 +77,32 @@ namespace AbstractOcclusion.WebGpuWater
 
             float velY = worldStep.y / VolumeExtentSafe.y; // world vertical motion -> pool-height units
 
+            // CHOP INVERSION (2026-08-03): stamp at the SOURCE point the horizontal wave
+            // displacement carries onto the object, not at the object itself - the sim is sampled
+            // at undisplaced lattice xz, so a raw stamp APPEARS at (object + chop) and the wake
+            // slid around the hull with the swell phase in a heavy sea. Submersion weight above
+            // deliberately used the TRUE position (it is about the object, not the lattice).
+            Vector2 inject = InvertLargeWaveChopXZ(worldPos.x, worldPos.z);
+
             // Windowed bodies inject into the scrolling sim WINDOW frame; wakes outside it are dropped.
             if (_windowed)
             {
-                Vector3 c = WorldToSim(new Vector3(worldPos.x, SimWindowCenter.y, worldPos.z));
+                Vector3 c = WorldToSim(new Vector3(inject.x, SimWindowCenter.y, inject.y));
                 if (c.x < -1f || c.x > 1f || c.z < -1f || c.z > 1f) return;
-                Vector3 cNext = WorldToSim(new Vector3(worldPos.x + worldStep.x, SimWindowCenter.y,
-                                                       worldPos.z + worldStep.z));
+                // The step maps from the SAME inverted origin: the dipole's direction/magnitude is
+                // the object's own motion, not the chop's (which is near-equal at both endpoints).
+                Vector3 cNext = WorldToSim(new Vector3(inject.x + worldStep.x, SimWindowCenter.y,
+                                                       inject.y + worldStep.z));
                 Vector2 velXZ = new Vector2(cNext.x - c.x, cNext.z - c.z);
                 _water.AddSphereInteraction(new Vector2(c.x, c.z), radius / SimHorizontalExtent,
                                             velXZ, velY, weight, strength);
                 return;
             }
 
-            Vector3 pool = WorldToPool(new Vector3(worldPos.x, VolumeCenter.y, worldPos.z));
+            Vector3 pool = WorldToPool(new Vector3(inject.x, VolumeCenter.y, inject.y));
             if (pool.x < -1f || pool.x > 1f || pool.z < -1f || pool.z > 1f) return;
-            Vector3 poolNext = WorldToPool(new Vector3(worldPos.x + worldStep.x, VolumeCenter.y,
-                                                       worldPos.z + worldStep.z));
+            Vector3 poolNext = WorldToPool(new Vector3(inject.x + worldStep.x, VolumeCenter.y,
+                                                       inject.y + worldStep.z));
             Vector2 velXZb = new Vector2(poolNext.x - pool.x, poolNext.z - pool.z);
             _water.AddSphereInteraction(new Vector2(pool.x, pool.z), radius / VolumeHorizontalExtent,
                                         velXZb, velY, weight, strength);

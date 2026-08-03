@@ -36,7 +36,7 @@ Material:
     m_Floats:
     - _AutoTileByFace: 1
     - _BumpScale: 1
-    - _CausticStrength: 2
+    - _CausticStrength: 2.73
     - _Cull: 2
     - _ObjectShadowStrength: 0.6
     - _UseCustomTiles: 0

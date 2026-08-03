@@ -85,7 +85,10 @@ float  OceanFoamSlowFadeFraction; // dense-foam decay as a fraction of the fade 
 float  OceanFoamDriftFraction;    // downwind foam-drift speed as a fraction of wind speed (Drift slider)
 
 // --- CPU buoyancy height-field bake (increment 4) ---
-RWTexture2D<float> OceanHeightField; // camera-centred summed height (metres) for async CPU readback
+RWTexture2D<float4> OceanHeightField; // camera-centred (dispX, height, dispZ, 0) in metres for async CPU readback
+// .y (height) feeds buoyancy exactly as the old single-channel field did; .xz is the summed horizontal
+// Gerstner displacement, read back so the CPU can INVERT chop (wake injection, Crest-style) - see
+// WaterVolume.InvertLargeWaveChopXZ. Same cascade fade + amplitude scale as the render path's fft.xz.
 float2 OceanFieldCenter;             // world XZ centre of the baked region
 float  OceanFieldSize;               // world metres spanned by the (square) region
 uint   OceanFieldRes;                // texels per side of the height field
@@ -578,7 +581,9 @@ void ComputeNormal(uint3 id : SV_DispatchThreadID)
 // Manual bilinear read of one cascade's height (.y) at a world xz. Cascades tile every 'domain' metres
 // and the FFT is periodic, so the taps wrap around the grid edge seamlessly. Manual (not Sample) because
 // the displacement array is bound as a UAV here, and WebGPU won't hardware-filter it anyway.
-float OceanCascadeHeightBilinear(float2 worldXZ, uint c)
+// Full displacement (x, height, z) - the height lane is what buoyancy always read; the horizontal
+// lanes now ride along for the CPU chop inversion (renamed from OceanCascadeHeightBilinear).
+float3 OceanCascadeDisplacementBilinear(float2 worldXZ, uint c)
 {
     int N = (int)OceanFftResolution;
     float2 texel = frac(worldXZ / max(OceanDomainSizes[c], 1e-3)) * N; // tile-local texel coordinate
@@ -586,10 +591,10 @@ float OceanCascadeHeightBilinear(float2 worldXZ, uint c)
     float fx = texel.x - x0; float fy = texel.y - y0;
     x0 &= OCEAN_TILE_WRAP; y0 &= OCEAN_TILE_WRAP;
     int x1 = (x0 + 1) & OCEAN_TILE_WRAP; int y1 = (y0 + 1) & OCEAN_TILE_WRAP;
-    float h00 = OceanDisplacement[uint3(x0, y0, c)].y;
-    float h10 = OceanDisplacement[uint3(x1, y0, c)].y;
-    float h01 = OceanDisplacement[uint3(x0, y1, c)].y;
-    float h11 = OceanDisplacement[uint3(x1, y1, c)].y;
+    float3 h00 = OceanDisplacement[uint3(x0, y0, c)].xyz;
+    float3 h10 = OceanDisplacement[uint3(x1, y0, c)].xyz;
+    float3 h01 = OceanDisplacement[uint3(x0, y1, c)].xyz;
+    float3 h11 = OceanDisplacement[uint3(x1, y1, c)].xyz;
     return lerp(lerp(h00, h10, fx), lerp(h01, h11, fx), fy);
 }
 
@@ -606,14 +611,16 @@ void BakeHeightField(uint3 id : SV_DispatchThreadID)
     // here is what keeps buoyancy on the surface that is actually drawn: without it a floater 128 m out
     // rides cascade 1 at full strength while the surface has already faded it to half.
     float camDist = distance(worldXZ, OceanFieldCenter);
-    float height = 0.0;
+    float3 disp = 0.0;
     for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
     {
         if (c >= (int)OceanFftCascades) break;
-        height += OceanCascadeDistanceFade(camDist, OceanVisibleAreas[c])
-                * OceanCascadeHeightBilinear(worldXZ, (uint)c);
+        disp += OceanCascadeDistanceFade(camDist, OceanVisibleAreas[c])
+              * OceanCascadeDisplacementBilinear(worldXZ, (uint)c);
     }
-    OceanHeightField[id.xy] = height * OceanFieldAmplitude;
+    // Amplitude scales ALL channels, mirroring the render path (WaterLargeWaves.hlsl:
+    // height = fft.y * _LargeWaveAmplitude ..., disp = fft.xz * (_LargeWaveAmplitude ...)).
+    OceanHeightField[id.xy] = float4(disp, 0.0) * OceanFieldAmplitude;
 }
 
 // TEMP (1c): remap displacement to a readable image - height as grey around mid, choppiness as tint.

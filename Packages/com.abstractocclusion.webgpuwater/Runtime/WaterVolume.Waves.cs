@@ -60,12 +60,13 @@ namespace AbstractOcclusion.WebGpuWater
 
         /// <summary>Height/slope AND the swell's vertical rate at a world xz, from ONE evaluation.</summary>
         /// <remarks>
-        /// The velocity out-param exists so a caller that needs both does not pay the chop inversion
-        /// twice: the query path used to take the height here and then call
-        /// LargeWaveField.VerticalVelocityAtQuery with identical arguments, which re-ran the whole
-        /// 4-iteration inversion. Callers that only want the height use the single-argument overload
-        /// above and discard it - on the analytic branch that costs nothing extra (same evaluation),
-        /// and on the FFT branch the rate is computed from the analytic mirror exactly as before.
+        /// The velocity out-param exists so a caller that needs both does not pay for the surface twice.
+        /// On the ANALYTIC branch that means one chop inversion instead of two (the query path used to
+        /// take the height here and then re-run the whole 4-iteration inversion for the rate). On the
+        /// FFT branch it means one readback lookup: the rate is measured on the readback field itself,
+        /// beside the height, rather than borrowed from the analytic mirror - a surface the FFT branch
+        /// does not render. Callers that only want the height use the single-argument overload above and
+        /// discard the rate; on both branches that costs nothing extra.
         /// </remarks>
         Vector3 SampleLargeWaveField(float worldX, float worldZ, out float verticalRate)
         {
@@ -76,21 +77,75 @@ namespace AbstractOcclusion.WebGpuWater
             // The FFT readback bakes the RAW cascades; the shader's FFT branch additionally shoals
             // them by depth, fades them under the surf fronts and adds the fronts on top - so the
             // readback sample gets the same treatment (mirror of LargeBodyWaveHeight's FFT path).
-            if (OceanFftActive && _oceanFft.TrySampleField(worldX, worldZ, out Vector3 fft))
+            if (OceanFftActive && _oceanFft.TrySampleField(worldX, worldZ, out Vector3 fft,
+                                                          out float fftRate))
             {
-                // The readback carries no time derivative, so the rate stays on the analytic mirror -
-                // unchanged from before, just no longer recomputed by the caller.
-                verticalRate = LargeWaveField.VerticalVelocityAtQuery(worldX, worldZ, _waveTime,
-                    LargeWaveAmplitudeEffective, LargeWaveHeadingRad, SwellWavelength, SwellHeight,
-                    LargeWaveChoppiness, ctx) * edge;
-                return LargeWaveField.ApplyShoreToFftSample(fft, worldX, worldZ, _waveTime,
-                    SwellWavelength, ctx) * edge;
+                // Height AND rate now both come from the FFT field. The rate used to be taken from
+                // the analytic mirror, which WaterLargeWaves.hlsl does not render while the FFT branch
+                // is live: buoyancy's surface-relative drag was chasing a velocity belonging to an
+                // invisible surface, so it never relaxed and pumped energy in proportional to Swell
+                // Height. ApplyShoreToFftSample composes the rate exactly like the height it
+                // differentiates.
+                verticalRate = fftRate;
+                Vector3 shored = LargeWaveField.ApplyShoreToFftSample(fft, worldX, worldZ, _waveTime,
+                    SwellWavelength, ctx, ref verticalRate);
+                verticalRate *= edge;
+                return shored * edge;
             }
             LargeWaveField.EvaluateAtQuery(worldX, worldZ, _waveTime, LargeWaveAmplitudeEffective,
                 LargeWaveHeadingRad, SwellWavelength, SwellHeight, LargeWaveChoppiness, ctx,
                 out Vector3 heightSlope, out float rate);
             verticalRate = rate * edge;
             return heightSlope * edge;
+        }
+
+        // Fixed-point iterations for the chop inversion below. 4 matches LargeWaveField's own
+        // InversionIterations (the buoyancy-validated count for these wave scales).
+        const int ChopInversionIterations = 4;
+
+        /// <summary>Invert the large-wave HORIZONTAL displacement at a world xz: the SOURCE point
+        /// whose displaced position lands on the query (Crest's SampleInvertedDisplacement).
+        ///
+        /// WHY (wake drift, 2026-08-03): interactive ripples live in the sim texture, which the
+        /// surface samples at each vertex's UNDISPLACED lattice xz - and the FFT/Gerstner chop then
+        /// moves that vertex horizontally by metres in a heavy sea. A wake stamped at the boat's
+        /// world xz therefore APPEARS at (boat + chop), sliding around the hull with the swell
+        /// phase. Injecting at the inverted source instead means the displaced surface carries the
+        /// stamp exactly back onto the boat. Identity for non-open-water bodies (no chop), and for
+        /// an FFT sea before its first displacement readback lands (a few frames of the old
+        /// behaviour, never a wrong-phase analytic guess - the two branches render mutually
+        /// exclusively, so mixing them here would invert a surface nothing draws).
+        ///
+        /// The displacement is edge-weighted like the render (fft.xz * amplitude * edge), and the
+        /// FFT branch's readback already bakes the amplitude in. Shore 'ambient' attenuation of
+        /// chop is NOT mirrored (readback lanes are raw-offshore maths): near a shore the
+        /// inversion slightly overshoots, bounded by the ambient fade itself.</summary>
+        internal Vector2 InvertLargeWaveChopXZ(float worldX, float worldZ)
+        {
+            if (!openWater) return new Vector2(worldX, worldZ);
+            bool fft = OceanFftActive;
+            ShoreWaveContext ctx = default;
+            if (!fft) ctx = ShoreWaveCtx; // analytic branch only; ~22-field build, skip when unused
+            float sx = worldX, sz = worldZ;
+            for (int i = 0; i < ChopInversionIterations; i++)
+            {
+                Vector2 d;
+                if (fft)
+                {
+                    if (!_oceanFft.TrySampleDisplacementLatest(sx, sz, out d))
+                        return i == 0 ? new Vector2(worldX, worldZ) : new Vector2(sx, sz);
+                }
+                else
+                {
+                    d = LargeWaveField.HorizontalDisplacementAtSource(sx, sz, _waveTime,
+                        LargeWaveAmplitudeEffective, LargeWaveHeadingRad, SwellWavelength,
+                        SwellHeight, LargeWaveChoppiness, ctx);
+                }
+                d *= LargeWaveEdgeWeight(sx, sz);
+                sx -= (sx + d.x) - worldX;
+                sz -= (sz + d.y) - worldZ;
+            }
+            return new Vector2(sx, sz);
         }
 
         // ---- wind-wave layer -----------------------------------------------

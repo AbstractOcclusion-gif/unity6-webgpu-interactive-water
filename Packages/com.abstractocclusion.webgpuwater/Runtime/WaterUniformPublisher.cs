@@ -132,6 +132,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_OceanFoamDepthTint = Shader.PropertyToID("_OceanFoamDepthTint");
         static readonly int ID_LbwGeomFoamFloor = Shader.PropertyToID("_LbwGeomFoamFloor");
         static readonly int ID_LargeWaveAmp = Shader.PropertyToID("_LargeWaveAmplitude");
+        static readonly int ID_OffshoreSigHeight = Shader.PropertyToID("_OffshoreSignificantHeight");
         static readonly int ID_LargeWaveWind = Shader.PropertyToID("_LargeWaveWindHeading");
         static readonly int ID_LargeWaveChop = Shader.PropertyToID("_LargeWaveChoppiness");
         static readonly int ID_RippleChoppiness = Shader.PropertyToID("_RippleChoppiness");
@@ -575,6 +576,9 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_LbwGeomFoamFloor,
                           _body.IsChunk && _body.openWater ? _body.chunkFoamStrength : 0f);
             sink.SetFloat(ID_LargeWaveAmp, _body.LargeWaveAmplitudeEffective);
+            // The sea's only metre scale, for SurfaceHeightBand (WaterWaterline.hlsl). The
+            // amplitude above is a multiplier on this, not a height - the band needs both.
+            sink.SetFloat(ID_OffshoreSigHeight, _body.OffshoreSignificantHeight);
             sink.SetFloat(ID_LargeWaveWind, _body.LargeWaveHeadingRad);
             sink.SetFloat(ID_LargeWaveChop, _body.LargeWaveChoppiness);
             sink.SetFloat(ID_RippleChoppiness, _body.rippleChoppiness);

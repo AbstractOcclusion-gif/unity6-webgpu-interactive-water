@@ -26,7 +26,7 @@ namespace AbstractOcclusion.WebGpuWater
         // Bumped by one for each feature whose flat fields move into a nested Settings block. A scene
         // serialized before a given version has its old (FormerlySerializedAs) legacy fields copied into
         // the new block once, on load, so tuned values are never lost. The copies are idempotent.
-        const int CurrentSettingsVersion = 11;
+        const int CurrentSettingsVersion = 12;
         [SerializeField, HideInInspector] int _settingsVersion = 0;
 
         void ISerializationCallbackReceiver.OnBeforeSerialize() { }
@@ -45,6 +45,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (_settingsVersion < 9) MigrateBodyTypeV9();
             if (_settingsVersion < 10) MigrateSeaStateV10();
             if (_settingsVersion < 11) MigrateWindWaveRigV11();
+            if (_settingsVersion < 12) MigrateOceanAmplitudeIntoMetresV12();
             _settingsVersion = CurrentSettingsVersion;
         }
 
@@ -102,6 +103,38 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (ocean.largeWaveChoppiness <= 0f) ocean.largeWaveChoppiness = DefaultLargeWaveChoppiness;
         }
+
+        // v12: `largeWaveAmplitude` stopped being drawn when the FFT sea state moved to honest metres
+        // (Significant Height / Swell Height, normalised by WaterOceanSpectrum), but it was left LIVE in
+        // the runtime - a multiplier on the whole FFT field that no inspector showed. A scene carrying a
+        // non-1 value therefore renders every authored metre scaled by an invisible factor, and the
+        // author compensates by inflating the heights until it looks right. Worse, the factor does NOT
+        // reach every consumer: the analytic swell band and the steepness readout skip it, so one knob
+        // produced several different numbers (see docs/PLAN_buoyancy_swell_v1.md).
+        //
+        // Folding it into the two authored heights is EXACT for an FFT ocean - the spectrum scales
+        // linearly in both - so the sea renders identically while the numbers finally read as metres.
+        //
+        // BOUNDED open water is deliberately left alone: it has no spectrum, so `largeWaveAmplitude` is
+        // the ONLY height control its analytic chop band has (and it carries the wind coupling there).
+        // Folding it into Significant Height on those bodies would move a value the analytic path never
+        // reads, silently flattening them.
+        void MigrateOceanAmplitudeIntoMetresV12()
+        {
+            if (!ocean.openWater || !ocean.unboundedOcean) return;
+            float amplitude = ocean.largeWaveAmplitude;
+            // 0 is "deliberately flat water" and is NOT foldable: multiplying the heights by it would
+            // destroy them, and neutralising the multiplier afterwards would then un-flatten the sea.
+            // Such a body keeps its 0 and is caught by the inspector's retired-multiplier warning.
+            if (amplitude <= 0f || Mathf.Approximately(amplitude, NeutralOceanAmplitude)) return;
+            ocean.significantWaveHeight *= amplitude;
+            ocean.swellHeight *= amplitude;
+            ocean.largeWaveAmplitude = NeutralOceanAmplitude;
+        }
+
+        // The value at which the retired multiplier is a no-op, i.e. "the authored metres are the
+        // rendered metres". Named so the migration above cannot be read as an arbitrary reset to 1.
+        const float NeutralOceanAmplitude = 1f;
 
         // v11: the small wind-wave layer moved from (wind speed, fetch, amplitude scale) to an
         // authored (length, height) rig - see WaterWaveBank's header for why the old three could not

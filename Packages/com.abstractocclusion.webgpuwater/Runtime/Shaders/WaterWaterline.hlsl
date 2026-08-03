@@ -40,6 +40,13 @@ float3 SafeFacetNormal(float3 positionWS, bool valid, float3 fallback)
 
 float _OceanWorldWaves; // 1 = sample wind waves in WORLD metres (ocean); 0 = pool xz (pond)
 
+// Significant height (metres) of the whole open-water field, wind sea and swell in quadrature -
+// the CPU's WaterVolume.OffshoreSignificantHeight, published verbatim. This is the ONLY metre
+// scale the FFT sea carries; _LargeWaveAmplitude is a dimensionless multiplier ON it, not a
+// height. Unset (0) on anything the publisher has not run for, which is exactly the fallback
+// SurfaceHeightBand below wants: the analytic term takes over and nothing changes.
+float _OffshoreSignificantHeight;
+
 #define WAVE_METERS_MIN 1e-3 // matches WindWaveSampleXZ's guard in WaterSurface.shader
 
 // Displaced world-space surface height at a WORLD xz: the single source of truth for the wavy
@@ -80,6 +87,12 @@ float SurfaceSignedGap(float3 world)
 // early-outs, never correctness; narrowing it below a real crest clips a crossing.
 #define SURFACE_BAND_AMPLITUDES 3.0
 #define SURFACE_BAND_PAD_METERS 2.0
+// Crest reach as a multiple of SIGNIFICANT height, for the FFT term below. A Gaussian sea is
+// Rayleigh-distributed, giving H_max ~ 1.86 * Hs over a ~1000-wave record and a crest of about
+// half that, ~0.93 * Hs. The rest is headroom for horizontal choppiness, which sharpens crests
+// ABOVE the linear height the spectrum was normalised to. Bounding, not descriptive: this may
+// only ever be raised, never trimmed toward the 0.93 the linear theory alone would justify.
+#define SURFACE_BAND_CREST_REACH 1.2
 
 float SurfaceHeightBand()
 {
@@ -91,8 +104,19 @@ float SurfaceHeightBand()
     float surfReach = (_SurfActive > 0.5)
                     ? _SurfAmplitude * SURF_SETAMP_JITTER_MAX * max(_SurfGreens, SURF_MIN_GREENS)
                     : 0.0;
-    return max(abs(_LargeWaveAmplitude) * SURFACE_BAND_AMPLITUDES, surfReach)
-         + SURFACE_BAND_PAD_METERS;
+    // TWO wave scales, because two generators author height in different units, and the band has
+    // to bound BOTH. On the ANALYTIC generator the amplitude IS the metre scale (the chop band
+    // sums to ~0.58 m per unit amplitude, so 3x is a ~5x conservative bound) - that term is
+    // unchanged, and it is what keeps pools and bounded bodies byte-identical. On the FFT path
+    // the metres live in the sea state and the amplitude multiplies it, so an amplitude-only
+    // band bounded NOTHING: a 15 m sea at the default amplitude 1 produced a 5 m band, three
+    // times narrower than its own crests, and the header contract above says narrowing below a
+    // real crest clips a crossing. Taking the max of both means this can only ever WIDEN, which
+    // that same contract states is always safe.
+    float analyticReach = abs(_LargeWaveAmplitude) * SURFACE_BAND_AMPLITUDES;
+    float seaReach = _OffshoreSignificantHeight * abs(_LargeWaveAmplitude)
+                   * SURFACE_BAND_CREST_REACH;
+    return max(max(analyticReach, seaReach), surfReach) + SURFACE_BAND_PAD_METERS;
 }
 
 // ---- Waterline coverage: ONE curve for every consumer -------------------------------

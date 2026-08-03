@@ -52,6 +52,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // surface itself - instead of the bounded analytic march.
         TEXTURE2D(_OceanSurfaceEyeDepth);
         float _OceanSurfaceDepthValid; // 1 = the prepass ran this frame (set by the fog pass)
+        // Prepass resolution as a fraction of camera resolution (WaterUnderwaterFogPass publishes
+        // it beside the validity flag). The RT is read with pixel LOADs, so every load coordinate
+        // below multiplies through this - full-res was the Full tier's biggest constant GPU add.
+        float _OceanSurfacePrepassScale;
         // Sun globals (published by WaterUniformPublisher) - not in this shader's include chain otherwise.
         // Needed so the underwater in-scatter can use the same lit WaterInscatterColor as the surface, for a
         // continuous colour crossing the waterline.
@@ -76,7 +80,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // how far the march reaches along the ray (STEP_METRES x MAX_STEPS): raised so the wider shore-surf
         // band is still bracketed on grazing up-looks, where the crossing sits many metres along the ray.
         #define UNDERWATER_CROSS_STEP_METRES 1.5
-        #define UNDERWATER_CROSS_MAX_STEPS   40
+        #define UNDERWATER_CROSS_MAX_STEPS   24 // was 40: reach 36 m past band entry (see note below)
+        // PERF (2026-08-03): 40 steps x ~6 texture fetches per SurfaceHeightAtXZ, x2 fullscreen
+        // passes, made the no-prepass marching set (the near-clip strip on partial-submersion
+        // frames, carve holes, silhouettes) the frame-time spike at the swell period. 24 keeps the
+        // same 1.5 m wave-scale resolution; only the REACH shrinks (60 m -> 36 m past band entry),
+        // and past the reach the crossing already blends to the flat rest plane - at those
+        // distances waves approach sub-pixel, which is the fallback's stated premise. Revert to 40
+        // if the wavy->flat handover line becomes visible on grazing up-looks near shore surf.
         // The band half-width itself (swell reach vs surf-crest reach + chop pad) moved to
         // WaterWaterline.hlsl as SurfaceHeightBand(): the god-ray pass early-outs against the
         // SAME envelope before paying any surface fetches, so the number has exactly one home.
@@ -172,7 +183,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // All three returns below are this one path; the carve handoff in OceanPrepassPath
             // re-stamps the id AFTER its call, so a marched carve pixel still reads as the carve.
             WaterFogDebugBranch(WATER_FOG_BRANCH_WAVY_MARCH);
-            float camSurf = SurfaceHeightAtXZ(cam.xz);
+            // PERF (2026-08-03): the surface height at the CAMERA's xz is constant across the
+            // frame, and the CPU already publishes it every frame (_UnderwaterSurfaceY, the same
+            // value the Simple tier's whole waterline runs on). Evaluating the full displaced
+            // field here (~6 texture fetches) per pixel, twice per frame (absorb + inscatter),
+            // priced a per-frame constant. camSurf only feeds surfaceRefY / early-out references
+            // (metres-scale, smooth), never the crossing itself - SurfaceSignedGap below still
+            // marches the exact displaced surface.
+            float camSurf = _UnderwaterSurfaceY;
             float sceneSurf = SurfaceHeightAtXZ(sceneWorld.xz);
             bool sceneUnder = sceneWorld.y <= sceneSurf;
             wetStart = cam; // start of the in-water span ALONG the ray (exclusion subtraction origin)
@@ -254,9 +272,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                               out float pathLen, out float deepestY, out float surfaceRefY,
                               out float3 wetStart)
         {
-            float camSurf = SurfaceHeightAtXZ(cam.xz);
-            float sceneSurf = SurfaceHeightAtXZ(sceneWorld.xz);
-            bool sceneUnder = sceneWorld.y <= sceneSurf;
+            // Same PERF move as OceanWavyPath above: per-frame constant, published by the CPU.
+            float camSurf = _UnderwaterSurfaceY;
+            // DEFERRED (2026-08-03): sceneSurf / sceneUnder used to be computed HERE, before the
+            // prepass load - ~6 texture fetches per pixel that every prepass-owned pixel (the
+            // bulk of a submerged frame) then never read. Both now live at the analytic-authority
+            // section below, the only consumer. No behaviour change: nothing between here and
+            // there reads them.
             wetStart = cam;
 
             // RASTERIZED SURFACE FIRST (authority inversion - the Crest/KWS ranking). The
@@ -275,7 +297,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             float3 ray = sceneWorld - cam;
             float rayLen = max(length(ray), 1e-4);
             float3 dir = ray / rayLen;
-            int2 prepassPixel = int2(uv * _ScaledScreenParams.xy);
+            // Prepass-space pixel: the RT is _OceanSurfacePrepassScale x camera resolution.
+            // Clamped against the RT's own max coord (an out-of-range load is undefined, not 0,
+            // and odd camera sizes floor-divide - uv ~1 could land one texel past the edge).
+            int2 prepassPixelMax = int2(_ScaledScreenParams.xy * _OceanSurfacePrepassScale) - int2(1, 1);
+            int2 prepassPixel = min(int2(uv * _ScaledScreenParams.xy * _OceanSurfacePrepassScale), prepassPixelMax);
             float surfaceSigned = LOAD_TEXTURE2D(_OceanSurfaceEyeDepth, prepassPixel).r;
             float surfaceEye = abs(surfaceSigned);
             // INSTRUMENT ONLY. Stamped here rather than re-loaded by the view: which of the two
@@ -306,7 +332,6 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             //
             // LOAD, not SAMPLE: no implicit derivatives, so this is valid before any branch, and
             // the coordinates are clamped because an out-of-range load is undefined, not zero.
-            int2 prepassPixelMax = int2(_ScaledScreenParams.xy) - int2(1, 1);
             int prepassRowUp   = min(prepassPixel.y + PREPASS_FROM_AIR_CORROBORATION_PIXELS, prepassPixelMax.y);
             int prepassRowDown = max(prepassPixel.y - PREPASS_FROM_AIR_CORROBORATION_PIXELS, 0);
             float surfaceSignedUp   = LOAD_TEXTURE2D(_OceanSurfaceEyeDepth, int2(prepassPixel.x, prepassRowUp)).r;
@@ -446,6 +471,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // drew, where the skybox cannot masquerade as a waterline). Ordered AFTER the
             // prepass on purpose - see the authority note above.
             WaterFogDebugBranch(WATER_FOG_BRANCH_ANALYTIC);
+            float sceneSurf = SurfaceHeightAtXZ(sceneWorld.xz); // deferred from the top - see note there
+            bool sceneUnder = sceneWorld.y <= sceneSurf;
             if (rayStartsWet && sceneUnder)
             {
                 pathLen = length(sceneWorld - cam);
@@ -536,6 +563,19 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             if (SurfaceSignedGap(exitWorld) > 0.0) return exitWorld;  // whole segment in air: no water (len 0)
             return RefineSurfaceCrossing(enterWorld, gapEnter, exitWorld);
         }
+
+        // Mirror clamp for the raised lid (see the pond branch): pull a segment's EXIT down to the
+        // wavy crossing when it ends in AIR - an up-look from a submerged eye exits through the
+        // raised lid, which can sit above the true surface, and without this the span gained an
+        // air tail the flat lid never had. Entry-side air is already resolved by
+        // ClampEntryToSurface before this runs, so an air exit brackets a crossing against the wet
+        // entry (degenerate all-air segments arrive with entry == exit and stay length 0).
+        float3 ClampExitToSurface(float3 enterWorld, float3 exitWorld)
+        {
+            float gapExit = SurfaceSignedGap(exitWorld);
+            if (gapExit <= 0.0) return exitWorld; // exit already underwater: keep it
+            return RefineSurfaceCrossing(exitWorld, gapExit, enterWorld);
+        }
 #endif // !WATER_FOG_SIMPLE
 
         // World-space length of the in-water part of the camera->scene ray, the deepest submerged point's
@@ -574,7 +614,24 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             float sceneT = length(rayPool);
             rayPool /= max(sceneT, 1e-5);
 
+#ifndef WATER_FOG_SIMPLE
+            // Crest coverage (the "straight fog line at the rest level" fix): the water box top is
+            // the FLAT rest plane and ClampEntryToSurface only ever pulls an air entry DOWN - so
+            // water ABOVE rest (wind-wave crests) held no fog, and from a submerged or straddling
+            // eye the fog's upper edge read as a straight line while the drawn waterline curved.
+            // Raise the clip LID by the surface height band - the same one-home envelope the
+            // crossing march and the god-ray ceiling already trust - converted through the volume
+            // frame itself (the rest level maps to pool y = 0, so no new uniform). Correctness
+            // stays the CLAMPS': entries that start in air bisect down to the true wavy surface,
+            // all-air segments collapse to length 0, and ClampExitToSurface below closes the
+            // up-look mirror case the raise opens.
+            float3 poolBoxMax = POOL_WATER_BOX_MAX;
+            poolBoxMax.y = WorldToPool(_VolumeCenter + float3(0.0, SurfaceHeightBand(), 0.0)).y;
+            float2 hit = IntersectCube(originPool, rayPool, POOL_WATER_BOX_MIN, poolBoxMax);
+#else
+            // Simple tier: the flat rest lid IS its waterline by definition - nothing to raise.
             float2 hit = IntersectCube(originPool, rayPool, POOL_WATER_BOX_MIN, POOL_WATER_BOX_MAX);
+#endif
             float tEnter = max(hit.x, 0.0);
             float tExit = min(hit.y, sceneT); // never fog past the scene surface
             if (tExit <= tEnter)
@@ -601,6 +658,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             surfaceRefY = _VolumeCenter.y;
 #else
             enterWorld = ClampEntryToSurface(enterWorld, exitWorld);
+            exitWorld = ClampExitToSurface(enterWorld, exitWorld);
 
             pathLen = length(exitWorld - enterWorld);
             deepestY = min(enterWorld.y, exitWorld.y);
@@ -871,7 +929,27 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                    - pathLen * downwellExp / max(1.0 - downwellExp, DOWNWELL_MEAN_SIGMA_MIN * 1e-3))
                 : (0.5 * pathLen);
             float downwellY = max(wetStart.y + segDir.y * downwellTMean, deepestY);
-            depthAttenuation = DownwellingAttenuation(downwellY, surfaceRefY);
+#ifndef WATER_FOG_SIMPLE
+            // Downwelling reference LOCAL to the in-scatter point (the ocean stripe fix): the
+            // per-path surfaceRefY samples the wave height above the ray's FAR ENDPOINT - and for
+            // a level camera every pixel in a screen COLUMN lands on nearly the same far xz, so
+            // the reference rode the wave phase out there column-coherently. A strong depth
+            // extinction turns that +-amplitude swing into vertical bright/dark stripes across
+            // the whole frame (exp of reference-minus-downwellY, multiplied onto the scene by the
+            // absorb pass). The light this term prices in-scatters at the MEAN point computed
+            // right above - so the height that belongs over it is the surface at THAT point's own
+            // xz, which is also smooth across columns (neighbouring rays' mean points sit metres
+            // apart, not hundreds). One extra wave sample per armed pixel; the wavy paths already
+            // pay several in their march, and WaterDepthClarity's shore fetch below sits at this
+            // same reconverged point in the control flow.
+            float2 downwellXZ = wetStart.xz + segDir.xz * downwellTMean;
+            float downwellRefY = SurfaceHeightAtXZ(downwellXZ);
+#else
+            // Simple tier: the per-path reference is already the flat waterline - stripe-free by
+            // construction, and this variant compiles no SurfaceHeightAtXZ to call.
+            float downwellRefY = surfaceRefY;
+#endif
+            depthAttenuation = DownwellingAttenuation(downwellY, downwellRefY);
             // Carve-boundary pane: edge occlusion + sun facet of the box face this ray looks
             // through (Crest-style darkened zone edges, analytic). Folded into the term BOTH
             // hardware passes multiply by, so the scene absorption and the in-scatter darken

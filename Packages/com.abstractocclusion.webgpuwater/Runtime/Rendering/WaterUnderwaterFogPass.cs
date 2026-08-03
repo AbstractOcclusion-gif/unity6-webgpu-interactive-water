@@ -39,6 +39,17 @@ namespace AbstractOcclusion.WebGpuWater
 
         static readonly int ID_OceanSurfaceEyeDepth = Shader.PropertyToID("_OceanSurfaceEyeDepth");
         static readonly int ID_OceanSurfaceDepthValid = Shader.PropertyToID("_OceanSurfaceDepthValid");
+        static readonly int ID_OceanSurfacePrepassScale = Shader.PropertyToID("_OceanSurfacePrepassScale");
+
+        // The eye-depth prepass renders at this fraction of camera resolution (both axes). The fog
+        // only needs the SIGN of the sheet and its eye depth at wave scale - not per-pixel exact
+        // silhouettes - and the full-res R32F + Depth32 pair was the single biggest constant GPU
+        // add of the Full tier (~20 displaced-mesh draws into two camera-sized targets, plus the
+        // mid-frame RT switch that costs far more on the WebGPU backend than native). At 0.5 the
+        // fill + bandwidth drop 4x and the corroboration test's +-1 texel becomes +-2 screen
+        // pixels, which still rejects the 1-px silhouette runs it exists for. The shader reads the
+        // RT with pixel LOADs, so it must know the scale: published as _OceanSurfacePrepassScale.
+        const float PrepassResolutionScale = 0.5f;
         static readonly int ID_WaterlineSceneTex = Shader.PropertyToID("_WaterlineSceneTex");
 
         readonly Material _material;
@@ -108,6 +119,8 @@ namespace AbstractOcclusion.WebGpuWater
                 }
             }
             Shader.SetGlobalFloat(ID_OceanSurfaceDepthValid, prepassRecorded ? 1f : 0f);
+            // _OceanSurfacePrepassScale is published inside RecordSurfaceDepthPrepass, from the
+            // scale actually applied to the RT - the only frames the shader reads it (validity 1).
 
             // Order matters: absorb (scene *= transmittance) then inscatter (scene += fog),
             // then the waterline meniscus ON TOP of the fogged scene (it darkens the final
@@ -190,6 +203,8 @@ namespace AbstractOcclusion.WebGpuWater
             colorDesc.msaaSamples = MSAASamples.None;
             colorDesc.clearBuffer = true;
             colorDesc.clearColor = Color.clear;
+            float appliedScale = ApplyPrepassScale(ref colorDesc);
+            Shader.SetGlobalFloat(ID_OceanSurfacePrepassScale, appliedScale);
             TextureHandle color = renderGraph.CreateTexture(colorDesc);
 
             TextureDesc depthDesc = renderGraph.GetTextureDesc(sizeSource);
@@ -198,6 +213,7 @@ namespace AbstractOcclusion.WebGpuWater
             depthDesc.depthBufferBits = DepthBits.Depth32;
             depthDesc.msaaSamples = MSAASamples.None;
             depthDesc.clearBuffer = true;
+            ApplyPrepassScale(ref depthDesc);
             TextureHandle depth = renderGraph.CreateTexture(depthDesc);
 
             using var builder = renderGraph.AddRasterRenderPass<PrepassData>(_prepassSampler.name,
@@ -221,6 +237,26 @@ namespace AbstractOcclusion.WebGpuWater
                                      renderer.sharedMaterial, 0, SurfaceDepthShaderPass, d.block);
                 }
             });
+        }
+
+        // Shrink a camera-sized desc to the prepass resolution, whatever size mode the source desc
+        // carries (URP's camera color is usually Explicit; Scale covers dynamic-resolution setups).
+        // Returns the scale ACTUALLY applied, so the published uniform can never disagree with
+        // the RT that was allocated (Functor mode cannot be composed and stays full res).
+        static float ApplyPrepassScale(ref TextureDesc desc)
+        {
+            if (desc.sizeMode == TextureSizeMode.Explicit)
+            {
+                desc.width = Mathf.Max(1, (int)(desc.width * PrepassResolutionScale));
+                desc.height = Mathf.Max(1, (int)(desc.height * PrepassResolutionScale));
+                return PrepassResolutionScale;
+            }
+            if (desc.sizeMode == TextureSizeMode.Scale)
+            {
+                desc.scale *= PrepassResolutionScale;
+                return PrepassResolutionScale;
+            }
+            return 1f; // Functor: full res, and the uniform must say so
         }
 
         void RecordFogPass(RenderGraph renderGraph, UniversalResourceData resources,

@@ -71,12 +71,21 @@ struct FoamLayer
 WaterGeomStage EvaluateSurfaceGeometry(v2f i)
 {
     float fade;
-    float4 info = SampleRipple(i.position, i.worldPos, fade);
+    // SOURCE xz, not i.worldPos: the vertex added the ripple HEIGHT before the FFT chop moved the
+    // vertex horizontally, so reading the ripple back at the DISPLACED position takes the wake's
+    // normal/foam/pinch from a different sim texel than the one that raised its bump. The two then
+    // disagree by lbwDisp, which oscillates at swell frequency - the wake smears across its own
+    // geometry. Harmless while a whole-field multiplier crushed the sea (disp was centimetres); at
+    // honest metres disp IS metres. Every other consumer in this file already reads
+    // largeWaveSourceXZ - the ripple was the one exception. i.position is pool space captured
+    // pre-displacement, so the non-windowed branch was already source-correct.
+    float3 rippleSourcePos = float3(i.largeWaveSourceXZ.x, i.worldPos.y, i.largeWaveSourceXZ.y);
+    float4 info = SampleRipple(i.position, rippleSourcePos, fade);
 
     // make the water look more "peaked": walk a few steps along the ripple normal
     // in the active UV domain (pool for whole-body, sim window for windowed).
     float2 coord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
-                                        : (WorldToSim(i.worldPos).xz * 0.5 + 0.5);
+                                        : (WorldToSim(rippleSourcePos).xz * 0.5 + 0.5);
     int refineSteps = clamp((int)_PeakedRefineSteps, 0, PEAKED_REFINE_MAX_STEPS);
     [loop] // uniform trip count (tier knob); explicit-LOD samples are loop-safe
     for (int k = 0; k < refineSteps; k++)

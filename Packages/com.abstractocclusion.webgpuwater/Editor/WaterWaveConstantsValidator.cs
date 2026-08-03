@@ -59,6 +59,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // a SetVectorArray over-run or lamps silently dropped. Was a KEEP-IN-SYNC comment.
         const string FogHlslAssetName = "WaterFog";
         const string UniformPublisherAssetName = "WaterUniformPublisher";
+        const string WaterlineHlslAssetName = "WaterWaterline";
+        // Dotted filename. AssetDatabase.FindAssets tokenises its filter, so this pair is read
+        // OUTSIDE the main gate below - a miss must skip this one group, never the whole validator.
+        const string UnderwaterCSharpAssetName = "WaterVolume.Underwater";
         // FoamParticles.shader DRAWS the particles WaterFoamParticles.compute simulates, so the GPU
         // struct is authored in the .compute, in the .shader, AND as a C# struct whose size becomes
         // every consumer's buffer stride. Nothing linked the three: a field added on one side only does
@@ -86,6 +90,17 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         static readonly (string Hlsl, string CSharp)[] SceneLightConstantPairs =
         {
             ("WATER_SCENE_LIGHT_MAX", "MaxSceneLights"),
+        };
+
+        // The displaced-surface envelope, mirrored between the shader's SurfaceHeightBand and the
+        // CPU's SurfaceHeightEnvelope. Unguarded until 2026-08-03, which is how the FFT path came
+        // to run a band three times narrower than its own crests: the pair drifted in MEANING (the
+        // amplitude stopped being a height) with nothing checking either side.
+        static readonly (string Hlsl, string CSharp)[] SurfaceBandConstantPairs =
+        {
+            ("SURFACE_BAND_AMPLITUDES",  "SurfaceBandAmplitudes"),
+            ("SURFACE_BAND_PAD_METERS",  "SurfaceBandPadMeters"),
+            ("SURFACE_BAND_CREST_REACH", "SurfaceBandCrestReach"),
         };
 
         static readonly (string Hlsl, string CSharp)[] LargeWavesConstantPairs =
@@ -391,11 +406,30 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             CollectProblems(problems, FogHlslAssetName, HlslExtension, fogHlslSource,
                             UniformPublisherAssetName, uniformPublisherSource, SceneLightConstantPairs);
             CollectFoamParticleLayoutProblems(problems, foamComputeSource, foamShaderSource);
+            CollectSurfaceBandProblems(problems);
             if (problems.Count == 0) return;
 
             // Warning, not error: drift is a real authoring bug but never blocks the editor, and a
             // red error trains you to ignore the console. This only ever fires in the dev project.
             Debug.LogWarning(BuildReport(problems));
+        }
+
+        // Surface-band trio, read separately from the gate in Validate: its C# side has a DOTTED
+        // filename that AssetDatabase.FindAssets may tokenise away, and a failed read there must
+        // cost this one group rather than silently disabling every other pair in the file.
+        static void CollectSurfaceBandProblems(List<string> problems)
+        {
+            if (!TryReadPackageAsset(WaterlineHlslAssetName, HlslExtension,
+                                     out string waterlineSource, out string readError)
+                || !TryReadPackageAsset(UnderwaterCSharpAssetName, CSharpExtension,
+                                        out string underwaterSource, out readError))
+            {
+                problems.Add($"surface band: pair not checked - {readError}");
+                return;
+            }
+
+            CollectProblems(problems, WaterlineHlslAssetName, HlslExtension, waterlineSource,
+                            UnderwaterCSharpAssetName, underwaterSource, SurfaceBandConstantPairs);
         }
 
         static void CollectProblems(List<string> problems, string hlslAssetName, string hlslExtension,

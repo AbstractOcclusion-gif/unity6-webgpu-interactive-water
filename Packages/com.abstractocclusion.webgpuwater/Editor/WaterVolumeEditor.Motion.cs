@@ -109,7 +109,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                         WaterVolumePropertyPaths.WaveScale);
                     // Steepness is the whole point of splitting height from wavelength, so show the one
                     // number the two sliders exist to control rather than making it mental arithmetic.
-                    if (target is WaterVolume seaVolume) DrawSteepnessReadout(seaVolume);
+                    // The sea-state line then answers the question the metres alone do not: what size
+                    // of wave will actually be seen out there.
+                    if (target is WaterVolume seaVolume)
+                    {
+                        DrawSteepnessReadout(seaVolume);
+                        DrawSeaSizeReadout(seaVolume);
+                    }
+                    DrawRetiredAmplitudeWarning();
 
                     _showSwell = WaterEditorUI.SubSection("Swell", _showSwell, () =>
                         DrawFields(
@@ -141,6 +148,72 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             EditorGUILayout.LabelField(" ", $"Steepness: 1/{1f / steepness:0} ({character})",
                                        EditorStyles.miniLabel);
         }
+
+        // Real wave SIZE, which the authored metres do not state on their own.
+        //
+        // Significant Height is the mean of the highest THIRD of the waves. That definition exists
+        // because it matches what an observer at sea reports as "the wave height" - so it is the honest
+        // answer to "how big is my sea", but it is emphatically NOT the biggest wave anyone will meet.
+        // For a narrow-banded sea the crest-to-trough heights are Rayleigh distributed, so the largest
+        // wave in a run of N is Hs * sqrt(ln(N) / 2) - about 1.9x Hs over a storm's worth of waves.
+        // Wind sea and swell are independent, so their heights combine in QUADRATURE (energies add),
+        // which is the same rule LargeWaveHeightMeters uses on the runtime side.
+        // Peak period comes from the deep-water dispersion relation via the coefficient the surf
+        // breakers already use, so this readout and the breaker physics cannot disagree about how fast
+        // a given wavelength travels.
+        void DrawSeaSizeReadout(WaterVolume volume)
+        {
+            float peakWavelength = volume.PeakWavelengthEffective;
+            if (peakWavelength <= 0f) return;
+
+            float windSea = volume.SignificantWaveHeight;
+            float swell = volume.SwellHeight;
+            float significant = Mathf.Sqrt(windSea * windSea + swell * swell);
+            if (significant <= 0f) return;
+
+            float largest = significant * Mathf.Sqrt(Mathf.Log(ObservedWaveCount) / 2f);
+            float peakPeriod = Mathf.Sqrt(peakWavelength / LargeWaveField.SurfDeepwaterLengthCoef);
+            EditorGUILayout.LabelField(" ",
+                $"Sea: {significant:0.#} m typical, biggest ~{largest:0.#} m "
+                + $"(crest to trough) - {DescribeSeaState(significant)}",
+                EditorStyles.miniLabel);
+            EditorGUILayout.LabelField(" ", $"Peak period {peakPeriod:0.#} s",
+                                       EditorStyles.miniLabel);
+        }
+
+        // WMO sea-state descriptions, by significant height in metres. Plain words rather than a code
+        // number, because the point of the line is to tell an artist what they have built.
+        static string DescribeSeaState(float significantHeight)
+        {
+            for (int i = 0; i < SeaStateCeilings.Length; i++)
+                if (significantHeight < SeaStateCeilings[i]) return SeaStateNames[i];
+            return PhenomenalSeaName;
+        }
+
+        static readonly float[] SeaStateCeilings = { 0.1f, 0.5f, 1.25f, 2.5f, 4f, 6f, 9f, 14f };
+        static readonly string[] SeaStateNames =
+            { "calm", "smooth", "slight", "moderate", "rough", "very rough", "high", "very high" };
+        const string PhenomenalSeaName = "phenomenal";
+        // Waves in the run the "biggest" figure is quoted over - roughly a storm's duration, which is
+        // the window the textbook 1.86x Hs figure assumes.
+        const float ObservedWaveCount = 1000f;
+
+        // `largeWaveAmplitude` is a retired whole-field multiplier that no inspector draws
+        // (see MigrateOceanAmplitudeIntoMetresV12). Unbounded oceans are folded back to 1 on load, so
+        // this can only fire if that migration was bypassed - and if it ever does, every metre in this
+        // section is a lie by exactly this factor. Cheap invariant, loud failure.
+        void DrawRetiredAmplitudeWarning()
+        {
+            if (!Prop(WaterVolumePropertyPaths.UnboundedOcean).boolValue) return;
+            float amplitude = Prop(WaterVolumePropertyPaths.LargeWaveAmplitude).floatValue;
+            if (Mathf.Approximately(amplitude, NeutralLargeWaveAmplitude)) return;
+            EditorGUILayout.HelpBox(
+                $"This ocean carries a retired wave-height multiplier of {amplitude:0.###}, so the sea "
+                + "is rendered at that fraction of every height above. Set it to 1 (Debug inspector) and "
+                + "re-author the heights in metres.", MessageType.Warning);
+        }
+
+        const float NeutralLargeWaveAmplitude = 1f;
 
         // Stokes' limiting steepness is 1/7; the other two are where a sea stops reading as one thing and
         // starts reading as another, taken from the fetch-limited steepness law (Hs/lambda ~ 1/14 at very

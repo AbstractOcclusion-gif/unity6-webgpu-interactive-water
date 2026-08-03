@@ -224,10 +224,23 @@ namespace AbstractOcclusion.WebGpuWater
         // Async buoyancy readback: throttle/error-streak/unsupported state lives on the shared
         // channel (the same machinery WaterSurfaceSampler uses); the landed buffer stays here.
         readonly AsyncReadbackChannel _readback;
-        float[] _heightCpu;
+        Color[] _heightCpu; // (r = dispX, g = height, b = dispZ) - matches the bake's channel order
         bool _heightReady;
         Vector2 _bakedCenter, _pendingCenter, _sampledCenter; // region centre at bake / in-flight / landed
         float _bakedSize, _pendingSize, _sampledSize;
+        // Wave-clock stamp travelling with the region through the same three stages, so a landed
+        // field knows WHEN it was baked. Without it two landings cannot be differenced in time.
+        float _bakedTime, _pendingTime, _sampledTime;
+
+        // The landing BEFORE the current one, kept so TrySampleField can measure d(height)/dt on the
+        // FFT surface itself instead of borrowing a rate from the analytic mirror - a field the FFT
+        // branch does not render, whose phase is unrelated to this one's height. Its own centre/size
+        // are kept beside it: the camera moves between bakes, so a shared UV would difference two
+        // different PLACES and report their height gap as a velocity.
+        Color[] _heightCpuPrev;
+        Vector2 _sampledCenterPrev;
+        float _sampledSizePrev, _sampledTimePrev;
+        bool _hasPrevField;
 
         // The debug view shows the readable preview, not the raw signed displacement.
         // Null in release builds: the preview array is a debug aid and is neither allocated nor
@@ -447,10 +460,12 @@ namespace AbstractOcclusion.WebGpuWater
             return tex;
         }
 
-        // Single-channel camera-centred buoyancy field (2D, not an array). RFloat -> readable as R32 on CPU.
+        // Camera-centred buoyancy/inversion field (2D, not an array): (dispX, height, dispZ, 0).
+        // ARGBFloat since 2026-08-03: the horizontal displacement lanes ride along so the CPU can
+        // invert chop (wake injection; deferred-improvement #1 below). 128x128x16B = 256 KB/readback.
         RenderTexture CreateHeightField()
         {
-            var rt = new RenderTexture(HeightFieldRes, HeightFieldRes, 0, RenderTextureFormat.RFloat)
+            var rt = new RenderTexture(HeightFieldRes, HeightFieldRes, 0, RenderTextureFormat.ARGBFloat)
             {
                 enableRandomWrite = true,
                 filterMode = FilterMode.Bilinear,
@@ -548,6 +563,7 @@ namespace AbstractOcclusion.WebGpuWater
             // Bake the camera-centred height field for CPU buoyancy readback.
             _bakedCenter = cameraXZ;
             _bakedSize = HeightFieldSize;
+            _bakedTime = waveTime;
             _cs.SetVector(ID_FieldCenter, new Vector4(cameraXZ.x, cameraXZ.y, 0f, 0f));
             _cs.SetFloat(ID_FieldSize, HeightFieldSize);
             _cs.SetInt(ID_FieldRes, HeightFieldRes);
@@ -584,19 +600,37 @@ namespace AbstractOcclusion.WebGpuWater
             if (!_ready || !_readback.CanRequest) return;
             _pendingCenter = _bakedCenter;
             _pendingSize = _bakedSize;
-            _readback.Request(_heightField, TextureFormat.RFloat, _onHeightReadback);
+            _pendingTime = _bakedTime;
+            _readback.Request(_heightField, TextureFormat.RGBAFloat, _onHeightReadback);
         }
 
         // Successful landings only: the channel absorbs errors (and drops _heightReady via the
         // ctor's onGaveUp when the streak crosses its threshold).
         void OnHeightReadback(AsyncGPUReadbackRequest req)
         {
-            var data = req.GetData<float>();
-            if (_heightCpu == null || _heightCpu.Length != data.Length) _heightCpu = new float[data.Length];
+            var data = req.GetData<Color>();
+            RetireLandedFieldToPrevious();
+            if (_heightCpu == null || _heightCpu.Length != data.Length) _heightCpu = new Color[data.Length];
             data.CopyTo(_heightCpu);
             _sampledCenter = _pendingCenter;
             _sampledSize = _pendingSize;
+            _sampledTime = _pendingTime;
             _heightReady = true;
+        }
+
+        // Move the current landing into the "previous" slot before the new one overwrites it.
+        // The buffers are SWAPPED rather than copied (the same ping-pong _foamHistA/_foamHistB uses):
+        // a copy would be a full field memcpy per landing purely to keep a value we are about to
+        // overwrite anyway. After the swap _heightCpu holds the older of the two arrays, which the
+        // caller's length check then reuses or reallocates.
+        void RetireLandedFieldToPrevious()
+        {
+            if (!_heightReady) return; // first landing: there is no previous field yet
+            (_heightCpu, _heightCpuPrev) = (_heightCpuPrev, _heightCpu);
+            _sampledCenterPrev = _sampledCenter;
+            _sampledSizePrev = _sampledSize;
+            _sampledTimePrev = _sampledTime;
+            _hasPrevField = true;
         }
 
         // DEFERRED IMPROVEMENTS (tracked, intentionally not done yet):
@@ -612,23 +646,59 @@ namespace AbstractOcclusion.WebGpuWater
         // World-space (height, dHeight/dx, dHeight/dz) at a world xz, from the last readback. False before
         // the first readback lands or when the point is outside the baked camera-centred region.
         internal bool TrySampleField(float worldX, float worldZ, out Vector3 heightSlope)
+            => TrySampleField(worldX, worldZ, out heightSlope, out _);
+
+        /// <summary>As the three-argument overload, and additionally the surface's vertical rate
+        /// d(height)/dt (m/s) MEASURED on this same field. <paramref name="verticalRate"/> is 0 until a
+        /// second readback has landed, and wherever a rate cannot be measured (see VerticalRateAt).</summary>
+        /// <remarks>
+        /// The rate used to come from LargeWaveField.VerticalVelocityAtQuery - the ANALYTIC Gerstner
+        /// mirror - while the height came from here. WaterLargeWaves.hlsl renders the two branches
+        /// MUTUALLY EXCLUSIVELY, so on an FFT ocean that rate described a surface nothing draws, in a
+        /// phase unrelated to this height. Buoyancy's surface-relative drag chases a velocity it can
+        /// never arrive at (the height that would let it arrive is elsewhere), so the drag term stops
+        /// being a damper and becomes a permanent energy source - it scaled with Swell Height and threw
+        /// boats out of the water. Differencing two landings costs one extra buffer and one extra
+        /// bilinear tap, and the answer describes the surface actually being floated on.
+        /// </remarks>
+        internal bool TrySampleField(float worldX, float worldZ, out Vector3 heightSlope,
+                                     out float verticalRate)
         {
             heightSlope = Vector3.zero;
+            verticalRate = 0f;
             if (!_heightReady || _heightCpu == null || _sampledSize <= 0f) return false;
-            float u = (worldX - _sampledCenter.x) / _sampledSize + 0.5f;
-            float v = (worldZ - _sampledCenter.y) / _sampledSize + 0.5f;
-            if (u < 0f || u > 1f || v < 0f || v > 1f) return false;
+            if (!TryFieldUV(_sampledCenter, _sampledSize, worldX, worldZ, out float u, out float v))
+                return false;
 
             float texel = _sampledSize / HeightFieldRes; // metres per texel
             float du = 1f / HeightFieldRes;
-            float h = SampleFieldBilinear(u, v);
-            float slopeX = (SampleFieldBilinear(Mathf.Clamp01(u + du), v) - SampleFieldBilinear(Mathf.Clamp01(u - du), v)) / (2f * texel);
-            float slopeZ = (SampleFieldBilinear(u, Mathf.Clamp01(v + du)) - SampleFieldBilinear(u, Mathf.Clamp01(v - du))) / (2f * texel);
+            float h = SampleFieldBilinear(u, v).g;
+            float slopeX = (SampleFieldBilinear(Mathf.Clamp01(u + du), v).g - SampleFieldBilinear(Mathf.Clamp01(u - du), v).g) / (2f * texel);
+            float slopeZ = (SampleFieldBilinear(u, Mathf.Clamp01(v + du)).g - SampleFieldBilinear(u, Mathf.Clamp01(v - du)).g) / (2f * texel);
             heightSlope = new Vector3(h, slopeX, slopeZ);
+            verticalRate = VerticalRateAt(worldX, worldZ, h);
             return true;
         }
 
-        float SampleFieldBilinear(float u, float v) => SampleFieldBilinearFrom(_heightCpu, u, v);
+        // d(height)/dt from the two most recent landings, each read against the centre and size IT was
+        // baked at. Returns 0 - never a guess - when the rate cannot be measured: no second landing yet,
+        // the point has left the previous region (camera moved, or a floater near the border), or a
+        // non-positive dt (a paused body re-requesting, or a scrubbed wave clock).
+        //
+        // Sampling adequacy: the request interval tops out at WaterQuality.MaxUpdateInterval frames, so
+        // dt stays well under the period of anything this field can carry - it is HeightFieldSize /
+        // HeightFieldRes metres per texel, which band-limits it far below the readback rate.
+        float VerticalRateAt(float worldX, float worldZ, float heightNow)
+        {
+            if (!_hasPrevField || _heightCpuPrev == null || _sampledSizePrev <= 0f) return 0f;
+            float deltaTime = _sampledTime - _sampledTimePrev;
+            if (deltaTime <= 0f) return 0f;
+            if (!TryFieldUV(_sampledCenterPrev, _sampledSizePrev, worldX, worldZ,
+                            out float u, out float v)) return 0f;
+            return (heightNow - SampleFieldBilinearFrom(_heightCpuPrev, u, v).g) / deltaTime;
+        }
+
+        Color SampleFieldBilinear(float u, float v) => SampleFieldBilinearFrom(_heightCpu, u, v);
 
         static bool TryFieldUV(Vector2 center, float size, float worldX, float worldZ, out float u, out float v)
         {
@@ -639,7 +709,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         // Shared filter (WaterFieldSampling) with exactly the clamp/half-texel semantics this
         // method used to inline; the wrapper just binds the fixed field resolution.
-        static float SampleFieldBilinearFrom(float[] field, float u, float v)
+        static Color SampleFieldBilinearFrom(Color[] field, float u, float v)
             => WaterFieldSampling.SampleBilinear(field, HeightFieldRes, u, v);
 
         // Latest landed readback height at a world xz. ~1-2 frames stale (async readback); the fog gate
@@ -651,7 +721,22 @@ namespace AbstractOcclusion.WebGpuWater
             height = 0f;
             if (!_heightReady || _heightCpu == null || _sampledSize <= 0f) return false;
             if (!TryFieldUV(_sampledCenter, _sampledSize, worldX, worldZ, out float u, out float v)) return false;
-            height = SampleFieldBilinearFrom(_heightCpu, u, v);
+            height = SampleFieldBilinearFrom(_heightCpu, u, v).g;
+            return true;
+        }
+
+        /// <summary>Latest landed horizontal Gerstner displacement (metres, world xz) at a world xz -
+        /// the .xz lanes the bake carries beside the height. Same region/staleness caveats as
+        /// <see cref="TrySampleHeightLatest"/>. Consumer: WaterVolume.InvertLargeWaveChopXZ, which
+        /// fixed-point-inverts it so wake/ripple injections land where the DISPLACED surface will
+        /// actually be drawn (deferred-improvement #1, now done for the injection path).</summary>
+        internal bool TrySampleDisplacementLatest(float worldX, float worldZ, out Vector2 dispXZ)
+        {
+            dispXZ = Vector2.zero;
+            if (!_heightReady || _heightCpu == null || _sampledSize <= 0f) return false;
+            if (!TryFieldUV(_sampledCenter, _sampledSize, worldX, worldZ, out float u, out float v)) return false;
+            Color c = SampleFieldBilinearFrom(_heightCpu, u, v);
+            dispXZ = new Vector2(c.r, c.b);
             return true;
         }
 
@@ -742,6 +827,8 @@ namespace AbstractOcclusion.WebGpuWater
             _hasLastDispatchTime = false;
             _heightReady = false;
             _heightCpu = null;
+            _heightCpuPrev = null;
+            _hasPrevField = false;
             if (_butterfly != null)
             {
                 WaterObjects.DestroyRuntime(_butterfly);

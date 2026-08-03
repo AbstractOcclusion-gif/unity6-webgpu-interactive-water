@@ -426,9 +426,13 @@ namespace AbstractOcclusion.WebGpuWater
         /// path): the per-cascade shoal attenuation collapses on the CPU to one weight at the
         /// dominant swell wavelength, the ambient fade under the fronts, and the surf-front
         /// height/slope on top. Applied to the FFT height-field readback sample so floaters near
-        /// shore keep matching the rendered surface. Identity when no shore field is live.</summary>
+        /// shore keep matching the rendered surface. Identity when no shore field is live.
+        /// <paramref name="verticalRate"/> is the rate MEASURED on the FFT field
+        /// (WaterOceanFft.TrySampleField); it is composed exactly like the height it differentiates -
+        /// same shoal/ambient weight, plus the fronts' own rate - so it stays d(height)/dt of the
+        /// composed surface rather than of the raw cascade.</summary>
         internal static Vector3 ApplyShoreToFftSample(Vector3 fft, float worldX, float worldZ,
-            float time, float dominantWavelength, in ShoreWaveContext ctx)
+            float time, float dominantWavelength, in ShoreWaveContext ctx, ref float verticalRate)
         {
             if (ctx.Field == null) return fft;
             ShoreSampleCpu shore = SampleShore(ctx, worldX, worldZ);
@@ -442,6 +446,8 @@ namespace AbstractOcclusion.WebGpuWater
             fft.x = fft.x * weight + surfHeight;
             fft.y = fft.y * weight + surfSlopeX;
             fft.z = fft.z * weight + surfSlopeZ;
+            verticalRate = verticalRate * weight
+                         + SurfFrontVerticalRate(ctx, shore, worldX, worldZ, surfMask, surfHeight);
             return fft;
         }
 
@@ -542,14 +548,32 @@ namespace AbstractOcclusion.WebGpuWater
                 a.Height += surfHeight;
                 a.SlopeX += surfSlopeX;
                 a.SlopeZ += surfSlopeZ;
-                const float velocityDt = 1f / 60f;
-                float s = Mathf.Max(shore.SdfDist, 0f);
-                float hNext = SurfFrontHeight(ctx, x, z, SurfWarpDistance(ctx, s), shore.Depth,
-                                              shore.SlopeTan, ctx.SurfBeatTime + velocityDt) * surfMask;
-                a.HeightVelocity += (hNext - surfHeight) / velocityDt;
+                a.HeightVelocity += SurfFrontVerticalRate(ctx, shore, x, z, surfMask, surfHeight);
             }
             return a;
         }
+
+        // A surf front's own d(height)/dt, by finite difference on the master beat. Physics-only, so
+        // there is no shader twin to stay lockstep with. Shared by the analytic band sum above and by
+        // ApplyShoreToFftSample: both compose the fronts onto a surface the same way, so they must
+        // compose the fronts' MOTION the same way too.
+        // surfHeight is the already-masked height at ctx.SurfBeatTime, so the forward sample is masked
+        // identically - differencing a masked against an unmasked height would read the mask ramp as
+        // surface velocity.
+        static float SurfFrontVerticalRate(in ShoreWaveContext ctx, in ShoreSampleCpu shore,
+                                           float x, float z, float surfMask, float surfHeight)
+        {
+            if (surfMask <= 0f) return 0f;
+            float s = Mathf.Max(shore.SdfDist, 0f);
+            float heightNext = SurfFrontHeight(ctx, x, z, SurfWarpDistance(ctx, s), shore.Depth,
+                                               shore.SlopeTan,
+                                               ctx.SurfBeatTime + SurfVelocityDeltaTime) * surfMask;
+            return (heightNext - surfHeight) / SurfVelocityDeltaTime;
+        }
+
+        // Finite-difference step for the surf-front rate: one 60 Hz frame, short enough that a front
+        // moves a small fraction of its own profile width within it.
+        const float SurfVelocityDeltaTime = 1f / 60f;
 
         /// <summary>
         /// Wave (height, dHeight/dx, dHeight/dz) in metres at world (x, z). Mirrors
@@ -569,6 +593,16 @@ namespace AbstractOcclusion.WebGpuWater
         /// .disp term of EvaluateLargeBodyWaveShore() in WaterLargeWaves.hlsl. Zero when <paramref name="choppiness"/>
         /// is 0, so the field collapses to the pure vertical swell.
         /// </summary>
+        /// <summary>Internal-visible alias of <see cref="Displacement"/> for WaterVolume's chop
+        /// inversion of the ANALYTIC field (wake injection lands on the displaced surface).
+        /// Same fixed-point use as InvertToSource; exposed rather than duplicated so the analytic
+        /// and FFT inversion loops can share one caller-side implementation with edge weighting.</summary>
+        internal static Vector2 HorizontalDisplacementAtSource(float sourceX, float sourceZ, float time,
+            float amplitudeScale, float windHeadingRadians, float swellWavelength, float swellHeight,
+            float choppiness, in ShoreWaveContext ctx)
+            => Displacement(sourceX, sourceZ, time, amplitudeScale, windHeadingRadians,
+                            swellWavelength, swellHeight, choppiness, ctx);
+
         static Vector2 Displacement(float sourceX, float sourceZ, float time, float amplitudeScale,
             float windHeadingRadians, float swellWavelength, float swellHeight, float choppiness,
             in ShoreWaveContext ctx)
@@ -615,32 +649,19 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         /// <summary>
-        /// Vertical surface velocity d(height)/dt (m/s) at a QUERY world (x, z), chop-inverted: the swell's
-        /// contribution to buoyancy drag velocity. Closed-form time derivative of the band sum, evaluated at
-        /// the inverted source (same point the height is read from). Physics-only, so no shader mirror.
-        /// </summary>
-        internal static float VerticalVelocityAtQuery(float worldX, float worldZ, float time, float amplitudeScale,
-            float windHeadingRadians, float swellWavelength, float swellHeight, float choppiness,
-            in ShoreWaveContext ctx)
-        {
-            Vector2 source = InvertToSource(worldX, worldZ, time, amplitudeScale, windHeadingRadians,
-                                            swellWavelength, swellHeight, choppiness, ctx);
-            return EvaluateBands(source.x, source.y, time, amplitudeScale, windHeadingRadians,
-                                 swellWavelength, swellHeight, ctx).HeightVelocity;
-        }
-
-        /// <summary>
-        /// Height+slope AND vertical velocity at a QUERY world (x, z) from ONE chop inversion. Exactly
-        /// the pair EvaluateAtQuery and VerticalVelocityAtQuery return, computed together.
+        /// Height+slope AND vertical velocity at a QUERY world (x, z) from ONE chop inversion.
         /// </summary>
         /// <remarks>
-        /// A caller wanting both used to call those two with byte-identical arguments, and EACH ran
-        /// InvertToSource - four EvaluateBands passes - before its own final pass: 10 passes per point
-        /// where 5 suffice. EvaluateBands is 16 Gerstner components plus the surf-front cosh chain, and
-        /// buoyancy asks for HeightNormalVelocity at every probe of every floater, so the waste scaled
-        /// with the scene (the shipped stress spawner's 8x8 grid x 8 probes burned ~2,500 redundant
-        /// passes per FixedUpdate). BandAccum already carried HeightVelocity beside Height/Slope, so
-        /// both answers fall out of the single pass that was always being done.
+        /// Height and velocity are returned TOGETHER because a caller wanting both once took them from
+        /// two separate entry points with byte-identical arguments, and EACH ran InvertToSource - four
+        /// EvaluateBands passes - before its own final pass: 10 passes per point where 5 suffice.
+        /// EvaluateBands is 16 Gerstner components plus the surf-front cosh chain, and buoyancy asks for
+        /// HeightNormalVelocity at every probe of every floater, so the waste scaled with the scene (the
+        /// shipped stress spawner's 8x8 grid x 8 probes burned ~2,500 redundant passes per FixedUpdate).
+        /// BandAccum already carried HeightVelocity beside Height/Slope, so both answers fall out of the
+        /// single pass that was always being done. This is now the ONLY chop-inverted query: the FFT
+        /// branch measures its own rate on the readback (WaterOceanFft.TrySampleField) instead of
+        /// borrowing this mirror's, so the velocity-only entry point it used has been removed.
         /// </remarks>
         internal static void EvaluateAtQuery(float worldX, float worldZ, float time, float amplitudeScale,
             float windHeadingRadians, float swellWavelength, float swellHeight, float choppiness,

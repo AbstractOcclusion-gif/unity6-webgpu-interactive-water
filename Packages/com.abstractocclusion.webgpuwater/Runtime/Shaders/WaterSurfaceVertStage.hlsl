@@ -187,9 +187,12 @@
                 // and round. Add a Gerstner pinch along the ripple slope so they sharpen. info.ba is the sim
                 // normal.xz (= -grad h, already faded at the window edge), so displacing AGAINST it pulls
                 // the surface toward crests. 0 = off (byte-identical). SIGN NOTE: if the wake BULGES instead
-                // of sharpening, flip the '-' to '+' (cf. the sim-window Scroll sign). The fragment
-                // re-samples the ripple at the displaced xz (minor, as the large-wave path already does);
-                // add a source-xz carry later if a strong pinch shows a sampling seam.
+                // of sharpening, flip the '-' to '+' (cf. the sim-window Scroll sign).
+                // The fragment re-samples the ripple at the SOURCE xz (largeWaveSourceXZ), i.e. the
+                // same point this stage sampled info at, so the wake's normal/foam and its bump stay
+                // one object. It used to re-sample at the displaced position, which was written off as
+                // minor back when a whole-field multiplier kept lbwDisp at centimetres; at honest
+                // metres that mismatch became a wake smearing across its own geometry.
                 if (_RippleChoppiness > 0.0)
                     worldPos.xz -= _RippleChoppiness * info.ba;
                 // Surf swash film: over the beach the surface HUGS THE SAND (a thin film a few

@@ -404,13 +404,20 @@ namespace AbstractOcclusion.WebGpuWater
                 ? ctx.SurfAmplitude * LargeWaveField.SurfSetAmpJitterMax
                   * Mathf.Max(ctx.Greens, LargeWaveField.SurfMinGreens)
                 : 0f;
-            return Mathf.Max(Mathf.Abs(LargeWaveAmplitudeEffective) * SurfaceBandAmplitudes,
-                             surfReach)
+            // Two wave scales, mirroring the shader exactly - see the long note in
+            // WaterWaterline.hlsl's SurfaceHeightBand for WHY the amplitude term alone bounded
+            // nothing on the FFT path.
+            float analyticReach = Mathf.Abs(LargeWaveAmplitudeEffective) * SurfaceBandAmplitudes;
+            float seaReach = OffshoreSignificantHeight * Mathf.Abs(LargeWaveAmplitudeEffective)
+                           * SurfaceBandCrestReach;
+            return Mathf.Max(Mathf.Max(analyticReach, seaReach), surfReach)
                  + SurfaceBandPadMeters;
         }
-        // KEEP IN SYNC with WaterWaterline.hlsl (SURFACE_BAND_AMPLITUDES / SURFACE_BAND_PAD_METERS).
+        // KEEP IN SYNC with WaterWaterline.hlsl (SURFACE_BAND_AMPLITUDES / SURFACE_BAND_PAD_METERS
+        // / SURFACE_BAND_CREST_REACH). Machine-checked: WaterWaveConstantsValidator guards the trio.
         const float SurfaceBandAmplitudes = 3f;
         const float SurfaceBandPadMeters = 2f;
+        const float SurfaceBandCrestReach = 1.2f;
         // This frame's "any near-plane corner within FogArmBandMeters of its surface" flag.
         bool _fogNearSurface;
 
@@ -446,12 +453,22 @@ namespace AbstractOcclusion.WebGpuWater
                 // correct for this height-only gate. Identity offshore (no shore field).
                 // Edge guard mirrors the render: the gate must not arm against wave height the
                 // feathered border no longer displays.
-                y += LargeWaveField.ApplyShoreToFftSample(new Vector3(fftHeight, 0f, 0f),
-                         x, z, _waveTime, SwellWavelength, ShoreWaveCtx).x
-                     * LargeWaveEdgeWeight(x, z);
+                // The rate out-param is composed for buoyancy's drag reference; a height-only gate has
+                // no use for it, so it is fed a local that is written and dropped rather than plumbed.
+                y += ApplyShoreToFftHeightOnly(fftHeight, x, z) * LargeWaveEdgeWeight(x, z);
             else
                 y += SampleLargeWaveField(x, z).x;
             return y;
+        }
+
+        // Shore/surf treatment of an FFT height sample, for callers that want the HEIGHT only.
+        // Zero slopes in and out: ApplyShoreToFftSample composes height from fft.x alone, so the
+        // derivative channels are unused here rather than wrong.
+        float ApplyShoreToFftHeightOnly(float fftHeight, float x, float z)
+        {
+            float unusedVerticalRate = 0f;
+            return LargeWaveField.ApplyShoreToFftSample(new Vector3(fftHeight, 0f, 0f),
+                       x, z, _waveTime, SwellWavelength, ShoreWaveCtx, ref unusedVerticalRate).x;
         }
 
         // Hysteresis half-band (world units) around the surface for the camera-submerged flag.
