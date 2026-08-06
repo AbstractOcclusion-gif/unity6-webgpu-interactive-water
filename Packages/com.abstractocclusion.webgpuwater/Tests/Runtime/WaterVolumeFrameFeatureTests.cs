@@ -11,6 +11,7 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         const float OutsideRayOffset = 1f;
         const string TestVolumeName = "Water Volume Frame Test";
         static readonly Vector3 VolumePosition = new Vector3(10f, 2f, -4f);
+        static readonly Vector3 SecondaryVolumePosition = new Vector3(-10f, 2f, 4f);
         static readonly Vector3 VolumeExtent = new Vector3(4f, 2f, 6f);
         static readonly Vector3 PoolPoint = new Vector3(0.25f, -0.5f, 0.75f);
         static readonly Quaternion VolumeRotation = Quaternion.Euler(0f, 35f, 0f);
@@ -74,6 +75,33 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             finally
             {
                 Object.DestroyImmediate(host);
+            }
+        }
+
+        [Test]
+        public void BodyContaining_SelectsTheSecondaryBodyAtTheCameraPosition()
+        {
+            GameObject primaryHost = CreateInactiveVolume(out WaterVolume primary);
+            GameObject secondaryHost = CreateInactiveVolume(out WaterVolume secondary);
+            try
+            {
+                primary.transform.position = VolumePosition;
+                secondary.transform.position = SecondaryVolumePosition;
+                primary.volumeExtent = Vector3.one;
+                secondary.volumeExtent = Vector3.one;
+                WaterVolume.Bodies.Add(primary);
+                WaterVolume.Bodies.Add(secondary);
+
+                WaterVolume fogSource = WaterVolume.BodyContaining(SecondaryVolumePosition);
+
+                Assert.That(fogSource, Is.EqualTo(secondary));
+            }
+            finally
+            {
+                WaterVolume.Bodies.Remove(primary);
+                WaterVolume.Bodies.Remove(secondary);
+                Object.DestroyImmediate(primaryHost);
+                Object.DestroyImmediate(secondaryHost);
             }
         }
 

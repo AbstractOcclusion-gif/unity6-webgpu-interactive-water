@@ -11,10 +11,13 @@ namespace AbstractOcclusion.WebGpuWater
     public partial class WaterVolume
     {
         /// <summary>True when the underwater fog pass should run this frame (set each frame by the
-        /// primary body). Ocean fog is infinite, so it runs only when the camera is submerged; a bounded
+        /// body containing the target camera). Ocean fog is infinite, so it runs only when the camera is submerged; a bounded
         /// pond is a finite volume the shader clips to its box, so its fog runs from ANY angle whenever
         /// Water Fog is on (circle the pond and see the murk inside). The feature reads this to gate.</summary>
         internal static bool UnderwaterFogActive { get; private set; }
+
+        /// <summary>The body whose camera-relative data drives this frame's fullscreen fog passes.</summary>
+        internal static WaterVolume FogSource { get; private set; }
 
         /// <summary>True while the camera's near plane straddles the (displaced) surface, so the
         /// screen-space waterline meniscus pass should draw this frame (set each frame by the primary
@@ -101,7 +104,9 @@ namespace AbstractOcclusion.WebGpuWater
             RenderPlanarMirror(cam); // per-body planar: every planar body mirrors its OWN plane, not just primary
 
             if (!isPrimary) return;
-            UpdateUnderwaterState();
+            WaterVolume fogSource = BodyContaining(cam.transform.position);
+            if (fogSource == null) return;
+            fogSource.UpdateUnderwaterState(cam);
         }
 
         // Fraction of screen resolution + clip-plane push for the per-body planar mirror. Constants (not
@@ -205,14 +210,20 @@ namespace AbstractOcclusion.WebGpuWater
             return ~(1 << surfaceLayer) & ~PlanarExcludeLayers.value;
         }
 
-        // Detect whether the camera is submerged in THIS (primary) body and publish the globals the
+        // Detect whether the camera is submerged in THIS fog-source body and publish the globals the
         // underwater fog shader needs. The surface height is wave-aware at the camera's xz (swell + shoal
         // + surf front on the master beat; see SurfaceHeightAtCamera), so the gate tracks the rendered
         // surface. Bounded bodies require the camera inside their footprint; an ocean clipmap spans
         // everywhere, so only the height test applies.
-        void UpdateUnderwaterState()
+        void UpdateUnderwaterState(Camera eyeCamera)
         {
-            bool submerged = ComputeCameraSubmerged(out float surfaceY, out bool nearPlaneStraddles);
+            FogSource = this;
+            // The fullscreen fog and waterline passes intentionally use the established global
+            // shader path: it is the path that keeps exclusion-wall scattering stable. Refresh
+            // that global body frame from the camera-selected source here, after all bodies have
+            // updated, so a secondary pool's fog no longer inherits the primary body's volume.
+            Publisher.PublishBodyGlobals();
+            bool submerged = ComputeCameraSubmerged(eyeCamera, out float surfaceY, out bool nearPlaneStraddles);
             // "The fog pass must run" and "the eye is in water" are two DIFFERENT questions, and
             // inside a semi-submerged exclusion volume they have opposite answers: the eye sits in
             // AIR, in a sunken room, below sea level, with water all around it. They used to be one
@@ -226,9 +237,7 @@ namespace AbstractOcclusion.WebGpuWater
             // pass alive; Crest disables its camera-height heuristics outright while a portal is
             // active, for the same reason (you can be anywhere relative to the sea and still be
             // looking into an aquarium).
-            Camera eyeCamera = targetCamera;
-            bool eyeInDryVolume = eyeCamera != null
-                               && WaterExclusionVolume.ContainsPoint(eyeCamera.transform.position);
+            bool eyeInDryVolume = WaterExclusionVolume.ContainsPoint(eyeCamera.transform.position);
             bool eyeInWater = submerged && !eyeInDryVolume;
             CameraSubmerged = eyeInWater; // CPU mirror for the after-fog foam overlay's gate
             // Ocean fog is infinite, so it only matters when the camera is submerged. A bounded pond is a
@@ -294,14 +303,12 @@ namespace AbstractOcclusion.WebGpuWater
         // waterline tracks the swell and the fog stops toggling frame-to-frame at a bobbing crest.
         // 'nearPlaneStraddles' additionally reports the surface sitting INSIDE the near plane's
         // vertical span - the partial-submersion band the waterline meniscus pass draws over.
-        bool ComputeCameraSubmerged(out float surfaceY, out bool nearPlaneStraddles)
+        bool ComputeCameraSubmerged(Camera cam, out float surfaceY, out bool nearPlaneStraddles)
         {
-            surfaceY = SurfaceHeightAtCamera();
+            surfaceY = SurfaceHeightAtCamera(cam);
             nearPlaneStraddles = false;
             _fogNearSurface = false; // recomputed below; the early-outs must not keep a stale band
             if (!waterFog) { _wasCameraSubmerged = false; return false; } // one Water Fog toggle drives both looks
-            Camera cam = targetCamera;
-            if (cam == null) { _wasCameraSubmerged = false; return false; }
 
             // NOTE: deliberately NO camera-inside-exclusion-volume early-out here. An eye in a dry
             // room below the surface still needs the fog pass ARMED: the shader carves the dry span
@@ -424,9 +431,10 @@ namespace AbstractOcclusion.WebGpuWater
         // World-space surface height at the camera's xz. Open water bobs with the large swell (analytic
         // + FFT), the dominant partial-submersion motion; pools / bounded bodies use the rest plane
         // (their wind-wave detail is small and the pond fog is box-clipped anyway).
-        float SurfaceHeightAtCamera()
+        float SurfaceHeightAtCamera() => SurfaceHeightAtCamera(targetCamera);
+
+        float SurfaceHeightAtCamera(Camera cam)
         {
-            Camera cam = targetCamera;
             if (cam == null) return VolumeCenter.y;
             Vector3 p = cam.transform.position;
             return SurfaceHeightAtWorldXZ(p.x, p.z);

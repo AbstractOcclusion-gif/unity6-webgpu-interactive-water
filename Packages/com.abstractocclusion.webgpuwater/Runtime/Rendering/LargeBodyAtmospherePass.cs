@@ -75,6 +75,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             public RTHandle Rt;
             public int Width, Height;
+            public WaterVolume SourceOcean;
             public bool Valid;   // false until this camera has copied into it (and after resize)
             public Matrix4x4 PrevViewProj;
             public bool PrevValid;
@@ -108,9 +109,14 @@ namespace AbstractOcclusion.WebGpuWater
             public Matrix4x4 currViewProj;
             public float temporalBlend;
             public float frame;
+            public MaterialPropertyBlock block;
         }
 
-        sealed class PassData { public Material material; }
+        sealed class PassData
+        {
+            public Material material;
+            public MaterialPropertyBlock block;
+        }
 
         public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
         {
@@ -120,12 +126,19 @@ namespace AbstractOcclusion.WebGpuWater
             UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
             TextureHandle cameraColor = resources.activeColorTexture;
             if (!cameraColor.IsValid()) return;
+            WaterVolume sourceOcean = LargeBodyAtmosphereGate.SourceOcean;
+            if (sourceOcean == null) return;
+            // Graphs for two game cameras may both be recorded before either executes. Keep this
+            // camera's source block immutable until its graph has drawn; a reusable field would
+            // let the second camera overwrite the first camera's ocean parameters.
+            var sourceBlock = new MaterialPropertyBlock();
+            sourceOcean.WriteBodyProps(sourceBlock);
 
             TextureHandle shaftTexture = CreateHalfResTarget(renderGraph, cameraColor, out TextureDesc halfDesc);
 
             bool temporal = cameraData.cameraType == CameraType.Game;
             Camera cam = cameraData.camera;
-            CameraHistory entry = temporal ? EnsureHistory(cam, halfDesc) : null;
+            CameraHistory entry = temporal ? EnsureHistory(cam, halfDesc, sourceOcean) : null;
 
             // VOLUMETRIC COUPLING (KWS increment, phase 1): bind LAST frame's post-blend shafts
             // as a real global so the water surface - drawn long before this pass, outside the
@@ -150,7 +163,8 @@ namespace AbstractOcclusion.WebGpuWater
                 ? renderGraph.ImportTexture(entry.Rt)
                 : TextureHandle.nullHandle;
 
-            RecordRaymarch(renderGraph, resources, shaftTexture, historyRead, prevVP, viewProj, blend);
+            RecordRaymarch(renderGraph, resources, shaftTexture, historyRead, prevVP, viewProj, blend,
+                           sourceBlock);
 
             if (temporal)
             {
@@ -165,7 +179,7 @@ namespace AbstractOcclusion.WebGpuWater
                 entry.PrevValid = true;
             }
 
-            RecordComposite(renderGraph, cameraColor);
+            RecordComposite(renderGraph, cameraColor, sourceBlock);
         }
 
         TextureHandle CreateHalfResTarget(RenderGraph renderGraph, TextureHandle cameraColor,
@@ -181,7 +195,7 @@ namespace AbstractOcclusion.WebGpuWater
             return renderGraph.CreateTexture(desc);
         }
 
-        CameraHistory EnsureHistory(Camera cam, in TextureDesc desc)
+        CameraHistory EnsureHistory(Camera cam, in TextureDesc desc, WaterVolume sourceOcean)
         {
             if (!_histories.TryGetValue(cam, out CameraHistory entry))
             {
@@ -190,13 +204,23 @@ namespace AbstractOcclusion.WebGpuWater
                 _histories.Add(cam, entry);
             }
             if (entry.Rt != null && entry.Width == desc.width && entry.Height == desc.height)
+            {
+                if (entry.SourceOcean != sourceOcean)
+                {
+                    entry.SourceOcean = sourceOcean;
+                    entry.Valid = false;
+                    entry.PrevValid = false;
+                }
                 return entry;
+            }
             entry.Rt?.Release();
             entry.Rt = RTHandles.Alloc(desc.width, desc.height, colorFormat: desc.format,
                                        name: "_LargeGodRayHistory");
             entry.Width = desc.width;
             entry.Height = desc.height;
+            entry.SourceOcean = sourceOcean;
             entry.Valid = false; // fresh RT holds garbage; blend stays 0 until the first copy
+            entry.PrevValid = false;
             return entry;
         }
 
@@ -220,7 +244,8 @@ namespace AbstractOcclusion.WebGpuWater
 
         void RecordRaymarch(RenderGraph renderGraph, UniversalResourceData resources,
                             TextureHandle shaftTexture, TextureHandle historyRead,
-                            Matrix4x4 prevVP, Matrix4x4 currVP, float temporalBlend)
+                            Matrix4x4 prevVP, Matrix4x4 currVP, float temporalBlend,
+                            MaterialPropertyBlock sourceBlock)
         {
             using var builder = renderGraph.AddRasterRenderPass<RaymarchPassData>(
                 _raymarchSampler.name, out RaymarchPassData data, _raymarchSampler);
@@ -231,6 +256,7 @@ namespace AbstractOcclusion.WebGpuWater
             data.currViewProj = currVP;
             data.temporalBlend = temporalBlend;
             data.frame = Time.frameCount & 1023; // wrapped for float precision in the jitter
+            data.block = sourceBlock;
 
             builder.SetRenderAttachment(shaftTexture, 0, AccessFlags.Write);
             if (historyRead.IsValid())
@@ -251,22 +277,24 @@ namespace AbstractOcclusion.WebGpuWater
                 d.material.SetMatrix(ID_CurrVP, d.currViewProj);
                 d.material.SetFloat(ID_TemporalBlend, d.temporalBlend);
                 d.material.SetFloat(ID_Frame, d.frame);
-                CoreUtils.DrawFullScreen(ctx.cmd, d.material, null, RaymarchShaderPass);
+                CoreUtils.DrawFullScreen(ctx.cmd, d.material, d.block, RaymarchShaderPass);
             });
         }
 
-        void RecordComposite(RenderGraph renderGraph, TextureHandle cameraColor)
+        void RecordComposite(RenderGraph renderGraph, TextureHandle cameraColor,
+                             MaterialPropertyBlock sourceBlock)
         {
             using var builder = renderGraph.AddRasterRenderPass<PassData>(
                 _compositeSampler.name, out PassData data, _compositeSampler);
 
             data.material = _material;
+            data.block = sourceBlock;
             // ReadWrite (not Write): the Read half forces the rendered scene to be LOADED before the
             // additive Blend One One, instead of discarded (Write alone left the screen black).
             builder.SetRenderAttachment(cameraColor, 0, AccessFlags.ReadWrite);
             builder.UseAllGlobalTextures(true);                             // resolve _LargeGodRayTex
             builder.SetRenderFunc((PassData d, RasterGraphContext ctx) =>
-                CoreUtils.DrawFullScreen(ctx.cmd, d.material, null, CompositeShaderPass));
+                CoreUtils.DrawFullScreen(ctx.cmd, d.material, d.block, CompositeShaderPass));
         }
     }
 }

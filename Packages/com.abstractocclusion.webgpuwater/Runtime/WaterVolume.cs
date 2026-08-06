@@ -274,6 +274,7 @@ namespace AbstractOcclusion.WebGpuWater
                 UnderwaterFogActive = false;
                 WaterlineActive = false; // same static-gate pattern: the meniscus pass reads it too
                 CameraSubmerged = false; // same pattern: the after-fog foam overlay reads it
+                FogSource = null;
                 Publisher.PublishUnderwater(0f, 0f, 0f, 0f, 0f, 0f);
                 // The rest of the body globals - the volume frame above all. Without this the dead
                 // body's footprint still describes a real box, and a WaterReceiver floor in the NEXT

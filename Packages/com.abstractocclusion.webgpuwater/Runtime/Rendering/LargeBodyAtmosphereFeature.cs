@@ -56,12 +56,12 @@ namespace AbstractOcclusion.WebGpuWater
             // Temporal history is safe: the skip zone sits strictly ABOVE the envelope, so a
             // descending camera re-runs the pass (re-warming its history) through the whole
             // envelope band before any shaft can become visible.
-            WaterVolume primary = WaterVolume.Primary;
+            WaterVolume sourceOcean = LargeBodyAtmosphereGate.SourceOcean;
             Camera atmosphereCamera = renderingData.cameraData.camera;
-            if (primary != null && atmosphereCamera != null
-                && primary.LargeGodRayFromAir <= 0f
+            if (sourceOcean != null && atmosphereCamera != null
+                && sourceOcean.LargeGodRayFromAir <= 0f
                 && atmosphereCamera.transform.position.y
-                   > primary.VolumeCenter.y + primary.SurfaceHeightEnvelope() + DryCameraPadMeters)
+                   > sourceOcean.VolumeCenter.y + sourceOcean.SurfaceHeightEnvelope() + DryCameraPadMeters)
                 return;
             // A fullscreen-fog debug view owns the frame: these shafts inject one slot AFTER the
             // fog and add WATER-TINTED light concentrated near the waterline, which tinted every

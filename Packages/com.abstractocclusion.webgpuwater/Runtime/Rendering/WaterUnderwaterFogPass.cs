@@ -84,13 +84,13 @@ namespace AbstractOcclusion.WebGpuWater
             // WaterUniformPublisher.PublishSceneLights - not URP's per-camera light data, so
             // this pass carries no light plumbing.)
 
-            // Rendered-surface waterline prepass (KWS trick): draw the primary ocean's DISPLACED
+            // Rendered-surface waterline prepass (KWS trick): draw the fog source ocean's DISPLACED
             // surface into an eye-depth target the fog samples per pixel, so its waterline is the
             // rendered surface itself - exact at any distance, replacing the bounded crossing
             // march. The validity global is refreshed EVERY record (globals persist across frames,
             // so a stale 1 after the ocean disappears would leave the fog reading a dead RT).
             bool prepassRecorded = false;
-            WaterVolume primary = WaterVolume.Primary;
+            WaterVolume fogSource = WaterVolume.FogSource;
             // NOT ON THE SIMPLE TIER - it has no reader there. UnderwaterSegment tests
             // _UnderwaterFogSimple BEFORE _OceanSurfaceDepthValid (WaterUnderwaterFog.shader), so a
             // Simple frame takes OceanFlatPath and _OceanSurfaceEyeDepth is sampled NOWHERE: its
@@ -99,19 +99,19 @@ namespace AbstractOcclusion.WebGpuWater
             // two per clipmap level, each through the full displacement vertex stage - into a
             // camera-sized R32F plus its own Depth32, and threw the result away. It also forced a
             // mid-frame render-target switch, which costs far more on the WebGPU backend than
-            // native. Leaving the validity global at 0 is the state a pond or a non-ocean primary
+            // native. Leaving the validity global at 0 is the state a pond or a non-ocean fog source
             // already ships every frame, so this adds no new case for the shader to handle.
             // Also gated on the fog actually RUNNING this frame: this pass is enqueued for
             // WaterlineActive alone too (a straddling near plane arms the line before the fog),
             // and on those frames the fog draws - the prepass's ONLY consumer - are skipped
             // below, so the ~20 displaced-mesh draws and the camera-sized R32F target were
             // recorded and thrown away on the exact crossing frames where a hitch shows most.
-            // Validity stays 0, the state a pond or non-ocean primary already ships every frame.
+            // Validity stays 0, the state a pond or non-ocean fog source already ships every frame.
             if (WaterVolume.UnderwaterFogActive
-                && primary != null && primary.IsOceanClipmap && !primary.UnderwaterFogSimple)
+                && fogSource != null && fogSource.IsOceanClipmap && !fogSource.UnderwaterFogSimple)
             {
                 s_SurfaceRenderers.Clear();
-                primary.CollectOceanSurfaceRenderers(s_SurfaceRenderers);
+                fogSource.CollectOceanSurfaceRenderers(s_SurfaceRenderers);
                 if (s_SurfaceRenderers.Count > 0)
                 {
                     RecordSurfaceDepthPrepass(renderGraph, cameraColor);
@@ -149,10 +149,10 @@ namespace AbstractOcclusion.WebGpuWater
             // The scene copy feeds ONLY the lens-tension warp: the shader samples
             // _WaterlineSceneTex exclusively inside its `_WaterlineWarp > 0` branch, so at
             // warp 0 the camera-sized copy was dead work on every straddle frame. Gated on the
-            // SAME knob that uniform is published from (the primary's MeniscusWarp,
+            // SAME knob that uniform is published from (the fog source's MeniscusWarp,
             // PublishWaterline); black is bound in its place so no backend ever sees a stale
             // transient on the sampler.
-            WaterVolume warpSource = WaterVolume.Primary;
+            WaterVolume warpSource = WaterVolume.FogSource;
             bool warpActive = warpSource != null && warpSource.MeniscusWarp > 0f;
             TextureHandle sceneCopy = default;
             if (warpActive)

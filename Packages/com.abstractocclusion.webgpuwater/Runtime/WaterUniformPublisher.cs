@@ -268,12 +268,12 @@ namespace AbstractOcclusion.WebGpuWater
             // Scene ambient feeds the volume-scatter in-scatter so shaded (away-from-sun) water isn't black.
             // Genuinely shared (scene lighting, not per body), so it rides with the sun here.
             Shader.SetGlobalColor(ID_ScatterAmbient, RenderSettings.ambientLight);
-            if (_body.tiles != null) Shader.SetGlobalTexture(ID_Tiles, _body.tiles);
             // Exclusion volumes are GLOBAL, not per body (a dry room is dry in whichever
             // body intersects it), so they ride the shared-globals path, not the sink.
             PublishExclusionVolumes();
-            // NOTE: the reflection cube (_Sky) is published PER BODY in WriteBodyUniforms, not here -
-            // a global would be stomped by the last body each frame when bodies use different skies.
+            // NOTE: tiles (_Tiles) and reflection cubes (_Sky) are published PER BODY in
+            // WriteBodyUniforms, not here - a global would be stomped by the last body each frame
+            // when bodies use different pool interiors or skies.
             // The wave clock (_WaveTime) moved to WriteBodyUniforms for the same reason: a shared global
             // was last-writer-wins across bodies, so with 2+ bodies at different TimeScale (or one
             // paused) every surface animated on whichever body updated last while CPU buoyancy used its
@@ -665,6 +665,10 @@ namespace AbstractOcclusion.WebGpuWater
             // fight over a shared material (and the editor asset is never dirtied).
             sink.SetFloat(ID_GodRaySteps, _body.GodRaySteps);
             sink.SetFloat(ID_PeakedRefine, _body.PeakedRefineSteps);
+
+            // Pool interiors are body data: a second procedural pool may use different tiles.
+            // The primary body's global mirror remains the fallback for unbound renderers.
+            if (_body.tiles != null) sink.SetTexture(ID_Tiles, _body.tiles);
 
             // Reflection: uniform-driven and live. Tier-capped toggles + the look, per body per frame.
             sink.SetFloat(ID_UsePlanar, _body.EffectiveUsePlanar ? 1f : 0f);
