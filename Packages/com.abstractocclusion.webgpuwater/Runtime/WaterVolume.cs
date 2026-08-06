@@ -96,7 +96,7 @@ namespace AbstractOcclusion.WebGpuWater
         // Lazy: the bed baker serves the context-menu RebakeBed even on an uninitialized
         // body, and the publisher serves WriteBodyProps callers defensively.
         WaterBedBaker BedBaker => _bedBaker ??= new WaterBedBaker(this);
-        WaterShoreDepthField ShoreDepth => _shoreDepth ??= new WaterShoreDepthField(this);
+        internal WaterShoreDepthField ShoreDepth => _shoreDepth ??= new WaterShoreDepthField(this);
         WaterUniformPublisher Publisher => _publisher ??= new WaterUniformPublisher(this);
         WaterInputRouter InputRouter => _inputRouter ??= new WaterInputRouter(this);
 
@@ -232,7 +232,7 @@ namespace AbstractOcclusion.WebGpuWater
             CreateOceanClipmap();   // unbounded-ocean bodies: horizon-reaching camera-following surface
 
             BedBaker.EnsureBaked(); // lazy terrain -> pool-space bed bake, only when useBedDepth is on
-            ShoreDepth.EnsureBakedAndPublish(); // Layer A: world-frame seabed field + publish globals
+            ShoreDepth.EnsureBaked(); // Layer A: world-frame seabed field, published per body below
 
             Publisher.PublishSharedGlobals();
             EnsureWaveBank();

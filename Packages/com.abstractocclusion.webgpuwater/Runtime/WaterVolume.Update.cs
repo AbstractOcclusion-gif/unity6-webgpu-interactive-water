@@ -72,7 +72,7 @@ namespace AbstractOcclusion.WebGpuWater
             Publisher.PublishSharedGlobals(); // sun, ambient, tiles (the wave clock is per body)
             EnsureWaveBank();
             BedBaker.EnsureBaked();           // picks up useBedDepth being toggled on at runtime
-            ShoreDepth.EnsureBakedAndPublish(); // Layer A: keep the seabed field + globals live
+            ShoreDepth.EnsureBaked(); // Layer A: keep the seabed field available for this body's property block
             // Bounded bodies render the pool caustic; the windowed OCEAN renders the large-body caustic
             // in the sim-window's world frame (other windowed bodies still skip - see RenderCausticsForThisBody).
             // The tier can amortise the pass over N frames (the caustic RT simply holds).

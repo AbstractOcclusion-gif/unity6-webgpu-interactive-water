@@ -27,14 +27,14 @@ namespace AbstractOcclusion.WebGpuWater
         public void ToggleShoreDepthDebug()
         {
             WaterShoreDepthField.ToggleDepthDebug();
-            ShoreDepth.EnsureBakedAndPublish(); // push the flag now so it shows without waiting for a tick
+            ShoreDepth.EnsureBaked(); // the next body-property publish carries the debug flag
         }
 
         [ContextMenu("Toggle Shore SDF Debug (Layer A)")]
         public void ToggleShoreSdfDebug()
         {
             WaterShoreDepthField.ToggleSdfDebug();
-            ShoreDepth.EnsureBakedAndPublish(); // push the flag now so it shows without waiting for a tick
+            ShoreDepth.EnsureBaked(); // the next body-property publish carries the debug flag
         }
     }
 }

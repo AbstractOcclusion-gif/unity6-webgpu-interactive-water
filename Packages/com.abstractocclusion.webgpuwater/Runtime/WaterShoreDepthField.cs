@@ -127,13 +127,12 @@ namespace AbstractOcclusion.WebGpuWater
         internal Vector2 FieldHalfSize => _halfSize;
         internal float FieldWaterLevel => _waterLevel;
 
-        // Lazily bake (once, when opted in) then (re)publish the globals every frame so the samplers are
-        // always bound - even unbaked they publish a black fallback + valid=0, because WebGPU never
-        // tolerates an unbound sampler.
-        internal void EnsureBakedAndPublish()
+        // Lazily bake once when opted in. Publishing happens through WaterUniformPublisher's per-body
+        // material-property-block/global-fallback sinks, so two shore-enabled bodies cannot race over
+        // a single graphics global field.
+        internal void EnsureBaked()
         {
             if (_body.useBedDepth && !_bakeAttempted) Rebake();
-            Publish();
         }
 
         internal void Rebake()
@@ -429,100 +428,103 @@ namespace AbstractOcclusion.WebGpuWater
         float BilinearCpu(float[] field, float u, float v)
             => WaterFieldSampling.SampleBilinear(field, _res, u, v);
 
-        void Publish()
+        /// <summary>Write this body's shore field through the same sink as its other surface uniforms.</summary>
+        /// <remarks>Every texture receives a black fallback when unavailable: WebGPU rejects unbound samplers.</remarks>
+        internal void WriteUniforms(WaterUniformPublisher.IUniformSink sink)
         {
+            if (sink == null) throw new System.ArgumentNullException(nameof(sink));
             // Runtime toggle-off must actually TURN THE GPU SIDE OFF (the CPU mirror already gates
-            // on useBedDepth): a stale bake keeps its textures but publishes invalid, so the
-            // shaders and the buoyancy mirror always agree about whether the shore is live.
+            // on useBedDepth): a stale bake keeps its textures but writes invalid, so the shaders
+            // and the buoyancy mirror always agree about whether the shore is live.
             bool depthLive = _depthBaked && _body.useBedDepth;
             bool sdfLive = _sdfBaked && _body.useBedDepth;
-            Shader.SetGlobalTexture(ID_Tex, depthLive ? (Texture)_depthTex : Texture2D.blackTexture);
-            Shader.SetGlobalVector(ID_Center, new Vector4(_center.x, _center.y, 0f, 0f));
-            Shader.SetGlobalVector(ID_Size, new Vector4(_halfSize.x, _halfSize.y, 0f, 0f));
-            Shader.SetGlobalFloat(ID_Valid, depthLive ? 1f : 0f);
-            Shader.SetGlobalFloat(ID_Debug, _depthDebugEnabled ? 1f : 0f);
-            Shader.SetGlobalFloat(ID_WaterLevel, _waterLevel);
+            sink.SetTexture(ID_Tex, depthLive ? (Texture)_depthTex : Texture2D.blackTexture);
+            sink.SetVector(ID_Center, new Vector4(_center.x, _center.y, 0f, 0f));
+            sink.SetVector(ID_Size, new Vector4(_halfSize.x, _halfSize.y, 0f, 0f));
+            sink.SetFloat(ID_Valid, depthLive ? 1f : 0f);
+            sink.SetFloat(ID_Debug, _depthDebugEnabled ? 1f : 0f);
+            sink.SetFloat(ID_WaterLevel, _waterLevel);
             // Two bands, one authored: the ATTENUATION band follows the sea state (so a big sea starts
             // flattening further out), while Green's-law amplification stays on the authored coastal
             // profile. Both live-tunable; no rebake needed.
-            Shader.SetGlobalFloat(ID_ShoalDepth, _body.ShoreShoalDepthEffective);
-            Shader.SetGlobalFloat(ID_GreenBandDepth, _body.shoreShoalDepth);
+            sink.SetFloat(ID_ShoalDepth, _body.ShoreShoalDepthEffective);
+            sink.SetFloat(ID_GreenBandDepth, _body.shoreShoalDepth);
 
-            Shader.SetGlobalTexture(ID_SdfTex, sdfLive ? (Texture)_sdfTex : Texture2D.blackTexture);
-            Shader.SetGlobalFloat(ID_SdfValid, sdfLive ? 1f : 0f);
-            Shader.SetGlobalFloat(ID_SdfDebug, _sdfDebugEnabled ? 1f : 0f);
+            sink.SetTexture(ID_SdfTex, sdfLive ? (Texture)_sdfTex : Texture2D.blackTexture);
+            sink.SetFloat(ID_SdfValid, sdfLive ? 1f : 0f);
+            sink.SetFloat(ID_SdfDebug, _sdfDebugEnabled ? 1f : 0f);
 
             // P1 shoal-transform knobs (inert when the field is unbaked - the shaders gate on the
             // valid flags above - but published every frame so they stay live-tunable).
-            Shader.SetGlobalFloat(ID_Refraction, _body.shoreRefraction);
-            Shader.SetGlobalFloat(ID_Compression, _body.shoreCompression);
-            Shader.SetGlobalFloat(ID_Greens, _body.shoreGreens);
+            sink.SetFloat(ID_Refraction, _body.shoreRefraction);
+            sink.SetFloat(ID_Compression, _body.shoreCompression);
+            sink.SetFloat(ID_Greens, _body.shoreGreens);
             // ONE compression curve: the ambient swell's warp reach is the same front-spacing
             // multiple the surf fronts use (SurfWarpDistance), so both wave families bunch in
             // lockstep - via the validator-guarded shared constants, not a hand copy.
-            Shader.SetGlobalFloat(ID_WarpReach,
+            sink.SetFloat(ID_WarpReach,
                 LargeWaveField.SurfWarpReachSpacings
                 * Mathf.Max(_body.SurfWavelengthEffective, LargeWaveField.SurfMinWavelength));
 
             // P2 surf breaker fronts: active only with BOTH fields baked (they steer by the SDF)
             // and the body opted in. The same values feed the ripple-sim foam injection through
             // WaterSimulation.BindShoreFoam - one source, two consumers.
-            Shader.SetGlobalFloat(ID_SurfActive, SurfLayerActive ? 1f : 0f);
+            sink.SetFloat(ID_SurfActive, SurfLayerActive ? 1f : 0f);
             // THE MASTER SURF BEAT (see WaterVolume.SurfBeatTime): every surf consumer evaluates
             // the front field on this wrapped clock, never raw _WaveTime.
-            Shader.SetGlobalFloat(ID_SurfBeatTime, _body.SurfBeatTime);
-            Shader.SetGlobalFloat(ID_SurfAmplitude, _body.SurfAmplitudeEffective);
-            Shader.SetGlobalFloat(ID_SurfWavelength, _body.SurfWavelengthEffective);
-            Shader.SetGlobalFloat(ID_SurfPeriod, _body.surfPeriod);
-            Shader.SetGlobalFloat(ID_SurfBandDepth, _body.surfBandDepth);
-            Shader.SetGlobalFloat(ID_SurfSetStrength, _body.surfSetStrength);
-            Shader.SetGlobalFloat(ID_SurfLean, _body.surfLean);
-            Shader.SetGlobalFloat(ID_SurfCompression, _body.shoreCompression);
-            Shader.SetGlobalFloat(ID_SurfGreens, _body.shoreGreens);
-            Shader.SetGlobalFloat(ID_SurfAmbientFade, _body.surfAmbientFade);
-            Shader.SetGlobalFloat(ID_SurfSwashAmplitude, _body.surfSwashAmplitude);
+            sink.SetFloat(ID_SurfBeatTime, _body.SurfBeatTime);
+            sink.SetFloat(ID_SurfAmplitude, _body.SurfAmplitudeEffective);
+            sink.SetFloat(ID_SurfWavelength, _body.SurfWavelengthEffective);
+            sink.SetFloat(ID_SurfPeriod, _body.surfPeriod);
+            sink.SetFloat(ID_SurfBandDepth, _body.surfBandDepth);
+            sink.SetFloat(ID_SurfSetStrength, _body.surfSetStrength);
+            sink.SetFloat(ID_SurfLean, _body.surfLean);
+            sink.SetFloat(ID_SurfCompression, _body.shoreCompression);
+            sink.SetFloat(ID_SurfGreens, _body.shoreGreens);
+            sink.SetFloat(ID_SurfAmbientFade, _body.surfAmbientFade);
+            sink.SetFloat(ID_SurfSwashAmplitude, _body.surfSwashAmplitude);
             // MUST be published on BOTH paths: EvaluateSurfSwash also runs in WaterSim.compute for
             // the persistent swash deposit, and a cap the render honoured but the sim did not would
             // strand foam lines up a cliff the water no longer washes. See WaterSimulation.cs.
-            Shader.SetGlobalFloat(ID_SurfSwashMaxSlopeTan, _body.surfSwashMaxSlopeTan);
-            Shader.SetGlobalFloat(ID_SurfWaterlineFoam, _body.surfWaterlineFoam);
+            sink.SetFloat(ID_SurfSwashMaxSlopeTan, _body.surfSwashMaxSlopeTan);
+            sink.SetFloat(ID_SurfWaterlineFoam, _body.surfWaterlineFoam);
             // FOAM-7: small-wave crest+tail foam (surface render; 0 = byte-identical).
-            Shader.SetGlobalFloat(ID_SurfSmallWaveFoam, _body.surfSmallWaveFoam);
-            Shader.SetGlobalFloat(ID_SurfCrestLength, _body.surfCrestLength);
-            Shader.SetGlobalFloat(ID_SurfCrestVariation, _body.surfCrestVariation);
-            Shader.SetGlobalFloat(ID_SurfCrestPersistence, _body.surfCrestPersistence);
-            Shader.SetGlobalFloat(ID_SurfDirectionality, _body.surfDirectionality);
-            Shader.SetGlobalVector(ID_SurfWindDirXZ,
+            sink.SetFloat(ID_SurfSmallWaveFoam, _body.surfSmallWaveFoam);
+            sink.SetFloat(ID_SurfCrestLength, _body.surfCrestLength);
+            sink.SetFloat(ID_SurfCrestVariation, _body.surfCrestVariation);
+            sink.SetFloat(ID_SurfCrestPersistence, _body.surfCrestPersistence);
+            sink.SetFloat(ID_SurfDirectionality, _body.surfDirectionality);
+            sink.SetVector(ID_SurfWindDirXZ,
                 new Vector4(Mathf.Cos(_body.LargeWaveHeadingRad), Mathf.Sin(_body.LargeWaveHeadingRad), 0f, 0f));
-            Shader.SetGlobalFloat(ID_SurfFoamStrength, _body.surfFoamStrength);
-            Shader.SetGlobalFloat(ID_SurfFoamFeather, _body.surfFoamFeather);
-            Shader.SetGlobalFloat(ID_SurfFoamTileSize, _body.surfFoamTileSize);
-            Shader.SetGlobalColor(ID_SurfFoamColor, _body.surfFoamColor);
+            sink.SetFloat(ID_SurfFoamStrength, _body.surfFoamStrength);
+            sink.SetFloat(ID_SurfFoamFeather, _body.surfFoamFeather);
+            sink.SetFloat(ID_SurfFoamTileSize, _body.surfFoamTileSize);
+            sink.SetColor(ID_SurfFoamColor, _body.surfFoamColor);
             // FOAM-1: crest-foam pop curve LUT. Texture ALWAYS bound (black fallback) so no
             // backend ever sees an unbound sampler; the active flag gates all reads.
             bool crestLutActive = _body.SurfCrestFoamLutActive;
             Texture2D crestLut = crestLutActive ? _body.SurfCrestFoamLutTexture : null;
-            Shader.SetGlobalTexture(ID_SurfCrestFoamLut,
+            sink.SetTexture(ID_SurfCrestFoamLut,
                                     crestLut != null ? crestLut : (Texture)Texture2D.blackTexture);
-            Shader.SetGlobalFloat(ID_SurfCrestFoamLutActive,
+            sink.SetFloat(ID_SurfCrestFoamLutActive,
                                   crestLutActive && crestLut != null ? 1f : 0f);
-            Shader.SetGlobalFloat(ID_SurfCrestFoamGain, _body.surfCrestFoamGain);
+            sink.SetFloat(ID_SurfCrestFoamGain, _body.surfCrestFoamGain);
             // FOAM-4: crest-cap gain (surface-only; 0 = byte-identical). Live-tunable.
-            Shader.SetGlobalFloat(ID_SurfFoamCrestCap, _body.surfFoamCrestCap);
+            sink.SetFloat(ID_SurfFoamCrestCap, _body.surfFoamCrestCap);
             // FOAM-2: whitewash repartition (the gate lerps the weights in from the legacy
             // constants, so bodies publishing here get the knobs, everything else stays legacy).
-            Shader.SetGlobalFloat(ID_SurfFoamRepartActive, 1f);
-            Shader.SetGlobalFloat(ID_SurfFoamBoreGain, _body.surfFoamBoreGain);
-            Shader.SetGlobalFloat(ID_SurfFoamTrailGain, _body.surfFoamTrailGain);
-            Shader.SetGlobalFloat(ID_SurfFoamTrailLength, _body.surfFoamTrailLength);
-            Shader.SetGlobalFloat(ID_SurfFoamTrailDissolve, _body.surfFoamTrailDissolve);
+            sink.SetFloat(ID_SurfFoamRepartActive, 1f);
+            sink.SetFloat(ID_SurfFoamBoreGain, _body.surfFoamBoreGain);
+            sink.SetFloat(ID_SurfFoamTrailGain, _body.surfFoamTrailGain);
+            sink.SetFloat(ID_SurfFoamTrailLength, _body.surfFoamTrailLength);
+            sink.SetFloat(ID_SurfFoamTrailDissolve, _body.surfFoamTrailDissolve);
             // FOAM-3: swash foam knobs (surface-only consumers).
-            Shader.SetGlobalFloat(ID_SurfSwashFoam, _body.surfSwashFoam);
-            Shader.SetGlobalFloat(ID_SurfSwashFoamWidth, _body.surfSwashFoamWidth);
-            Shader.SetGlobalFloat(ID_SurfSwashFoamDissolve, _body.surfSwashFoamDissolve);
+            sink.SetFloat(ID_SurfSwashFoam, _body.surfSwashFoam);
+            sink.SetFloat(ID_SurfSwashFoamWidth, _body.surfSwashFoamWidth);
+            sink.SetFloat(ID_SurfSwashFoamDissolve, _body.surfSwashFoamDissolve);
             // FOAM-5: the SAME gain the sim uses to inject persistent deposits, published to the
             // SURFACE too so the vertex lift + fragment clip keep the beach alive under them.
-            Shader.SetGlobalFloat(ID_ShoreSwashDepositGain, _body.surfSwashDepositGain);
+            sink.SetFloat(ID_ShoreSwashDepositGain, _body.surfSwashDepositGain);
         }
 
         /// <summary>True when the surf breaker-front layer runs on this body: bed depth on, surf

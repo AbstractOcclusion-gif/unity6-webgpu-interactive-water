@@ -738,10 +738,11 @@ namespace AbstractOcclusion.WebGpuWater
             if (_body.BedTexture != null) sink.SetTexture(ID_BedTex, _body.BedTexture);
             sink.SetFloat(ID_BedValid, _body.IsBedBaked ? 1f : 0f);
             sink.SetFloat(ID_UseBedDepth, _body.useBedDepth ? 1f : 0f);
-            // Per-body gate on the SHARED _Shore*/_Surf* globals (WaterShoreDepthField publishes
-            // one field at a time): only the body that opted into bed depth reads the shore
-            // substrate, so a pond overlapping the terrain field can never catch its surf/shoal.
+            // The whole shore field rides this same per-body sink: depth/SDF textures, their world
+            // frame and every shoal/surf knob must stay together or two shore-enabled bodies would
+            // sample whichever one last wrote the old graphics globals.
             sink.SetFloat(ID_ShoreBodyGate, _body.useBedDepth ? 1f : 0f);
+            _body.ShoreDepth.WriteUniforms(sink);
             sink.SetColor(ID_DeepWaterColor, _body.deepWaterColor);
             sink.SetFloat(ID_ShorelineScale, 1f / Mathf.Max(WaterVolume.MinBedFadeDepth, _body.bedFadeDepth));
             sink.SetFloat(ID_ShorelineStrength, _body.bedTintStrength);
@@ -793,7 +794,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         // A write target for the per-body uniforms: either a MaterialPropertyBlock or the
         // global shader state. Only the id-keyed setters WriteBodyUniforms needs are exposed.
-        interface IUniformSink
+        internal interface IUniformSink
         {
             void SetFloat(int id, float value);
             void SetColor(int id, Color value);
