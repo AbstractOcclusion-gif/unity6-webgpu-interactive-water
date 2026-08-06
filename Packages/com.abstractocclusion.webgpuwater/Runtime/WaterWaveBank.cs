@@ -336,12 +336,15 @@ namespace AbstractOcclusion.WebGpuWater
         {
             var meters = new Vector2(poolX * metersPerPoolUnit, poolZ * metersPerPoolUnit);
             float linear = 0f;
+            bool hasIncludedWave = false;
             for (int i = 0; i < _count; i++)
             {
                 Wave w = _waves[i];
                 if (IsFilteredOut(w, minWavelengthMeters)) continue;
+                hasIncludedWave = true;
                 linear += w.amp * Mathf.Sin(Phase(w, meters, time));
             }
+            if (!hasIncludedWave) return 0f;
             return StokesSharpen(linear * GroupEnvelope(meters, time, out _, out _));
         }
 

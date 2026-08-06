@@ -57,6 +57,38 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             Assert.That(matrices[3].inverse.MultiplyPoint3x4(Vector3.zero).x, Is.EqualTo(4f).Within(0.0001f));
         }
 
+        [Test]
+        public void MeshVolume_UsesItsProxyForAnalyticUniformsAndCountsOnlyAssignedMeshes()
+        {
+            WaterExclusionVolume volume = CreateVolume("Mesh", WaterExclusionVolume.Shape.Mesh,
+                                                        Vector3.zero, Vector3.one);
+            volume.meshProxy = WaterExclusionVolume.Shape.Sphere;
+            volume.castsSunShadow = false;
+
+            Assert.That(volume.ShapeUniform, Is.EqualTo(new Vector4(1f, 1f, 1f, 0f)));
+            Assert.That(WaterExclusionVolume.MeshVolumeCount, Is.Zero);
+
+            volume.carveMesh = WaterMeshBuilder.BuildUnitCube();
+            Assert.That(WaterExclusionVolume.MeshVolumeCount, Is.EqualTo(1));
+            Object.DestroyImmediate(volume.carveMesh);
+            volume.carveMesh = null;
+        }
+
+        [Test]
+        public void WriteVolumeUniforms_RejectsBuffersThatCannotMatchShaderArraySize()
+        {
+            var validMatrices = new Matrix4x4[WaterExclusionVolume.MaxVolumes];
+            var validShapes = new Vector4[WaterExclusionVolume.MaxVolumes];
+            var shortMatrices = new Matrix4x4[WaterExclusionVolume.MaxVolumes - 1];
+
+            Assert.That(
+                () => WaterExclusionVolume.WriteVolumeUniforms(shortMatrices, validShapes, null, null, Vector3.zero),
+                Throws.InstanceOf<System.ArgumentException>());
+            Assert.That(
+                () => WaterExclusionVolume.WriteVolumeUniforms(validMatrices, null, null, null, Vector3.zero),
+                Throws.InstanceOf<System.ArgumentException>());
+        }
+
         WaterExclusionVolume CreateVolume(string objectName, WaterExclusionVolume.Shape shape,
                                            Vector3 position, Vector3 size)
         {

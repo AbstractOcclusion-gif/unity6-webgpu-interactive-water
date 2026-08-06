@@ -54,6 +54,18 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         }
 
         [Test]
+        public void WaveBank_FilteringEveryComponentProducesAFlatSurface()
+        {
+            const float AllWavelengthsFiltered = 1000f;
+            var bank = new WaterWaveBank();
+            bank.Generate(45f, 8f, 1.5f, 4, 2f, 0.5f, 1f, 1f, 1f, 1f);
+
+            Assert.That(bank.SampleHeight(2f, 3f, 4f, 1f, AllWavelengthsFiltered), Is.Zero);
+            Assert.That(bank.SampleSlope(2f, 3f, 4f, 1f, AllWavelengthsFiltered), Is.EqualTo(Vector2.zero));
+            Assert.That(bank.SampleVerticalVelocity(2f, 3f, 4f, 1f, AllWavelengthsFiltered), Is.Zero);
+        }
+
+        [Test]
         public void PinchTracker_OnlyReportsDeltaAfterTheFirstSampleAndResets()
         {
             var tracker = new PinchTracker();

@@ -5,6 +5,9 @@ namespace AbstractOcclusion.WebGpuWater.Tests
 {
     public sealed class QualityAndInteractionFeatureTests
     {
+        const int LowOceanFftInterval = 2;
+        const int LowFoamParticleBudget = 1024;
+
         [Test]
         public void QualityTier_SanitisesUnsafeValues()
         {
@@ -30,6 +33,42 @@ namespace AbstractOcclusion.WebGpuWater.Tests
                 Assert.That(preset.Extinction.r, Is.GreaterThanOrEqualTo(0f));
                 Assert.That(preset.Extinction.g, Is.GreaterThanOrEqualTo(0f));
                 Assert.That(preset.Extinction.b, Is.GreaterThanOrEqualTo(0f));
+            }
+        }
+
+        [Test]
+        public void JerlovPresets_RejectUnknownWaterTypes()
+        {
+            const JerlovWaterType UnknownType = (JerlovWaterType)(-1);
+
+            Assert.That(
+                () => JerlovWaterTypes.Get(UnknownType),
+                Throws.InstanceOf<System.ArgumentOutOfRangeException>());
+        }
+
+        [Test]
+        public void QualitySelection_UsesTheExplicitTierWithoutReadingHardwareCapabilities()
+        {
+            var quality = ScriptableObject.CreateInstance<WaterQuality>();
+            try
+            {
+                quality.selection = WaterQuality.Selection.ForceLow;
+                WaterQuality.Tier low = quality.Resolve();
+                quality.selection = WaterQuality.Selection.ForceHigh;
+                WaterQuality.Tier high = quality.Resolve();
+
+                Assert.That(low.RichReflections, Is.False);
+                Assert.That(low.RealRefraction, Is.False);
+                Assert.That(low.OceanFftInterval, Is.EqualTo(LowOceanFftInterval));
+                Assert.That(low.MaxFoamParticles, Is.EqualTo(LowFoamParticleBudget));
+                Assert.That(low.UnderwaterFog, Is.EqualTo(WaterQuality.UnderwaterMode.Simple));
+                Assert.That(high.RichReflections, Is.True);
+                Assert.That(high.RealRefraction, Is.True);
+                Assert.That(high.UnderwaterFog, Is.EqualTo(WaterQuality.UnderwaterMode.Full));
+            }
+            finally
+            {
+                Object.DestroyImmediate(quality);
             }
         }
 
