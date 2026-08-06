@@ -91,21 +91,31 @@ namespace AbstractOcclusion.WebGpuWater
                 if (c.x < -1f || c.x > 1f || c.z < -1f || c.z > 1f) return;
                 // The step maps from the SAME inverted origin: the dipole's direction/magnitude is
                 // the object's own motion, not the chop's (which is near-equal at both endpoints).
-                Vector3 cNext = WorldToSim(new Vector3(inject.x + worldStep.x, SimWindowCenter.y,
-                                                       inject.y + worldStep.z));
-                Vector2 velXZ = new Vector2(cNext.x - c.x, cNext.z - c.z);
                 _water.AddSphereInteraction(new Vector2(c.x, c.z), radius / SimHorizontalExtent,
-                                            velXZ, velY, weight, strength);
+                                            HorizontalStepInHeightUnits(worldStep), velY, weight, strength);
                 return;
             }
 
             Vector3 pool = WorldToPool(new Vector3(inject.x, VolumeCenter.y, inject.y));
             if (pool.x < -1f || pool.x > 1f || pool.z < -1f || pool.z > 1f) return;
-            Vector3 poolNext = WorldToPool(new Vector3(inject.x + worldStep.x, VolumeCenter.y,
-                                                       inject.y + worldStep.z));
-            Vector2 velXZb = new Vector2(poolNext.x - pool.x, poolNext.z - pool.z);
             _water.AddSphereInteraction(new Vector2(pool.x, pool.z), radius / VolumeHorizontalExtent,
-                                        velXZb, velY, weight, strength);
+                                        HorizontalStepInHeightUnits(worldStep), velY, weight, strength);
+        }
+
+        /// <summary>A sphere interactor's horizontal step in POOL-HEIGHT units, in the body frame.
+        /// BOTH dipole channels land in the sim's VELOCITY channel and are integrated into height, so
+        /// the horizontal term has to be normalised by the same vertical extent velY is: taking it from
+        /// the pool/sim delta divided it by the HORIZONTAL extent instead, and a wake's world amplitude
+        /// then scaled with the body's depth. Only the body rotation is applied - the sim's normalised
+        /// space is already squashed world-round for the dipole (_SphereAxisScale), so re-applying the
+        /// horizontal extents here would squash the direction twice.
+        /// SCALE NOTE: this changes the effective gain by horizontal/vertical - 3.3x weaker on a 500 m
+        /// body with a 30 m window - so authored interactor strengths need scaling by the same ratio.
+        /// The wake foam stamp reads |velXZ| as its speed gate, so it moves with them.</summary>
+        Vector2 HorizontalStepInHeightUnits(Vector3 worldStep)
+        {
+            Vector3 bodyStep = Quaternion.Inverse(VolumeRotation) * worldStep;
+            return new Vector2(bodyStep.x, bodyStep.z) / VolumeExtentSafe.y;
         }
 
         // Submersion weight for the sphere interactor: 1 at the waterline, a Gaussian fade as the sphere

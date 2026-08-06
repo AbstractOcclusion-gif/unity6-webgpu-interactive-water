@@ -26,6 +26,8 @@ namespace AbstractOcclusion.WebGpuWater
         // not the sim texture, which merely happens to share its resolution today.
         static readonly int ID_CausticGridStep = Shader.PropertyToID("_CausticGridStepNorm");
         static readonly int ID_CausticRippleStrength = Shader.PropertyToID("_LargeCausticRippleStrength");
+        static readonly int ID_PoolSlopeToWorld = Shader.PropertyToID("_PoolSlopeToWorld");
+        static readonly int ID_SimSlopeToWorld = Shader.PropertyToID("_SimSlopeToWorld");
         static readonly int ID_WaveNormalStrength = Shader.PropertyToID("_WaveNormalStrength");
 
         // Green channel of the caustic RT starts at 1 (unshadowed) so floor fragments that sample
@@ -221,6 +223,10 @@ namespace AbstractOcclusion.WebGpuWater
             _largeBodyMaterial.SetFloat(ID_CausticTime, _owner.WaveTime * _owner.LargeCausticTimeScale);
             _largeBodyMaterial.SetFloat(ID_CausticRippleScale, _owner.LargeCausticRippleScale);
             _largeBodyMaterial.SetFloat(ID_CausticRippleStrength, _owner.LargeCausticRippleStrength);
+            // Pool -> world slope conversion for the ripple tilt (see LargeBodyCaustics.shader). This
+            // material takes a hand-written subset of the body uniforms, so it must be set explicitly.
+            _largeBodyMaterial.SetVector(ID_PoolSlopeToWorld, _owner.PoolSlopeToWorld);
+            _largeBodyMaterial.SetVector(ID_SimSlopeToWorld, _owner.SimSlopeToWorld);
             _largeBodyMaterial.SetFloat(ID_CausticGridStep, CausticGridStepNorm());
 
             _cb.Clear();

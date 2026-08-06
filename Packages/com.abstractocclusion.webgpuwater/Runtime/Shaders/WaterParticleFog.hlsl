@@ -75,4 +75,19 @@ void ParticleUnderwaterFog(float3 worldPos, float3 lightDir, float3 sunColor,
     ParticleUnderwaterFogAlways(worldPos, lightDir, sunColor, fogMul, fogAdd);
 }
 
+// Armed gate + an EXPLICIT waterline, for sprites that know their own local surface height.
+// The flat _UnderwaterSurfaceY is sampled at the CAMERA xz, and the fog ARMS in a band while the
+// camera is still in the air - so on a raging sea a droplet flying over a distant trough sat below
+// the camera-crest waterline, measured a wet path it never had, and came out fog-coloured while
+// the camera was dry. Against its OWN surface a dry droplet prices exactly zero.
+void ParticleUnderwaterFogArmedAtLevel(float3 worldPos, float surfaceLevel,
+                                       float3 lightDir, float3 sunColor,
+                                       out float3 fogMul, out float3 fogAdd)
+{
+    fogMul = float3(1.0, 1.0, 1.0);
+    fogAdd = float3(0.0, 0.0, 0.0);
+    if (_UnderwaterFogArmed < 0.5) return; // fog off: queue-time draw path, untouched look
+    ParticleUnderwaterFogAtLevel(worldPos, surfaceLevel, lightDir, sunColor, fogMul, fogAdd);
+}
+
 #endif // WATER_PARTICLE_FOG_INCLUDED

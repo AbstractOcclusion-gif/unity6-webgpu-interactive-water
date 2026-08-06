@@ -6,6 +6,8 @@
 
 #include "WaterFoamCommon.hlsl" // FoamDecayBlend: split decay shared with OceanFft.compute
 #include "WaterSurfWaves.hlsl"  // surf breaker-front whitewash source (pure math; textures below)
+#include "WaterSimLimits.hlsl"  // WATER_SIM_MAX_ABS_*: the containment bounds, shared with the
+                                //                      surface headroom debug view
 #include "WaterShoreMath.hlsl"  // sampler-free shore math: SHORE_BORDER_FEATHER, ShoreFieldUVFrom,
                                 // ShoreFieldInfluence, ShoreDecodeToShore (this compute cannot
                                 // include the sampler2D-bearing WaterShore.hlsl; textures below)
@@ -31,14 +33,9 @@
 
 static const float PI = 3.141592653589793;
 
-// Hard bounds on the simulated field. The explicit wave integrator is only
-// conditionally stable, so a violent enough disturbance can overshoot and diverge
-// to Inf/NaN. Clamping height and velocity keeps the field bounded; resetting any
-// non-finite texel stops one bad value from being averaged into the conserved mean
-// and poisoning the whole surface (which on WebGPU made the plane and the floating
-// objects vanish). Bounds sit far above normal ripple amplitude so visuals are unaffected.
-static const float MAX_ABS_HEIGHT   = 1.0;
-static const float MAX_ABS_VELOCITY = 0.5;
+// The hard bounds on the simulated field (and why they exist) live in WaterSimLimits.hlsl,
+// included above: the surface's headroom debug view tests against the same two numbers, and a
+// second private copy would let the view draw the clamp somewhere it does not fire.
 
 // Rest state written into cells newly exposed by a window scroll: flat surface
 // (height 0, velocity 0) with an upward normal (normal.xz = 0, stored in .ba).
@@ -51,6 +48,14 @@ static const float FOAM_MAX_ADVECT_TEXELS = 4.0;
 // Shear foam: fraction of the speed response given to the spatial gradient of the
 // sim velocity (wake edges / dipole rims whiten where moving water borders still).
 static const float FOAM_SHEAR_FRACTION = 1.0;
+
+// Temporal hysteresis of the generation knees (StepFoam). Authored values can sit right
+// ON the knees (_FoamGenThreshold / _FoamMinWaveHeight), so a violent sea strobes
+// generation on/off frame-to-frame and whole patches pop (foam / no-foam / foam).
+// SENSE: how much existing foam counts as "this cell is foaming" (1 / foam units);
+// KNEE_RELAX: how far both knees drop for a fully-foamed cell (fraction of the knee).
+static const float FOAM_STICKY_SENSE = 4.0;
+static const float FOAM_STICKY_KNEE_RELAX = 0.5;
 
 // Foam level at which decay is fully the FRESH rate. Real foam collapses quickly
 // while thick and bright, then the thin residual lace lingers much longer; a single
@@ -171,6 +176,8 @@ float InteractionFalloff(float a, float x)
 // Update (wave equation tuning)
 float  _WaveSpeed; // stiffness ~ propagation speed (stable for 0 < x <= 2.0)
 float  _Damping;   // velocity attenuation per step (e.g. 0.995)
+// Kinematic viscosity on the VELOCITY channel, per step. 0 = off (the field is byte-identical).
+float  _RippleViscosity;
 // Per-axis Laplacian weight so waves propagate at equal WORLD speed on a rectangular pool
 // (weight ~ 1/extent^2 per axis, normalised so the max stays 0.25 = the stable square value).
 // Default (0.25, 0.25) = the isotropic square case (unchanged). Set from C# per body.
@@ -280,6 +287,12 @@ float _WakeFoamStrength;    // master gain on the wake stamp
 float _WakeFoamRadiusScale; // stamp radius as a multiple of the sphere radius
 static const float WAKE_FOAM_SPEED_GAIN = 25.0; // maps sim-normalised step speed onto a 0..1 stamp
 
+// Wake start-force cap: the largest per-step velocity a single interactor stamp may inject. A FRESH
+// wake over still water dumps a concentrated push toward the velocity ceiling in a few texels, which
+// the solver integrates into a too-tall crest before spreading it; capping the push clips that initial
+// overshoot while the developed wake (many smaller pushes below the cap) keeps its shape. 0 = off.
+float _WakeStartForceCap;
+
 // Bed depth (Phase 1 shoreline): pool-space terrain bed height (R = bed pool-Y), baked by
 // WaterVolume in the SAME pool frame as the sim, so a sim cell's UV maps straight to it. Used to
 // hold dry land flat (ripples reflect off the waterline) and drain the open-shore boundary.
@@ -347,8 +360,8 @@ float4 Read(int2 p)         { return Src.Load(int3(ClampC(p), 0)); }
 float4 Sanitize(float4 info)
 {
     if (!isfinite(info.r) || !isfinite(info.g)) { info.r = 0.0; info.g = 0.0; }
-    info.r = clamp(info.r, -MAX_ABS_HEIGHT, MAX_ABS_HEIGHT);
-    info.g = clamp(info.g, -MAX_ABS_VELOCITY, MAX_ABS_VELOCITY);
+    info.r = clamp(info.r, -WATER_SIM_MAX_ABS_HEIGHT, WATER_SIM_MAX_ABS_HEIGHT);
+    info.g = clamp(info.g, -WATER_SIM_MAX_ABS_VELOCITY, WATER_SIM_MAX_ABS_VELOCITY);
     return info;
 }
 
@@ -419,7 +432,11 @@ void SphereInteract(uint3 id : SV_DispatchThreadID)
             if (sdf < 0.0) horizontalForce *= SPHERE_INNER_MULT;
         }
 
-        info.g += q.weight * (verticalForce + horizontalForce) * q.strength;
+        float wakePush = q.weight * (verticalForce + horizontalForce) * q.strength;
+        // Cap the per-step push so a fresh stamp can't spike a too-tall crest (see _WakeStartForceCap).
+        if (_WakeStartForceCap > 0.0)
+            wakePush = clamp(wakePush, -_WakeStartForceCap, _WakeStartForceCap);
+        info.g += wakePush;
         info = Sanitize(info);   // per-stamp, as one dispatch per interactor used to be
 
         // Wake foam (move #3): stamp foam at the hull, scaled by the interactor's speed and submersion,
@@ -457,12 +474,14 @@ bool ObstacleSolidAt(int2 p)
     return ObstacleSolidCover(p) > _ObstacleSolidThreshold;
 }
 
-// Neighbour height for the Laplacian: mirror the centre height across a solid neighbour (zero-gradient
-// Neumann wall) so ripples reflect; otherwise read the neighbour normally.
-float ReflectiveNeighbour(int2 neighbour, float centreHeight)
+// Neighbour (height, velocity) for the Laplacian and the viscosity: mirror the CENTRE across a solid
+// neighbour (zero-gradient Neumann wall) so ripples reflect; otherwise read the neighbour normally.
+// Both channels come from ONE fetch, so the viscosity term below is free in bandwidth - the update
+// was already loading these four texels and discarding everything but .r.
+float2 ReflectiveNeighbour(int2 neighbour, float2 centreState)
 {
-    if (ObstacleSolidAt(neighbour)) return centreHeight;
-    return Read(neighbour).r;
+    if (ObstacleSolidAt(neighbour)) return centreState;
+    return Read(neighbour).rg;
 }
 
 [numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
@@ -485,16 +504,31 @@ void Update(uint3 id : SV_DispatchThreadID)
     // (_WaveAxisWeight) so waves travel at equal WORLD speed on a rectangular pool. With the
     // default (0.25, 0.25) this is exactly the old isotropic form: 0.25*(hL+hR+hD+hU) - h.
     // Neighbours read through ReflectiveNeighbour so a solid cell reflects instead of transmitting.
-    float hL = ReflectiveNeighbour(p + int2(-1, 0), info.r);
-    float hR = ReflectiveNeighbour(p + int2( 1, 0), info.r);
-    float hD = ReflectiveNeighbour(p + int2( 0,-1), info.r);
-    float hU = ReflectiveNeighbour(p + int2( 0, 1), info.r);
-    float force = _WaveAxisWeight.x * (hL + hR - 2.0 * info.r)
-                + _WaveAxisWeight.y * (hD + hU - 2.0 * info.r);
+    float2 centre = info.rg;
+    float2 nL = ReflectiveNeighbour(p + int2(-1, 0), centre);
+    float2 nR = ReflectiveNeighbour(p + int2( 1, 0), centre);
+    float2 nD = ReflectiveNeighbour(p + int2( 0,-1), centre);
+    float2 nU = ReflectiveNeighbour(p + int2( 0, 1), centre);
+    float force = _WaveAxisWeight.x * (nL.x + nR.x - 2.0 * info.r)
+                + _WaveAxisWeight.y * (nD.x + nU.x - 2.0 * info.r);
 
     // move velocity by the restoring force, attenuate, integrate height
     info.g += force * _WaveSpeed;
     info.g *= _Damping;
+
+    // VISCOSITY: pull the velocity toward its neighbourhood mean. The correction is proportional to
+    // the LAPLACIAN of the velocity field, so it is ~0 on a long smooth swell and strongest on the
+    // texel-to-texel checkerboard the explicit integrator's dispersive tail leaves behind - which is
+    // the part the eye reads as noise rather than as water. _Damping cannot do this job: a flat
+    // per-step multiplier takes the swell down at exactly the rate it takes the chop down.
+    // Per STEP, like _Damping, and deliberately NOT re-based by the density ratio: this targets the
+    // GRID frequency, which is a property of the lattice, not of world metres.
+    if (_RippleViscosity > 0.0)
+    {
+        float neighbourVelocity = (nL.y + nR.y + nD.y + nU.y) * 0.25;
+        info.g = lerp(info.g, neighbourVelocity, _RippleViscosity);
+    }
+
     info.r += info.g;
 
     // Open-shore boundary drain: absorb ripples over the outer band so they don't reflect off the
@@ -649,9 +683,18 @@ void Foam(uint3 id : SV_DispatchThreadID)
     // so it is dimensionally comparable to _FoamMinWaveHeight.
     float crestHeight  = max(0.0, -lap);
     float heightSignal = lerp(abs(info.r), crestHeight, _FoamCrestBias);
-    float heightGate = smoothstep(_FoamMinWaveHeight * 0.5, max(_FoamMinWaveHeight, 1e-6),
+    // TEMPORAL STICKINESS: an already-foaming cell keeps foaming through a brief dip below the
+    // knees. Both gates are hard knees, and a raging sea's activity oscillates ACROSS them
+    // frame-to-frame, so without this the whole crest field blinks (foam / no-foam / foam).
+    // Physically: aerated water re-entrains far more readily than glassy water, so the breaking
+    // threshold IS lower where foam already sits. 'foam' is last step's advected value, so the
+    // relaxation follows the foam patch instead of the camera or the grid.
+    float sticky = saturate(foam * FOAM_STICKY_SENSE) * FOAM_STICKY_KNEE_RELAX;
+    float genThreshold = _FoamGenThreshold * (1.0 - sticky);
+    float minWaveHeight = _FoamMinWaveHeight * (1.0 - sticky);
+    float heightGate = smoothstep(minWaveHeight * 0.5, max(minWaveHeight, 1e-6),
                                   heightSignal);
-    float gen = saturate(activity - _FoamGenThreshold) * heightGate;
+    float gen = saturate(activity - genThreshold) * heightGate;
 
     // Shallow-water breaking boost (move #1): shallow AND supercritical water aerates far more
     // readily. Only ever multiplies gen UP, and only where a bed makes the column shallow, so
@@ -757,12 +800,26 @@ void Foam(uint3 id : SV_DispatchThreadID)
                 float phase = frac(_ShoreFoamTime / max(_SurfPeriod, SURF_MIN_PERIOD) - 0.5);
                 // Only while the film is DRAINING (past the uprush apex), and only where the
                 // receding edge (swash.x) is right at this cell's beach height - one burst per
-                // cell as the water pulls back off it. Cells below the waterline (beachRise < 0)
-                // are self-excluded: swash.x >= 0, so the band term collapses there.
+                // cell as the water pulls back off it.
                 float backwash = smoothstep(SURF_SWASH_UPRUSH,
                                             SURF_SWASH_UPRUSH + SHORE_SWASH_DEPOSIT_ONSET, phase);
                 float edgePass = saturate(1.0 - abs(beachRise - swash.x) / SHORE_SWASH_DEPOSIT_BAND);
-                float deposit = backwash * edgePass * influence * SurfExposure(toShore);
+                // Cells below the waterline are NOT self-excluded by the band, whatever the comment
+                // that used to sit here claimed. edgePass is a SYMMETRIC abs() around swash.x, and
+                // swash.x is 0 through most of the cycle - so at beachRise = -0.10 m it still read
+                // 0.5 and laid a persistent floor into the decay buffer 20 cm UNDER the water, every
+                // wave: a standing foam ring in the shallows that never cleared. The exclusion has to
+                // be WRITTEN DOWN, so here it is - 0 at the waterline, full one band up the dry sand,
+                // which is what "the backwash strands foam on the WET SAND" actually means.
+                float drySide = saturate(beachRise / SHORE_SWASH_DEPOSIT_BAND);
+                // The swash's own steepness cap. EvaluateSurfSwash applies it to that function's
+                // LOCAL copy of influence, so it never reached the strength below - which was built
+                // from the raw influence passed IN. That is why deposits appeared everywhere with no
+                // regard for slope, cliffs included, where the very swash that is supposed to strand
+                // them is switched off and EvaluateSurfSwash is returning 0.
+                float slopeGate = SurfSwashSlopeGate(shoreSdf.a);
+                float deposit = backwash * edgePass * drySide * slopeGate
+                              * influence * SurfExposure(toShore);
                 foam = max(foam, saturate(deposit * _ShoreSwashDepositGain));
             }
         }

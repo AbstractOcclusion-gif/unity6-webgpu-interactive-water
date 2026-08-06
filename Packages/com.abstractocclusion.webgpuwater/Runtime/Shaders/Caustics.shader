@@ -77,7 +77,14 @@ Shader "AbstractOcclusion/WebGpuWater/Caustics"
                 // Fold in the wind-wave slope exactly as the surface does (same MINUS sign and raw
                 // * _WaveNormalStrength, in EvaluateSurfaceGeometry) so the caustic - and the
                 // chunk god-ray shafts that sample it - inherit the wave structure the surface shows.
-                float2 nxz = info.ba - WaveSlope(poolXY) * _WaveNormalStrength;
+                // WORLD slopes before the normal is built, exactly as the surface does. Left in pool
+                // units the tilt carries the footprint/depth aspect factor, sqrt(1 - dot) floors at
+                // zero, and refract() is handed a non-unit, near-horizontal normal - the caustic
+                // pattern tears on any wide shallow body. The refracted ray then rides the pool-space
+                // trace below on the same world-direction-in-pool-space convention refractedLight
+                // already uses, so nothing downstream changes.
+                float2 nxz = info.ba * SIM_SLOPE_TO_POOL * _SimSlopeToWorld.xy
+                           - WaveSlope(poolXY) * _WaveNormalStrength * _PoolSlopeToWorld.xy;
                 float3 normal = float3(nxz.x, sqrt(max(0.0, 1.0 - dot(nxz, nxz))), nxz.y);
                 float3 ray = refract(-_LightDir, normal, IOR_AIR / IOR_WATER);
                 // v.vertex.xzy put the grid's z into y; baseY carries that through unchanged.

@@ -29,6 +29,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // Every "Advanced" fold below holds the second-order knobs of the section above it: solver
         // and numerical parameters, refinements of a primary knob, and wizard-set-once values. They
         // all default closed - the visible fields are the ones that answer "make it more like X".
+        bool _showTopology = true;
         bool _showPlacement = true;
         bool _showBody = true;
         bool _showBodyAdvanced = false;
@@ -107,6 +108,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // of load/save. The field initializers above remain the first-session defaults.
         void SyncFoldouts(bool load)
         {
+            Sync(ref _showTopology, nameof(_showTopology), load);
             Sync(ref _showPlacement, nameof(_showPlacement), load);
             Sync(ref _showBody, nameof(_showBody), load);
             Sync(ref _showBodyAdvanced, nameof(_showBodyAdvanced), load);
@@ -197,6 +199,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             switch (_tab)
             {
                 case InspectorTab.Body:
+                    DrawTopologySection();
                     DrawPlacementSection();
                     DrawBodySection();
                     DrawBedSourceSection();

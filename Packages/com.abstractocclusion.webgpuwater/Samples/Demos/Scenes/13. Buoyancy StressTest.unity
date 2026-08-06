@@ -857,13 +857,19 @@ MonoBehaviour:
   _legacyCausticDepthFade: 0.5
   _legacyGodRayDepthFade: 0.5
   _legacyLinkDepthToFog: 0
-  _settingsVersion: 9
+  _settingsVersion: 12
   simWindowEdgeFadeTexels: 8
   ocean:
     openWater: 1
-    largeWaveAmplitude: 0.5
-    largeWaveChoppiness: 0
-    swellHeight: 0.5
+    largeWaveAmplitude: 1
+    largeWaveChoppiness: 1
+    significantWaveHeight: 2
+    peakWavelength: 60
+    peakSharpness: 3.3
+    waveScale: 1
+    seaDepth: 0
+    cascadeReach: 3
+    swellHeight: 0.25
     swellWavelength: 140
     oceanWindTurbulence: 0.25
     unboundedOcean: 1
@@ -889,7 +895,7 @@ MonoBehaviour:
     largeCausticRippleStrength: 1
     largeCausticProjectionSoften: 0
     oceanFoamWindThreshold: 4
-    oceanFoamCoverage: 1.01
+    oceanFoamCoverage: 1.04
     oceanFoamStrength: 0.96
     oceanFoamFadeRate: 2
     oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
@@ -970,9 +976,14 @@ MonoBehaviour:
     texture: {fileID: 2800000, guid: bfdc4d9124f106c4f97bb95ef3618340, type: 3}
     strength: 0.11
     tileMeters: 18.4
+    farTileMeters: 72
+    farTileDistance: 200
     scrollSpeed: 0.25
+    farScrollSpeed: 0.5
+    hexTiling: 0
     windResponse: 1
     crestBoost: 0.5
+    distanceBoost: 0.35
   _legacyFoam: 0
   _legacyFoamGenRate: 0.6
   _legacyFoamDecay: 0.96
@@ -990,6 +1001,7 @@ MonoBehaviour:
   rippleSettings:
     waveSpeed: 0.6
     damping: 0.99
+    rippleViscosity: 0
     stepsPerFrame: 2
     rippleStrength: 0.001
     rippleRadius: 0.05
@@ -1060,6 +1072,7 @@ MonoBehaviour:
     screenSpaceCaustics: 0
     screenCausticIntensity: 1
     godRayDepthFade: 0.5
+    causticWindWaveStrength: 1
     linkDepthToFog: 1
   _legacyUseBedDepth: 0
   _legacyBedTerrain: {fileID: 0}
@@ -1069,13 +1082,19 @@ MonoBehaviour:
   _legacyShorelineStrength: 0.8
   windWaveSettings:
     windWaves: 1
-    windSpeed: 4.5
+    windSpeed: 5
     windFromDegrees: 0
-    waveScaleMeters: 500
+    waveLengthMeters: 1.6529254
+    waveHeightMeters: 0.0020560941
+    waveGrouping: 0
+    waveCrestSharpness: 0
     waveCount: 12
-    waveAmplitudeScale: 2
     waveDirectionSpread: 2
     waveNormalStrength: 1
+    windResponse: 1
+    waveAnimationSpeed: 1
+    legacyFetchMeters: 500
+    legacyAmplitudeScale: 2
   discSurface: 0
 --- !u!114 &1326625263
 MonoBehaviour:
@@ -1117,8 +1136,11 @@ MonoBehaviour:
   flowDrift: 0.25
   windDriftSpeed: 0.02
   drag: 2
-  crestRollSpeed: 0.6
-  crestFoamSpawn: 1
+  bubbleAmount: 0.5
+  bubbleRiseSpeed: 0.25
+  bubbleLifeRange: {x: 2, y: 4}
+  bubbleSizeRange: {x: 0.015, y: 0.05}
+  bubbleWobble: 1
   flipbookGrid: {x: 2, y: 2}
   flipbookFps: 0
 --- !u!1 &1346425472
@@ -1211,7 +1233,7 @@ MonoBehaviour:
   surfaceRelativeDrag: 1
   addRippleInteractor: 0
   addSplash: 0
-  overlay: {fileID: 1718559811}
+  overlay: {fileID: 0}
 --- !u!114 &1718559811
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1258,9 +1280,70 @@ Transform:
   - {fileID: 1346425473}
   m_Father: {fileID: 369893181}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1990000010
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1990000011}
+  - component: {fileID: 1990000012}
+  m_Layer: 0
+  m_Name: Demo Overlay
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1990000011
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1990000010}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1990000012
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1990000010}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3f9c1d5a7b2e4c8d9a0f6b3e5c7d1a24, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterDemoOverlay
+  title: Buoyancy Stress Test
+  description: A spawned grid of floaters on the FFT ocean, all batched through one
+    WaterVolume.SampleHeights query. The metrics panel down-left reads the batch
+    cost live.
+  corner: 2
+  panelWidth: 460
+  screenMargin: 14
+  paddingHorizontal: 12
+  paddingVertical: 10
+  titleFontSize: 28
+  bodyFontSize: 22
+  textColor: {r: 1, g: 1, b: 1, a: 1}
+  backgroundTint: {r: 1, g: 1, b: 1, a: 1}
+  uiScale: 1
+  showFrameRate: 1
+  frameSmoothing: 0.05
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
   m_Roots:
   - {fileID: 961739753}
   - {fileID: 369893181}
+  - {fileID: 1990000011}

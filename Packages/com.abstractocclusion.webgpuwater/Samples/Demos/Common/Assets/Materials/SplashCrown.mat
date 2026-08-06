@@ -44,7 +44,7 @@ Material:
     - PixelSnap: 0
     - _EnableExternalAlpha: 0
     - _PackedChannels: 1
-    - _ParticleOpacity: 0.532
+    - _ParticleOpacity: 0.478
     - _SixWay: 1
     - _SixWayFlipX: 1
     - _SoftFadeDistance: 0.1

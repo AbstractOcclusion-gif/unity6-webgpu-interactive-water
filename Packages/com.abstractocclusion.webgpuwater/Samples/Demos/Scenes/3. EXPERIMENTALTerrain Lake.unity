@@ -6650,7 +6650,7 @@ MonoBehaviour:
   _legacyCausticDepthFade: 0.5
   _legacyGodRayDepthFade: 0.5
   _legacyLinkDepthToFog: 0
-  _settingsVersion: 11
+  _settingsVersion: 12
   simWindowEdgeFadeTexels: 8
   ocean:
     openWater: 0
@@ -6767,11 +6767,11 @@ MonoBehaviour:
     refractionStrength: 1
   detailNormalSettings:
     texture: {fileID: 2800000, guid: bfdc4d9124f106c4f97bb95ef3618340, type: 3}
-    strength: 0.05
-    tileMeters: 35
+    strength: 0.1
+    tileMeters: 24
     farTileMeters: 72
     farTileDistance: 200
-    scrollSpeed: 0.25
+    scrollSpeed: 0.1
     farScrollSpeed: 0.5
     hexTiling: 0
     windResponse: 1
@@ -6793,11 +6793,12 @@ MonoBehaviour:
   _legacyFoamContactDepth: 0.06
   rippleSettings:
     waveSpeed: 0.6
-    damping: 0.97
+    damping: 0.9919
+    rippleViscosity: 0.035
     stepsPerFrame: 1
-    rippleStrength: 0.08
+    rippleStrength: 0.05
     rippleRadius: 0.05
-    rippleChoppiness: 0
+    rippleChoppiness: 0.046
     seedRipplesOnStart: 1
     conserveVolume: 1
     conserveMaxCorrection: 0.05
@@ -11941,7 +11942,7 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1982793371}
   m_Mesh: {fileID: 10208, guid: 0000000000000000e000000000000000, type: 0}
---- !u!1 &2100478839
+--- !u!1 &1990000010
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -11949,43 +11950,59 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 2100478841}
-  - component: {fileID: 2100478840}
+  - component: {fileID: 1990000011}
+  - component: {fileID: 1990000012}
   m_Layer: 0
-  m_Name: GameObject
+  m_Name: Demo Overlay
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &2100478840
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2100478839}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 7eb9d5ff936dc3d4d8ed8d039315f50f, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterDebugView
-  mode: 0
---- !u!4 &2100478841
+--- !u!4 &1990000011
 Transform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2100478839}
+  m_GameObject: {fileID: 1990000010}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 7.85076, y: 0.40631, z: 14.19071}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1990000012
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1990000010}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3f9c1d5a7b2e4c8d9a0f6b3e5c7d1a24, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterDemoOverlay
+  title: Terrain Lake (experimental)
+  description: 'Addition of  terrain bed. Still experimental: Terrain fed shore line
+    and clarity . Also addition of  water line , partial submersion and ripples on
+    huge simulation window. For caustics to display onto standard material use 3D
+    screen caustic. '
+  corner: 2
+  panelWidth: 460
+  screenMargin: 14
+  paddingHorizontal: 12
+  paddingVertical: 10
+  titleFontSize: 28
+  bodyFontSize: 22
+  textColor: {r: 1, g: 1, b: 1, a: 1}
+  backgroundTint: {r: 1, g: 1, b: 1, a: 1}
+  uiScale: 1
+  showFrameRate: 1
+  frameSmoothing: 0.05
 --- !u!1 &2104834052
 GameObject:
   m_ObjectHideFlags: 0
@@ -12031,4 +12048,4 @@ SceneRoots:
   - {fileID: 1374467070}
   - {fileID: 2104834053}
   - {fileID: 1149793001}
-  - {fileID: 2100478841}
+  - {fileID: 1990000011}

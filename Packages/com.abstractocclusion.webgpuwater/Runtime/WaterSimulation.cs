@@ -16,7 +16,13 @@ namespace AbstractOcclusion.WebGpuWater
         // On a large plane that fraction can fall below one texel and inject an aliased spike, so floor
         // it to a few texels: every drop stays a smooth bump regardless of body size. _Radius is a
         // fraction of the grid side, so N texels correspond to N / Resolution.
-        const float MinDropTexelRadius = 2.5f;
+        // Band limit on an injected stamp, in TEXELS - the unit the noise lives in. The dispersive
+        // tail of the explicit integrator sits at 2-4 texel wavelengths, and a stamp of radius R
+        // carries spectral content up to ~1/R, so a 2.5-texel floor fed the tail directly. 4 keeps
+        // the injection out of that band at every body size. Footprint only: the peak HEIGHT is
+        // untouched (see the two rejected strength compensations in WaterVolume.Quality.cs).
+        // SIDE EFFECT: wider stamps carry less height CURVATURE, which is what _FoamFromCurv reads.
+        const float MinDropTexelRadius = 4f;
 
         // Compute kernel names (must match WaterSim.compute).
         const string KernelDrop = "Drop";
@@ -59,6 +65,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_ObstacleTemporalBlend = Shader.PropertyToID("_ObstacleTemporalBlend");
         static readonly int ID_WaveSpeed = Shader.PropertyToID("_WaveSpeed");
         static readonly int ID_Damping = Shader.PropertyToID("_Damping");
+        static readonly int ID_RippleViscosity = Shader.PropertyToID("_RippleViscosity");
         static readonly int ID_FoamGenRate = Shader.PropertyToID("_FoamGenRate");
         static readonly int ID_FoamGenThreshold = Shader.PropertyToID("_FoamGenThreshold");
         static readonly int ID_FoamMinWaveHeight = Shader.PropertyToID("_FoamMinWaveHeight");
@@ -79,6 +86,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FoamCrestBias = Shader.PropertyToID("_FoamCrestBias");
         static readonly int ID_WakeFoamStrength = Shader.PropertyToID("_WakeFoamStrength");
         static readonly int ID_WakeFoamRadiusScale = Shader.PropertyToID("_WakeFoamRadiusScale");
+        static readonly int ID_WakeStartForceCap = Shader.PropertyToID("_WakeStartForceCap");
         static readonly int ID_FoamSrc = Shader.PropertyToID("FoamSrc");
         static readonly int ID_FoamDst = Shader.PropertyToID("FoamDst");
         static readonly int ID_PartialSums = Shader.PropertyToID("PartialSums");
@@ -122,6 +130,10 @@ namespace AbstractOcclusion.WebGpuWater
         // foam settings; default 0 = off, so a sphere interaction is byte-identical (pure copy-through).
         float _wakeFoamStrength;
         float _wakeFoamRadiusScale = 1.5f;
+
+        // Wake start-force cap: limits the per-step velocity a moving interactor injects, clipping the
+        // initial over-tall crest of a fresh wake without touching the developed shape. 0 = off (no cap).
+        float _wakeStartForceCap;
 
         RenderTexture _a; // current state (height, velocity, normal.x, normal.z)
         RenderTexture _b; // scratch
@@ -322,6 +334,13 @@ namespace AbstractOcclusion.WebGpuWater
         {
             _wakeFoamStrength = Mathf.Max(0f, strength);
             _wakeFoamRadiusScale = Mathf.Max(1e-4f, radiusScale);
+        }
+
+        /// <summary>Cap on the per-step velocity a moving interactor injects (SphereInteract). Clips the
+        /// too-tall crest of a freshly generated wake without touching the developed shape; 0 = off.</summary>
+        public void SetWakeForceCap(float cap)
+        {
+            _wakeStartForceCap = Mathf.Max(0f, cap);
         }
 
         // Bind the bed map + active flag onto a kernel. A texture is always bound (black when inactive)
@@ -587,6 +606,7 @@ namespace AbstractOcclusion.WebGpuWater
             // copy, so foam is unchanged. StepFoam (later this frame) advects + decays the deposit.
             _cs.SetFloat(ID_WakeFoamStrength, _wakeFoamStrength);
             _cs.SetFloat(ID_WakeFoamRadiusScale, _wakeFoamRadiusScale);
+            _cs.SetFloat(ID_WakeStartForceCap, _wakeStartForceCap);
             _cs.SetTexture(_kSphereInteract, ID_FoamSrc, _foamA);
             _cs.SetTexture(_kSphereInteract, ID_FoamDst, _foamB);
             Dispatch(_kSphereInteract);
@@ -623,10 +643,11 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.Dispatch(_kObstacleSmooth, _groups, _groups, 1);
         }
 
-        public void StepSimulation(float waveSpeed, float damping)
+        public void StepSimulation(float waveSpeed, float damping, float viscosity)
         {
             _cs.SetFloat(ID_WaveSpeed, waveSpeed);
             _cs.SetFloat(ID_Damping, damping);
+            _cs.SetFloat(ID_RippleViscosity, viscosity);
             _cs.SetVector(ID_WaveAxisWeight, _waveAxisWeight);
             BindBed(_kUpdate);
             BindObstacleReflection(_kUpdate);

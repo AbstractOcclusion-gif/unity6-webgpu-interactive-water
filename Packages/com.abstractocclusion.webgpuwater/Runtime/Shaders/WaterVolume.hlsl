@@ -105,6 +105,24 @@ float3 WorldDirToPool(float3 worldDir)
     return mul(transpose(VolumeRot()), worldDir) / VolumeExtentSafe();
 }
 
+// (x, z) factor turning a POOL-space slope into a WORLD one, published per body. Pool space
+// normalises each axis by its own extent, so a slope measured there is the world slope times
+// horizontal/vertical - 40x on a 200 m wide, 5 m deep body. Any normal built from a pool slope has
+// to convert FIRST: sqrt(1 - dot(n,n)) cannot hold a slope of 2, it floors, the normal goes
+// horizontal, and no later divide-by-extent can undo what the normalize already ate.
+float4 _PoolSlopeToWorld;
+
+// The SIM heightfield's slope -> world. Separate from the above because a windowed body's sim spans
+// the WINDOW while pool space spans the footprint; identical on every non-windowed body. Use this for
+// anything read out of the sim texture (info.ba), and _PoolSlopeToWorld for anything sampled in pool
+// space (the wind-wave layer).
+float4 _SimSlopeToWorld;
+
+// The sim measures its gradient per TEXTURE unit, where [0,1] spans what pool space spans with
+// [-1,1] - so info.ba is twice the pool slope of the same surface. Consumers of info.ba that want a
+// real slope pay this half first, then _PoolSlopeToWorld.
+#define SIM_SLOPE_TO_POOL 0.5
+
 // Pool-space surface normal -> world normal (inverse-transpose of the linear map).
 float3 PoolNormalToWorld(float3 poolNormal)
 {

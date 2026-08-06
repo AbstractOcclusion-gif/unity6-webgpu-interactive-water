@@ -86,6 +86,30 @@
                 return info;
             }
 
+            // ---- RESTORED helpers (uncommitted work wiped by an errant whole-file revert;
+            // verify against IDE Local History for a guaranteed-exact copy). ----
+            float  _PatchCoverActive; // 1 = punch the base sheet where the near-field patch covers it
+            float2 _PatchCoverMargin; // shrink of the cover test inside the window (pool units, per axis)
+
+            // The UV SampleRipple WOULD read for this point - the raw texel address the headroom
+            // debug view point-samples; one branch on _SimWindowed so the two never disagree.
+            float2 RippleSimUV(float3 poolPos, float3 worldPos)
+            {
+                if (_SimWindowed < 0.5) return poolPos.xz * 0.5 + 0.5;
+                return WorldToSim(worldPos).xz * 0.5 + 0.5;
+            }
+
+            // True where the dense near-field patch already draws this pixel, so the base sheet must
+            // NOT (one surface per pixel). Patch/clipmap/underside renderers stay out.
+            bool PatchCoversBaseSheet(float3 poolPos)
+            {
+                if (_PatchCoverActive < 0.5 || _IsPatch > 0.5 || _IsClipmap > 0.5 || _Underwater > 0.5)
+                    return false;
+                float2 inner = _PatchPoolHalf - _PatchCoverMargin;
+                if (any(inner <= 0.0)) return false; // margin swallowed the window: keep the sheet whole
+                return all(abs(poolPos.xz - _PatchPoolCenter) < inner);
+            }
+
             struct appdata { float4 vertex : POSITION; };
             struct v2f
             {

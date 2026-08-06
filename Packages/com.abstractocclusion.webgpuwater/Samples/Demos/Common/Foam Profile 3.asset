@@ -22,9 +22,9 @@ MonoBehaviour:
     sizeHeroPower: 4.59
   ambient:
     drive: 1
-    spawnThreshold: 0.035
-    spawnRate: 49.6
-    maxSpawnPerFrame: 256
+    spawnThreshold: 0.1
+    spawnRate: 150
+    maxSpawnPerFrame: 1024
     sprayChance: 0.182
     sprayLaunchSpeed: 3.82
     lifeRange: {x: 0.5, y: 1}
@@ -32,7 +32,7 @@ MonoBehaviour:
     spawnMaxDistance: 400
     sprayLifeRange: {x: 2, y: 4}
     spraySizeRange: {x: 1, y: 2}
-    depositLifeRange: {x: 5, y: 10}
+    depositLifeRange: {x: 1, y: 1.5}
     depositSizeRange: {x: 0.3, y: 0.6}
   veil:
     drive: 1

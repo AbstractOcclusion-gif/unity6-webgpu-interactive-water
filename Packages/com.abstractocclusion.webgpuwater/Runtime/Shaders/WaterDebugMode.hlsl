@@ -38,5 +38,15 @@ float _WaterDebugMode;
 // listing them: the surface pass must not claim a fog view, and the fog pass must not claim a
 // surface one, or a single mode would be painted twice.
 #define WATER_DEBUG_FOG_FIRST         WATER_DEBUG_FOG_ARM_WEIGHT
+#define WATER_DEBUG_FOG_LAST          WATER_DEBUG_FOG_SHEET_SIDE
+
+// ---- Surface views added after the fog block ----
+// APPENDED, never renumbered: WaterDebugView.Mode is serialized as an int on the component, so
+// reusing an ordinal would silently repoint every saved scene's selection at a different view.
+// Both sides therefore test the fog block as a RANGE rather than as everything past FOG_FIRST.
+#define WATER_DEBUG_SIM_HEADROOM     14
+#define WATER_DEBUG_FOAM_MASK        15
+#define WATER_DEBUG_SIM_WINDOW       16
+#define WATER_DEBUG_RIPPLE_FIELD     17
 
 #endif // WEBGPUWATER_DEBUG_MODE_INCLUDED

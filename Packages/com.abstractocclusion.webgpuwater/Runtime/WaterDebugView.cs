@@ -108,6 +108,54 @@ namespace AbstractOcclusion.WebGpuWater
             /// that coin toss, and every one of those pixels is fogless. The branch view cannot
             /// show it: it paints the whole legitimately-from-air region the same green.</summary>
             FogSheetSide = 13,
+
+            // ---- Surface views added after the fog block ----
+            // APPENDED, never renumbered: this enum is serialized as an int on the component, so
+            // reusing an ordinal would silently repoint every saved scene's selection.
+
+            /// <summary>How much headroom the ripple sim has left before its containment clamp
+            /// fires (WaterSim.compute, Sanitize). BLACK = a healthy field. RED = height climbing
+            /// toward the bound, GREEN = velocity climbing toward it, WHITE = at the bound and
+            /// being clamped THIS FRAME, BLUE = a texel Sanitize reset to flat after it went
+            /// non-finite. A white patch that blinks on when the surface is hit hard IS the pop;
+            /// blue speckle means the integrator diverged and the containment is papering over it,
+            /// which no amount of clamp tuning can fix. Bounds are POOL units, so their world value
+            /// scales with the body's vertical extent - a shallow pool reaches white far sooner
+            /// than a deep one for the same ripple in metres.</summary>
+            SimHeadroom = 14,
+
+            /// <summary>What the water actually reads out of the foam buffer, split so generation
+            /// and delivery cannot be confused for each other. RED = the RAW buffer value with no
+            /// window fade (is there foam here at all?). GREEN = what the surface really gets
+            /// (raw x fade). BLUE = the window fade on its own - 1 well inside, ramping down over
+            /// Sim Window Edge Fade Texels, 0 at the border. MAGENTA = outside the sim window, where
+            /// no foam can exist by construction, so the window's rectangle is visible as a shape.
+            /// BLACK water = the buffer is empty there: a generation problem, and the render side is
+            /// innocent. Red with no green = the foam is there and the edge fade is eating it.
+            /// Red AND green = it is present and delivered, so the fault is downstream of this
+            /// read.</summary>
+            FoamMask = 15,
+
+            /// <summary>The ripple sim's window, drawn as a shape. GREEN = full-strength sim, RED =
+            /// the edge fade band (the same fade the foam mask and the ripple sample use, so this is
+            /// the band that really attenuates them), DARK = outside the window, where the water is
+            /// analytic and no interaction can reach it. The CYAN cross marks the window centre -
+            /// on a boat-focused window it should sit on the hull, and if it lags or leads, the
+            /// follow target or its offset is what to look at. The faint checker is ONE SQUARE PER
+            /// SIM TEXEL: the grid's real density, countable on screen, which is what decides how
+            /// coarse a ripple can be and is invisible in every other view.</summary>
+            SimWindow = 16,
+
+            /// <summary>The ripple sim's own state, converted to WORLD units so it reads the same on
+            /// a 1 m pond and a 100 m-deep sea. RED = crest (height above rest), BLUE = trough,
+            /// GREEN = speed - how hard the water is moving, which is the wake's ENERGY and outlives
+            /// its shape. Still water is BLACK, so anything visible is something the sim was told to
+            /// do: a wake reads as red/blue bands with a green core, an interactor that is spraying
+            /// ripples everywhere paints them where they are actually being injected, and
+            /// grid-frequency noise reads as a red/blue checker at texel scale. Point-sampled at the
+            /// texel centre on purpose - a filtered read hides exactly that checker. Full channel is
+            /// 25 cm of displacement / 5 cm per step of motion.</summary>
+            RippleField = 17,
         }
 
         /// <summary>True while a FULLSCREEN-FOG view (modes 7+) is selected. The passes that draw

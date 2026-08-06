@@ -43,6 +43,45 @@ namespace AbstractOcclusion.WebGpuWater
 
         // Camera-following clipmap surface for unbounded open-water (ocean) bodies: a WORLD-LOCKED
 
+        // ---- The patch's pool rect, and the hole the base sheet cuts for it ------------------
+        // The patch and the base sheet are COINCIDENT over the window and tessellate the SAME ripple
+        // field at very different densities, so the coarse sheet chords across waves the patch
+        // resolves. After a real disturbance the two surfaces differ by far more than
+        // PatchDepthBiasMeters can hold and the base sheet punches through in blobs - visible as
+        // patches of the surface stepping, and as half the ripple field being drawn by a mesh that
+        // cannot resolve it. The cure is ONE surface per pixel: the base sheet drops the region the
+        // patch covers. Derived here rather than at each consumer so the patch's own vertex remap and
+        // the hole can never disagree about where the patch is.
+        internal bool PatchCoverActive => _patchRenderer != null;
+
+        internal Vector4 PatchPoolCenter
+        {
+            get
+            {
+                Vector3 poolCenter = WorldToPool(SimWindowCenter);
+                return new Vector4(poolCenter.x, poolCenter.z, 0f, 0f);
+            }
+        }
+
+        internal Vector4 PatchPoolHalf => new Vector4(SimHorizontalExtent / VolumeExtentSafe.x,
+                                                      SimHorizontalExtent / VolumeExtentSafe.z, 0f, 0f);
+
+        // The hole is shrunk by this much so the patch OVERLAPS its rim instead of meeting it exactly:
+        // two surfaces that end on the same line leave a rasterised seam showing the sky through the
+        // water. Measured in base-sheet quads, because a quad is the width the seam would open by.
+        const float PatchCoverMarginQuads = 2f;
+        const float MinPatchCoverMarginPool = 0.01f; // floor for bodies that kept their authored mesh
+
+        internal float PatchCoverMargin
+        {
+            get
+            {
+                int detail = SurfaceMeshDetail();
+                float quadPool = detail > 0 ? 2f / detail : 0f;   // pool space spans [-1, 1]
+                return Mathf.Max(PatchCoverMarginQuads * quadPool, MinPatchCoverMarginPool);
+            }
+        }
+
         // Refresh both near-field patches (the above one, and the under twin on ocean bodies).
         void ApplyPatchBlock()
         {
@@ -60,12 +99,10 @@ namespace AbstractOcclusion.WebGpuWater
             if (block == null) block = new MaterialPropertyBlock();
             WriteBodyProps(block);
 
-            Vector3 poolCenter = WorldToPool(SimWindowCenter);
             block.SetFloat(ID_IsPatch, 1f);
             block.SetFloat(ID_PatchDepthBias, PatchDepthBiasMeters);
-            block.SetVector(ID_PatchPoolCenter, new Vector4(poolCenter.x, poolCenter.z, 0f, 0f));
-            block.SetVector(ID_PatchPoolHalf, new Vector4(
-                SimHorizontalExtent / VolumeExtentSafe.x, SimHorizontalExtent / VolumeExtentSafe.z, 0f, 0f));
+            block.SetVector(ID_PatchPoolCenter, PatchPoolCenter);
+            block.SetVector(ID_PatchPoolHalf, PatchPoolHalf);
             patch.SetPropertyBlock(block);
 
             Transform t = patch.transform;

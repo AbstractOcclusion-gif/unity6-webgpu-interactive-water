@@ -39,6 +39,10 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0.1f, 2.0f)] public float waveSpeed = 0.6f;
             [Tooltip("Velocity damping per step. Lower = ripples die out faster.")]
             [Range(0.90f, 1.0f)] public float damping = 0.99f;
+            [Tooltip("Smooths the velocity field toward its neighbourhood each step - a viscosity. " +
+                     "Targets the texel-to-texel chop the explicit solver's dispersion leaves behind " +
+                     "and barely touches long waves, which is what Damping cannot do. 0 = off.")]
+            [Range(0f, 1f)] public float rippleViscosity = 0f;
             [Tooltip("Solver steps per frame AT THE 60 FPS REFERENCE - the sim accumulates real " +
                      "time and runs this rate regardless of frame rate, so wave speed is identical " +
                      "in a 30 fps build and a 144 fps editor. More = faster, smoother propagation.")]
@@ -52,6 +56,11 @@ namespace AbstractOcclusion.WebGpuWater
                      "and round. 0 = off (height-only, unchanged). Raise for a sharp V-wake; also sharpens " +
                      "ambient interactive ripples. On the ocean the wake rides the camera-following sim window.")]
             [Range(0f, 1.5f)] public float rippleChoppiness = 0f;
+            [Tooltip("Caps the per-step velocity a moving interactor (boat/sphere) injects, taming the " +
+                     "too-tall crest a FRESH wake dumps over still water before the solver spreads it - " +
+                     "without touching the developed wake SHAPE (built from many smaller pushes below the " +
+                     "cap). 0 = off (no cap). Lower positive = softer onset; the sim velocity ceiling is 0.5.")]
+            [Range(0f, 0.5f)] public float wakeStartForceCap = 0f;
             [Tooltip("Seed the pool with random ripples on start.")]
             public bool seedRipplesOnStart = true;
             [Tooltip("Keep total water volume constant so the surface doesn't drift up/down.")]
@@ -66,8 +75,10 @@ namespace AbstractOcclusion.WebGpuWater
         // public get/set (sample scripting API) targeting the settings; the rest are read-only.
         internal float waveSpeed => rippleSettings.waveSpeed;
         internal float damping => rippleSettings.damping;
+        internal float rippleViscosity => rippleSettings.rippleViscosity;
         internal int stepsPerFrame => rippleSettings.stepsPerFrame;
         internal float rippleChoppiness => rippleSettings.rippleChoppiness;
+        internal float wakeStartForceCap => rippleSettings.wakeStartForceCap;
         internal bool seedRipplesOnStart => rippleSettings.seedRipplesOnStart;
         internal bool conserveVolume => rippleSettings.conserveVolume;
         internal float conserveMaxCorrection => rippleSettings.conserveMaxCorrection;

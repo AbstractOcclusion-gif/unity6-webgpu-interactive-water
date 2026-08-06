@@ -108,7 +108,7 @@ Material:
     - _OcclusionStrength: 1
     - _PackedChannels: 1
     - _Parallax: 0.005
-    - _ParticleOpacity: 0.079
+    - _ParticleOpacity: 0.241
     - _QueueOffset: 0
     - _ReceiveShadows: 1
     - _Smoothness: 0.5

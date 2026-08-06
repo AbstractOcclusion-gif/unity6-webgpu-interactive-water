@@ -125,6 +125,40 @@ namespace AbstractOcclusion.WebGpuWater
         // Average horizontal window half-size, keeping an injected ripple round in world units.
         float SimHorizontalExtent => Mathf.Max(simWindowMeters, MinWindowHalfExtent);
 
+        // POOL-space slope -> WORLD slope, per axis. Pool space normalises each axis by its own
+        // extent, so a slope measured there is the world slope times horizontal/vertical - and on a
+        // wide shallow body that factor is enormous (200 m wide, 5 m deep = 40x). Any consumer that
+        // treats a pool slope as a real one, or builds a NORMAL from it, has to convert first:
+        // sqrt(1 - dot(n,n)) cannot hold a slope of 2, and the flattening that follows is not
+        // something a later divide-by-extent can undo. The sim's own gradient carries an extra
+        // factor 2 on top (it is measured per texture unit, and [0,1] spans what pool space spans
+        // with [-1,1]) - that half belongs to the sim's consumers, not here.
+        // Windowed bodies span the sim WINDOW horizontally but still scale height by the body extent.
+        internal Vector4 PoolSlopeToWorld
+        {
+            get
+            {
+                Vector3 e = VolumeExtentSafe;
+                return new Vector4(e.y / e.x, e.y / e.z, 0f, 0f);
+            }
+        }
+
+        // The SIM's slope -> WORLD, which is NOT the same conversion. A windowed body's heightfield
+        // spans the sim WINDOW, not the volume footprint, so its gradient is normalised by the window
+        // while the wind-wave layer is still sampled in POOL space and normalised by the extent.
+        // Feeding both through one factor made the wind waves on a 500 m body with a 30 m window
+        // 16.7x too steep - "very sharp and not realistic". They coincide on every non-windowed body,
+        // which is why pools looked right.
+        internal Vector4 SimSlopeToWorld
+        {
+            get
+            {
+                Vector3 horizontal = _windowed ? SimHalfExtent : VolumeExtentSafe;
+                float vertical = VolumeExtentSafe.y;
+                return new Vector4(vertical / horizontal.x, vertical / horizontal.z, 0f, 0f);
+            }
+        }
+
         // GPU consumer API (sim state texture, frame uniforms, window accessors) -> WaterVolume.Facade.cs.
 
         // World -> sim-window normalised coords (.xz in [-1,1] inside the window).

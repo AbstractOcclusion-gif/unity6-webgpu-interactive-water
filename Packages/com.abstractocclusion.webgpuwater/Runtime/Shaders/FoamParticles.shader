@@ -133,6 +133,63 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             float _ParticleFlipbookFps;   // 0 = static per-seed variant; >0 animates the atlas over age
             sampler2D _CameraDepthTexture;
 
+            // ---- Interactive-ripple glue (file-local BY DESIGN).
+            // These live here, not in WaterVolume.hlsl, because that include is pulled in by every
+            // water shader in the package - the fog marcher included. Putting foam helpers there
+            // made a foam edit force a full rebuild of the heaviest variant set in the project for
+            // no reason. Keep glue code next to the glue. The vertex stage carries its own copy of
+            // the same fade for the same reason; the two are kept in step by the comment on each.
+
+            // Largest ripple height (POOL units - multiples of the volume's vertical half-extent)
+            // the glue will trust. Real ripples are orders of magnitude smaller; this only ever
+            // fires on a corrupt texel.
+            #define FOAM_RIPPLE_MAX_POOL_HEIGHT 1.0
+
+            // Ripple height hardened for the glue. A fresh wake stamp can spike a texel, and ONE
+            // bad height here turns every sprite in the draw into garbage geometry (the whole-ocean
+            // "rainbow specks" regression) - a glue value feeds thousands of quads, where the
+            // surface mesh would only lose a single vertex. min/max rather than isfinite: it
+            // flushes NaN to the bound without adding an intrinsic to this translation unit.
+            float FoamRippleHeightSafe(float rawPoolHeight)
+            {
+                return min(max(rawPoolHeight, -FOAM_RIPPLE_MAX_POOL_HEIGHT),
+                           FOAM_RIPPLE_MAX_POOL_HEIGHT);
+            }
+
+            // Weight of the ripple at sim-window UV: 1 inside, ramping to 0 over the last
+            // _SimEdgeFadeTexels, 0 outside the window. MUST match WaterSurfaceVertStage's
+            // SampleRipple - the drawn surface fades its ripple to flat at the border, and past the
+            // border the clamped sampler would serve the edge texel's wake across the open sea.
+            // SINGLE EXIT on purpose: this package's plat-4 compile already reports "potentially
+            // uninitialized variable" against multi-return helpers across a dozen files, and there
+            // is no reason to add to that list for a four-line function.
+            float FoamRippleWindowFade(float2 uv)
+            {
+                float band = max(_SimEdgeFadeTexels, 0.0) * _WaterTexel.x; // texels -> UV
+                float2 edgeDist = min(uv, 1.0 - uv);
+                float fade = saturate(min(edgeDist.x, edgeDist.y) / max(band, 1e-5));
+                bool outsideWindow = any(uv < 0.0) || any(uv > 1.0);
+                return outsideWindow ? 0.0 : fade;
+            }
+
+            // Interactive-ripple (wake) height in WORLD metres under a world xz. Open water needs
+            // this because the RENDERED surface adds the same heightfield on top of the swell
+            // (WaterSurfaceVertStage lifts the vertex by the faded ripple): without it the sprites
+            // sat at plain swell height while the water under them rode the wake, so ZWrite cut the
+            // foam out of the wake it belongs to. Sampled on the surface plane, like the vertex
+            // stage - under a rotated volume a probe's own y would bleed into the window's xz.
+            float RippleGlueWorldHeight(float2 worldXZ)
+            {
+                float3 flatWorld = float3(worldXZ.x, _VolumeCenter.y, worldXZ.y);
+                bool   windowed  = _SimWindowed >= 0.5;
+                float2 uv   = windowed ? (WorldToSim(flatWorld).xz * 0.5 + 0.5)
+                                       : (WorldToPool(flatWorld).xz * 0.5 + 0.5);
+                float  fade = windowed ? FoamRippleWindowFade(uv) : 1.0;
+                // fade == 0 outside the window: analytic-only water there, so no ripple. The sample
+                // still runs (single exit, see FoamRippleWindowFade) and is multiplied away.
+                return FoamRippleHeightSafe(SampleWaterBilinear(uv).r) * fade * VolumeExtentSafe().y;
+            }
+
             // The animated water surface at a probe point's xz, in world space. Two bodies, one
             // contract: open water rides the FULL large-body surface (LargeBodyWaveHeight already
             // carries the swell/FFT, the near-shore shoal attenuation and the surf fronts, so foam
@@ -153,7 +210,8 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                                                             shore.toShore, shore.slopeTan,
                                                             shore.influence, _SurfBeatTime);
                     surfaceWorld = float3(wxz.x,
-                                          _VolumeCenter.y + LargeBodyWaveHeightShore(wxz, shore, surf),
+                                          _VolumeCenter.y + LargeBodyWaveHeightShore(wxz, shore, surf)
+                                                          + RippleGlueWorldHeight(wxz),
                                           wxz.y);
                     // Edge guard matches the OceanFftNormalTilt wrapper this replaces; 0 tilt when
                     // the FFT is off (flat lean).
@@ -431,6 +489,11 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 // paints this sprite, so price the camera->sprite wet path here. Identity
                 // mul/add whenever the fog is off - the queue-time look is untouched.
                 float3 fogLightDir = normalize(_LightDir + 1e-5);
+                // Into LOCALS, then onto o: passing o.fogMul/o.fogAdd straight in as out-params made
+                // the compiler treat the whole partially-written v2f as an aggregate copy-in/copy-out
+                // and report "potentially uninitialized variable (o)" on plat 4.
+                float3 fogMul;
+                float3 fogAdd;
                 if (isBubble)
                 {
                     // A bubble is submerged BY DEFINITION and is drawn at its apparent image, so
@@ -439,14 +502,20 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                     // don't blend with the fog"), and the image sits exactly ON the waterline, so
                     // even an ungated call would have measured a zero wet path. Price the TRUE
                     // position against the bubble's OWN local waterline instead.
-                    ParticleUnderwaterFogAtLevel(bubbleWorld, surfaceWorld.y, fogLightDir, _SunColor,
-                                                 o.fogMul, o.fogAdd);
+                    ParticleUnderwaterFogAtLevel(bubbleWorld, surfaceWorld.y, fogLightDir,
+                                                 _SunColor, fogMul, fogAdd);
                 }
                 else
                 {
-                    ParticleUnderwaterFog(worldVertex, fogLightDir, _SunColor,
-                                          o.fogMul, o.fogAdd);
+                    // Against the sprite's OWN local waterline, not the camera-xz flat one: foam is
+                    // glued to that surface and spray is thrown from it, so on waves the flat level
+                    // is a different height entirely and dry spray over a trough came out
+                    // fog-coloured. surfaceWorld.y is already the glue's answer - no extra sample.
+                    ParticleUnderwaterFogArmedAtLevel(worldVertex, surfaceWorld.y, fogLightDir,
+                                                      _SunColor, fogMul, fogAdd);
                 }
+                o.fogMul = fogMul;
+                o.fogAdd = fogAdd;
                 return o;
             }
 

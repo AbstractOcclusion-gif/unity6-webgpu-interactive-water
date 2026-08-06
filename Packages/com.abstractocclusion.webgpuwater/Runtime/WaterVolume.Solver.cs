@@ -120,7 +120,7 @@ namespace AbstractOcclusion.WebGpuWater
                 ? Mathf.Pow(damping, 1f / Mathf.Sqrt(_simDensityRatio))
                 : damping;
             for (int i = 0; i < steps; i++)
-                _water.StepSimulation(effectiveWaveSpeed, effectiveDamping);
+                _water.StepSimulation(effectiveWaveSpeed, effectiveDamping, rippleViscosity);
 
             // Exact GPU-reduced mean (no more Blit + GenerateMips: the float-mip mean silently
             // point-sampled in WebGPU builds and popped the plane; see WaterSim.compute). Skipped on
@@ -133,6 +133,8 @@ namespace AbstractOcclusion.WebGpuWater
             // Wake foam (move #3): push the stamp gain to the sim so the next interactor dispatches
             // deposit foam at the hull. Zeroed when foam is off, so interactions stay copy-through.
             _water.SetWakeFoam(foam ? foamWakeStrength : 0f, foamWakeRadiusScale);
+            // Wake start-force cap: clip the too-tall crest of a freshly generated wake (0 = off).
+            _water.SetWakeForceCap(wakeStartForceCap);
 
             // Wetness memory rides this same pass, so the sim must still step when the foam LOOK is
             // off but something in the scene reads wet ground. _FoamWriteMask keeps R empty in that
@@ -151,7 +153,13 @@ namespace AbstractOcclusion.WebGpuWater
                 // the response knobs would need re-tuning per size. Boosting the response gains
                 // by 1/ratio restores the activity magnitude the knobs and threshold were
                 // authored against. Identity at ratio 1 (small bodies unchanged).
-                float foamActivityScale = 1f / Mathf.Max(_simDensityRatio, 0.05f);
+                // ...and the readings are POOL heights (world / extent.y), so a fixed world ripple
+                // foamed less the deeper the body got. Carrying the gains to world units removes that,
+                // and matches the threshold pair below, which is already authored in metres.
+                // KNOWN TRADE-OFF: the authored gains were tuned in the pool convention, so on a deep
+                // body this scales `activity` far past _FoamGenThreshold - saturate() pins gen at 1 and
+                // the response reads binary until the gains (or the threshold) are re-tuned to match.
+                float foamActivityScale = VolumeExtentSafe.y / Mathf.Max(_simDensityRatio, 0.05f);
                 // Min wave height AND the shallow-breaking range are authored in WORLD metres; the
                 // sim's heights and bed column depths are pool units, so both divide by the extent.
                 PushShoreFoam(_water);    // surf-front whitewash source (inert without the surf layer)

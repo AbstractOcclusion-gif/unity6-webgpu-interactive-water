@@ -31,7 +31,7 @@ MonoBehaviour:
     sizeRange: {x: 0.1, y: 0.2}
     spawnMaxDistance: 400
     sprayLifeRange: {x: 1, y: 2}
-    spraySizeRange: {x: 0.03, y: 0.06}
+    spraySizeRange: {x: 0.1, y: 0.2}
     depositLifeRange: {x: 0.8, y: 1}
     depositSizeRange: {x: 0.1, y: 0.15}
   veil:

@@ -151,6 +151,9 @@ Texture2D<float4> Sim;      // (height, velocity, normal.x, normal.z)
 Texture2D<float>  FoamTex;  // foam amount (R)
 
 float _Size;              // sim grid resolution
+// _SimEdgeFadeTexels is declared by WaterVolume.hlsl (included above) - it was already in scope
+// here, just never SET on this compute, so it read 0 and the particles skipped the band the
+// surface fades over. The C# side now binds it; see SimWindowRippleFade.
 uint  _Capacity;          // particle pool size (power of two)
 uint  _FrameSeed;         // per-frame random salt
 float _DeltaTime;
@@ -435,6 +438,46 @@ SurfWaveSample SurfSampleAt(float2 worldXZ, out float shoreDepth, out float shor
 // World-space surface height under a floating particle: the same "glue to the animated
 // surface" the quad vertex does, minus the small analytic wind-wave layer (cm-scale;
 // compute has no wave globals). Pond: sim heightfield. Ocean: summed FFT cascades.
+// Weight of the sim's ripple at these window coords, mirroring WaterSurfaceVertStage's
+// SampleRipple: 1 inside, ramping to 0 over the last _SimEdgeFadeTexels, and 0 outside the window
+// entirely. WITHOUT this the particles rode the FULL-amplitude heightfield while the drawn surface
+// was already fading to flat, so through the band the two disagreed by up to the ripple's whole
+// amplitude - particles left below the rendered water are depth-culled, which reads as the foam
+// being cut in an arc that moves when the window is resized. Past the window it is worse than a
+// mismatch: SampleSim clamps, so an outside particle silently reads the border texel's height.
+// Whole-body bodies have no window and no band, so this returns 1 and they stay byte-identical.
+float SimWindowRippleFade(float2 simNorm)
+{
+    if (_SimWindowed < 0.5) return 1.0;
+
+    float2 uv = simNorm * 0.5 + 0.5;
+    if (any(uv < 0.0) || any(uv > 1.0)) return 0.0;
+
+    float band = max(_SimEdgeFadeTexels, 0.0) / max(_Size, 1.0); // texels -> normalised
+    float2 edgeDist = min(uv, 1.0 - uv);
+    return saturate(min(edgeDist.x, edgeDist.y) / max(band, 1e-5));
+}
+
+// Largest ripple height (POOL units) the glue will trust; see the twin in FoamParticles.shader.
+// min/max rather than isfinite, matching the render side - it flushes NaN to the bound.
+#define FOAM_RIPPLE_MAX_POOL_HEIGHT 1.0
+
+float FoamRippleHeightSafe(float rawPoolHeight)
+{
+    return min(max(rawPoolHeight, -FOAM_RIPPLE_MAX_POOL_HEIGHT), FOAM_RIPPLE_MAX_POOL_HEIGHT);
+}
+
+// The interactive ripple under a particle, in WORLD metres: pool-unit sim height, faded at the
+// window border, hardened, scaled by the volume's vertical extent. Shared by both surface
+// branches - the OCEAN one adds it ON TOP of the swell, exactly as the surface mesh does.
+float RippleGlueWorldHeight(float2 simNorm)
+{
+    float fade = SimWindowRippleFade(simNorm);
+    if (fade <= 0.0) return 0.0; // outside the window: analytic-only water, no ripple
+
+    return FoamRippleHeightSafe(SampleSim(simNorm).r) * fade * VolumeExtentSafe().y;
+}
+
 float SurfaceWorldY(float3 worldPos, float2 simNorm)
 {
     float surfaceY;
@@ -461,14 +504,17 @@ float SurfaceWorldY(float3 worldPos, float2 simNorm)
         height += active * cascadeShoal
                 * _OceanFftSpatial.SampleLevel(sampler_OceanFftSpatial, float3(uv, slice), 0).y;
     }
+    // The wake/interactive ripple rides ON TOP of the swell on oceans too (the surface mesh adds
+    // both), so the density glue must - otherwise the veil sits at swell height inside a wake that
+    // has lifted the water above it and the foam is depth-culled out of its own wake.
     surfaceY = _VolumeCenter.y
              + height * _OceanFftAmplitude * SurfAmbientWeight(surfGlue.mask)
-             + surfGlue.height;
+             + surfGlue.height
+             + RippleGlueWorldHeight(simNorm);
 #else
     // Sim height is stored in pool units; the volume's vertical extent maps it to metres.
     // The surf fronts ride on top (they are analytic surface geometry, not sim state).
-    float poolY = SampleSim(simNorm).r;
-    surfaceY = _VolumeCenter.y + poolY * VolumeExtentSafe().y + surfGlue.height;
+    surfaceY = _VolumeCenter.y + RippleGlueWorldHeight(simNorm) + surfGlue.height;
 #endif
     return surfaceY;
 }

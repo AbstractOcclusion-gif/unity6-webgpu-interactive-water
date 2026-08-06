@@ -134,7 +134,11 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyCaustics"
                 // large window, so it must not dominate. It stays LIVE in every mode - wake/splash
                 // caustics must track the thing that made them.
                 float4 info = SampleWaterBilinear(windowNorm * 0.5 + 0.5);
-                float2 rippleTilt = info.ba * (CAUSTIC_NORMAL_SOFTEN * CAUSTIC_RIPPLE_WEIGHT);
+                // info.ba is a SIM-space slope; this normal is built in the world frame, so it
+                // converts first or the tilt arrives inflated by the window/depth aspect and
+                // saturates sqrt(1 - dot) on a shallow sea. See _PoolSlopeToWorld.
+                float2 rippleTilt = info.ba * SIM_SLOPE_TO_POOL * _SimSlopeToWorld.xy
+                                  * (CAUSTIC_NORMAL_SOFTEN * CAUSTIC_RIPPLE_WEIGHT);
                 float3 normal = float3(rippleTilt.x, sqrt(max(0.0, 1.0 - dot(rippleTilt, rippleTilt))), rippleTilt.y);
                 // TWO LAYERS THAT COMPOSE, and that is the fix. These used to be an
                 // if / else-if / else, so ANY _LargeCausticRippleStrength above zero shadowed BOTH

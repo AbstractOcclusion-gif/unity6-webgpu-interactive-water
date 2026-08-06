@@ -35,9 +35,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 DrawFields(
                     "rippleSettings.waveSpeed",
                     "rippleSettings.damping",
+                    "rippleSettings.rippleViscosity",
                     "rippleSettings.rippleStrength",
                     "rippleSettings.rippleRadius",
-                    "rippleSettings.rippleChoppiness");
+                    "rippleSettings.rippleChoppiness",
+                    "rippleSettings.wakeStartForceCap");
                 _showRippleAdvanced = WaterEditorUI.SubSection("Advanced", _showRippleAdvanced, () =>
                 {
                     DrawFields("rippleSettings.stepsPerFrame", "rippleSettings.seedRipplesOnStart");
@@ -127,7 +129,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                         DrawFields(
                             WaterVolumePropertyPaths.SeaDepth,
                             "ocean.cascadeReach",
-                            WaterVolumePropertyPaths.UnboundedOcean,
+                            // Unbounded Ocean moved to the Body tab's Topology section: it decides what
+                            // the body IS, it must stay tickable when the type says Pond, and this fold
+                            // greys out exactly when someone would be reaching for it.
                             WaterVolumePropertyPaths.EdgeFeatherMeters));
                 },
                 contentEnabled: LakeOrOcean);

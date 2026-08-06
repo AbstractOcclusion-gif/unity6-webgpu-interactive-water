@@ -157,6 +157,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_Sim = Shader.PropertyToID("Sim");
         static readonly int ID_FoamTex = Shader.PropertyToID("FoamTex");
         static readonly int ID_Size = WaterShaderProps.Size;
+        static readonly int ID_SimEdgeFadeTexels = Shader.PropertyToID("_SimEdgeFadeTexels");
         static readonly int ID_Capacity = Shader.PropertyToID("_Capacity");
         static readonly int ID_FrameSeed = Shader.PropertyToID("_FrameSeed");
         static readonly int ID_DeltaTime = Shader.PropertyToID("_DeltaTime");
@@ -578,6 +579,9 @@ namespace AbstractOcclusion.WebGpuWater
             shoreFoam.BindTo(cs, _kUpdate);
 
             cs.SetFloat(ID_Size, volume.SimResolution);
+            // Same band the surface fades its ripple over, so a particle and the water under it
+            // agree on the height through the window border instead of by up to a full amplitude.
+            cs.SetFloat(ID_SimEdgeFadeTexels, volume.simWindowEdgeFadeTexels);
             cs.SetInt(ID_Capacity, _capacityPow2);
             cs.SetInt(ID_FrameSeed, unchecked((int)(Time.frameCount * FrameSeedHashPrime)));
             cs.SetFloat(ID_DeltaTime, dt);
@@ -756,23 +760,24 @@ namespace AbstractOcclusion.WebGpuWater
             cs.Dispatch(_kClearDensity,
                         (texelCount + UpdateThreadGroupSize - 1) / UpdateThreadGroupSize, 1, 1);
 
-            // The surface-height glue reads the FFT cascade on oceans and the 2D sim on
-            // pools; bind only what this variant declares (unused binds hard-error on
-            // some backends, mirroring the Spawn kernel's pattern). The shore binder re-runs
-            // here because the kernel executes outside DispatchSimulation's bind scope.
+            // The surface-height glue reads the 2D sim on every body and the FFT cascade only on
+            // oceans; bind only what this variant declares (unused binds hard-error on some
+            // backends, mirroring the Spawn kernel's pattern). The shore binder re-runs here
+            // because the kernel executes outside DispatchSimulation's bind scope.
             volume.BuildShoreFoamState().BindTo(cs, _kRasterizeDensity);
             cs.SetBuffer(_kRasterizeDensity, ID_Particles, _particles);
             cs.SetBuffer(_kRasterizeDensity, ID_DensityBuffer, _density);
             cs.SetBuffer(_kRasterizeDensity, ID_DensityDepth, _densityDepth);
+            // The 2D sim is read on BOTH paths now: the ocean glue adds the interactive ripple
+            // (the wake) on top of the swell, exactly as the surface mesh does, so leaving Sim
+            // unbound on oceans would be the unbound-resource error this bind pattern exists to
+            // avoid. The cascade textures stay ocean-only (the variant that reads them).
+            cs.SetTexture(_kRasterizeDensity, ID_Sim, volume.SimStateTexture);
             bool oceanFftGlue = volume.OceanFftActive && volume.OceanFftSpatialTexture != null;
             if (oceanFftGlue)
             {
                 cs.SetTexture(_kRasterizeDensity, ID_OceanFftSpatial, volume.OceanFftSpatialTexture);
                 cs.SetFloat(ID_OceanFftAmplitude, volume.LargeWaveAmplitudeEffective);
-            }
-            else
-            {
-                cs.SetTexture(_kRasterizeDensity, ID_Sim, volume.SimStateTexture);
             }
             cs.Dispatch(_kRasterizeDensity, _capacityPow2 / UpdateThreadGroupSize, 1, 1);
         }

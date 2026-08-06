@@ -192,7 +192,8 @@ bool WaterFogDebugColor(float armWeight, float classifyPushDist, float wetSpanLe
     if (_WaterDebugMode < 0.5) return false;
 
     int mode = (int)(_WaterDebugMode + 0.5);
-    if (mode < WATER_DEBUG_FOG_FIRST) return false; // a surface view: not ours to paint
+    // A surface view, on either side of the fog block: not ours to paint.
+    if (mode < WATER_DEBUG_FOG_FIRST || mode > WATER_DEBUG_FOG_LAST) return false;
 
     if (mode == WATER_DEBUG_FOG_ARM_WEIGHT)
     {

@@ -136,6 +136,14 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_LargeWaveWind = Shader.PropertyToID("_LargeWaveWindHeading");
         static readonly int ID_LargeWaveChop = Shader.PropertyToID("_LargeWaveChoppiness");
         static readonly int ID_RippleChoppiness = Shader.PropertyToID("_RippleChoppiness");
+        static readonly int ID_PoolSlopeToWorld = Shader.PropertyToID("_PoolSlopeToWorld");
+        static readonly int ID_SimSlopeToWorld = Shader.PropertyToID("_SimSlopeToWorld");
+        // The near-field patch's footprint, published to EVERY renderer of the body: the patch reads it
+        // to place its vertices, the base sheet reads it to cut its hole.
+        static readonly int ID_PatchCoverActive = Shader.PropertyToID("_PatchCoverActive");
+        static readonly int ID_PatchCoverMargin = Shader.PropertyToID("_PatchCoverMargin");
+        static readonly int ID_PatchCoverCenter = Shader.PropertyToID("_PatchPoolCenter");
+        static readonly int ID_PatchCoverHalf = Shader.PropertyToID("_PatchPoolHalf");
         static readonly int ID_LargeWaveDetail = Shader.PropertyToID("_LargeWaveDetailSlope");
         static readonly int ID_LargeWaveEdgeFeather = Shader.PropertyToID("_LargeWaveEdgeFeather");
         static readonly int ID_OceanWorldWaves = Shader.PropertyToID("_OceanWorldWaves");
@@ -380,6 +388,10 @@ namespace AbstractOcclusion.WebGpuWater
             material.SetFloat(ID_WaveCount, _body.WindWaves ? _body.WaveBank.Count : 0f);
             material.SetFloat(ID_WaveMeters, _body.WaveMetersPerUnit);
             material.SetFloat(ID_WaveNormal, _body.waveNormalStrength);
+            // The caustic normal is built from the same two slopes the surface uses, so it needs the
+            // same pool -> world conversion; without it the material reads 0 and the surface goes flat.
+            material.SetVector(ID_PoolSlopeToWorld, _body.PoolSlopeToWorld);
+            material.SetVector(ID_SimSlopeToWorld, _body.SimSlopeToWorld);
             material.SetVector(ID_WaveGroupA, _body.WaveBank.GroupA);
             material.SetVector(ID_WaveGroupB, _body.WaveBank.GroupB);
             material.SetVector(ID_WaveShape, _body.WaveBank.Shape);
@@ -582,6 +594,14 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_LargeWaveWind, _body.LargeWaveHeadingRad);
             sink.SetFloat(ID_LargeWaveChop, _body.LargeWaveChoppiness);
             sink.SetFloat(ID_RippleChoppiness, _body.rippleChoppiness);
+            sink.SetVector(ID_PoolSlopeToWorld, _body.PoolSlopeToWorld);
+            sink.SetVector(ID_SimSlopeToWorld, _body.SimSlopeToWorld);
+            // 0 whenever no patch is drawn (every bounded body, and windowed bodies in edit mode),
+            // which leaves the base sheet whole exactly as before.
+            sink.SetFloat(ID_PatchCoverActive, _body.PatchCoverActive ? 1f : 0f);
+            sink.SetFloat(ID_PatchCoverMargin, _body.PatchCoverMargin);
+            sink.SetVector(ID_PatchCoverCenter, _body.PatchPoolCenter);
+            sink.SetVector(ID_PatchCoverHalf, _body.PatchPoolHalf);
             sink.SetFloat(ID_LargeWaveDetail, _body.OceanDetailSlope);
             // 0 for pools AND unbounded oceans (the Effective accessor gates); only a BOUNDED
             // open-water body feathers its wave field toward the footprint border.

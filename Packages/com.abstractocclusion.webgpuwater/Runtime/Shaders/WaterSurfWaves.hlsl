@@ -162,6 +162,12 @@ float _SurfFoamTrailLength;  // trailing-deposit length multiplier (1 = legacy)
 // creases. MUST stay under 4 x SURF_FILM_THICKNESS: SmoothMin dips blend/4 below the true minimum
 // where the two arguments meet, and that dip eats into the film's clearance over the sand.
 #define SURF_FILM_BLEND        0.05
+// Foam-buffer coverage at which a persistent swash deposit HOLDS the beach film fully onto the sand
+// (FOAM_MASK_EPSILON is the other end of the ramp). This was a bare `> FOAM_MASK_EPSILON` test, i.e.
+// a binary switch on a continuously decaying buffer: the faintest trace of foam snapped the film up
+// by whole metres and opened the clip, so beach patches popped in and out as deposits faded through
+// 0.005. An epsilon answers "is anything here", which is the wrong question for a HOLD strength.
+#define SURF_DEPOSIT_HOLD_FULL 0.15
 // Lifecycle x-axis span of the crest-foam pop LUT (FOAM-1): overCap 0..this maps to LUT u 0..1.
 // LOCKSTEP with WaterVolume.SurfCrestLutOverCapMax (the C# curve bake) - render-only foam, so it
 // is NOT a validator-guarded height pair; the comment is the contract.
@@ -668,21 +674,38 @@ float SurfAmbientWeight(float surfMask)
 //                  wave cycle, so sand and the ground beside it dry at one rate
 // The surface shader keeps beach fragments alive up to max(.x, .y) and renders the zone above the
 // current film as the dark wet-sand glaze - wet sand with zero extra state.
+// The swash's beach-steepness cap as a plain 0..1 weight: 1 on a beach gentle enough to hold a
+// film, falling to 0 past the authored ceiling.
+//
+// Swash is a BEACH process: a thin film runs up a slope only while the slope is gentle enough to
+// hold it. The Hunt/Iribarren run-up GROWS with tanBeta - correct for a beach, where a steeper face
+// really does surge further, and exactly wrong past the point where the "beach" is a cliff and the
+// water simply hits it and falls. The physical model cannot know where that is, so the ceiling is
+// authored (_SurfSwashMaxSlopeTan).
+//
+// A SEPARATE FUNCTION, not an inline fold, because the cap has to be visible to callers. It used to
+// live inside EvaluateSurfSwash, applied to that function's own local copy of `influence`, where no
+// caller could see it. Any caller deriving a STRENGTH from the swash - rather than reading the
+// levels it returns - therefore skipped the cap silently. That is exactly how the foam sim came to
+// lay full-strength swash deposits along CLIFF waterlines, where the swash itself is switched off:
+// EvaluateSurfSwash dutifully returned 0, and the sim then built its deposit from the uncapped
+// influence it had passed in. Anything gating on "is there swash here" must multiply by THIS.
+//
+// The divide is guarded and the ramp is built from a saturate rather than smoothstep's two edges,
+// so a max slope of 0 degenerates cleanly to "no swash" instead of to undefined behaviour.
+float SurfSwashSlopeGate(float tanBeta)
+{
+    float slopeFalloff = max(_SurfSwashMaxSlopeTan * (1.0 - SURF_SWASH_SLOPE_FEATHER), 1e-4);
+    float slopeT = saturate((_SurfSwashMaxSlopeTan - tanBeta) / slopeFalloff);
+    return smoothstep(0.0, 1.0, slopeT);
+}
+
 float2 EvaluateSurfSwash(float2 worldXZ, float2 toShore, float tanBeta, float influence, float time)
 {
-    // Steepness cap. Swash is a BEACH process: a thin film runs up a slope only while the slope is
-    // gentle enough to hold it. The Hunt/Iribarren run-up below GROWS with tanBeta - correct for a
-    // beach, where a steeper face really does surge further, and exactly wrong past the point where
-    // the "beach" is a cliff and the water simply hits it and falls. The physical model cannot know
-    // where that is, so the ceiling is authored.
     // Folded into `influence` rather than applied at the return: influence already multiplies BOTH
     // `run` and `runPrev` below, so the current film AND the drying wet line inherit the cap from
     // one multiply and can never disagree about where the beach ends.
-    // The divide is guarded and the ramp is built from a saturate rather than smoothstep's two
-    // edges, so a max of 0 degenerates cleanly to "no swash" instead of to undefined behaviour.
-    float slopeFalloff = max(_SurfSwashMaxSlopeTan * (1.0 - SURF_SWASH_SLOPE_FEATHER), 1e-4);
-    float slopeT = saturate((_SurfSwashMaxSlopeTan - tanBeta) / slopeFalloff);
-    influence *= smoothstep(0.0, 1.0, slopeT);
+    influence *= SurfSwashSlopeGate(tanBeta);
 
     if (_SurfActive < 0.5 || influence <= SURF_MIN_INFLUENCE || _SurfSwashAmplitude <= 0.0)
         return float2(0.0, 0.0);

@@ -194,6 +194,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
             fixed4 frag(v2f i) : SV_Target
             {
+                // The near-field patch already owns these pixels (see PatchCoversBaseSheet).
+                // Coincident sheets at different tessellations, so whichever wins the depth test
+                // flips per region once a disturbance opens the gap - the surface reads as slabs
+                // stepping against each other. Inert on every body without a patch.
+                if (PatchCoversBaseSheet(i.position)) discard;
+
                 // Dry-interior exclusion (boat hull, sub room): kill the surface fragment
                 // BEFORE any shading work. Runs on both sides (_Underwater 0 and 1), so a
                 // dry room seen from below loses its ceiling sheet too. WGSL-safe: discard
@@ -290,7 +296,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 // Debug views LAST, so they REPLACE the finished colour rather than perturb it.
                 // Uniform branch: one compare per pixel whenever _WaterDebugMode is 0.
                 float3 debugColor;
-                if (WaterDebugColor(i.screenPos, geom.normal, debugColor))
+                // SOURCE xz, mirroring EvaluateSurfaceGeometry: the sim is read at the pre-chop
+                // point, so the headroom view addresses the texel this fragment was shaded from.
+                float3 debugRippleSource = float3(i.largeWaveSourceXZ.x, i.worldPos.y,
+                                                  i.largeWaveSourceXZ.y);
+                if (WaterDebugColor(i.screenPos, geom.normal, i.position, debugRippleSource, debugColor))
                     return float4(debugColor, 1.0);
                 return float4(outColor, 1.0);
             }
@@ -344,6 +354,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
             float4 fragDepth(v2f i) : SV_Target
             {
+                // The near-field patch already owns these pixels (see PatchCoversBaseSheet).
+                // Coincident sheets at different tessellations, so whichever wins the depth test
+                // flips per region once a disturbance opens the gap - the surface reads as slabs
+                // stepping against each other. Inert on every body without a patch.
+                if (PatchCoversBaseSheet(i.position)) discard;
+
                 // Dry-interior exclusion: no surface there, so no waterline either (matches the
                 // visible pass's discard, mesh tier included - the two must agree, or this RT would
                 // report a surface the visible pass threw away).
@@ -428,6 +444,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
             fixed4 fragFoamOverlay(v2f i) : SV_Target
             {
+                // The near-field patch already owns these pixels (see PatchCoversBaseSheet).
+                // Coincident sheets at different tessellations, so whichever wins the depth test
+                // flips per region once a disturbance opens the gap - the surface reads as slabs
+                // stepping against each other. Inert on every body without a patch.
+                if (PatchCoversBaseSheet(i.position)) discard;
+
                 // Same carve rules as the visible pass: no surface there, no foam either.
                 if (InsideExclusion(i.worldPos)) discard;
                 if (_ExclusionMeshCount > 0.5)

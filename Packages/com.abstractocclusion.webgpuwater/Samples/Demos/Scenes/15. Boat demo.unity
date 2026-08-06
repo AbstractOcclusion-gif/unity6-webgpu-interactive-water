@@ -378,7 +378,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &232428234
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5696,6 +5696,135 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1001 &669187504
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 0}
+    m_Modifications:
+    - target: {fileID: 2289032453173115939, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: radius
+      value: 0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 2289032453173115939, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: strength
+      value: 0.1
+      objectReference: {fileID: 0}
+    - target: {fileID: 3503852985712929184, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: m_Mass
+      value: 100
+      objectReference: {fileID: 0}
+    - target: {fileID: 3604949055224105157, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: m_Layer
+      value: 4
+      objectReference: {fileID: 0}
+    - target: {fileID: 3815383692066494255, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: objectWidth
+      value: 10
+      objectReference: {fileID: 0}
+    - target: {fileID: 3815383692066494255, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: waveDriftStrength
+      value: 0.3
+      objectReference: {fileID: 0}
+    - target: {fileID: 3815383692066494255, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: verticalSettleDamping
+      value: 3
+      objectReference: {fileID: 0}
+    - target: {fileID: 3910971927850112354, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: radius
+      value: 0.8
+      objectReference: {fileID: 0}
+    - target: {fileID: 3910971927850112354, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: strength
+      value: 0.1
+      objectReference: {fileID: 0}
+    - target: {fileID: 4128827499602973311, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0.2
+      objectReference: {fileID: 0}
+    - target: {fileID: 5857976772605731170, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: m_Layer
+      value: 4
+      objectReference: {fileID: 0}
+    - target: {fileID: 6758772759551313938, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: m_Layer
+      value: 4
+      objectReference: {fileID: 0}
+    - target: {fileID: 7188803851468958105, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: m_Layer
+      value: 4
+      objectReference: {fileID: 0}
+    - target: {fileID: 7188803851468958105, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: m_IsActive
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8106151295197513698, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: m_Layer
+      value: 4
+      objectReference: {fileID: 0}
+    - target: {fileID: 8263202057762359871, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8263202057762359871, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8263202057762359871, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8263202057762359871, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8263202057762359871, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8263202057762359871, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8263202057762359871, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8263202057762359871, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8263202057762359871, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8263202057762359871, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8719084040468371349, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: m_Name
+      value: Boat (1)
+      objectReference: {fileID: 0}
+    - target: {fileID: 8719084040468371349, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: m_Layer
+      value: 4
+      objectReference: {fileID: 0}
+    - target: {fileID: 9087477482550035349, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: enginePower
+      value: 9
+      objectReference: {fileID: 0}
+    m_RemovedComponents:
+    - {fileID: 281386409395102035, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 8719084040468371349, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 2071714859}
+  m_SourcePrefab: {fileID: 100100000, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
 --- !u!1 &773898432
 GameObject:
   m_ObjectHideFlags: 0
@@ -5906,7 +6035,7 @@ MonoBehaviour:
     m_Bits: 1
   m_VolumeTrigger: {fileID: 0}
   m_VolumeFrameworkUpdateModeOption: 2
-  m_RenderPostProcessing: 1
+  m_RenderPostProcessing: 0
   m_Antialiasing: 2
   m_AntialiasingQuality: 2
   m_StopNaN: 0
@@ -6031,8 +6160,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0c2f11fcb19c4fd478b030ada99be5fb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.SimpleFollowCamera
-  target: {fileID: 232428239}
-  localOffset: {x: 0, y: 4.5, z: -11}
+  target: {fileID: 1260589600}
+  localOffset: {x: 0, y: 10, z: -20}
   lookHeight: 1
   followSharpness: 4
 --- !u!1 &1000572585
@@ -6080,6 +6209,11 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!4 &1260589600 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 8263202057762359871, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+  m_PrefabInstance: {fileID: 669187504}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1 &1370892792
 GameObject:
   m_ObjectHideFlags: 0
@@ -11076,9 +11210,9 @@ MonoBehaviour:
   sun: {fileID: 177695280}
   tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
   sky: {fileID: 8900000, guid: 85bd64faed533b54a88c144de0f680b6, type: 3}
-  foamPatternTexture: {fileID: 2800000, guid: 74ed02889dbed0e4096685ebafa011b6, type: 3}
-  foamPatternGrid: {x: 4, y: 4}
-  foamPatternFps: 10
+  foamPatternTexture: {fileID: 2800000, guid: a5f2ef87d189d12951522a62b6df8920, type: 3}
+  foamPatternGrid: {x: 1, y: 1}
+  foamPatternFps: 0
   foamReliefStrength: 1
   oceanWhitecapTexture: {fileID: 2800000, guid: 1ee279c16b027ad48a8eb248749ff66c, type: 3}
   oceanWhitecapGrid: {x: 1, y: 1}
@@ -11090,7 +11224,7 @@ MonoBehaviour:
   largeBodyThreshold: 300
   simWindowMeters: 30
   clampWindowToShore: 0
-  simWindowFocus: {fileID: 232428239}
+  simWindowFocus: {fileID: 1260589600}
   simWindowOffset: {x: 0, y: 0}
   _legacyWaveSpeed: 0.6
   _legacyDamping: 0.99
@@ -11114,37 +11248,37 @@ MonoBehaviour:
   _legacyWaveNormalStrength: 1
   foamSettings:
     foam: 1
-    foamGenRate: 1.7
-    foamDecay: 0.802
+    foamGenRate: 1.6
+    foamDecay: 0.824
     foamDecayResidual: 0.9053
-    foamDecayRate: 0.05
+    foamDecayRate: 3.27
     wetnessMemory: 0
     wetnessDryTime: 3
-    foamSpread: 0.073
-    foamGenThreshold: 0.106
-    foamMinWaveHeight: 0.041
-    foamAdvect: 5.91
-    foamFromSpeed: 17
-    foamFromCurvature: 85.7
-    foamDeposit: 0.89
-    foamBreakStrength: 0.057
-    foamBreakRange: 0.71
-    foamCrestBias: 0.616
+    foamSpread: 0.82
+    foamGenThreshold: 0.116
+    foamMinWaveHeight: 0.2
+    foamAdvect: 5.58
+    foamFromSpeed: 18.7
+    foamFromCurvature: 62.1
+    foamDeposit: 0.283
+    foamBreakStrength: 0.265
+    foamBreakRange: 2.12
+    foamCrestBias: 0.621
     foamHeadroom: 1
-    foamWakeStrength: 1.75
-    foamWakeRadiusScale: 3.73
+    foamWakeStrength: 0.52
+    foamWakeRadiusScale: 2.99
     foamColor: {r: 1, g: 1, b: 1, a: 1}
-    foamPatternSize: 4
-    foamStrength: 1.13
-    foamFeather: 0.486
-    foamCoreCut: 0.988
+    foamPatternSize: 5
+    foamStrength: 0.96
+    foamFeather: 0.489
+    foamCoreCut: 0.729
     foamBorderWidth: 0
     foamContactDepth: 0.06
   objectInteractionSettings:
     objectInteraction: 1
-    obstacleStrength: 0.5
+    obstacleStrength: 0.193
     obstacleDeadband: 0.0006
-    obstacleSmoothing: 0.65
+    obstacleSmoothing: 0.796
     obstacleFlipY: 1
   _legacyDepthDarken: 0
   _legacyDepthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
@@ -11152,24 +11286,24 @@ MonoBehaviour:
   _legacyCausticDepthFade: 0.5
   _legacyGodRayDepthFade: 0.5
   _legacyLinkDepthToFog: 0
-  _settingsVersion: 11
-  simWindowEdgeFadeTexels: 8
+  _settingsVersion: 12
+  simWindowEdgeFadeTexels: 5
   ocean:
     openWater: 1
-    largeWaveAmplitude: 0.3
+    largeWaveAmplitude: 1
     largeWaveChoppiness: 0.1
-    significantWaveHeight: 1.5
-    peakWavelength: 60
-    peakSharpness: 3.3
+    significantWaveHeight: 10
+    peakWavelength: 300
+    peakSharpness: 1.5
     waveScale: 1
     seaDepth: 0
-    cascadeReach: 3
-    swellHeight: 1
-    swellWavelength: 120
+    cascadeReach: 4
+    swellHeight: 8
+    swellWavelength: 140
     oceanWindTurbulence: 0.25
     unboundedOcean: 1
     edgeFeatherMeters: 10
-    clipmapGridResolution: 128
+    clipmapGridResolution: 96
     clipmapOuterRadius: 10000
     oceanDetailFalloff: 0.003
     horizonFadeDistance: 9000
@@ -11190,21 +11324,21 @@ MonoBehaviour:
     largeCausticRippleStrength: 1
     largeCausticProjectionSoften: 0
     oceanFoamWindThreshold: 3
-    oceanFoamCoverage: 0.85
-    oceanFoamStrength: 0.54
-    oceanFoamFadeRate: 0.95
+    oceanFoamCoverage: 1.1
+    oceanFoamStrength: 2
+    oceanFoamFadeRate: 2
     oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
     oceanFoamTileSize: 10
-    oceanFoamFeather: 0.302
-    oceanFoamStreakStretch: 3.5
+    oceanFoamFeather: 0.612
+    oceanFoamStreakStretch: 1.75
     oceanFoamTextureInfluence: 0.35
     oceanFoamCrestAnisotropy: 1
-    oceanFoamCrestGate: 0.8
+    oceanFoamCrestGate: 0.851
     oceanFoamFaceBias: 0.6
     oceanFoamDepthTint: 0.45
     oceanFoamCascadeMix: 1
     oceanFoamDeposit: 0.79
-    oceanFoamDrift: 0.193
+    oceanFoamDrift: 0.255
     oceanFoamMaxBuildup: 1.35
   _legacyOpenWater: 0
   _legacyLargeWaveAmplitude: 1
@@ -11240,7 +11374,7 @@ MonoBehaviour:
   enableCulling: 1
   activationDistance: 200
   reflectionSettings:
-    useScreenSpaceReflection: 0
+    useScreenSpaceReflection: 1
     usePlanarReflection: 1
     reflectUrpProbe: 0
     realRefraction: 1
@@ -11296,10 +11430,12 @@ MonoBehaviour:
   rippleSettings:
     waveSpeed: 1.5
     damping: 0.997
-    stepsPerFrame: 1
-    rippleStrength: 0.061
-    rippleRadius: 0.1411
-    rippleChoppiness: 0.422
+    rippleViscosity: 0.071
+    stepsPerFrame: 2
+    rippleStrength: 0.0241
+    rippleRadius: 0.026
+    rippleChoppiness: 0.066
+    wakeStartForceCap: 0.36
     seedRipplesOnStart: 0
     conserveVolume: 1
     conserveMaxCorrection: 0.05
@@ -11375,8 +11511,8 @@ MonoBehaviour:
   _legacyShorelineFadeDepth: 6
   _legacyShorelineStrength: 0.8
   windWaveSettings:
-    windWaves: 1
-    windSpeed: 1.5
+    windWaves: 0
+    windSpeed: 3.5
     windFromDegrees: 0
     waveLengthMeters: 0.79464364
     waveHeightMeters: 0.0006853647
@@ -11475,6 +11611,65 @@ Transform:
   m_CorrespondingSourceObject: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
   m_PrefabInstance: {fileID: 833592551}
   m_PrefabAsset: {fileID: 0}
+--- !u!1 &1990000010
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1990000011}
+  - component: {fileID: 1990000012}
+  m_Layer: 0
+  m_Name: Demo Overlay
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1990000011
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1990000010}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1990000012
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1990000010}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3f9c1d5a7b2e4c8d9a0f6b3e5c7d1a24, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterDemoOverlay
+  title: Boat Demo
+  description: 'A driveable boat on the ocean: buoyancy across the hull, a spray
+    pump at the bow, a chase camera, and wake ripples written back into the sim window.'
+  corner: 2
+  panelWidth: 460
+  screenMargin: 14
+  paddingHorizontal: 12
+  paddingVertical: 10
+  titleFontSize: 15
+  bodyFontSize: 12
+  textColor: {r: 1, g: 1, b: 1, a: 1}
+  backgroundTint: {r: 1, g: 1, b: 1, a: 1}
+  uiScale: 1
+  showFrameRate: 1
+  frameSmoothing: 0.05
 --- !u!1 &1990666713
 GameObject:
   m_ObjectHideFlags: 0
@@ -11508,6 +11703,34 @@ Transform:
   - {fileID: 234566206}
   m_Father: {fileID: 1734502737}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!23 &2047131710 stripped
+MeshRenderer:
+  m_CorrespondingSourceObject: {fileID: 8909087619676932452, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+  m_PrefabInstance: {fileID: 669187504}
+  m_PrefabAsset: {fileID: 0}
+--- !u!1 &2071714851 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 8719084040468371349, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+  m_PrefabInstance: {fileID: 669187504}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &2071714859
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2071714851}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bbcdd9a68e9064f4183d7e323cbcf8bd, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterInteractable
+  displaceScale: 1
+  verticalEmitSpacing: 0.012
+  horizontalEmitSpacing: 0.02
+  rippleRadiusScale: 1
+  reflectsWaves: 1
+  rendererOverride: {fileID: 2047131710}
 --- !u!1 &2097037567
 GameObject:
   m_ObjectHideFlags: 0
@@ -11586,3 +11809,5 @@ SceneRoots:
   - {fileID: 775939798}
   - {fileID: 1000572587}
   - {fileID: 232428239}
+  - {fileID: 1990000011}
+  - {fileID: 669187504}
