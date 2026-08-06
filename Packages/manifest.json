@@ -1,4 +1,7 @@
 {
+  "testables": [
+    "com.abstractocclusion.webgpuwater"
+  ],
   "dependencies": {
     "com.needle.upm-in-unitypackage": "https://github.com/needle-tools/upm-in-unitypackage.git",
     "com.unity.ai.navigation": "2.0.10",

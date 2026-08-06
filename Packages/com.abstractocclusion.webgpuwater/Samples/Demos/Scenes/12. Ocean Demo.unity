@@ -5740,13 +5740,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 961739749}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.10390972, y: 0.82663566, z: -0.16247912, w: 0.5286556}
-  m_LocalPosition: {x: -7.7, y: 5.56, z: -10.06}
+  m_LocalRotation: {x: 0.08056527, y: 0.8329802, z: -0.1259764, w: 0.5327131}
+  m_LocalPosition: {x: 0.71, y: 0.29, z: -12.21}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 22.24, y: 114.8, z: 0}
+  m_LocalEulerAnglesHint: {x: 17.2, y: 114.8, z: 0}
 --- !u!114 &961739756
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -6215,6 +6215,7 @@ MonoBehaviour:
     rippleStrength: 0.0394
     rippleRadius: 0.041
     rippleChoppiness: 0
+    wakeStartForceCap: 0
     seedRipplesOnStart: 1
     conserveVolume: 1
     conserveMaxCorrection: 0.05

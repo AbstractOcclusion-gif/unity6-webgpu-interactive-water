@@ -43,6 +43,25 @@ bool ExclusionPrepassExitDistance(float2 screenUV, float3 origin, float3 segDir,
     return exitDist > 0.0;
 }
 
+// Distance along the ray at which it ENTERS the rasterised silhouette at this pixel, read from the
+// SAME rawSpan a prior ExclusionPrepassExitDistance call handed back - so an entry costs arithmetic
+// only, never a second pair of depth LOADs.
+//
+// 0 when the front face is empty, which by the prepass's own convention means the eye sits INSIDE
+// the mesh (its front faces are behind the camera): the dry column then starts at the ray's own
+// origin, the same rule the chunk wall applies to its missing entry face.
+//
+// Only meaningful when that exit call returned true - an empty back face means no silhouette covers
+// the pixel at all, and there is no span for an entry to belong to.
+float ExclusionPrepassEntryDistance(float2 rawSpan, float2 screenUV, float3 origin, float3 segDir)
+{
+    float frontEye = LinearEyeDepth(rawSpan.x, _ZBufferParams);
+    if (ExclusionMeshDepthEmpty(frontEye, _ProjectionParams.z)) return 0.0;
+
+    float3 frontWS = ComputeWorldSpacePosition(screenUV, rawSpan.x, UNITY_MATRIX_I_VP);
+    return dot(frontWS - origin, segDir);
+}
+
 // Dry length of the segment [origin, origin + segDir * maxDist] inside the MESH exclusion volumes,
 // taken from the prepass at screenUV. 0 when no mesh volume covers the pixel. Callers still gate on
 // _ExclusionMeshCount so a scene without mesh volumes never even issues the texel fetches.
@@ -55,24 +74,15 @@ bool ExclusionPrepassExitDistance(float2 screenUV, float3 origin, float3 segDir,
 // Behaviour is unchanged by routing the exit through the helper above: a non-positive tBack already
 // produced 0 through the final max(), and an unwritten RT already read as empty. The only new
 // refusal is the explicit _ExclusionPrepassValid gate, which now says so instead of relying on a
-// cleared target to mean the same thing by accident.
+// cleared target to mean the same thing by accident. The ENTRY routes through its own helper for
+// the same reason - one home per endpoint - and computes the identical value it used to inline.
 float ExclusionMeshRayLength(float2 screenUV, float3 origin, float3 segDir, float maxDist)
 {
     float2 rawSpan;
     float tBack;
     if (!ExclusionPrepassExitDistance(screenUV, origin, segDir, rawSpan, tBack)) return 0.0;
 
-    // Front empty + back valid = the camera sits INSIDE the mesh (its front faces are behind the
-    // eye, so nothing rasterised), and the dry column starts at the ray's own origin - the same
-    // rule the chunk wall applies to its missing entry face.
-    float tFront = 0.0;
-    float frontEye = LinearEyeDepth(rawSpan.x, _ZBufferParams);
-    if (!ExclusionMeshDepthEmpty(frontEye, _ProjectionParams.z))
-    {
-        float3 frontWS = ComputeWorldSpacePosition(screenUV, rawSpan.x, UNITY_MATRIX_I_VP);
-        tFront = dot(frontWS - origin, segDir);
-    }
-
+    float tFront = ExclusionPrepassEntryDistance(rawSpan, screenUV, origin, segDir);
     return max(min(tBack, maxDist) - max(tFront, 0.0), 0.0);
 }
 

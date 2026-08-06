@@ -25,12 +25,12 @@ MonoBehaviour:
     spawnThreshold: 0.1
     spawnRate: 150
     maxSpawnPerFrame: 1024
-    sprayChance: 0.182
+    sprayChance: 0.45
     sprayLaunchSpeed: 3.82
     lifeRange: {x: 0.5, y: 1}
     sizeRange: {x: 0.3, y: 0.6}
-    spawnMaxDistance: 400
-    sprayLifeRange: {x: 2, y: 4}
+    spawnMaxDistance: 124
+    sprayLifeRange: {x: 0.1, y: 0.2}
     spraySizeRange: {x: 1, y: 2}
     depositLifeRange: {x: 1, y: 1.5}
     depositSizeRange: {x: 0.3, y: 0.6}

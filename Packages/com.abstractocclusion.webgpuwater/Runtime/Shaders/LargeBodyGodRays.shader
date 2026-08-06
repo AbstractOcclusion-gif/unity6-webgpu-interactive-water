@@ -28,9 +28,10 @@
 // camera looks into the water THROUGH AN EXCLUSION VOLUME'S WINDOW. The from-air case is culled to
 // exactly that: a ray whose waterline crossing lands inside a carve - and that crossing is solved
 // against the DISPLACED surface at its own xz, so the pane's edge follows the waves and does not
-// move when the camera does. Over open sea a viewer in air
-// gets nothing, because the surface shader owns that view and shafts there would be painted onto
-// water the viewer is not inside. Requires the URP asset's Depth Texture ON and main-light shadows
+// move when the camera does. "Inside a carve" is answered per tier: analytic volumes by the point
+// test, MESH volumes by the rasterised prepass span along the pixel's own ray. Over open sea a
+// viewer in air gets nothing, because the surface shader owns that view and shafts there would be
+// painted onto water the viewer is not inside. Requires the URP asset's Depth Texture ON and main-light shadows
 // enabled. All tuning comes from published globals.
 //
 // SURFACE-SYNC CONTRACT (the waterline-transition rule, from the KWS/Crest post-mortem): every
@@ -418,21 +419,43 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 // leaves the water, so a shaft stops where the water ends instead of streaking into
                 // the air; from air, it STARTS where the ray dips under, and a ray that never dips has
                 // no span at all. Never past the scene, and never past SHAFT_MAX_DISTANCE.
-                // ONE rasterised carve query per pixel, used TWICE below - to find where a
-                // dry-carve eye's ray enters the water, and to floor the regime across the surface
-                // crossing. Hoisted so the two do not each pay the texel fetches. Gated on
-                // _ExclusionCount so a scene with no volume issues no fetch at all.
+                // ONE rasterised carve query per pixel, used FOUR times below - to find where a
+                // dry-carve eye's ray enters the water, to floor the regime across the surface
+                // crossing, to decide whether a from-air ray's water entry sits inside a MESH
+                // window, and to keep the march's samples dry across the silhouette. Hoisted so
+                // none of them pays the texel fetches twice. Gated on _ExclusionCount so a scene
+                // with no volume issues no fetch at all.
                 float2 carveSpan = float2(0.0, 0.0);
                 float carveExit = 0.0;
                 bool rayLeavesCarve = (_ExclusionCount > 0.5)
                                     && ExclusionPrepassExitDistance(input.uv, camWorld, rayDir,
                                                                     carveSpan, carveExit);
+                // The ENTRY of that same silhouette, from the span the exit call already fetched -
+                // arithmetic only, no second pair of LOADs. 0 when the eye is inside the mesh, per
+                // the prepass's own front-empty rule, which is exactly right: the dry column then
+                // starts at the ray's origin.
+                //
+                // The analytic InsideExclusion cannot stand in for this. It SKIPS mesh volumes by
+                // design (WaterExclusion.hlsl: a proxy would carve a box where the author put a
+                // silhouette), so for the mesh tier the rasterised span is the only thing that
+                // knows where the carve is along this ray. The prepass draws EVERY shape, so for a
+                // box or sphere the span simply agrees with the point test.
+                float carveEnter = rayLeavesCarve
+                                 ? ExclusionPrepassEntryDistance(carveSpan, input.uv,
+                                                                 camWorld, rayDir)
+                                 : 0.0;
 
                 float camGap = camSurfY - camWorld.y; // > 0 = the eye is below the surface
                 // ...below the water HEIGHT, which is NOT "in water" - a dry carve is air down there.
                 bool eyeInWater = camGap > 0.0 && _CameraDryVolume < 0.5;
                 float tEnter = 0.0;
                 float tExit = min(sceneDist, SHAFT_MAX_DISTANCE);
+                // TRUE when this ray's water entry is the carve's own exit - i.e. the ray reached
+                // the water THROUGH the window rather than over the open surface. Hoisted out of
+                // the from-air branch below because the pane cull needs it: "the eye is in a carve"
+                // and "this ray entered through one" are different claims, and only the second one
+                // licenses a pane (see the cull).
+                bool enteredThroughCarve = false;
                 if (eyeInWater)
                 {
                     // Up-ray: the shaft stops where the ray leaves the water. Full tiers solve the
@@ -467,15 +490,14 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                     // Taken from the RASTERISED exclusion silhouette, per pixel and for every shape.
                     // Only honoured when the exit is BELOW the displaced surface: an exit into air
                     // is not a water entry, and that ray falls through to the waterline rule.
-                    bool entered = false;
                     if (_CameraDryVolume > 0.5 && rayLeavesCarve
                         && carveExit < tExit
                         && SurfaceSignedGap(camWorld + rayDir * carveExit) <= 0.0)
                     {
                         tEnter = carveExit;
-                        entered = true;
+                        enteredThroughCarve = true;
                     }
-                    if (!entered)
+                    if (!enteredThroughCarve)
                     {
                         // Eye above the open surface: only a DOWNWARD ray reaches the water. Also the
                         // fallback when the prepass did not run (no WaterExclusionDepthFeature on the
@@ -500,10 +522,45 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 // what it was. An earlier attempt floored the submerged side at the knob instead and
                 // popped the shafts on diving in.
                 float3 waterEntry = camWorld + rayDir * tEnter;
-                // An eye already INSIDE the carve is looking through the window by construction, so
-                // it does not have to prove it: waterEntry is then the carve EXIT, which sits ON the
-                // boundary and would test as outside, blanking the room's shafts entirely.
-                float paneWeight = (_CameraDryVolume > 0.5 || InsideExclusion(waterEntry))
+                // A ray that ENTERED THROUGH the carve is looking through the window by
+                // construction, so it does not have to prove it: waterEntry is then the carve EXIT,
+                // which sits ON the boundary and would test as outside, blanking the room's shafts
+                // entirely.
+                //
+                // That first term used to read `_CameraDryVolume > 0.5` - "the EYE is inside a
+                // carve" - which is a strictly WEAKER claim than "this RAY entered through one",
+                // and the gap between them was a bug. The flag is a proxy-box point test with no
+                // waterline in it (WaterExclusionVolume.ContainsPoint), while a carve box normally
+                // stands well clear of the sea: the Exclusion Demo's is 50 m tall around a rest
+                // plane at 0, so its top is 20 m up IN THE AIR. A camera flying there short-
+                // circuited the cull for every ray on screen - including the ones that leave the
+                // carve ABOVE the waterline and go on to meet the OPEN sea, which then took the
+                // full knob and painted shafts onto water the viewer is not inside. Bert,
+                // 2026-08-06: "we can see god rays from air onto surface when cam is above water
+                // and close to exclusion zone; we should only see them onto exclusion walls."
+                // enteredThroughCarve is exactly the claim the window argument was always making.
+                //
+                // The RASTERISED arm is what makes the pane reachable for MESH carves at all.
+                // InsideExclusion skips them by design, so an eye OUTSIDE a mesh volume - the
+                // ordinary "stand on the dock and look down through the window" view - had no
+                // enteredThroughCarve and no analytic hit, and the cull could only ever say no.
+                // (Whatever a mesh zone showed from air before came from the dry-volume short-
+                // circuit above, i.e. from the bug.) The prepass draws EVERY shape, so this also
+                // answers for boxes and spheres, where it simply agrees with the analytic test.
+                //
+                // The silhouette does NOT stop at the waterline - the veil that used to run up the
+                // mesh above water - but the point tested against it is tEnter, which IS the
+                // waterline crossing, so the below-water condition holds by construction rather
+                // than by an added guard.
+                //
+                // !eyeInWater keeps the invariant the temporal arming below rests on: paneWeight is
+                // 0 for every submerged pixel. Without it an eye inside a mesh whose analytic PROXY
+                // does not contain it (so _CameraDryVolume stayed 0) would open a span at t = 0 and
+                // earn a pane weight underwater, silently stripping those pixels of accumulation.
+                bool entryInPrepassCarve = !eyeInWater && rayLeavesCarve
+                                         && tEnter >= carveEnter && tEnter <= carveExit;
+                float paneWeight = (enteredThroughCarve || entryInPrepassCarve
+                                    || InsideExclusion(waterEntry))
                                  ? _LargeGodRayFromAir : 0.0;
                 // THE HANDOFF, and why max() was not one. The two regimes are MUTUALLY EXCLUSIVE
                 // across the eyeInWater branch above - only ever one is non-zero - so max() never
@@ -550,7 +607,9 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 // not of the point behind it, so accumulating it slides a stale pane along with the
                 // camera. paneWeight already answers "is this a pane pixel" PER PIXEL and is free
                 // here - it is 0 for every submerged-field pixel by construction, because
-                // underwater the eye is in water and so never inside a dry carve. This is the
+                // underwater the eye is in water and so never inside a dry carve (and, for the
+                // rasterised arm, because that one carries its own !eyeInWater gate for exactly
+                // this reason - see the cull). This is the
                 // "strictly doctrinal form ... PER PIXEL" the header wished for, and it needs no
                 // history channel at all: the regime is RECOMPUTED from this frame's geometry
                 // instead of stored, which is what made the B10G11R11 alpha objection moot.
@@ -691,7 +750,15 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                     caustic *= 1.0 - saturate(t * GODRAY_CAUSTIC_DISTANCE_FADE);
                     // Dry-interior exclusion: samples inside an exclusion volume are air - skip their
                     // scatter (sun AND lamps); the view-fog transmittance still advances along the ray.
-                    bool sampleWet = !InsideExclusion(p);
+                    // TWO tiers, the split the exclusion header mandates: analytic volumes by the
+                    // point test, MESH volumes by the rasterised span along this pixel's own camera
+                    // ray. The rasterised half is new alongside the pane arm above and is what keeps
+                    // it honest - InsideExclusion skips mesh volumes, so without it a mesh window
+                    // would light its own DRY interior with in-scatter and read as fog in the room.
+                    // For a box or sphere the two agree (the prepass draws every shape), so the
+                    // union changes nothing there.
+                    bool inPrepassCarve = rayLeavesCarve && t >= carveEnter && t < carveExit;
+                    bool sampleWet = !InsideExclusion(p) && !inPrepassCarve;
                     if (sampleWet)
                         accum += shadow * depthFade * viewFog * (1.0 + caustic * _LargeGodRayCausticStrength);
 #if defined(WATER_FOG_POINT_LIGHTS) && !defined(WATER_FOG_SIMPLE)
@@ -963,6 +1030,9 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             float _ExclusionCount;
             float _CameraDryVolume;
             float _UnderwaterSurfaceY;
+            // The From Air knob, read here for the same reason the raymarch pass reads it: with it
+            // at 0 no pane pixel can exist, and the mask below can therefore stay armed.
+            float _LargeGodRayFromAir;
 
             struct Attributes { uint vertexID : SV_VertexID; };
             struct Varyings   { float4 positionCS : SV_POSITION; float2 uv : TEXCOORD0; };
@@ -1005,12 +1075,20 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
 #endif
                 float coverage = WaterlineCoverage(gap, fwidth(gap), 0.0);
 
-                // NOT with exclusion volumes in the scene, and not for a dry-carve eye: the
-                // from-air pane view exists to draw shafts ABOVE the waterline (through a carve
-                // window), and this pass cannot tell a pane pixel from an air pixel. Uniform
-                // gates, applied to the RESULT - with them the Exclusion Demo composites
-                // bit-identically to before this mask existed.
-                float mask = (_ExclusionCount < 0.5 && _CameraDryVolume < 0.5) ? coverage : 1.0;
+                // NOT where a from-air pane can exist: that view draws shafts ABOVE the waterline
+                // (through a carve window), and this pass cannot tell a pane pixel from an air
+                // pixel - the regime lives in the raymarch pass and is not stored, the half-res
+                // target having no spare channel to put it in.
+                //
+                // But "a carve exists" is not "a pane can exist", and keying the stand-down on the
+                // first surrendered the net across the WHOLE SCREEN for every exclusion scene,
+                // submerged views included, whether or not the author had opted in. With the knob
+                // at 0 the raymarch pass early-outs on every dry pixel, so there is provably
+                // nothing above the waterline to protect and the mask stays armed. Uniform gates,
+                // applied to the RESULT; still bit-identical for any scene that HAS opted in.
+                bool paneViewPossible = _LargeGodRayFromAir > 0.0
+                                      && (_ExclusionCount > 0.5 || _CameraDryVolume > 0.5);
+                float mask = paneViewPossible ? 1.0 : coverage;
                 shafts.rgb *= mask;
                 return shafts;
             }
