@@ -128,6 +128,7 @@ struct WaterSphereInjection
     float  velY;     // vertical motion this step, pool-height units (bobbing term)
     float  weight;   // submersion x user weight (0 = no effect)
     float  strength; // master gain on the injected acceleration
+    float  wakeFoamDose; // world-speed/time foam source, independent of pool-height scaling
 };
 
 StructuredBuffer<WaterDropInjection>   DropQueue;
@@ -285,7 +286,6 @@ float _FoamCrestBias;
 // horizontal current). _WakeFoamStrength 0 = off: foam is copied through unchanged, byte-identical.
 float _WakeFoamStrength;    // master gain on the wake stamp
 float _WakeFoamRadiusScale; // stamp radius as a multiple of the sphere radius
-static const float WAKE_FOAM_SPEED_GAIN = 25.0; // maps sim-normalised step speed onto a 0..1 stamp
 
 // Wake start-force cap: the largest per-step velocity a single interactor stamp may inject. A FRESH
 // wake over still water dumps a concentrated push toward the velocity ceiling in a few texels, which
@@ -439,16 +439,15 @@ void SphereInteract(uint3 id : SV_DispatchThreadID)
         info.g += wakePush;
         info = Sanitize(info);   // per-stamp, as one dispatch per interactor used to be
 
-        // Wake foam (move #3): stamp foam at the hull, scaled by the interactor's speed and submersion,
-        // over a soft disc a little wider than the sphere. StepFoam advects + decays it into the trail.
-        // _WakeFoamStrength 0 leaves the stamp at zero, so this stays a pure copy-through.
-        float wakeSpeed = length(q.velXZ);
+        // Wake foam uses its own world-speed/time dose. velXZ is intentionally NOT reused: it is
+        // normalised by the body's vertical extent for the wave-force integrator, which made foam
+        // coverage change when only the water depth changed.
         float wakeDisc  = saturate(1.0 - dist / max(q.radius * _WakeFoamRadiusScale, 1e-4));
-        float wakeStamp = q.weight * _WakeFoamStrength
-                        * saturate(wakeSpeed * WAKE_FOAM_SPEED_GAIN) * wakeDisc;
+        float wakeDose = q.weight * _WakeFoamStrength * q.wakeFoamDose * wakeDisc;
+        float wakeStamp = 1.0 - exp(-wakeDose);
         // R only: the wake deposits FOAM. The wet mark is owned solely by the Foam kernel, so an
         // interactor pass can never rewrite the waterline history behind its back.
-        foam.r = saturate(foam.r + wakeStamp);
+        foam.r = 1.0 - (1.0 - foam.r) * (1.0 - wakeStamp);
     }
 
     Dst[p] = Sanitize(info);

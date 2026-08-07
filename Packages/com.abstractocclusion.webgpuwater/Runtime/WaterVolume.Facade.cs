@@ -76,6 +76,9 @@ namespace AbstractOcclusion.WebGpuWater
             if (weight <= 0f) return;
 
             float velY = worldStep.y / VolumeExtentSafe.y; // world vertical motion -> pool-height units
+            Vector3 bodyStep = Quaternion.Inverse(VolumeRotation) * worldStep;
+            float wakeFoamDose = WaterSimulation.CalculateWakeFoamDose(
+                new Vector2(bodyStep.x, bodyStep.z), Time.deltaTime);
 
             // CHOP INVERSION (2026-08-03): stamp at the SOURCE point the horizontal wave
             // displacement carries onto the object, not at the object itself - the sim is sampled
@@ -92,14 +95,16 @@ namespace AbstractOcclusion.WebGpuWater
                 // The step maps from the SAME inverted origin: the dipole's direction/magnitude is
                 // the object's own motion, not the chop's (which is near-equal at both endpoints).
                 _water.AddSphereInteraction(new Vector2(c.x, c.z), radius / SimHorizontalExtent,
-                                            HorizontalStepInHeightUnits(worldStep), velY, weight, strength);
+                                            HorizontalStepInHeightUnits(worldStep), velY, weight, strength,
+                                            wakeFoamDose);
                 return;
             }
 
             Vector3 pool = WorldToPool(new Vector3(inject.x, VolumeCenter.y, inject.y));
             if (pool.x < -1f || pool.x > 1f || pool.z < -1f || pool.z > 1f) return;
             _water.AddSphereInteraction(new Vector2(pool.x, pool.z), radius / VolumeHorizontalExtent,
-                                        HorizontalStepInHeightUnits(worldStep), velY, weight, strength);
+                                        HorizontalStepInHeightUnits(worldStep), velY, weight, strength,
+                                        wakeFoamDose);
         }
 
         /// <summary>A sphere interactor's horizontal step in POOL-HEIGHT units, in the body frame.

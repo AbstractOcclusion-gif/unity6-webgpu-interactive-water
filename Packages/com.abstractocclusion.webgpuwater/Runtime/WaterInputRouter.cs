@@ -34,7 +34,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal const float TapMaxTravelPixels = 16f;
         const float TapSplashStrength = 0.5f;
 
-        readonly WaterVolume _owner; // the primary body: camera/orbit/splash wiring + ripple look
+        readonly WaterVolume _owner; // the primary body: camera/orbit wiring + ripple look
 
         PointerMode _mode = PointerMode.None;
         Vector2 _oldMouse;
@@ -73,6 +73,13 @@ namespace AbstractOcclusion.WebGpuWater
                 if (sqr < bestSqr) { bestSqr = sqr; best = bodies[i]; worldHit = hit; }
             }
             return best;
+        }
+
+        // Surface selection already identifies the body that received the ripple. Resolve its
+        // emitter too, otherwise a stacked body sends splashes through the primary body's pool.
+        internal static WaterSplashEmitter ResolveHitSplashEmitter(WaterVolume hitBody)
+        {
+            return hitBody != null ? hitBody.ResolveSplashEmitter() : null;
         }
 
         void HandleMouse()
@@ -143,7 +150,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (body == null) return;
 
             body.AddRipple(hit.x, hit.z, _owner.RippleRadius, _owner.RippleStrength);
-            WaterSplashEmitter splash = _owner.ResolveSplashEmitter();
+            WaterSplashEmitter splash = ResolveHitSplashEmitter(body);
             if (splash != null)
                 splash.EmitSplash(hit, TapSplashStrength, _owner.RippleRadius * DragSplashRadiusScale);
         }
@@ -171,7 +178,7 @@ namespace AbstractOcclusion.WebGpuWater
                     // Route the ripple to the clicked body (world-space API; it converts).
                     _dragBody.AddRipple(hit.x, hit.z, _owner.RippleRadius, _owner.RippleStrength);
 
-                    WaterSplashEmitter splash = _owner.ResolveSplashEmitter();
+                    WaterSplashEmitter splash = ResolveHitSplashEmitter(_dragBody);
                     if (splash != null)
                     {
                         float strength = Mathf.Clamp01(moved / DragSplashFullStrengthDistance);

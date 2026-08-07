@@ -49,11 +49,11 @@ MonoBehaviour:
     outwardSpread: 3
     dropletSize: 0.4
     lifetime: {x: 1, y: 1.5}
-    crownMinStrength: 0.185
-    crownBaseSize: 1.6
+    crownMinStrength: 0
+    crownBaseSize: 2
     crownLifetime: 0.5
     crownTint: {r: 1, g: 1, b: 1, a: 1}
-    crownOpacity: 0.636
+    crownOpacity: 1
   bubbles:
     drive: 1
     bubbleAmount: 0.5

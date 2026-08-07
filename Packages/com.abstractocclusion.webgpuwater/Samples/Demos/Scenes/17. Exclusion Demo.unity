@@ -11113,8 +11113,8 @@ MonoBehaviour:
   _legacyWaterOpacity: 0
   volumeScatterSettings:
     volumeScatter: 1
-    scatterColor: {r: 0.01672481, g: 0.10188681, b: 0.100443386, a: 1}
-    scatterIntensity: 1.5
+    scatterColor: {r: 0.06751866, g: 0.4113207, b: 0.4113207, a: 1}
+    scatterIntensity: 0.73
     scatterAnisotropy: 0.1
     scatterAmbientTerm: 0.96
     scatterSunTerm: 0.65
@@ -11276,7 +11276,7 @@ MonoBehaviour:
   meshProxy: 0
   size: {x: 1, y: 1, z: 1}
   drawWaterWalls: 1
-  wallScatterBoost: 2
+  wallScatterBoost: 0.01
   wallShader: {fileID: 4800000, guid: 7be6fdf6364de4a499679d0a2a1ca92e, type: 3}
   edgeColor: {r: 0, g: 0, b: 0, a: 1}
   edgeIntensity: 0.306

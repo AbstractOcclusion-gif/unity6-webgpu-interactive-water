@@ -3,7 +3,7 @@
 // the Inspector: the builder creates one "Water Splash FX" root (this component)
 // with two children - "Droplet Spray (CPU Fallback)" (Shuriken droplets, only
 // bursts on bodies WITHOUT an active GPU WaterFoamParticles) and "Crown Ring"
-// (flipbook crown, always plays). Swap the droplet texture on the fallback's
+// (a cloud of photographic chunk sprites, always plays). Swap the droplet texture on the fallback's
 // ParticleSystemRenderer material. Both object impacts
 // (WaterSplash) and the mouse interaction (WaterVolume) emit through this.
 //
@@ -87,11 +87,33 @@ namespace AbstractOcclusion.WebGpuWater
         const float DropletStretchLengthScale = 1f;
 
         // ---- crown particle-system defaults (ConfigureCrown) ----
+        // The crown is a CLOUD of photographic chunk sprites (KWS WaterSplashes.prefab
+        // droplet layer), not a single flipbook card. Gravity/drag/tumble are the measured
+        // KWS prefab values (docs/RESEARCH_kws_splash_definition_2026-08-06.md section 3).
         const float CrownStartLifetime = 0.5f;
         const float CrownStartSize = 0.4f;
         static readonly Color CrownStartColor = new Color(0.95f, 0.98f, 1.0f, 1.0f);
-        const int CrownMaxParticles = 64;
-        const float CrownFadeStartFraction = 0.7f;    // flipbook tail softening
+        const int CrownMaxParticles = 256;            // bursts are sprite CLOUDS now, not 1 card
+        const float CrownGravityModifier = 1.2f;      // chunks arc over and fall (KWS 1..1.5)
+        const float CrownVelocityDampen = 0.03f;      // air drag (KWS LimitVelocity dampen)
+        const float CrownTumbleMaxDegrees = 30f;      // slow random spin, +/- deg per second
+        // Size-over-lifetime pop: a chunk reaches CrownPopFraction of its size within
+        // CrownPopTime of its life, then grows linearly to full size (KWS pop shape).
+        const float CrownPopTime = 0.04f;
+        const float CrownPopFraction = 0.5f;
+
+        // ---- chunk-cloud burst shaping (EmitCrown) ----
+        const int CrownBurstMinCount = 6;             // a threshold hit still reads as a cloud
+        const int CrownBurstMaxCount = 16;            // full-strength slam
+        const float CrownUpSpeedMin = 0.5f;           // vertical throw at threshold strength...
+        const float CrownUpSpeedMax = 2.0f;           // ...and at full strength
+        const float CrownOutSpeedMax = 0.8f;          // horizontal scatter at full strength
+        const float CrownSizeJitterMin = 0.5f;        // per-sprite size randomisation...
+        const float CrownSizeJitterMax = 1.1f;
+        const float CrownHeroSizePower = 10f;         // ...pow-shaped so a RARE sprite lands
+        const float CrownHeroSizeBonus = 1.5f;        //    near hero size (KWS pow10 distro)
+        const float CrownLifetimeJitterMin = 0.75f;   // per-sprite life spread (KWS 0.75..1.25)
+        const float CrownLifetimeJitterMax = 1.25f;
 
         [Tooltip("The particle system to emit from. Auto-created if left empty.")]
         [SerializeField] internal ParticleSystem particles;
@@ -118,14 +140,14 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("How high above the surface a settled droplet rides (world units).")]
         [SerializeField] internal float surfaceRideHeight = 0.004f;
 
-        [Header("Crown splash (flipbook)")]
-        [Tooltip("Optional flipbook splash emitted at the impact point. Leave empty to disable.")]
+        [Header("Crown splash (chunk cloud)")]
+        [Tooltip("Optional chunk-sprite cloud emitted at the impact point. Leave empty to disable.")]
         [SerializeField] internal ParticleSystem crownParticles;
         [Tooltip("Minimum impact strength (0..1) that spawns a crown splash.")]
         [Range(0f, 1f)] [SerializeField] internal float crownMinStrength = 0.25f;
         [Tooltip("Base world size of the crown splash, scaled up by impact strength.")]
         [SerializeField] internal float crownBaseSize = 0.4f;
-        [Tooltip("Crown lifetime; the flipbook plays through once over this time.")]
+        [Tooltip("Crown lifetime; each sprite steps through the chunk atlas once over this time.")]
         [SerializeField] internal float crownLifetime = 0.5f;
         [Tooltip("Crown tint, applied per emit as the particle start color (multiplies the material).")]
         [SerializeField] internal Color crownTint = CrownStartColor;
@@ -262,7 +284,7 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>Emit a splash at a surface point. strength is 0..1. Droplets are thrown by
         /// the body's GPU foam-particle system when one is present (spray unification: every
         /// airborne droplet shares the KIND_SPRAY tech + look); the Shuriken system here then
-        /// only plays the crown flipbook. Bodies without a GPU system keep the legacy
+        /// only throws the crown chunk cloud. Bodies without a GPU system keep the legacy
         /// Shuriken droplet burst. amountScale scales ONLY the droplet count (spray volume):
         /// launch speed, droplet size, spread and opacity are untouched, so a boosted caller
         /// throws MORE spray, never FASTER spray. 0 mutes the burst (crown included).</summary>
@@ -272,8 +294,8 @@ namespace AbstractOcclusion.WebGpuWater
         /// <param name="elevationDegrees">Lifts the whole burst toward vertical, on top of the angle
         /// Upward Bias and Outward Spread already imply. ZERO (the default) changes nothing, and it
         /// applies to full rings as readily as to petals.</param>
-        /// <param name="allowCrown">False suppresses the crown flipbook for THIS emit - a continuous
-        /// stream plays the crown on its first emit only. Droplets are unaffected.</param>
+        /// <param name="allowCrown">False suppresses the crown chunk cloud for THIS emit - a
+        /// continuous stream plays the crown on its first emit only. Droplets are unaffected.</param>
         public void EmitSplash(Vector3 surfacePos, float strength, float radius,
                                float amountScale = BaseAmountScale,
                                Vector3 petalDirection = default, float arcDegrees = FullRingDegrees,
@@ -409,26 +431,44 @@ namespace AbstractOcclusion.WebGpuWater
             return ElevationOf(upSpeed, outSpeed, elevationDegrees * Mathf.Deg2Rad);
         }
 
-        // One flipbook crown splash at the impact, for strong-enough hits. The crown
-        // is a separate particle system (set up by ConfigureCrown), so the drifting
-        // droplets above are unaffected.
+        // One chunk-cloud burst at the impact, for strong-enough hits. Overlapping
+        // photographic chunk sprites, each eroding on its own clock, are what reads as
+        // a defined splash (the KWS WaterSplashes.prefab construction). The crown is a
+        // separate particle system (ConfigureCrown), so the drifting droplets above are
+        // unaffected.
         void EmitCrown(Vector3 surfacePos, float strength, float radius)
         {
             if (crownParticles == null || strength < crownMinStrength) return;
 
-            var ep = new ParticleSystem.EmitParams();
-            ep.position = surfacePos;
-            ep.velocity = Vector3.zero;
-            ep.startLifetime = crownLifetime;
-            ep.startSize = crownBaseSize * Mathf.Lerp(CrownMinSizeFactor, CrownMaxSizeFactor, strength)
-                         + radius * CrownRadiusContribution;
+            int count = Mathf.RoundToInt(
+                Mathf.Lerp(CrownBurstMinCount, CrownBurstMaxCount, strength));
+            float baseSize = crownBaseSize * Mathf.Lerp(CrownMinSizeFactor, CrownMaxSizeFactor, strength)
+                           + radius * CrownRadiusContribution;
             // Per-particle start color (same channel the droplets already use for their
             // velocity-proportional alpha) - the profile can retint the crown without
             // touching the shared material asset.
             Color crownColor = crownTint;
             crownColor.a *= crownOpacity;
-            ep.startColor = crownColor;
-            crownParticles.Emit(ep, 1);
+
+            var ep = new ParticleSystem.EmitParams();
+            for (int i = 0; i < count; i++)
+            {
+                Vector2 ring = Random.insideUnitCircle;
+                ep.position = surfacePos + new Vector3(ring.x, 0f, ring.y)
+                              * (radius * SpawnRingRadiusScale);
+                float up = Mathf.Lerp(CrownUpSpeedMin, CrownUpSpeedMax, strength)
+                           * Random.Range(UpwardJitterMin, UpwardJitterMax);
+                ep.velocity = new Vector3(ring.x * CrownOutSpeedMax * strength, up,
+                                          ring.y * CrownOutSpeedMax * strength);
+                // pow-shaped size distribution: most sprites modest, a rare one near hero size
+                float hero = Mathf.Pow(Random.value, CrownHeroSizePower) * CrownHeroSizeBonus;
+                ep.startSize = baseSize * (Random.Range(CrownSizeJitterMin, CrownSizeJitterMax) + hero);
+                ep.rotation = Random.Range(0f, 360f);
+                ep.startLifetime = crownLifetime
+                                   * Random.Range(CrownLifetimeJitterMin, CrownLifetimeJitterMax);
+                ep.startColor = crownColor;
+                crownParticles.Emit(ep, 1);
+            }
         }
 
         /// <summary>Configure a particle system for drifting droplets (used by the
@@ -464,7 +504,7 @@ namespace AbstractOcclusion.WebGpuWater
 
             // Stretched billboards: fast droplets read as streaks along their motion (KWS
             // splash look); settled drifters are slow, so they stay effectively round.
-            // The crown system is left as plain billboards - its flipbook is directional.
+            // The crown system stays on plain billboards - its chunk sprites tumble instead.
             var renderer = ps.GetComponent<ParticleSystemRenderer>();
             if (renderer != null)
             {
@@ -492,7 +532,8 @@ namespace AbstractOcclusion.WebGpuWater
             return fade;
         }
 
-        /// <summary>Configure a particle system to play a splash flipbook once over each
+        /// <summary>Configure a particle system as the splash chunk cloud: gravity, drag,
+        /// tumble, pop-then-grow size, and the chunk atlas stepped once over each
         /// particle's lifetime (used by the scene builder for the crown splash). The
         /// caller assigns the sprite-sheet material and matching tile counts.</summary>
         public static void ConfigureCrown(ParticleSystem ps, int tilesX, int tilesY)
@@ -500,7 +541,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (ps == null) throw new System.ArgumentNullException(nameof(ps));
             var main = ps.main;
             main.simulationSpace = ParticleSystemSimulationSpace.World;
-            main.gravityModifier = 0f;     // the crown stays put on the surface
+            main.gravityModifier = CrownGravityModifier; // chunks arc over and fall
             main.startSpeed = 0f;
             main.startLifetime = CrownStartLifetime;
             main.startSize = CrownStartSize;
@@ -511,7 +552,24 @@ namespace AbstractOcclusion.WebGpuWater
             var emission = ps.emission; emission.enabled = false; // manual Emit only
             var shape = ps.shape; shape.enabled = false;
 
-            // play the whole sprite sheet exactly once across each particle's life
+            // air drag so thrown chunks decelerate and arc instead of flying ballistic
+            var velocityLimit = ps.limitVelocityOverLifetime;
+            velocityLimit.enabled = true;
+            velocityLimit.dampen = CrownVelocityDampen;
+            velocityLimit.multiplyDragByParticleSize = false;
+
+            // slow random tumble, half the sprites spinning each way
+            var rotationOverLifetime = ps.rotationOverLifetime;
+            rotationOverLifetime.enabled = true;
+            rotationOverLifetime.z = new ParticleSystem.MinMaxCurve(
+                -CrownTumbleMaxDegrees * Mathf.Deg2Rad, CrownTumbleMaxDegrees * Mathf.Deg2Rad);
+
+            // pop to CrownPopFraction almost immediately, then grow to full size
+            var sizeOverLifetime = ps.sizeOverLifetime;
+            sizeOverLifetime.enabled = true;
+            sizeOverLifetime.size = new ParticleSystem.MinMaxCurve(1f, PopCurve());
+
+            // step through the chunk atlas exactly once across each particle's life
             var sheetAnimation = ps.textureSheetAnimation;
             sheetAnimation.enabled = true;
             sheetAnimation.mode = ParticleSystemAnimationMode.Grid;
@@ -523,12 +581,24 @@ namespace AbstractOcclusion.WebGpuWater
             sheetAnimation.startFrame = 0f;
             sheetAnimation.frameOverTime = new ParticleSystem.MinMaxCurve(1f, AnimationCurve.Linear(0f, 0f, 1f, 1f));
 
-            // soften the tail so the splash dissolves instead of cutting off
+            // Linear alpha 1 -> 0 across the WHOLE life: this is the erosion clock.
+            // SplashParticles.shader burns the sprite through its noise channel as this
+            // alpha falls, so the chunk disintegrates instead of ghost-fading (KWS).
             var colorOverLifetime = ps.colorOverLifetime;
             colorOverLifetime.enabled = true;
-            colorOverLifetime.color = FadeTailGradient(CrownFadeStartFraction);
+            colorOverLifetime.color = FadeTailGradient(0f);
 
             ps.Play();
+        }
+
+        // The chunk pop-then-grow size curve: (0,0) -> (PopTime, PopFraction) -> (1,1).
+        static AnimationCurve PopCurve()
+        {
+            var curve = new AnimationCurve(
+                new Keyframe(0f, 0f),
+                new Keyframe(CrownPopTime, CrownPopFraction),
+                new Keyframe(1f, 1f));
+            return curve;
         }
     }
 }

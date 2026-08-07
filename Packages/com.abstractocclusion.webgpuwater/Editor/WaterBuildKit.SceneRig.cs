@@ -90,8 +90,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var crownPS = crownGO.AddComponent<ParticleSystem>();
             WaterSplashEmitter.ConfigureCrown(crownPS, CrownSheetCols, CrownSheetRows);
             var crownPSR = crownGO.GetComponent<ParticleSystemRenderer>();
-            crownPSR.renderMode = ParticleSystemRenderMode.VerticalBillboard;
-            crownPSR.pivot = new Vector3(0f, 0.5f, 0f);
+            // Free-rotating billboards: each chunk sprite spawns at a random angle and
+            // tumbles (KWS droplet cloud). The old vertical-billboard bottom pivot belonged
+            // to the single crown card this system used to be.
+            crownPSR.renderMode = ParticleSystemRenderMode.Billboard;
+            crownPSR.pivot = Vector3.zero;
             crownPSR.sharedMaterial = CreateOrUpgradeCrownMaterial();
             splashEmitter.crownParticles = crownPS;
             return splashEmitter;
@@ -107,28 +110,20 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             AssetDatabase.SaveAssets();
         }
 
-        // The crown material: packed flipbook + the six-way light sheets and backlit
-        // transmission (both baked by gen_splash_flipbook.py alongside the main sheet).
-        // Doubles as the one-click upgrade for crown materials created before six-way
-        // lighting existed. Missing light sheets (older package payloads) degrade
-        // gracefully: the material stays on the scalar foam lighting.
+        // The crown material: the packed photographic chunk atlas (KWS WaterSplash
+        // construction) + backlit transmission, which reads the atlas' thickness channel.
+        // Doubles as the one-click upgrade for crown materials created on the old 8x8
+        // procedural flipbook: the texture is swapped and six-way lighting is switched
+        // OFF, because the baked light sheets match the old flipbook's frames, not the
+        // chunk atlas - relighting chunks with them would shade garbage.
         static Material CreateOrUpgradeCrownMaterial()
         {
             var material = LoadOrCreateSplashMaterial(SplashCrownMaterialPath,
                 LoadOrProvisionPackagedSheet(SplashCrownSheetPath, CrownSheetPackageRelativePath));
             if (material == null) return null;
 
-            var lightSheetA = LoadOrProvisionPackagedSheet(
-                SplashCrownLightSheetAPath, CrownLightSheetAPackageRelativePath);
-            var lightSheetB = LoadOrProvisionPackagedSheet(
-                SplashCrownLightSheetBPath, CrownLightSheetBPackageRelativePath);
-            bool sixWayReady = lightSheetA != null && lightSheetB != null
-                && material.HasProperty(SixWayProperty);
-            if (!sixWayReady) return material;
-
-            material.SetTexture(LightSheetAProperty, lightSheetA);
-            material.SetTexture(LightSheetBProperty, lightSheetB);
-            material.SetFloat(SixWayProperty, 1f);
+            if (material.HasProperty(SixWayProperty))
+                material.SetFloat(SixWayProperty, 0f);
             if (material.HasProperty(TransmissionStrengthProperty) &&
                 Mathf.Approximately(material.GetFloat(TransmissionStrengthProperty), 0f))
             {

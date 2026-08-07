@@ -23,6 +23,9 @@ namespace AbstractOcclusion.WebGpuWater
         // untouched (see the two rejected strength compensations in WaterVolume.Quality.cs).
         // SIDE EFFECT: wider stamps carry less height CURVATURE, which is what _FoamFromCurv reads.
         const float MinDropTexelRadius = 4f;
+        const float MinInteractionDeltaSeconds = 1e-5f;
+        const float WakeFoamFullSpeedMetersPerSecond = 5f;
+        const float WakeFoamInjectionRatePerSecond = 3f;
 
         // Compute kernel names (must match WaterSim.compute).
         const string KernelDrop = "Drop";
@@ -171,6 +174,7 @@ namespace AbstractOcclusion.WebGpuWater
             public float VelY;
             public float Weight;
             public float Strength;
+            public float WakeFoamDose;
         }
 
         // Taken from the struct, not written as a literal, so adding a field cannot silently desync
@@ -188,6 +192,32 @@ namespace AbstractOcclusion.WebGpuWater
 
         /// <summary>The current foam amount texture (R channel).</summary>
         public RenderTexture FoamTexture => _foamA;
+
+        // Wake force lives in pool-height units, but foam is an authored visual effect. Keep its
+        // source in world speed/time so changing a volume's vertical extent cannot thin or thicken
+        // the wake. The dose composes linearly across frames; the compute shader converts it to a
+        // coverage alpha with exp(), preserving that invariance under repeated stamps.
+        internal static float CalculateWakeFoamDose(Vector2 worldHorizontalStep, float deltaSeconds)
+        {
+            if (deltaSeconds <= MinInteractionDeltaSeconds) return 0f;
+            float speed = worldHorizontalStep.magnitude / deltaSeconds;
+            float speedFactor = Mathf.Clamp01(speed / WakeFoamFullSpeedMetersPerSecond);
+            return speedFactor * WakeFoamInjectionRatePerSecond * deltaSeconds;
+        }
+
+        // Foam runs once per rendered frame. Rebase its transport operators from authored reference
+        // steps (1 = 1/60 s) so advection and diffusion match the existing time-scaled generation
+        // and decay when the frame rate changes.
+        internal static float CalculateFoamAdvection(float authoredAdvection, float elapsedReferenceSteps)
+        {
+            return Mathf.Max(0f, authoredAdvection) * Mathf.Max(0f, elapsedReferenceSteps);
+        }
+
+        internal static float CalculateFoamSpread(float authoredSpread, float elapsedReferenceSteps)
+        {
+            float retainedFraction = 1f - Mathf.Clamp01(authoredSpread);
+            return 1f - Mathf.Pow(retainedFraction, Mathf.Max(0f, elapsedReferenceSteps));
+        }
 
         // Every kernel the sim dispatches, validated up front (see the constructor guard): a wrong
         // or stale compute asset should fail with ONE clear message naming the missing kernel, not
@@ -555,7 +585,7 @@ namespace AbstractOcclusion.WebGpuWater
         /// by <see cref="FlushInjections"/>, so a hull carrying several interactors costs ONE full-grid
         /// pass rather than one each. A scene with no interactor never dispatches at all.</summary>
         public void AddSphereInteraction(Vector2 center, float radius, Vector2 velXZ, float velY,
-                                         float weight, float strength)
+                                         float weight, float strength, float wakeFoamDose)
         {
             radius = Mathf.Max(radius, MinDropTexelRadius / Resolution);
             if (_sphereCount >= MaxQueuedInjections) FlushSpheres();
@@ -567,6 +597,7 @@ namespace AbstractOcclusion.WebGpuWater
                 VelY = velY,
                 Weight = weight,
                 Strength = strength,
+                WakeFoamDose = Mathf.Max(0f, wakeFoamDose),
             };
         }
 
@@ -692,10 +723,10 @@ namespace AbstractOcclusion.WebGpuWater
             // at the single write site instead of zeroing gen / deposit / shore injection / wake
             // separately is what makes it impossible to leave a foam source switched on by accident.
             _cs.SetFloat(ID_FoamWriteMask, foamVisible ? 1f : 0f);
-            _cs.SetFloat(ID_FoamSpread, spread);
+            _cs.SetFloat(ID_FoamSpread, CalculateFoamSpread(spread, dtSteps));
             _cs.SetFloat(ID_FoamFromSpeed, fromSpeed);
             _cs.SetFloat(ID_FoamFromCurv, fromCurv);
-            _cs.SetFloat(ID_FoamAdvect, advect);
+            _cs.SetFloat(ID_FoamAdvect, CalculateFoamAdvection(advect, dtSteps));
             _cs.SetFloat(ID_FoamBreakStrength, breakStrength);
             _cs.SetFloat(ID_FoamBreakRange, breakRange);
             _cs.SetTexture(_kFoam, ID_Src, _a);        // height state (read)

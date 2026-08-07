@@ -18,42 +18,42 @@ MonoBehaviour:
     opacity: 0.549
     particleAtlas: {fileID: 2800000, guid: da3c1f866a847c34f9d37f4990d73d92, type: 3}
     flipbookGrid: {x: 2, y: 2}
-    flipbookFps: 2
+    flipbookFps: 10
     sizeHeroPower: 1
   ambient:
     drive: 1
-    spawnThreshold: 0.404
-    spawnRate: 113
-    maxSpawnPerFrame: 256
-    sprayChance: 0.686
-    sprayLaunchSpeed: 1.25
-    lifeRange: {x: 1, y: 1.5}
+    spawnThreshold: 0.676
+    spawnRate: 25.9
+    maxSpawnPerFrame: 1024
+    sprayChance: 0.158
+    sprayLaunchSpeed: 1.01
+    lifeRange: {x: 0.2, y: 0.5}
     sizeRange: {x: 0.1, y: 0.2}
     spawnMaxDistance: 400
     sprayLifeRange: {x: 1, y: 2}
     spraySizeRange: {x: 0.1, y: 0.2}
-    depositLifeRange: {x: 0.8, y: 1}
-    depositSizeRange: {x: 0.1, y: 0.15}
+    depositLifeRange: {x: 1, y: 2}
+    depositSizeRange: {x: 0.3, y: 0.5}
   veil:
     drive: 1
     opacity: 0.567
     densityLowGain: 0.2
     densityHighGain: 0.5
     breakupTexture: {fileID: 2800000, guid: 8fc49b69d0d057948be747fa1a37627c, type: 3}
-    breakupTiling: 6.4
-    breakupStrength: 0.208
+    breakupTiling: 6.7
+    breakupStrength: 0.257
   splash:
     drive: 1
-    maxParticlesPerBurst: 18
-    upwardBias: 1.06
-    outwardSpread: 0.43
-    dropletSize: 0.15
+    maxParticlesPerBurst: 91
+    upwardBias: 3
+    outwardSpread: 1.56
+    dropletSize: 0.1
     lifetime: {x: 1, y: 1.5}
-    crownMinStrength: 0
-    crownBaseSize: 0.4
-    crownLifetime: 0.2
+    crownMinStrength: 0.126
+    crownBaseSize: 1
+    crownLifetime: 1
     crownTint: {r: 1, g: 1, b: 1, a: 1}
-    crownOpacity: 0.471
+    crownOpacity: 1
   bubbles:
     drive: 1
     bubbleAmount: 1

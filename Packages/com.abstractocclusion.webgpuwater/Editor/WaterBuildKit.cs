@@ -94,25 +94,17 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string ShaderSplashParticles = WaterShaderNames.SplashParticles;
         internal const string SplashDropletMaterialPath = Gen + "/SplashDroplet.mat";
         internal const string SplashCrownMaterialPath = Gen + "/SplashCrown.mat";
-        internal const string SplashCrownSheetPath = Gen + "/SplashFlipbook_8x8.png";
-        internal const string SplashCrownLightSheetAPath = Gen + "/SplashFlipbookLightA_8x8.png";
-        internal const string SplashCrownLightSheetBPath = Gen + "/SplashFlipbookLightB_8x8.png";
-        // The crown flipbook (and its six-way light sheets) ship inside the package's Samples~
-        // folder, which Unity never imports. These are their paths RELATIVE to the resolved
-        // package root; the wizard copies them out to the Gen paths above on first build (see
-        // LoadOrProvisionPackagedSheet) so the crown is textured even in projects that never
-        // imported the demo samples.
+        internal const string SplashCrownSheetPath = Gen + "/WaterSplashChunks_4x1.png";
+        // The chunk atlas ships inside the package's Samples~ folder, which Unity never
+        // imports. This is its path RELATIVE to the resolved package root; the wizard copies
+        // it out to the Gen path above on first build (see LoadOrProvisionPackagedSheet) so
+        // the splash is textured even in projects that never imported the demo samples.
         const string CrownSheetPackageRelativePath =
-            "Samples~/Demos/Common/Assets/Textures/SplashFlipbook_8x8.png";
-        const string CrownLightSheetAPackageRelativePath =
-            "Samples~/Demos/Common/Assets/Textures/SplashFlipbookLightA_8x8.png";
-        const string CrownLightSheetBPackageRelativePath =
-            "Samples~/Demos/Common/Assets/Textures/SplashFlipbookLightB_8x8.png";
-        // Crown material upgrades applied when the six-way light sheets are provisioned:
-        // directional flipbook lighting on, plus a default backlit-transmission glow.
+            "Samples~/Demos/Common/Assets/Textures/WaterSplashChunks_4x1.png";
+        // The chunk atlas has no baked six-way light sheets (those belonged to the old 8x8
+        // procedural flipbook), so the upgrade switches the crown material to the scalar
+        // foam lighting. Backlit transmission stays: it reads the atlas' thickness channel.
         const string SixWayProperty = "_SixWay";
-        const string LightSheetAProperty = "_LightSheetA";
-        const string LightSheetBProperty = "_LightSheetB";
         const string TransmissionStrengthProperty = "_TransmissionStrength";
         const float DefaultCrownTransmission = 1.0f;
         // KWS-style packed droplet (R mass / G shine / B dissolve noise / A thickness). The
@@ -165,9 +157,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const float DefaultSunIntensity = 1.2f;
         static readonly Vector3 DefaultSunTowardLight = new Vector3(2f, 2f, -1f);
 
-        // Crown splash flipbook grid; must match the SplashFlipbook_8x8 sheet layout.
-        const int CrownSheetCols = 8;
-        const int CrownSheetRows = 8;
+        // Splash chunk grid; must match the WaterSplashChunks_4x1 atlas layout: four packed
+        // 512px photographic chunks side by side (the KWS WaterSplash construction). Each
+        // sprite steps through all four chunks once over its life.
+        const int CrownSheetCols = 4;
+        const int CrownSheetRows = 1;
 
         // Generated meshes keep huge bounds so Unity's renderer culling can never wrongly cull
         // a surface placed by the volume frame; real frustum culling is WaterVolume.CullBounds.

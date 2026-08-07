@@ -31,7 +31,7 @@ Material:
     m_Floats:
     - _ParticleOpacity: 0.401
     - _SoftFadeDistance: 0.05
-    - _VelocityStretch: 3
+    - _VelocityStretch: 1.37
     m_Colors:
     - _Tint: {r: 0.95, g: 0.97999996, b: 1, a: 1}
   m_BuildTextureStacks: []
