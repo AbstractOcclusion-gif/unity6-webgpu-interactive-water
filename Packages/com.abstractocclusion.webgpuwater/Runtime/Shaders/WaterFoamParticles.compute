@@ -10,12 +10,13 @@
 //     filterable on WebGPU),
 //   - fixed-capacity pool; dead slots are skipped by the vertex shader.
 //
-// Three particle kinds share one pool:
+// Four particle kinds share one pool:
 //   KIND_SURFACE: floats on the water, dragged by the local flow + wind.
 //   KIND_SPRAY:   ballistic droplets thrown off strong turbulence; on landing they
 //                 convert to KIND_SURFACE and keep drifting as foam.
 //   KIND_BUBBLE:  underwater plume injected DOWNWARD by splash bursts; buoyancy turns it
 //                 around and it pops into KIND_SURFACE at the waterline (or dissolves).
+//   KIND_RIPPLE_CREST: small surface flecks emitted from energetic ripple crests.
 
 #pragma kernel BeginFrame
 #pragma kernel Spawn
@@ -49,6 +50,7 @@
 static const float KIND_SURFACE = 0.0;
 static const float KIND_SPRAY   = 1.0;
 static const float KIND_BUBBLE  = 2.0; // MUST match KIND_BUBBLE in FoamParticles.shader
+static const float KIND_RIPPLE_CREST = 3.0;
 
 // ---- KIND_BUBBLE tuning (physics-anchored; see docs/PLAN_bubbles_v1.md) ----
 // Injection: the plume enters just under the surface moving DOWN at a fraction of the
@@ -72,6 +74,7 @@ static const float BUBBLE_WOBBLE_SPEED = 0.06;     // world units/sec at full si
 static const uint COUNTER_RING_CURSOR = 0; // ever-increasing spawn cursor (ring index)
 static const uint COUNTER_FRAME_SPAWNS = 1; // turbulence spawns this frame (budget check)
 static const uint COUNTER_BURST_SPAWNS = 2; // burst droplets this frame (own budget below)
+static const uint COUNTER_CREST_FLECK_SPAWNS = 3; // ripple-crest flecks this frame (own budget)
 
 // Burst droplets get their OWN per-frame budget = capacity / this (they are event-driven
 // and must not starve behind the turbulence budget, but 16 requests x 64 droplets could
@@ -164,6 +167,12 @@ float _SpawnRate;         // expected spawns / second / world-unit^2 at foam = 1
 uint  _MaxSpawnPerFrame;  // hard budget per frame
 float _SprayChance;       // 0..1 fraction of spawns thrown as ballistic spray
 float _SprayLaunchSpeed;  // world units/sec initial upward speed of spray
+float _RippleCrestFlecksEnabled;
+float _RippleCrestFleckAmount;
+uint _RippleCrestFleckMaxPerFrame;
+float _RippleCrestFleckLifeMin, _RippleCrestFleckLifeMax;
+float _RippleCrestFleckSizeMin, _RippleCrestFleckSizeMax;
+float _RippleCrestFleckMotion;
 float _LifeMin, _LifeMax; // seconds
 float _SizeMin, _SizeMax; // world units
 float _SizeHeroPower;     // >= 1; KWS pow-distribution: most particles small, rare heroes
@@ -224,6 +233,26 @@ static const int SPLAT_RADIUS_MAX = 3;
 static const uint TILE_GRID = 16;
 // Spawn-probability boost per unit of local velocity shear (wake edges emit more).
 static const float SPAWN_SHEAR_BOOST = 4.0;
+
+// KWS emits small foam flecks from dynamic-wave height, horizontal flow and divergence. This solver
+// stores height and vertical velocity instead, so positive moving height selects the source while
+// the height-gradient direction supplies its travel below.
+static const float CREST_FLECK_MIN_HEIGHT_METERS = 0.001;
+static const float CREST_FLECK_HEIGHT_RANGE_METERS = 0.02;
+// Peakness is curvature normalised by the local ripple amplitude. This keeps a smooth low ripple
+// eligible while restricting flecks to its narrow positive apex rather than its whole upper half.
+static const float CREST_FLECK_PEAKNESS_MIN = 0.001;
+static const float CREST_FLECK_PEAKNESS_RANGE = 0.02;
+static const float CREST_FLECK_MIN_LOCAL_AMPLITUDE = 1e-6;
+// KWS tests each qualifying wave texel directly rather than accumulating a low per-metre rate.
+// This is the base chance at Density = 1; the source-local frame cap remains the performance bound.
+static const float CREST_FLECK_CELL_SELECTION_CHANCE = 0.25;
+static const uint CREST_FLECK_MAX_SPAWNS_PER_TEXEL = 4u;
+static const float CREST_FLECK_JITTER_TEXEL_FRACTION = 0.8;
+static const uint CREST_FLECK_CLUSTER_SEED = 0x68BC21EBu;
+static const float CREST_FLECK_TRANSPORT_SPEED = 0.75;
+static const float CREST_FLECK_MIN_HEIGHT_GRADIENT_SQUARED = 1e-12;
+static const float CREST_FLECK_APPROX_FLOW_MIN_DIRECTION_SQUARED = 1e-12;
 
 // Surf plunging-lip spray (CURL-3, the KWS crash moment): a spawn on a cresting PLUNGING front is
 // forced to ballistic spray thrown shoreward off the lip. The gate reads the front's canonical
@@ -531,8 +560,144 @@ void BeginFrame(uint3 id : SV_DispatchThreadID)
     {
         Counters[COUNTER_FRAME_SPAWNS] = 0;
         Counters[COUNTER_BURST_SPAWNS] = 0;
+        Counters[COUNTER_CREST_FLECK_SPAWNS] = 0;
     }
     if (id.x < TILE_GRID * TILE_GRID) TileCounts[id.x] = 0;
+}
+
+bool TryClaimAmbientSlot(out uint slot)
+{
+    uint frameSpawns;
+    InterlockedAdd(Counters[COUNTER_FRAME_SPAWNS], 1, frameSpawns);
+    if (frameSpawns >= _MaxSpawnPerFrame)
+    {
+        slot = 0u;
+        return false;
+    }
+    return ClaimPoolSlot(slot);
+}
+
+bool TryClaimRippleCrestFleckSlot(out uint slot)
+{
+    uint crestFleckSpawns;
+    InterlockedAdd(Counters[COUNTER_CREST_FLECK_SPAWNS], 1, crestFleckSpawns);
+    if (crestFleckSpawns >= _RippleCrestFleckMaxPerFrame)
+    {
+        slot = 0u;
+        return false;
+    }
+
+    return TryClaimAmbientSlot(slot);
+}
+
+bool TryGetRippleCrestFleckCandidate(int2 texel, float3 texelWorld, out float crestStrength,
+                                     out float2 propagationPool)
+{
+    crestStrength = 0.0;
+    propagationPool = 0.0;
+    if (_RippleCrestFlecksEnabled <= 0.5 || _RippleCrestFleckAmount <= 0.0) return false;
+
+    float4 info = Sim.Load(int3(texel, 0));
+    float rippleFade = SimWindowRippleFade(WorldToSim(texelWorld).xz);
+    float metresPerPoolHeight = VolumeExtentSafe().y;
+    float crestHeight = FoamRippleHeightSafe(info.r) * rippleFade * metresPerPoolHeight;
+    if (crestHeight <= CREST_FLECK_MIN_HEIGHT_METERS) return false;
+
+    float4 leftInfo = Sim.Load(int3(ClampTexel(texel + int2(-1, 0)), 0));
+    float4 rightInfo = Sim.Load(int3(ClampTexel(texel + int2( 1, 0)), 0));
+    float4 downInfo = Sim.Load(int3(ClampTexel(texel + int2(0, -1)), 0));
+    float4 upInfo = Sim.Load(int3(ClampTexel(texel + int2(0,  1)), 0));
+
+    float neighbourAverageHeight = (leftInfo.r + rightInfo.r + downInfo.r + upInfo.r) * 0.25;
+    float positivePeakHeight = max(0.0, info.r - neighbourAverageHeight);
+    float localAmplitude = max(abs(info.r), CREST_FLECK_MIN_LOCAL_AMPLITUDE);
+    float peakness = positivePeakHeight / localAmplitude;
+    if (peakness <= CREST_FLECK_PEAKNESS_MIN) return false;
+
+    // The heightfield has no horizontal velocity channel like KWS. The height-gradient direction,
+    // signed by vertical velocity, gives the travelling-wave direction without treating amplitude
+    // as a reject threshold; low-amplitude splash ripples must still be eligible to emit flecks.
+    float2 heightGradient = float2(rightInfo.r - leftInfo.r, upInfo.r - downInfo.r) * 0.5;
+    if (dot(heightGradient, heightGradient) <= CREST_FLECK_MIN_HEIGHT_GRADIENT_SQUARED) return false;
+
+    float propagationSign = info.g >= 0.0 ? -1.0 : 1.0;
+    propagationPool = propagationSign * heightGradient / SimExtentSafe().xz;
+
+    float heightStrength = saturate((crestHeight - CREST_FLECK_MIN_HEIGHT_METERS)
+                                    / CREST_FLECK_HEIGHT_RANGE_METERS);
+    float peakStrength = saturate((peakness - CREST_FLECK_PEAKNESS_MIN)
+                                  / CREST_FLECK_PEAKNESS_RANGE);
+    crestStrength = heightStrength * peakStrength;
+    return true;
+}
+
+float3 CrestFleckJitterWorld(int2 texel, uint spawnIndex)
+{
+    uint spawnSeed = _FrameSeed ^ CREST_FLECK_CLUSTER_SEED ^ spawnIndex;
+    float2 jitter = float2(Rand01((uint2)texel, spawnSeed),
+                           Rand01((uint2)texel, spawnSeed ^ 0x9E3779B9u)) - 0.5;
+    float2 normalizedTexelJitter = jitter * (CREST_FLECK_JITTER_TEXEL_FRACTION * 2.0 / _Size);
+    float3 localOffset = float3(normalizedTexelJitter.x, 0.0, normalizedTexelJitter.y)
+                       * (_SimWindowed < 0.5 ? VolumeExtentSafe() : SimExtentSafe());
+    return mul(VolumeRot(), localOffset);
+}
+
+bool TrySpawnRippleCrestFlecks(int2 texel, float3 texelWorld, float crestStrength,
+                               float2 propagationPool)
+{
+    float densityStrength = crestStrength * _RippleCrestFleckAmount;
+    float probability = saturate(densityStrength
+                                 * CREST_FLECK_CELL_SELECTION_CHANCE);
+    // Unlike ambient foam, ripple flecks use a per-texel roll (the same KWS idiom). The generic
+    // world-cell key has a 0.25 m floor, so it selects whole square chunks of a small ripple and
+    // leaves visible gaps around the ring.
+    if (Rand01((uint2)texel, _FrameSeed ^ 0x7F4A7C15u) >= probability) return false;
+    if (_ExclusionCount > 0.5 && InsideParticleExclusion(texelWorld)) return false;
+
+    propagationPool = normalize(propagationPool);
+    float3 propagationWorld = mul(VolumeRot(), float3(propagationPool.x, 0.0, propagationPool.y));
+    uint spawnCount = min((uint)ceil(densityStrength), CREST_FLECK_MAX_SPAWNS_PER_TEXEL);
+    bool spawned = false;
+    // KWS turns stronger dynamic-wave cells into a compact cluster, rather than merely raising
+    // the odds of one point. The jitter keeps that cluster on the source texel instead of making
+    // a grid of duplicates at its centre.
+    for (uint spawnIndex = 0u; spawnIndex < spawnCount; spawnIndex++)
+    {
+        uint slot;
+        if (!TryClaimRippleCrestFleckSlot(slot)) return spawned;
+
+        uint spawnSeed = _FrameSeed ^ CREST_FLECK_CLUSTER_SEED ^ spawnIndex;
+        float r0 = Rand01((uint2)texel, spawnSeed ^ 0xA24BAED5u);
+        float r1 = Rand01((uint2)texel, spawnSeed ^ 0x9FB21C65u);
+        FoamParticle particle;
+        particle.worldPos = texelWorld + CrestFleckJitterWorld(texel, spawnIndex);
+        particle.worldPos.y = 0.0;
+        particle.velocity = propagationWorld * (CREST_FLECK_TRANSPORT_SPEED * crestStrength);
+        particle.age = 0.0;
+        particle.life = lerp(_RippleCrestFleckLifeMin, _RippleCrestFleckLifeMax, r0);
+        particle.size = lerp(_RippleCrestFleckSizeMin, _RippleCrestFleckSizeMax, r1);
+        particle.seed = r1;
+        particle.kind = KIND_RIPPLE_CREST;
+        particle.strength = crestStrength;
+        Particles[slot] = particle;
+        spawned = true;
+    }
+    return spawned;
+}
+
+float3 CrestFleckApproximateFlowWorld(float4 simulationInfo, float crestStrength)
+{
+    float2 normalDirection = simulationInfo.ba;
+    if (dot(normalDirection, normalDirection)
+        <= CREST_FLECK_APPROX_FLOW_MIN_DIRECTION_SQUARED) return 0.0;
+
+    // In a height-only solver the normal is the only continuously available horizontal signal.
+    // Its orientation combined with the sign of vertical motion approximates the travelling-wave
+    // direction, letting a fleck bend along its live ripple without adding a new sim texture.
+    float propagationSign = simulationInfo.g >= 0.0 ? 1.0 : -1.0;
+    float2 propagationPool = normalize(normalDirection) * propagationSign;
+    float3 propagationWorld = mul(VolumeRot(), float3(propagationPool.x, 0.0, propagationPool.y));
+    return propagationWorld * (CREST_FLECK_TRANSPORT_SPEED * crestStrength);
 }
 
 // One thread per sim texel: roll a spawn where foam exceeds the threshold. The
@@ -543,6 +708,19 @@ void Spawn(uint3 id : SV_DispatchThreadID)
 {
     int2 texel = int2(id.xy);
     float3 texelWorld = TexelToWorld(texel);
+    uint2 spawnKey = WorldSpawnKey(texelWorld.xz);
+
+#ifndef OCEAN_FFT_GLUE
+    float crestStrength;
+    float2 crestPropagationPool;
+    bool isRippleCrest = TryGetRippleCrestFleckCandidate(texel, texelWorld, crestStrength,
+                                                          crestPropagationPool);
+    if (isRippleCrest)
+    {
+        TrySpawnRippleCrestFlecks(texel, texelWorld, crestStrength, crestPropagationPool);
+    }
+#endif
+
     float foam = FoamTex.Load(int3(texel, 0));
     float excess = foam - _SpawnThreshold;
     if (excess <= 0.0) return;
@@ -553,7 +731,6 @@ void Spawn(uint3 id : SV_DispatchThreadID)
     // re-rolled around the camera every frame. The plateau keeps density FULL out to
     // SPAWN_LOD_PLATEAU of the range - inside it, camera motion changes nothing at all -
     // and the shoulder then thins smoothly to the keep-alive dusting beyond the range.
-    uint2 spawnKey = WorldSpawnKey(texelWorld.xz);
     if (_SpawnMaxDistance > 0.0)
     {
         float distNorm = saturate(distance(texelWorld.xz, _SpawnCameraXZ) / _SpawnMaxDistance);
@@ -582,14 +759,8 @@ void Spawn(uint3 id : SV_DispatchThreadID)
     // texelWorld.y is the surface-plane height - close enough against people-sized boxes.
     if (_ExclusionCount > 0.5 && InsideParticleExclusion(texelWorld)) return;
 
-    // Per-frame budget: count first, back out if over. A few threads may race past
-    // the limit; the budget is a soft cap, so that is acceptable.
-    uint frameSpawns;
-    InterlockedAdd(Counters[COUNTER_FRAME_SPAWNS], 1, frameSpawns);
-    if (frameSpawns >= _MaxSpawnPerFrame) return;
-
     uint slot;
-    if (!ClaimPoolSlot(slot)) return; // pool saturated: drop the spawn, never kill live foam
+    if (!TryClaimAmbientSlot(slot)) return; // pool saturated: drop the spawn, never kill live foam
 
     float4 info = Sim.Load(int3(texel, 0));
     float r0 = Rand01(id.xy, _FrameSeed ^ 0x9E3779B9u);
@@ -887,6 +1058,15 @@ void Update(uint3 id : SV_DispatchThreadID)
         float4 info = SampleSim(simNorm);
         float3 driven = mul(VolumeRot(), float3(info.b, 0.0, info.a)) * _FlowDrift
                       + float3(_WindDrift.x, 0.0, _WindDrift.y);
+        if (particle.kind == KIND_RIPPLE_CREST)
+        {
+            float3 approximateRippleFlow = CrestFleckApproximateFlowWorld(info, particle.strength);
+            // This is not a full fluid-velocity field like KWS has. It is a continuously refreshed
+            // heightfield proxy, so crest flecks follow the visible ripple while their authored
+            // motion setting still blends in the body's normal slope/wind drift.
+            driven = lerp(driven, approximateRippleFlow + float3(_WindDrift.x, 0.0, _WindDrift.y),
+                          saturate(_RippleCrestFleckMotion));
+        }
         // Curl + clumping (KWS): a divergence-free swirl (gradient rotated 90 degrees) keeps
         // floating foam alive, and a gentle pull UP the noise gradient gathers it into
         // streaks/patches instead of a uniform sprinkle. The field drifts slowly so clumps
@@ -927,7 +1107,7 @@ void RasterizeDensity(uint3 id : SV_DispatchThreadID)
 
     FoamParticle particle = Particles[slot];
     if (particle.life <= 0.0 || particle.age >= particle.life) return;
-    if (particle.kind != KIND_SURFACE) return; // the density veil is floating foam only
+    if (particle.kind != KIND_SURFACE && particle.kind != KIND_RIPPLE_CREST) return;
 
     float2 simNorm = WorldToSimNorm(particle.worldPos);
     float3 world = particle.worldPos;

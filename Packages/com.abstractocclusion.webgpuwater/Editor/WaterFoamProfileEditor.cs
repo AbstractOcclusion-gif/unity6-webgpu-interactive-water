@@ -71,6 +71,16 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             ("spraySizeRange", "Mist Size", "Ambient mist only, for the same reason."),
         };
 
+        static readonly (string Field, string Label, string Tooltip)[] RippleCrestFleckFields =
+        {
+            ("rippleCrestFlecksEnabled", "Enabled", "Emit small floating flecks from moving ripple crests."),
+            ("rippleCrestFleckAmount", "Density", "Multiplies the number of flecks selected from each crest."),
+            ("rippleCrestFleckMaxPerFrame", "Max Per Frame", "Hard per-frame cap for this source."),
+            ("rippleCrestFleckLifetimeRange", "Lifetime Range", "Lifetime range for ripple-crest flecks."),
+            ("rippleCrestFleckSizeRange", "Size Range", "World half-size range for ripple-crest flecks."),
+            ("rippleCrestFleckMotion", "Ripple Motion", "How strongly flecks keep their ripple-propagation motion."),
+        };
+
         // Section expanded state (editor-session only). Open by default so every knob is discoverable.
         bool _lookExpanded = true;
         bool _ambientExpanded = true;
@@ -127,6 +137,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 "bursts spawn regardless, so zeroing Spawn Rate does not stop a boat spraying.",
                 MessageType.None);
             DrawGroup(ambient, AmbientSourceFields, drawn);
+
+            WaterEditorUI.SubHeading("Ripple Crest Flecks");
+            DrawGroup(ambient, RippleCrestFleckFields, drawn);
 
             DrawRemainingFields(ambient, drawn);
         }

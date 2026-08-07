@@ -44,15 +44,15 @@ Material:
     - PixelSnap: 0
     - _EnableExternalAlpha: 0
     - _PackedChannels: 1
-    - _ParticleOpacity: 0.307
+    - _ParticleOpacity: 0.366
     - _SixWay: 0
     - _SixWayFlipX: 1
-    - _SoftFadeDistance: 0.5
+    - _SoftFadeDistance: 0.05
     - _TransmissionStrength: 0
     m_Colors:
     - _Color: {r: 0.92, g: 0.97, b: 1, a: 1}
     - _Flip: {r: 1, g: 1, b: 1, a: 1}
     - _RendererColor: {r: 1, g: 1, b: 1, a: 1}
-    - _Tint: {r: 0.95, g: 0.97999996, b: 1, a: 1}
+    - _Tint: {r: 1, g: 1, b: 1, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

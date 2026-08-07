@@ -808,7 +808,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 WaterSceneBuilder.AssignFoamTexturesToSceneWater();
 
             if (GUILayout.Button(new GUIContent("Upgrade Splash Materials (lit)",
-                "Upgrade the shared splash materials to the lit splash shader in place.")))
+                "Upgrade existing crowns to the 4x1 packed chunks and add the KWS-style entry-jet layer.")))
                 WaterSceneBuilder.UpgradeSplashMaterialsMenu();
 
             if (GUILayout.Button(new GUIContent("Add Water Body (secondary)",

@@ -86,6 +86,7 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         {
             var profile = ScriptableObject.CreateInstance<WaterFoamProfile>();
             var properties = new MaterialPropertyBlock();
+            var layerProperties = new MaterialPropertyBlock();
             Color tint = new Color(0.1f, 0.2f, 0.3f, 0.4f);
             try
             {
@@ -98,11 +99,13 @@ namespace AbstractOcclusion.WebGpuWater.Tests
                 profile.veil.breakupStrength = 0.3f;
 
                 profile.WriteLook(properties);
+                profile.WriteLook(layerProperties, 0.5f);
                 profile.WriteVeil(properties);
                 WaterParticlePool.WriteFlipbook(properties, new Vector2Int(0, -1), FlipbookFramesPerSecond);
 
                 AssertColor(properties.GetColor(TintProperty), tint);
                 Assert.That(properties.GetFloat(ParticleOpacityProperty), Is.EqualTo(profile.veil.opacity));
+                Assert.That(layerProperties.GetFloat(ParticleOpacityProperty), Is.EqualTo(0.35f));
                 Assert.That(properties.GetFloat(DensityLowGainProperty), Is.EqualTo(profile.veil.densityLowGain));
                 Assert.That(properties.GetFloat(DensityHighGainProperty), Is.EqualTo(profile.veil.densityHighGain));
                 Assert.That(properties.GetFloat(BreakupTilingProperty), Is.EqualTo(profile.veil.breakupTiling));

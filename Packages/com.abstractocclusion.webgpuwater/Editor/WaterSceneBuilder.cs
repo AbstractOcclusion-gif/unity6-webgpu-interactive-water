@@ -99,7 +99,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal static void UpgradeSplashMaterialsMenu()
         {
             UpgradeSplashMaterials();
-            Debug.Log("[WebGpuWater] Splash materials now use " + ShaderSplashParticles + ".");
+            Debug.Log("[WebGpuWater] Splash crowns now use the 4x1 packed chunks; existing " +
+                      "emitters received the entry-jet layer where missing.");
         }
 
         // Assign the animated foam flipbook + relief normal map to every water surface

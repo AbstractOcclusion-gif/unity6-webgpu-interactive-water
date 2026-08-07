@@ -16,6 +16,23 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         const string UnderwaterPointLightsKeyword = "WATER_FOG_POINT_LIGHTS";
         const float SpotlightOuterAngle = 60f;
         const float SpotlightInnerAngle = 30f;
+        const int SplashAtlasColumns = 4;
+        const int SplashAtlasRows = 1;
+        const float DefaultWaterParticleGravity = 1f;
+        const float UnityGravityMetersPerSecondSquared = 9.81f;
+        const float JetGravityModifier = DefaultWaterParticleGravity / UnityGravityMetersPerSecondSquared;
+        const float JetStretchLengthScale = 4f;
+        const float DisabledStreakAmount = 0f;
+        const float DefaultStreakAmount = 1f;
+        const float ReducedCrownLaunchHeight = 0.5f;
+        const float ReducedCrownLaunchSpread = 0.25f;
+        const float GenericFoamSpawnThreshold = 0.35f;
+        const float GenericFoamSpawnRate = 12f;
+        const float RippleCrestFleckAmount = 3.5f;
+        const int RippleCrestFleckMaxPerFrame = 128;
+        static readonly Vector2 RippleCrestFleckLifetimeRange = new Vector2(0.4f, 0.8f);
+        static readonly Vector2 RippleCrestFleckSizeRange = new Vector2(0.01f, 0.025f);
+        const float RippleCrestFleckMotion = 0.6f;
         static readonly int VolumeCenterProperty = Shader.PropertyToID("_VolumeCenter");
         static readonly int SceneLightCountProperty = Shader.PropertyToID(SceneLightCountName);
         static readonly int SceneLightSpotDirectionProperty = Shader.PropertyToID(SceneLightSpotDirectionName);
@@ -137,6 +154,111 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             {
                 Object.DestroyImmediate(primaryHost);
                 Object.DestroyImmediate(hitBodyHost);
+            }
+        }
+
+        [Test]
+        public void SplashJets_AreConfiguredAsIndependentStretchedAtlasParticles()
+        {
+            GameObject host = new GameObject("Water Splash Jet Test");
+            try
+            {
+                ParticleSystem particles = host.AddComponent<ParticleSystem>();
+                WaterSplashEmitter.ConfigureJets(particles, SplashAtlasColumns, SplashAtlasRows);
+
+                Assert.That(particles.main.simulationSpace, Is.EqualTo(ParticleSystemSimulationSpace.World));
+                Assert.That(particles.main.gravityModifier.constant,
+                    Is.EqualTo(JetGravityModifier).Within(FloatTolerance));
+                Assert.That(particles.emission.enabled, Is.False);
+                Assert.That(particles.shape.enabled, Is.False);
+                Assert.That(particles.textureSheetAnimation.numTilesX, Is.EqualTo(SplashAtlasColumns));
+                Assert.That(particles.textureSheetAnimation.numTilesY, Is.EqualTo(SplashAtlasRows));
+                ParticleSystemRenderer renderer = host.GetComponent<ParticleSystemRenderer>();
+                Assert.That(renderer.renderMode, Is.EqualTo(ParticleSystemRenderMode.Stretch));
+                Assert.That(renderer.lengthScale, Is.EqualTo(JetStretchLengthScale).Within(FloatTolerance));
+            }
+            finally
+            {
+                Object.DestroyImmediate(host);
+            }
+        }
+
+        [Test]
+        public void SplashProfile_AppliesCrownAndEntryStreakControlsToEmitter()
+        {
+            GameObject host = new GameObject("Water Splash Streak Profile Test");
+            WaterFoamProfile profile = ScriptableObject.CreateInstance<WaterFoamProfile>();
+            try
+            {
+                WaterSplashEmitter emitter = host.AddComponent<WaterSplashEmitter>();
+                profile.splash.crownLaunchHeight = ReducedCrownLaunchHeight;
+                profile.splash.crownLaunchSpread = ReducedCrownLaunchSpread;
+                profile.splash.entryStreaksEnabled = false;
+                profile.splash.entryStreakAmount = DisabledStreakAmount;
+
+                profile.ApplyTo(emitter);
+
+                Assert.That(emitter.entryStreaksEnabled, Is.False);
+                Assert.That(emitter.crownLaunchHeight,
+                    Is.EqualTo(ReducedCrownLaunchHeight).Within(FloatTolerance));
+                Assert.That(emitter.crownLaunchSpread,
+                    Is.EqualTo(ReducedCrownLaunchSpread).Within(FloatTolerance));
+                Assert.That(emitter.entryStreakAmount,
+                    Is.EqualTo(DisabledStreakAmount).Within(FloatTolerance));
+                Assert.That(emitter.entryStreakHeight, Is.EqualTo(DefaultStreakAmount).Within(FloatTolerance));
+                Assert.That(emitter.entryStreakWidth, Is.EqualTo(DefaultStreakAmount).Within(FloatTolerance));
+                Assert.That(emitter.entryStreakGravity, Is.EqualTo(DefaultStreakAmount).Within(FloatTolerance));
+                Assert.That(emitter.entryStreakLifetimeRange,
+                    Is.EqualTo(profile.splash.entryStreakLifetimeRange));
+                Assert.That(emitter.entryStreakSizeRange,
+                    Is.EqualTo(profile.splash.entryStreakSizeRange));
+            }
+            finally
+            {
+                Object.DestroyImmediate(profile);
+                Object.DestroyImmediate(host);
+            }
+        }
+
+        [Test]
+        public void FoamProfile_AppliesRippleCrestFleckControlsToParticlePool()
+        {
+            GameObject host = new GameObject("Ripple Crest Fleck Profile Test");
+            WaterFoamProfile profile = ScriptableObject.CreateInstance<WaterFoamProfile>();
+            try
+            {
+                WaterFoamParticles particles = host.AddComponent<WaterFoamParticles>();
+                profile.ambient.spawnThreshold = GenericFoamSpawnThreshold;
+                profile.ambient.spawnRate = GenericFoamSpawnRate;
+                profile.ambient.rippleCrestFlecksEnabled = true;
+                profile.ambient.rippleCrestFleckAmount = RippleCrestFleckAmount;
+                profile.ambient.rippleCrestFleckMaxPerFrame = RippleCrestFleckMaxPerFrame;
+                profile.ambient.rippleCrestFleckLifetimeRange = RippleCrestFleckLifetimeRange;
+                profile.ambient.rippleCrestFleckSizeRange = RippleCrestFleckSizeRange;
+                profile.ambient.rippleCrestFleckMotion = RippleCrestFleckMotion;
+
+                profile.ApplyTo(particles);
+
+                Assert.That(particles.rippleCrestFlecksEnabled, Is.True);
+                Assert.That(particles.rippleCrestFleckAmount,
+                    Is.EqualTo(RippleCrestFleckAmount).Within(FloatTolerance));
+                Assert.That(particles.rippleCrestFleckMaxPerFrame,
+                    Is.EqualTo(RippleCrestFleckMaxPerFrame));
+                Assert.That(particles.rippleCrestFleckLifetimeRange,
+                    Is.EqualTo(RippleCrestFleckLifetimeRange));
+                Assert.That(particles.rippleCrestFleckSizeRange,
+                    Is.EqualTo(RippleCrestFleckSizeRange));
+                Assert.That(particles.rippleCrestFleckMotion,
+                    Is.EqualTo(RippleCrestFleckMotion).Within(FloatTolerance));
+                Assert.That(particles.spawnThreshold,
+                    Is.EqualTo(GenericFoamSpawnThreshold).Within(FloatTolerance));
+                Assert.That(particles.spawnRate,
+                    Is.EqualTo(GenericFoamSpawnRate).Within(FloatTolerance));
+            }
+            finally
+            {
+                Object.DestroyImmediate(profile);
+                Object.DestroyImmediate(host);
             }
         }
 

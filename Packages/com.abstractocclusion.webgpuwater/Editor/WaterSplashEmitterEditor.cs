@@ -16,13 +16,18 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         SerializedProperty _particles, _profile;
         SerializedProperty _maxParticlesPerBurst, _upwardBias, _outwardSpread, _dropletSize, _lifetime;
         SerializedProperty _popDuration, _driftStrength, _driftDamping, _surfaceRideHeight;
-        SerializedProperty _crownParticles, _crownMinStrength, _crownBaseSize, _crownLifetime;
-        SerializedProperty _crownTint, _crownOpacity;
+        SerializedProperty _crownParticles, _crownMinStrength, _crownBaseSize, _crownLifetime,
+            _crownLaunchHeight, _crownLaunchSpread;
+        SerializedProperty _crownTint, _crownOpacity, _cpuFallbackOpacity;
+        SerializedProperty _jetParticles, _entryStreaksEnabled, _entryStreakAmount, _entryStreakHeight,
+            _entryStreakWidth, _entryStreakGravity, _entryStreakOpacity, _entryStreakMinStrength,
+            _entryStreakLifetimeRange, _entryStreakSizeRange, _entryStreakTint;
 
         bool _wiringExpanded = true;
         bool _burstExpanded = true;
         bool _driftExpanded;
         bool _crownExpanded = true;
+        bool _streaksExpanded = true;
 
         // Refreshed each GUI pass: true while the assigned profile's Splash section drives
         // the burst/crown fields below.
@@ -45,13 +50,27 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             _crownMinStrength = serializedObject.FindProperty("crownMinStrength");
             _crownBaseSize = serializedObject.FindProperty("crownBaseSize");
             _crownLifetime = serializedObject.FindProperty("crownLifetime");
+            _crownLaunchHeight = serializedObject.FindProperty("crownLaunchHeight");
+            _crownLaunchSpread = serializedObject.FindProperty("crownLaunchSpread");
             _crownTint = serializedObject.FindProperty("crownTint");
             _crownOpacity = serializedObject.FindProperty("crownOpacity");
+            _cpuFallbackOpacity = serializedObject.FindProperty("cpuFallbackOpacity");
+            _jetParticles = serializedObject.FindProperty("jetParticles");
+            _entryStreaksEnabled = serializedObject.FindProperty("entryStreaksEnabled");
+            _entryStreakAmount = serializedObject.FindProperty("entryStreakAmount");
+            _entryStreakHeight = serializedObject.FindProperty("entryStreakHeight");
+            _entryStreakWidth = serializedObject.FindProperty("entryStreakWidth");
+            _entryStreakGravity = serializedObject.FindProperty("entryStreakGravity");
+            _entryStreakOpacity = serializedObject.FindProperty("entryStreakOpacity");
+            _entryStreakMinStrength = serializedObject.FindProperty("entryStreakMinStrength");
+            _entryStreakLifetimeRange = serializedObject.FindProperty("entryStreakLifetimeRange");
+            _entryStreakSizeRange = serializedObject.FindProperty("entryStreakSizeRange");
+            _entryStreakTint = serializedObject.FindProperty("entryStreakTint");
         }
 
         public override void OnInspectorGUI()
         {
-            WaterEditorUI.DrawHeader("Water Splash Emitter", "impact droplets + crown ring");
+            WaterEditorUI.DrawHeader("Water Splash Emitter", "impact droplets + entry streaks + crown ring");
             serializedObject.Update();
 
             var profile = _profile.objectReferenceValue as WaterFoamProfile;
@@ -63,6 +82,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             _burstExpanded = WaterEditorUI.Section("Burst Shaping", _burstExpanded, DrawBurst);
             _driftExpanded = WaterEditorUI.Section("Surface Drift", _driftExpanded, DrawDrift);
             _crownExpanded = WaterEditorUI.Section("Crown Ring", _crownExpanded, DrawCrown);
+            _streaksExpanded = WaterEditorUI.Section("Entry Streaks", _streaksExpanded, DrawStreaks);
 
             serializedObject.ApplyModifiedProperties();
             WaterEditorUI.DrawFooter();
@@ -73,7 +93,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             EditorGUILayout.HelpBox(
                 "Droplets are thrown by the body's GPU foam system when one is active; the " +
                 "'Droplet Spray (CPU Fallback)' Shuriken system only bursts on bodies without " +
-                "one. The 'Crown Ring' flipbook always plays.",
+                "one. Entry streaks and the 'Crown Ring' flipbook always play.",
                 MessageType.None);
             if (_splashDriven)
                 EditorGUILayout.HelpBox(
@@ -107,6 +127,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 new GUIContent("Droplet System", "Shuriken droplet system (CPU fallback). Auto-created if empty."));
             EditorGUILayout.PropertyField(_crownParticles,
                 new GUIContent("Crown System", "Flipbook crown system. Leave empty to disable the crown."));
+            EditorGUILayout.PropertyField(_jetParticles,
+                new GUIContent("Entry Jet System", "Stretched vertical splash columns. Leave empty to disable them."));
             EditorGUILayout.PropertyField(_profile,
                 new GUIContent("Foam Profile",
                     "Optional master profile. When set, its Splash section overrides the burst/crown fields on every emit."));
@@ -121,6 +143,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 EditorGUILayout.PropertyField(_outwardSpread);
                 EditorGUILayout.PropertyField(_dropletSize);
                 EditorGUILayout.PropertyField(_lifetime);
+                EditorGUILayout.PropertyField(_cpuFallbackOpacity,
+                    new GUIContent("CPU Fallback Opacity"));
             }
         }
 
@@ -139,8 +163,38 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 EditorGUILayout.PropertyField(_crownMinStrength);
                 EditorGUILayout.PropertyField(_crownBaseSize);
                 EditorGUILayout.PropertyField(_crownLifetime);
+                WaterEditorUI.SubHeading("Motion");
+                EditorGUILayout.PropertyField(_crownLaunchHeight,
+                    new GUIContent("Launch Height"));
+                EditorGUILayout.PropertyField(_crownLaunchSpread,
+                    new GUIContent("Launch Spread"));
+                WaterEditorUI.SubHeading("Look");
                 EditorGUILayout.PropertyField(_crownTint);
                 EditorGUILayout.PropertyField(_crownOpacity);
+            }
+        }
+
+        void DrawStreaks()
+        {
+            using (new EditorGUI.DisabledScope(_splashDriven))
+            {
+                WaterEditorUI.SubHeading("Emission");
+                EditorGUILayout.PropertyField(_entryStreaksEnabled);
+                EditorGUILayout.PropertyField(_entryStreakMinStrength);
+                EditorGUILayout.PropertyField(_entryStreakAmount);
+
+                WaterEditorUI.SubHeading("Motion");
+                EditorGUILayout.PropertyField(_entryStreakHeight);
+                EditorGUILayout.PropertyField(_entryStreakWidth);
+                EditorGUILayout.PropertyField(_entryStreakGravity);
+                EditorGUILayout.PropertyField(_entryStreakLifetimeRange,
+                    new GUIContent("Lifetime Range"));
+                EditorGUILayout.PropertyField(_entryStreakSizeRange,
+                    new GUIContent("Size Range"));
+
+                WaterEditorUI.SubHeading("Look");
+                EditorGUILayout.PropertyField(_entryStreakTint);
+                EditorGUILayout.PropertyField(_entryStreakOpacity);
             }
         }
     }

@@ -59,6 +59,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // "Splash Particles"/"Splash Crown" read as two unrelated features).
         internal const string SplashRootName = "Water Splash FX";
         internal const string SplashDropletChildName = "Droplet Spray (CPU Fallback)";
+        internal const string SplashJetChildName = "Vertical Entry Jets";
         internal const string SplashCrownChildName = "Crown Ring";
 
         // Shared, fully editable splash particles (drift droplets + a flipbook crown).
@@ -85,6 +86,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             // streak along their motion) - no override here.
             splashEmitter.particles = splashPS;
 
+            EnsureJetLayer(splashEmitter, CreateOrUpgradeCrownMaterial());
+
             var crownGO = NewUndoableGameObject(SplashCrownChildName);
             crownGO.transform.SetParent(rootGO.transform);
             var crownPS = crownGO.AddComponent<ParticleSystem>();
@@ -100,14 +103,60 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             return splashEmitter;
         }
 
-        // Upgrade (or create) both shared splash materials on the lit shader. They are
-        // referenced by every demo scene, so this fixes all of them at once.
+        // Upgrade the shared splash materials and retrofit the independent jet layer onto
+        // existing emitters in the open scene. New emitters receive it in CreateSplashEmitter.
         internal static void UpgradeSplashMaterials()
         {
             EnsureGenFolder();
             LoadOrCreateSplashMaterial(SplashDropletMaterialPath, LoadOrBuildDroplet(DropletTexturePath));
-            CreateOrUpgradeCrownMaterial();
+            Material crownMaterial = CreateOrUpgradeCrownMaterial();
+            foreach (WaterSplashEmitter emitter in Object.FindObjectsByType<WaterSplashEmitter>(
+                         FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                EnsureJetLayer(emitter, crownMaterial);
+                UpgradeCrownLayer(emitter, crownMaterial);
+            }
             AssetDatabase.SaveAssets();
+        }
+
+        // The editor-only retrofit is explicit: it never adds objects at play time, and does
+        // not overwrite an artist-assigned jet system.
+        static ParticleSystem EnsureJetLayer(WaterSplashEmitter emitter, Material crownMaterial)
+        {
+            if (emitter == null) return null;
+            if (emitter.jetParticles != null) return emitter.jetParticles;
+
+            Transform existingJet = emitter.transform.Find(SplashJetChildName);
+            ParticleSystem jetParticles = existingJet != null
+                ? existingJet.GetComponent<ParticleSystem>()
+                : null;
+            if (jetParticles == null)
+            {
+                var jetGO = NewUndoableGameObject(SplashJetChildName);
+                jetGO.transform.SetParent(emitter.transform);
+                jetParticles = jetGO.AddComponent<ParticleSystem>();
+                WaterSplashEmitter.ConfigureJets(jetParticles, CrownSheetCols, CrownSheetRows);
+            }
+
+            var jetRenderer = jetParticles.GetComponent<ParticleSystemRenderer>();
+            if (jetRenderer != null && crownMaterial != null)
+                jetRenderer.sharedMaterial = crownMaterial;
+            Undo.RecordObject(emitter, "Add Splash Entry Jets");
+            emitter.jetParticles = jetParticles;
+            EditorUtility.SetDirty(emitter);
+            return jetParticles;
+        }
+
+        // The old crown used an 8x8 procedural sheet. Switching only its material would
+        // sample invalid cells, so this explicit upgrade changes the sheet layout with it.
+        static void UpgradeCrownLayer(WaterSplashEmitter emitter, Material crownMaterial)
+        {
+            if (emitter == null || emitter.crownParticles == null || crownMaterial == null) return;
+
+            WaterSplashEmitter.ConfigureCrown(emitter.crownParticles, CrownSheetCols, CrownSheetRows);
+            var crownRenderer = emitter.crownParticles.GetComponent<ParticleSystemRenderer>();
+            if (crownRenderer != null) crownRenderer.sharedMaterial = crownMaterial;
+            EditorUtility.SetDirty(emitter.crownParticles);
         }
 
         // The crown material: the packed photographic chunk atlas (KWS WaterSplash

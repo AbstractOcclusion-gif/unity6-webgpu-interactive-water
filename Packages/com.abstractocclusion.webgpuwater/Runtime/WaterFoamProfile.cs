@@ -56,6 +56,19 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(16, 4096)] public int maxSpawnPerFrame = 256;
             [Range(0f, 1f)] public float sprayChance = 0.15f;
             [Range(0f, 5f)] public float sprayLaunchSpeed = 0.6f;
+            [Header("Ripple crest flecks")]
+            [Tooltip("Emit small floating flecks from moving ripple crests.")]
+            public bool rippleCrestFlecksEnabled;
+            [Range(0f, 4f)] public float rippleCrestFleckAmount = 1f;
+            [Range(16, 1024)] public int rippleCrestFleckMaxPerFrame = 256;
+            public Vector2 rippleCrestFleckLifetimeRange = new Vector2(0.4f, 0.8f);
+            public Vector2 rippleCrestFleckSizeRange = new Vector2(0.01f, 0.025f);
+            [Range(0f, 1f)] public float rippleCrestFleckMotion = 0.6f;
+            [Header("Layer opacity")]
+            [Tooltip("Opacity of floating surface foam before the global Shared Look opacity is applied.")]
+            [Range(0f, 1f)] public float surfaceFoamOpacity = 1f;
+            [Tooltip("Opacity of airborne GPU droplets before the global Shared Look opacity is applied.")]
+            [Range(0f, 1f)] public float sprayOpacity = 1f;
             public Vector2 lifeRange = new Vector2(1.5f, 4f);
             public Vector2 sizeRange = new Vector2(0.02f, 0.06f);
             [Range(0f, 400f)] public float spawnMaxDistance = 120f;
@@ -93,15 +106,35 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0f, 3f)] public float outwardSpread = 1.3f;
             public float dropletSize = 0.02f;
             public Vector2 lifetime = new Vector2(0.6f, 1.3f);
+            [Header("Crown")]
             [Range(0f, 1f)] public float crownMinStrength = 0.25f;
             public float crownBaseSize = 0.4f;
             public float crownLifetime = 0.5f;
+            [Tooltip("Vertical launch multiplier for the crown cloud. Lower values keep it close to the surface.")]
+            [Range(0f, 3f)] public float crownLaunchHeight = 1f;
+            [Tooltip("Horizontal launch multiplier for the crown cloud. Lower values reduce projected spread.")]
+            [Range(0f, 3f)] public float crownLaunchSpread = 1f;
             // Crown LOOK lives here too (it used to be unreachable from the profile: only
             // sizing was mirrored, so the profile tint silently ignored the crown).
             // Defaults match WaterSplashEmitter's crown defaults - zero drift on assign.
             [Tooltip("Crown flipbook tint, applied per emit as the particle start color.")]
             public Color crownTint = new Color(0.95f, 0.98f, 1f, 1f);
             [Range(0f, 1f)] public float crownOpacity = 1f;
+            [Tooltip("Opacity of CPU fallback droplets before the global Shared Look opacity is applied.")]
+            [Range(0f, 1f)] public float cpuFallbackOpacity = 1f;
+            [Header("Entry streaks")]
+            [Tooltip("Enable the narrow entry streaks emitted before the crown cloud.")]
+            public bool entryStreaksEnabled = true;
+            [Range(0f, 2f)] public float entryStreakAmount = 1f;
+            [Range(0f, 3f)] public float entryStreakHeight = 1f;
+            [Range(0.1f, 3f)] public float entryStreakWidth = 1f;
+            [Range(0f, 2f)] public float entryStreakGravity = 1f;
+            [Tooltip("Opacity of entry streaks before the global Shared Look opacity is applied.")]
+            [Range(0f, 1f)] public float entryStreakOpacity = 1f;
+            [Range(0f, 1f)] public float entryStreakMinStrength = 0.2f;
+            public Vector2 entryStreakLifetimeRange = new Vector2(0.75f, 1.5f);
+            public Vector2 entryStreakSizeRange = new Vector2(0.35f, 0.5f);
+            public Color entryStreakTint = new Color(0.95f, 0.98f, 1f, 1f);
         }
 
         [System.Serializable]
@@ -120,6 +153,9 @@ namespace AbstractOcclusion.WebGpuWater
             public Vector2 bubbleSizeRange = new Vector2(0.015f, 0.05f);
             [Tooltip("Sideways wobble while rising; amplitude scales with bubble size.")]
             [Range(0f, 2f)] public float bubbleWobble = 1f;
+            [Header("Layer opacity")]
+            [Tooltip("Opacity of underwater bubbles before the global Shared Look opacity is applied.")]
+            [Range(0f, 1f)] public float opacity = 1f;
         }
 
         [Tooltip("Shared look for every foam element under the body.")]
@@ -145,6 +181,14 @@ namespace AbstractOcclusion.WebGpuWater
                 foam.maxSpawnPerFrame = ambient.maxSpawnPerFrame;
                 foam.sprayChance = ambient.sprayChance;
                 foam.sprayLaunchSpeed = ambient.sprayLaunchSpeed;
+                foam.rippleCrestFlecksEnabled = ambient.rippleCrestFlecksEnabled;
+                foam.rippleCrestFleckAmount = ambient.rippleCrestFleckAmount;
+                foam.rippleCrestFleckMaxPerFrame = ambient.rippleCrestFleckMaxPerFrame;
+                foam.rippleCrestFleckLifetimeRange = ambient.rippleCrestFleckLifetimeRange;
+                foam.rippleCrestFleckSizeRange = ambient.rippleCrestFleckSizeRange;
+                foam.rippleCrestFleckMotion = ambient.rippleCrestFleckMotion;
+                foam.surfaceFoamOpacity = ambient.surfaceFoamOpacity;
+                foam.sprayOpacity = ambient.sprayOpacity;
                 foam.lifeRange = ambient.lifeRange;
                 foam.sizeRange = ambient.sizeRange;
                 foam.spawnMaxDistance = ambient.spawnMaxDistance;
@@ -160,6 +204,7 @@ namespace AbstractOcclusion.WebGpuWater
                 foam.bubbleLifeRange = bubbles.bubbleLifeRange;
                 foam.bubbleSizeRange = bubbles.bubbleSizeRange;
                 foam.bubbleWobble = bubbles.bubbleWobble;
+                foam.bubbleOpacity = bubbles.opacity;
             }
             if (look.drive)
             {
@@ -180,29 +225,42 @@ namespace AbstractOcclusion.WebGpuWater
             emitter.crownMinStrength = splash.crownMinStrength;
             emitter.crownBaseSize = splash.crownBaseSize;
             emitter.crownLifetime = splash.crownLifetime;
+            emitter.crownLaunchHeight = splash.crownLaunchHeight;
+            emitter.crownLaunchSpread = splash.crownLaunchSpread;
             emitter.crownTint = splash.crownTint;
             emitter.crownOpacity = splash.crownOpacity;
+            emitter.cpuFallbackOpacity = splash.cpuFallbackOpacity;
+            emitter.entryStreaksEnabled = splash.entryStreaksEnabled;
+            emitter.entryStreakAmount = splash.entryStreakAmount;
+            emitter.entryStreakHeight = splash.entryStreakHeight;
+            emitter.entryStreakWidth = splash.entryStreakWidth;
+            emitter.entryStreakGravity = splash.entryStreakGravity;
+            emitter.entryStreakOpacity = splash.entryStreakOpacity;
+            emitter.entryStreakMinStrength = splash.entryStreakMinStrength;
+            emitter.entryStreakLifetimeRange = splash.entryStreakLifetimeRange;
+            emitter.entryStreakSizeRange = splash.entryStreakSizeRange;
+            emitter.entryStreakTint = splash.entryStreakTint;
         }
 
         // ---- Draw-time material overrides (property blocks; assets never written) -----
 
         /// <summary>Shared look over the foam-quad draw: tint, opacity, and the shared atlas.</summary>
-        internal void WriteLook(MaterialPropertyBlock mpb)
+        internal void WriteLook(MaterialPropertyBlock mpb, float layerOpacity = 1f)
         {
             if (!look.drive) return;
             mpb.SetColor(ID_Tint, look.tint);
-            mpb.SetFloat(ID_ParticleOpacity, look.opacity);
+            mpb.SetFloat(ID_ParticleOpacity, look.opacity * Mathf.Clamp01(layerOpacity));
             if (look.particleAtlas != null) mpb.SetTexture(ID_ParticleTex, look.particleAtlas);
         }
 
         /// <summary>Shared look over the spray-droplet draw: tint + opacity only. The atlas is left to
         /// the spray's own material because the spray runs a separate flipbook grid (sprayFlipbookGrid);
         /// forcing the shared sheet, authored for the foam grid, would misplay the spray flipbook.</summary>
-        internal void WriteSprayLook(MaterialPropertyBlock mpb)
+        internal void WriteSprayLook(MaterialPropertyBlock mpb, float layerOpacity = 1f)
         {
             if (!look.drive) return;
             mpb.SetColor(ID_Tint, look.tint);
-            mpb.SetFloat(ID_ParticleOpacity, look.opacity);
+            mpb.SetFloat(ID_ParticleOpacity, look.opacity * Mathf.Clamp01(layerOpacity));
         }
 
         /// <summary>Veil values over the density composite draw.</summary>

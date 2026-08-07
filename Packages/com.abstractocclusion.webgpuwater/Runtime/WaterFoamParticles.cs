@@ -30,7 +30,7 @@ namespace AbstractOcclusion.WebGpuWater
         const int UpdateThreadGroupSize = 64;
 
         const int VerticesPerParticle = 6;
-        const int CounterCount = 3; // ring cursor + frame spawn count + frame burst count
+        const int CounterCount = 4; // ring cursor + ambient, burst and crest-fleck frame counts
                                     // (MUST match the COUNTER_* layout in the compute)
 
         // ---- Screen-space density foam (KWS). MUST match WaterFoamParticles.compute. ----
@@ -153,6 +153,7 @@ namespace AbstractOcclusion.WebGpuWater
         // Compute/shader property ids.
         static readonly int ID_Particles = Shader.PropertyToID("Particles");
         static readonly int ID_ParticlesShader = WaterShaderProps.Particles;
+        static readonly int ID_ParticleOpacity = Shader.PropertyToID("_ParticleOpacity");
         static readonly int ID_Counters = Shader.PropertyToID("Counters");
         static readonly int ID_Sim = Shader.PropertyToID("Sim");
         static readonly int ID_FoamTex = Shader.PropertyToID("FoamTex");
@@ -179,6 +180,14 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_MaxSpawnPerFrame = Shader.PropertyToID("_MaxSpawnPerFrame");
         static readonly int ID_SprayChance = Shader.PropertyToID("_SprayChance");
         static readonly int ID_SprayLaunchSpeed = Shader.PropertyToID("_SprayLaunchSpeed");
+        static readonly int ID_RippleCrestFlecksEnabled = Shader.PropertyToID("_RippleCrestFlecksEnabled");
+        static readonly int ID_RippleCrestFleckAmount = Shader.PropertyToID("_RippleCrestFleckAmount");
+        static readonly int ID_RippleCrestFleckLifeMin = Shader.PropertyToID("_RippleCrestFleckLifeMin");
+        static readonly int ID_RippleCrestFleckLifeMax = Shader.PropertyToID("_RippleCrestFleckLifeMax");
+        static readonly int ID_RippleCrestFleckSizeMin = Shader.PropertyToID("_RippleCrestFleckSizeMin");
+        static readonly int ID_RippleCrestFleckSizeMax = Shader.PropertyToID("_RippleCrestFleckSizeMax");
+        static readonly int ID_RippleCrestFleckMotion = Shader.PropertyToID("_RippleCrestFleckMotion");
+        static readonly int ID_RippleCrestFleckMaxPerFrame = Shader.PropertyToID("_RippleCrestFleckMaxPerFrame");
         static readonly int ID_LifeMin = Shader.PropertyToID("_LifeMin");
         static readonly int ID_LifeMax = Shader.PropertyToID("_LifeMax");
         static readonly int ID_SizeMin = Shader.PropertyToID("_SizeMin");
@@ -210,6 +219,7 @@ namespace AbstractOcclusion.WebGpuWater
         const float DrawKindFoam = 1f;
         const float DrawKindSpray = 2f;
         const float DrawKindBubble = 3f;
+        const float DrawKindCrestFleck = 4f;
 
         // Density foam + spawn quality (compute + composite shader).
         static readonly int ID_DensityBuffer = Shader.PropertyToID("DensityBuffer");
@@ -285,6 +295,19 @@ namespace AbstractOcclusion.WebGpuWater
         [Range(0f, 1f)] [SerializeField] internal float sprayChance = 0.15f;
         [Tooltip("Initial upward speed of spray droplets (world units/sec).")]
         [Range(0f, 5f)] [SerializeField] internal float sprayLaunchSpeed = 0.6f;
+        [Header("Ripple crest flecks")]
+        [Tooltip("Emit small floating flecks from moving ripple crests. Disabled by default to preserve existing scenes.")]
+        [SerializeField] internal bool rippleCrestFlecksEnabled;
+        [Tooltip("Crest-fleck density multiplier. One matches the KWS-style default recipe.")]
+        [Range(0f, 4f)] [SerializeField] internal float rippleCrestFleckAmount = 1f;
+        [Tooltip("Hard cap on crest flecks emitted each frame. Keeps a strong ripple from filling the shared pool.")]
+        [Range(16, 1024)] [SerializeField] internal int rippleCrestFleckMaxPerFrame = 256;
+        [Tooltip("Lifetime range of flecks emitted directly from ripple crests.")]
+        [SerializeField] internal Vector2 rippleCrestFleckLifetimeRange = new Vector2(0.4f, 0.8f);
+        [Tooltip("World half-size range of ripple crest flecks.")]
+        [SerializeField] internal Vector2 rippleCrestFleckSizeRange = new Vector2(0.01f, 0.025f);
+        [Tooltip("How strongly crest flecks keep their outward ripple-propagation motion.")]
+        [Range(0f, 1f)] [SerializeField] internal float rippleCrestFleckMotion = 0.6f;
 
         [Header("Look & life")]
         [Tooltip("Particle lifetime range (seconds).")]
@@ -308,6 +331,9 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] internal Vector2 sprayLifeRange = new Vector2(0.5f, 1.2f);
         [Tooltip("Spray droplet world half-size range - independent of the floating-foam size above.")]
         [SerializeField] internal Vector2 spraySizeRange = new Vector2(0.02f, 0.05f);
+        [Range(0f, 1f)] [SerializeField] internal float surfaceFoamOpacity = 1f;
+        [Range(0f, 1f)] [SerializeField] internal float sprayOpacity = 1f;
+        [Range(0f, 1f)] [SerializeField] internal float bubbleOpacity = 1f;
         [Tooltip("Spray sprite atlas layout (cols, rows). (1,1) = a plain droplet texture, no flipbook.")]
         [SerializeField] internal Vector2Int sprayFlipbookGrid = new Vector2Int(1, 1);
         [Tooltip("Spray flipbook speed (frames/sec). 0 = a static droplet sprite.")]
@@ -383,6 +409,7 @@ namespace AbstractOcclusion.WebGpuWater
         Matrix4x4 _densityViewProjThisFrame; // approx VP for the composite's breakup pattern only
         MaterialPropertyBlock _mpb;
         MaterialPropertyBlock _sprayMpb;
+        MaterialPropertyBlock _crestFleckMpb;
         MaterialPropertyBlock _bubbleMpb;
         MaterialPropertyBlock _densityMpb;
 
@@ -473,6 +500,7 @@ namespace AbstractOcclusion.WebGpuWater
 
             _mpb = new MaterialPropertyBlock();
             _sprayMpb = new MaterialPropertyBlock();
+            _crestFleckMpb = new MaterialPropertyBlock();
             _bubbleMpb = new MaterialPropertyBlock();
             _densityMpb = new MaterialPropertyBlock();
 
@@ -592,6 +620,16 @@ namespace AbstractOcclusion.WebGpuWater
             cs.SetInt(ID_MaxSpawnPerFrame, maxSpawnPerFrame);
             cs.SetFloat(ID_SprayChance, sprayChance);
             cs.SetFloat(ID_SprayLaunchSpeed, sprayLaunchSpeed);
+            cs.SetFloat(ID_RippleCrestFlecksEnabled, rippleCrestFlecksEnabled ? 1f : 0f);
+            cs.SetFloat(ID_RippleCrestFleckAmount, rippleCrestFleckAmount);
+            cs.SetInt(ID_RippleCrestFleckMaxPerFrame, rippleCrestFleckMaxPerFrame);
+            cs.SetFloat(ID_RippleCrestFleckLifeMin, rippleCrestFleckLifetimeRange.x);
+            cs.SetFloat(ID_RippleCrestFleckLifeMax,
+                Mathf.Max(rippleCrestFleckLifetimeRange.x, rippleCrestFleckLifetimeRange.y));
+            cs.SetFloat(ID_RippleCrestFleckSizeMin, rippleCrestFleckSizeRange.x);
+            cs.SetFloat(ID_RippleCrestFleckSizeMax,
+                Mathf.Max(rippleCrestFleckSizeRange.x, rippleCrestFleckSizeRange.y));
+            cs.SetFloat(ID_RippleCrestFleckMotion, rippleCrestFleckMotion);
             cs.SetFloat(ID_LifeMin, lifeRange.x);
             cs.SetFloat(ID_LifeMax, Mathf.Max(lifeRange.x, lifeRange.y));
             cs.SetFloat(ID_SizeMin, sizeRange.x);
@@ -882,7 +920,8 @@ namespace AbstractOcclusion.WebGpuWater
                 volume.WriteBodyProps(_mpb);
                 _mpb.SetBuffer(ID_ParticlesShader, _particles);
                 WaterParticlePool.WriteFlipbook(_mpb, flipbookGrid, flipbookFps);
-                if (profile != null) profile.WriteLook(_mpb); // shared look over the foam material
+                if (profile != null && profile.look.drive) profile.WriteLook(_mpb, surfaceFoamOpacity);
+                else WriteLayerOpacity(_mpb, particleMaterial, surfaceFoamOpacity);
                 _mpb.SetFloat(ID_DrawKind, DrawKindFoam);
 
                 if (!reroute)
@@ -909,7 +948,8 @@ namespace AbstractOcclusion.WebGpuWater
             volume.WriteBodyProps(_sprayMpb);
             _sprayMpb.SetBuffer(ID_ParticlesShader, _particles);
             WaterParticlePool.WriteFlipbook(_sprayMpb, sprayFlipbookGrid, sprayFlipbookFps);
-            if (profile != null) profile.WriteSprayLook(_sprayMpb);
+            if (profile != null && profile.look.drive) profile.WriteSprayLook(_sprayMpb, sprayOpacity);
+            else WriteLayerOpacity(_sprayMpb, sprayDrawMaterial, sprayOpacity);
             _sprayMpb.SetFloat(ID_DrawKind, DrawKindSpray);
 
             if (!reroute)
@@ -922,6 +962,25 @@ namespace AbstractOcclusion.WebGpuWater
                 Graphics.RenderPrimitives(sprayRp, MeshTopology.Triangles, vertexCount);
             }
 
+            // Crest flecks stay surface-bound and use FoamParticles.shader's analytic KWS-style
+            // dot branch. Their simulation kind remains KIND_RIPPLE_CREST, so they never inherit
+            // ballistic spray motion or depend on a droplet texture.
+            volume.WriteBodyProps(_crestFleckMpb);
+            _crestFleckMpb.SetBuffer(ID_ParticlesShader, _particles);
+            if (profile != null && profile.look.drive) profile.WriteSprayLook(_crestFleckMpb, surfaceFoamOpacity);
+            else WriteLayerOpacity(_crestFleckMpb, particleMaterial, surfaceFoamOpacity);
+            _crestFleckMpb.SetFloat(ID_DrawKind, DrawKindCrestFleck);
+
+            if (!reroute)
+            {
+                var crestFleckRp = new RenderParams(particleMaterial)
+                {
+                    worldBounds = volume.SimWorldBounds,
+                    matProps = _crestFleckMpb
+                };
+                Graphics.RenderPrimitives(crestFleckRp, MeshTopology.Triangles, vertexCount);
+            }
+
             // Bubble pass (_DrawKind = bubble-only): underwater plume sprites on the foam
             // material - the shader draws them as analytic rim circles, so no atlas and no
             // extra material asset. Skipped entirely while the body injects no bubbles.
@@ -929,7 +988,8 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 volume.WriteBodyProps(_bubbleMpb);
                 _bubbleMpb.SetBuffer(ID_ParticlesShader, _particles);
-                if (profile != null) profile.WriteLook(_bubbleMpb); // tint/opacity ride over bubbles too
+                if (profile != null && profile.look.drive) profile.WriteLook(_bubbleMpb, bubbleOpacity);
+                else WriteLayerOpacity(_bubbleMpb, particleMaterial, bubbleOpacity);
                 _bubbleMpb.SetFloat(ID_DrawKind, DrawKindBubble);
 
                 if (!reroute)
@@ -977,11 +1037,21 @@ namespace AbstractOcclusion.WebGpuWater
             Material sprayDrawMaterial = sprayMaterial != null ? sprayMaterial : particleMaterial;
             cmd.DrawProcedural(Matrix4x4.identity, sprayDrawMaterial, 0,
                                MeshTopology.Triangles, vertexCount, 1, _sprayMpb);
+            cmd.DrawProcedural(Matrix4x4.identity, particleMaterial, 0,
+                               MeshTopology.Triangles, vertexCount, 1, _crestFleckMpb);
 
             // Bubble pass rides the reroute like the others; its block was filled in Draw().
             if (bubbleAmount > 0f)
                 cmd.DrawProcedural(Matrix4x4.identity, particleMaterial, 0,
                                    MeshTopology.Triangles, vertexCount, 1, _bubbleMpb);
+        }
+
+        static void WriteLayerOpacity(MaterialPropertyBlock properties, Material material, float layerOpacity)
+        {
+            float authoredOpacity = material != null && material.HasProperty(ID_ParticleOpacity)
+                ? material.GetFloat(ID_ParticleOpacity)
+                : 1f;
+            properties.SetFloat(ID_ParticleOpacity, authoredOpacity * Mathf.Clamp01(layerOpacity));
         }
 
         // Fullscreen triangle that shades the splatted density as connected foam. The bounds

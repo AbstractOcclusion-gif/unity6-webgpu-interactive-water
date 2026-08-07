@@ -34,8 +34,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         SerializedProperty _volume, _compute, _material, _renderMode, _densityMaterial, _profile;
         SerializedProperty _capacity;
         SerializedProperty _spawnThreshold, _spawnRate, _maxSpawnPerFrame, _sprayChance, _sprayLaunchSpeed;
+        SerializedProperty _rippleCrestFlecksEnabled, _rippleCrestFleckAmount,
+            _rippleCrestFleckMaxPerFrame, _rippleCrestFleckLifetimeRange, _rippleCrestFleckSizeRange,
+            _rippleCrestFleckMotion;
         SerializedProperty _lifeRange, _sizeRange, _sizeHeroPower, _spawnMaxDistance;
         SerializedProperty _sprayMaterial, _sprayLifeRange, _spraySizeRange, _sprayFlipbookGrid, _sprayFlipbookFps;
+        SerializedProperty _surfaceFoamOpacity, _sprayOpacity, _bubbleOpacity;
         SerializedProperty _depositLifeRange, _depositSizeRange;
         SerializedProperty _gravity, _flowDrift, _windDriftSpeed, _drag;
         SerializedProperty _bubbleAmount, _bubbleRiseSpeed, _bubbleLifeRange, _bubbleSizeRange,
@@ -73,6 +77,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             _maxSpawnPerFrame = serializedObject.FindProperty("maxSpawnPerFrame");
             _sprayChance = serializedObject.FindProperty("sprayChance");
             _sprayLaunchSpeed = serializedObject.FindProperty("sprayLaunchSpeed");
+            _rippleCrestFlecksEnabled = serializedObject.FindProperty("rippleCrestFlecksEnabled");
+            _rippleCrestFleckAmount = serializedObject.FindProperty("rippleCrestFleckAmount");
+            _rippleCrestFleckMaxPerFrame = serializedObject.FindProperty("rippleCrestFleckMaxPerFrame");
+            _rippleCrestFleckLifetimeRange = serializedObject.FindProperty("rippleCrestFleckLifetimeRange");
+            _rippleCrestFleckSizeRange = serializedObject.FindProperty("rippleCrestFleckSizeRange");
+            _rippleCrestFleckMotion = serializedObject.FindProperty("rippleCrestFleckMotion");
             _lifeRange = serializedObject.FindProperty("lifeRange");
             _sizeRange = serializedObject.FindProperty("sizeRange");
             _sizeHeroPower = serializedObject.FindProperty("sizeHeroPower");
@@ -82,6 +92,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             _spraySizeRange = serializedObject.FindProperty("spraySizeRange");
             _sprayFlipbookGrid = serializedObject.FindProperty("sprayFlipbookGrid");
             _sprayFlipbookFps = serializedObject.FindProperty("sprayFlipbookFps");
+            _surfaceFoamOpacity = serializedObject.FindProperty("surfaceFoamOpacity");
+            _sprayOpacity = serializedObject.FindProperty("sprayOpacity");
+            _bubbleOpacity = serializedObject.FindProperty("bubbleOpacity");
             _depositLifeRange = serializedObject.FindProperty("depositLifeRange");
             _depositSizeRange = serializedObject.FindProperty("depositSizeRange");
             _gravity = serializedObject.FindProperty("gravity");
@@ -261,6 +274,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "lifetime under Airborne Droplets."));
                 EditorGUILayout.PropertyField(_sizeRange, new GUIContent("Foam Size",
                     "World half-size range of a floating foam particle."));
+                WaterEditorUI.SubHeading("Layer Opacity");
+                EditorGUILayout.PropertyField(_surfaceFoamOpacity, new GUIContent("Foam Opacity"));
             }
             using (new EditorGUI.DisabledScope(_lookDriven))
             {
@@ -307,6 +322,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 "How MUCH each source throws, and how long those droplets live, belongs to the source " +
                 "sections below.", MessageType.None);
 
+            using (new EditorGUI.DisabledScope(_ambientDriven))
+            {
+                WaterEditorUI.SubHeading("Layer Opacity");
+                EditorGUILayout.PropertyField(_sprayOpacity, new GUIContent("Droplet Opacity"));
+            }
             EditorGUILayout.PropertyField(_sprayMaterial, new GUIContent("Droplet Material",
                 "Material for ALL airborne droplets. Empty = draw them with the foam Particle Material above."));
             EditorGUILayout.PropertyField(_sprayFlipbookGrid, new GUIContent("Droplet Flipbook Grid",
@@ -355,6 +375,21 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "Distance LOD in metres: full density to ~60% of this, then thinning to a dusting. " +
                     "0 = no thinning. Applies to this source only."));
 
+                WaterEditorUI.SubHeading("Ripple Crest Flecks");
+                EditorGUILayout.PropertyField(_rippleCrestFlecksEnabled,
+                    new GUIContent("Enabled",
+                        "Emit small floating flecks from moving ripple crests, independently of foam-mask spawning."));
+                EditorGUILayout.PropertyField(_rippleCrestFleckAmount, new GUIContent("Density"));
+                EditorGUILayout.PropertyField(_rippleCrestFleckMaxPerFrame,
+                    new GUIContent("Max Per Frame"));
+                EditorGUILayout.PropertyField(_rippleCrestFleckLifetimeRange,
+                    new GUIContent("Lifetime Range"));
+                EditorGUILayout.PropertyField(_rippleCrestFleckSizeRange,
+                    new GUIContent("Size Range"));
+                EditorGUILayout.PropertyField(_rippleCrestFleckMotion,
+                    new GUIContent("Ripple Motion",
+                        "How strongly flecks retain their outward ripple-propagation motion."));
+
                 WaterEditorUI.SubHeading("Mist thrown off the foam");
                 EditorGUILayout.PropertyField(_sprayChance, new GUIContent("Mist Chance",
                     "Fraction of this source's spawns launched as airborne mist instead of floating foam."));
@@ -388,6 +423,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 EditorGUILayout.PropertyField(_bubbleWobble, new GUIContent("Wobble",
                     "Sideways zigzag while rising; amplitude scales with bubble size (only mm+ bubbles " +
                     "wobble in reality)."));
+                WaterEditorUI.SubHeading("Layer Opacity");
+                EditorGUILayout.PropertyField(_bubbleOpacity, new GUIContent("Bubble Opacity"));
             }
             if (_bubbleDriven)
                 EditorGUILayout.HelpBox("Driven by the Foam Profile's Bubbles section.", MessageType.None);

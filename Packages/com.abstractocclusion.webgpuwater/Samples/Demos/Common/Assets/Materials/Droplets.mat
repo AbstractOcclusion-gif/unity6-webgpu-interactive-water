@@ -108,7 +108,7 @@ Material:
     - _OcclusionStrength: 1
     - _PackedChannels: 1
     - _Parallax: 0.005
-    - _ParticleOpacity: 0.241
+    - _ParticleOpacity: 1
     - _QueueOffset: 0
     - _ReceiveShadows: 1
     - _Smoothness: 0.5
@@ -118,7 +118,7 @@ Material:
     - _SrcBlend: 1
     - _SrcBlendAlpha: 1
     - _Surface: 0
-    - _VelocityStretch: 7.09
+    - _VelocityStretch: 0
     - _WorkflowMode: 1
     - _XRMotionVectorsPass: 1
     - _ZWrite: 1

@@ -72,11 +72,19 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
 
             static const float KIND_SPRAY  = 1.0;
             static const float KIND_BUBBLE = 2.0; // MUST match WaterFoamParticles.compute
+            static const float KIND_RIPPLE_CREST = 3.0; // MUST match WaterFoamParticles.compute
             // Bubble look: analytic rim circle (no texture) - KWS ships bubbles as ONE static
             // sprite; generating the same look in-shader needs no asset at all.
             static const float BUBBLE_RIM_START = 0.45;      // uv radius where rim brightening begins
             static const float BUBBLE_EDGE_SOFT = 0.12;      // outer edge softness in uv radius
             static const float BUBBLE_INTERIOR_ALPHA = 0.28; // fill alpha inside the rim
+            // KWS renders dynamic-wave foam flecks as an analytic, faint soft dot rather than an
+            // atlas sprite. Crest flecks use that treatment only; splash spray remains textured.
+            static const float CREST_FLECK_UV_CENTER = 0.5;
+            static const float CREST_FLECK_RADIUS_TO_UV_SCALE = 2.0;
+            static const float CREST_FLECK_FALLOFF_POWER = 2.0;
+            static const float CREST_FLECK_ALPHA_GAIN = 10.0;
+            static const float CREST_FLECK_ALPHA_MULTIPLIER = 0.1;
             // Depth is NOT dimmed by hand any more: the camera->bubble wet path priced below
             // carries the real per-channel extinction, which is what makes a bubble sink into the
             // water colour instead of sitting on it. A body with the fog feature OFF has no
@@ -118,7 +126,8 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
 
             sampler2D _ParticleTex;
             // Which kinds this draw renders: 0 = foam + spray, 1 = floating foam only
-            // (KIND_SURFACE), 2 = spray only (KIND_SPRAY), 3 = bubbles only (KIND_BUBBLE).
+            // (KIND_SURFACE), 2 = spray only (KIND_SPRAY), 3 = bubbles only (KIND_BUBBLE),
+            // 4 = ripple crest flecks only (KIND_RIPPLE_CREST).
             // Lets the kinds draw in separate passes with their own materials/looks. Set per
             // draw by WaterFoamParticles.cs, never a material slider.
             float _DrawKind;
@@ -324,12 +333,15 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 // drops foam, so each can be drawn with its own material. 0 = draw both.
                 bool isSpray = (particle.kind == KIND_SPRAY);
                 bool isBubble = (particle.kind == KIND_BUBBLE);
-                bool bubblePass = (_DrawKind > 2.5);
+                bool isRippleCrest = (particle.kind == KIND_RIPPLE_CREST);
+                bool bubblePass = (_DrawKind > 2.5 && _DrawKind < 3.5);
+                bool rippleCrestPass = (_DrawKind > 3.5);
                 if (bubblePass != isBubble) return Dead(); // bubbles draw ONLY in their own pass
-                if (!bubblePass)
+                if (rippleCrestPass != isRippleCrest) return Dead();
+                if (!bubblePass && !rippleCrestPass)
                 {
                     if (_DrawKind > 1.5 && !isSpray) return Dead();                  // spray-only pass
-                    if (_DrawKind > 0.5 && _DrawKind < 1.5 && isSpray) return Dead(); // foam-only pass
+                    if (_DrawKind > 0.5 && _DrawKind < 1.5 && (isSpray || isRippleCrest)) return Dead();
                 }
 
                 float2 corner = ParticleQuadCorner(vid);
@@ -435,7 +447,10 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 {
                     // in the surface plane: seed yaw, stretched along the drift direction.
                     SurfacePlaneAxes(surfaceNormal, particle.seed * PARTICLE_TWO_PI, axisX, axisY);
-                    if (speed > STRETCH_MIN_SPEED)
+                    // Crest flecks are analytic KWS-style dots. They share the surface-plane
+                    // placement with floating foam, but stretching their quad turns the dots
+                    // into dashes and defeats that dedicated look.
+                    if (!isRippleCrest && speed > STRETCH_MIN_SPEED)
                     {
                         // NaN-guarded like the basis itself: the projected velocity cancels when
                         // the drift is parallel to the normal (extreme wave tilt).
@@ -524,7 +539,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 float envelope = i.fade.x;
                 float4 sprite;
                 float alpha;
-                if (_DrawKind > 2.5)
+                if (_DrawKind > 2.5 && _DrawKind < 3.5)
                 {
                     // Bubble pass: analytic rim circle - bright rim, dim interior, soft outer
                     // edge. No texture fetch; the erosion lace is a foam-texture concept and
@@ -535,6 +550,15 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                     sprite = float4(1.0, 1.0, 1.0, 1.0);
                     alpha = circle * lerp(BUBBLE_INTERIOR_ALPHA, 1.0, rim)
                           * envelope * _ParticleOpacity;
+                }
+                else if (_DrawKind > 3.5)
+                {
+                    float radialAlpha = saturate(1.0 - length(i.uv - CREST_FLECK_UV_CENTER)
+                                                 * CREST_FLECK_RADIUS_TO_UV_SCALE);
+                    sprite = float4(1.0, 1.0, 1.0, 1.0);
+                    alpha = saturate(pow(radialAlpha, CREST_FLECK_FALLOFF_POWER)
+                                     * CREST_FLECK_ALPHA_GAIN)
+                          * CREST_FLECK_ALPHA_MULTIPLIER * envelope * _ParticleOpacity;
                 }
                 else
                 {

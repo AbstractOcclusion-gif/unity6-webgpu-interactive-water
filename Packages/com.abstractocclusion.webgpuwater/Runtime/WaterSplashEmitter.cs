@@ -115,6 +115,27 @@ namespace AbstractOcclusion.WebGpuWater
         const float CrownLifetimeJitterMin = 0.75f;   // per-sprite life spread (KWS 0.75..1.25)
         const float CrownLifetimeJitterMax = 1.25f;
 
+        // ---- vertical jet layer (KWS WaterSplashes layer A) ----
+        // This is deliberately separate from the CPU fallback droplets: GPU-spray bodies do
+        // not emit that fallback, yet they still need the unmistakable entry columns.
+        const int JetBurstMinCount = 4;
+        const int JetBurstMaxCount = 6;
+        const float JetUpSpeedMin = 0.5f;
+        const float JetUpSpeedMax = 2f;
+        const float JetOutSpeedMax = 0.2f;
+        const float JetSizeMin = 0.35f;
+        const float JetSizeMax = 0.5f;
+        const float JetLifetimeMin = 0.75f;
+        const float JetLifetimeMax = 1.5f;
+        const int JetMaxParticles = 96;
+        const float JetDefaultGravityModifier = 1f;
+        const float JetVelocityDampen = 0.2f;
+        const float JetVelocityDrag = 1.5f;
+        const float JetStretchVelocityScale = 0.4f;
+        const float JetStretchLengthScale = 4f;
+        const float UnityGravityMetersPerSecondSquared = 9.81f;
+        const float DefaultWaterParticleGravity = 1f;
+
         [Tooltip("The particle system to emit from. Auto-created if left empty.")]
         [SerializeField] internal ParticleSystem particles;
         [Tooltip("Optional master foam profile: when assigned, its Splash section overrides " +
@@ -149,10 +170,34 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] internal float crownBaseSize = 0.4f;
         [Tooltip("Crown lifetime; each sprite steps through the chunk atlas once over this time.")]
         [SerializeField] internal float crownLifetime = 0.5f;
+        [Tooltip("Vertical launch multiplier for the crown cloud. Lower this to keep the splash close to the water.")]
+        [Range(0f, 3f)] [SerializeField] internal float crownLaunchHeight = 1f;
+        [Tooltip("Horizontal launch multiplier for the crown cloud. Lower this to reduce its projected spread.")]
+        [Range(0f, 3f)] [SerializeField] internal float crownLaunchSpread = 1f;
         [Tooltip("Crown tint, applied per emit as the particle start color (multiplies the material).")]
         [SerializeField] internal Color crownTint = CrownStartColor;
         [Tooltip("Crown opacity multiplier on top of the tint's alpha.")]
         [Range(0f, 1f)] [SerializeField] internal float crownOpacity = 1f;
+        [Range(0f, 1f)] [SerializeField] internal float cpuFallbackOpacity = 1f;
+        [Tooltip("Optional stretched water-column layer emitted with the crown. Leave empty to disable.")]
+        [SerializeField] internal ParticleSystem jetParticles;
+        [Header("Entry streaks")]
+        [Tooltip("Enable the narrow vertical water columns that precede the crown cloud.")]
+        [SerializeField] internal bool entryStreaksEnabled = true;
+        [Tooltip("Streak count and opacity multiplier. Zero disables streak emission without removing the layer.")]
+        [Range(0f, 2f)] [SerializeField] internal float entryStreakAmount = 1f;
+        [Tooltip("Vertical launch-speed multiplier. Higher values create a taller ballistic arc.")]
+        [Range(0f, 3f)] [SerializeField] internal float entryStreakHeight = 1f;
+        [Tooltip("Horizontal spread and sprite-width multiplier. Higher values make the breach read wider.")]
+        [Range(0.1f, 3f)] [SerializeField] internal float entryStreakWidth = 1f;
+        [Tooltip("Multiplier over Water Foam Particles > Motion > Gravity. One follows the shared particle gravity.")]
+        [Range(0f, 2f)] [SerializeField] internal float entryStreakGravity = JetDefaultGravityModifier;
+        [Range(0f, 1f)] [SerializeField] internal float entryStreakOpacity = 1f;
+        [Range(0f, 1f)] [SerializeField] internal float entryStreakMinStrength = 0.2f;
+        [SerializeField] internal Vector2 entryStreakLifetimeRange =
+            new Vector2(JetLifetimeMin, JetLifetimeMax);
+        [SerializeField] internal Vector2 entryStreakSizeRange = new Vector2(JetSizeMin, JetSizeMax);
+        [SerializeField] internal Color entryStreakTint = CrownStartColor;
 
         ParticleSystem.Particle[] _buffer;
 
@@ -180,6 +225,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         ParticleSystemRenderer _dropletRenderer; // lazy cache: the fallback droplets' renderer
         ParticleSystemRenderer _crownRenderer;   // lazy cache: the crown ring's renderer
+        ParticleSystemRenderer _jetRenderer;     // lazy cache: the always-on vertical jet layer
 
         void OnEnable()
         {
@@ -208,6 +254,12 @@ namespace AbstractOcclusion.WebGpuWater
                     _crownRenderer = crownParticles.GetComponent<ParticleSystemRenderer>();
                 if (_crownRenderer != null) _crownRenderer.forceRenderingOff = reroute;
             }
+            if (jetParticles != null)
+            {
+                if (_jetRenderer == null)
+                    _jetRenderer = jetParticles.GetComponent<ParticleSystemRenderer>();
+                if (_jetRenderer != null) _jetRenderer.forceRenderingOff = reroute;
+            }
         }
 
         /// <summary>Issues the muted Shuriken draws into the after-fog pass. forceRenderingOff
@@ -222,6 +274,9 @@ namespace AbstractOcclusion.WebGpuWater
             if (_crownRenderer != null && crownParticles != null && crownParticles.particleCount > 0
                 && _crownRenderer.sharedMaterial != null)
                 cmd.DrawRenderer(_crownRenderer, _crownRenderer.sharedMaterial, 0, 0);
+            if (_jetRenderer != null && jetParticles != null && jetParticles.particleCount > 0
+                && _jetRenderer.sharedMaterial != null)
+                cmd.DrawRenderer(_jetRenderer, _jetRenderer.sharedMaterial, 0, 0);
         }
 
         // Pop -> stick -> drift. Runs after the controllers have stepped their sims so the
@@ -327,6 +382,7 @@ namespace AbstractOcclusion.WebGpuWater
             // at all - GPU droplets AND the Shuriken crown - matching the ambient foam the same switch silences.
             // A body with no foam system has no switch, so it keeps splashing as before.
             if (gpuSpray != null && !gpuSpray.UseParticles) return;
+            ApplyImpactLayerGravity(gpuSpray);
             if (gpuSpray != null && gpuSpray.isActiveAndEnabled)
             {
                 // Map the burst shaping onto the GPU request; per-droplet jitter runs in-kernel.
@@ -362,7 +418,8 @@ namespace AbstractOcclusion.WebGpuWater
                 // Velocity-proportional opacity (DWP2): faint droplets on a soft entry,
                 // near-opaque on a hard slam. colorOverLifetime multiplies on top.
                 Color dropletColor = DriftStartColor;
-                dropletColor.a *= AlphaStrengthFloor + AlphaStrengthGain * strength;
+                dropletColor.a *= (AlphaStrengthFloor + AlphaStrengthGain * strength)
+                                  * EffectiveOpacity(cpuFallbackOpacity);
                 ep.startColor = dropletColor;
                 particles.Emit(ep, 1);
             }
@@ -438,6 +495,7 @@ namespace AbstractOcclusion.WebGpuWater
         // unaffected.
         void EmitCrown(Vector3 surfacePos, float strength, float radius)
         {
+            EmitJets(surfacePos, strength);
             if (crownParticles == null || strength < crownMinStrength) return;
 
             int count = Mathf.RoundToInt(
@@ -448,7 +506,7 @@ namespace AbstractOcclusion.WebGpuWater
             // velocity-proportional alpha) - the profile can retint the crown without
             // touching the shared material asset.
             Color crownColor = crownTint;
-            crownColor.a *= crownOpacity;
+            crownColor.a *= EffectiveOpacity(crownOpacity);
 
             var ep = new ParticleSystem.EmitParams();
             for (int i = 0; i < count; i++)
@@ -457,9 +515,10 @@ namespace AbstractOcclusion.WebGpuWater
                 ep.position = surfacePos + new Vector3(ring.x, 0f, ring.y)
                               * (radius * SpawnRingRadiusScale);
                 float up = Mathf.Lerp(CrownUpSpeedMin, CrownUpSpeedMax, strength)
-                           * Random.Range(UpwardJitterMin, UpwardJitterMax);
-                ep.velocity = new Vector3(ring.x * CrownOutSpeedMax * strength, up,
-                                          ring.y * CrownOutSpeedMax * strength);
+                           * Random.Range(UpwardJitterMin, UpwardJitterMax)
+                           * crownLaunchHeight;
+                float outwardSpeed = CrownOutSpeedMax * strength * crownLaunchSpread;
+                ep.velocity = new Vector3(ring.x * outwardSpeed, up, ring.y * outwardSpeed);
                 // pow-shaped size distribution: most sprites modest, a rare one near hero size
                 float hero = Mathf.Pow(Random.value, CrownHeroSizePower) * CrownHeroSizeBonus;
                 ep.startSize = baseSize * (Random.Range(CrownSizeJitterMin, CrownSizeJitterMax) + hero);
@@ -471,6 +530,61 @@ namespace AbstractOcclusion.WebGpuWater
             }
         }
 
+        // Narrow, velocity-stretched chunks give a breach an initial upward impulse before
+        // the broader cloud opens. This runs regardless of the GPU droplet route.
+        void EmitJets(Vector3 surfacePos, float strength)
+        {
+            if (jetParticles == null || !entryStreaksEnabled || entryStreakAmount <= 0f ||
+                strength < entryStreakMinStrength) return;
+
+            int count = Mathf.RoundToInt(
+                Mathf.Lerp(JetBurstMinCount, JetBurstMaxCount, strength) * entryStreakAmount);
+            if (count <= 0) return;
+            Color jetColor = entryStreakTint;
+            jetColor.a *= EffectiveOpacity(entryStreakOpacity) * Mathf.Min(1f, entryStreakAmount);
+            var emission = new ParticleSystem.EmitParams();
+            for (int index = 0; index < count; index++)
+            {
+                Vector2 lateral = Random.insideUnitCircle * JetOutSpeedMax * strength * entryStreakWidth;
+                emission.position = surfacePos + Vector3.up * SpawnHeightAboveSurface;
+                emission.velocity = new Vector3(lateral.x,
+                    Mathf.Lerp(JetUpSpeedMin, JetUpSpeedMax, strength) * entryStreakHeight, lateral.y);
+                emission.startSize = Random.Range(entryStreakSizeRange.x,
+                                                   Mathf.Max(entryStreakSizeRange.x, entryStreakSizeRange.y))
+                                     * entryStreakWidth;
+                emission.startLifetime = Random.Range(entryStreakLifetimeRange.x,
+                                                       Mathf.Max(entryStreakLifetimeRange.x,
+                                                                 entryStreakLifetimeRange.y));
+                emission.rotation = Random.Range(0f, FullRingDegrees);
+                emission.startColor = jetColor;
+                jetParticles.Emit(emission, 1);
+            }
+        }
+
+        float EffectiveOpacity(float layerOpacity)
+        {
+            float globalOpacity = profile != null && profile.look.drive ? profile.look.opacity : 1f;
+            return Mathf.Clamp01(layerOpacity) * Mathf.Clamp01(globalOpacity);
+        }
+
+        void ApplyImpactLayerGravity(WaterFoamParticles bodyParticles)
+        {
+            float globalGravity = bodyParticles != null
+                ? bodyParticles.gravity
+                : DefaultWaterParticleGravity;
+            ApplyParticleGravity(particles, globalGravity, DriftGravityModifier);
+            ApplyParticleGravity(crownParticles, globalGravity, CrownGravityModifier);
+            ApplyParticleGravity(jetParticles, globalGravity, entryStreakGravity);
+        }
+
+        static void ApplyParticleGravity(ParticleSystem system, float globalGravity, float localMultiplier)
+        {
+            if (system == null) return;
+            var main = system.main;
+            main.gravityModifier = Mathf.Max(0f, globalGravity) / UnityGravityMetersPerSecondSquared
+                                   * Mathf.Max(0f, localMultiplier);
+        }
+
         /// <summary>Configure a particle system for drifting droplets (used by the
         /// scene builder and the auto-created fallback).</summary>
         public static void ConfigureForDrift(ParticleSystem ps)
@@ -478,7 +592,8 @@ namespace AbstractOcclusion.WebGpuWater
             if (ps == null) throw new System.ArgumentNullException(nameof(ps));
             var main = ps.main;
             main.simulationSpace = ParticleSystemSimulationSpace.World; // droplets live in world space
-            main.gravityModifier = DriftGravityModifier;
+            main.gravityModifier = DefaultWaterParticleGravity / UnityGravityMetersPerSecondSquared
+                                   * DriftGravityModifier;
             main.startSpeed = 0f;          // velocity is set per-emit
             main.startLifetime = DriftStartLifetime;
             main.startSize = DriftStartSize;
@@ -541,7 +656,8 @@ namespace AbstractOcclusion.WebGpuWater
             if (ps == null) throw new System.ArgumentNullException(nameof(ps));
             var main = ps.main;
             main.simulationSpace = ParticleSystemSimulationSpace.World;
-            main.gravityModifier = CrownGravityModifier; // chunks arc over and fall
+            main.gravityModifier = DefaultWaterParticleGravity / UnityGravityMetersPerSecondSquared
+                                   * CrownGravityModifier;
             main.startSpeed = 0f;
             main.startLifetime = CrownStartLifetime;
             main.startSize = CrownStartSize;
@@ -588,6 +704,50 @@ namespace AbstractOcclusion.WebGpuWater
             colorOverLifetime.enabled = true;
             colorOverLifetime.color = FadeTailGradient(0f);
 
+            ps.Play();
+        }
+
+        /// <summary>Configures the narrow, stretched entry columns that precede the crown.
+        /// They use the same packed four-chunk atlas but never depend on CPU fallback spray.</summary>
+        public static void ConfigureJets(ParticleSystem ps, int tilesX, int tilesY)
+        {
+            if (ps == null) throw new System.ArgumentNullException(nameof(ps));
+            var main = ps.main;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.gravityModifier = DefaultWaterParticleGravity / UnityGravityMetersPerSecondSquared
+                                   * JetDefaultGravityModifier;
+            main.startSpeed = 0f;
+            main.startLifetime = JetLifetimeMin;
+            main.startSize = JetSizeMin;
+            main.maxParticles = JetMaxParticles;
+            main.playOnAwake = true;
+
+            var emission = ps.emission;
+            emission.enabled = false;
+            var shape = ps.shape;
+            shape.enabled = false;
+            var velocityLimit = ps.limitVelocityOverLifetime;
+            velocityLimit.enabled = true;
+            velocityLimit.dampen = JetVelocityDampen;
+            velocityLimit.drag = JetVelocityDrag;
+            var sheetAnimation = ps.textureSheetAnimation;
+            sheetAnimation.enabled = true;
+            sheetAnimation.numTilesX = tilesX;
+            sheetAnimation.numTilesY = tilesY;
+            sheetAnimation.animation = ParticleSystemAnimationType.WholeSheet;
+            sheetAnimation.timeMode = ParticleSystemAnimationTimeMode.Lifetime;
+            sheetAnimation.cycleCount = 1;
+            sheetAnimation.startFrame = 0f;
+            sheetAnimation.frameOverTime = new ParticleSystem.MinMaxCurve(
+                1f, AnimationCurve.Linear(0f, 0f, 1f, 1f));
+            var colorOverLifetime = ps.colorOverLifetime;
+            colorOverLifetime.enabled = true;
+            colorOverLifetime.color = FadeTailGradient(0f);
+
+            var renderer = ps.GetComponent<ParticleSystemRenderer>();
+            renderer.renderMode = ParticleSystemRenderMode.Stretch;
+            renderer.velocityScale = JetStretchVelocityScale;
+            renderer.lengthScale = JetStretchLengthScale;
             ps.Play();
         }
 
