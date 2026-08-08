@@ -1,0 +1,53 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b54282e4be6639b4097a9dc1014d5416, type: 3}
+  m_Name: Pond - Murky Swamp
+  m_EditorClassIdentifier: 
+  notes: "Opaque green standing water: heavy turbidity, sluggish ripples, barely-moving surface, no foam. Jerlov Coastal 9C."
+  jerlovWaterType: 9
+  waterFogSettings:
+    waterFog: 1
+    fogColor: {r: 0.3349, g: 0.6065, b: 0.2968, a: 1}
+    fogExtinction: {r: 0.2865, g: 0.1779, b: 0.663, a: 1}
+    fogDensity: 0.8
+    waterOpacity: 0.45
+    lightScatter: 0.2
+  volumeScatterSettings:
+    volumeScatter: 1
+    scatterColor: {r: 0.3349, g: 0.6065, b: 0.2968, a: 1}
+    scatterIntensity: 0.15
+  depthAttenuation:
+    depthDarken: 1
+  refractShadowSoftness: 0.05
+  windWaveSettings:
+    windSpeed: 1.5
+    waveHeightMeters: 0.01
+    waveAnimationSpeed: 0.2
+  reflectionSettings:
+    useScreenSpaceReflection: 0
+    realRefraction: 1
+    reflectionStrength: 0.3
+    envReflectionIntensity: 0.2
+    fresnelFloor: 0.1
+  detailNormalSettings:
+    texture: {fileID: 2800000, guid: 62664aadf524b76e2b375fdbd6c85003, type: 3}
+    strength: 0.3
+    tileMeters: 6
+    scrollSpeed: 0.1
+  underwaterSurfaceSettings:
+    reflectionStrength: 0.2
+    mirrorWaterBlend: 0.7
+  foamSettings:
+    foam: 0
+  rippleSettings:
+    waveSpeed: 0.5
+    damping: 0.985

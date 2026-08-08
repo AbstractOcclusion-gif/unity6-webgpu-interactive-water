@@ -1,0 +1,90 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b54282e4be6639b4097a9dc1014d5416, type: 3}
+  m_Name: Ocean - Beach Demo
+  m_EditorClassIdentifier: 
+  notes: "The shipped default ocean - the same values the Water Wizard writes for the Ocean kind (beach demo, rounded). Jerlov Ocean I."
+  jerlovWaterType: 0
+  waterFogSettings:
+    waterFog: 1
+    fogColor: {r: 0, g: 0.0323, b: 0.1223, a: 1}
+    fogExtinction: {r: 0.6189, g: 0.0582, b: 0.0331, a: 1}
+    fogDensity: 0.3
+    waterOpacity: 0.2
+    lightScatter: 0.5
+  volumeScatterSettings:
+    volumeScatter: 1
+    scatterColor: {r: 0, g: 0.0323, b: 0.1223, a: 1}
+    scatterIntensity: 0.1
+  depthAttenuation:
+    depthDarken: 1
+    screenSpaceCaustics: 1
+  refractShadowSoftness: 0.05
+  ocean:
+    significantWaveHeight: 3
+    peakWavelength: 90
+    cascadeReach: 8
+    swellHeight: 0.5
+    oceanWindTurbulence: 0.15
+    horizonHazeDensity: 0.85
+    largeGodRayColor: {r: 0, g: 0.75, b: 1, a: 1}
+    largeGodRayDensity: 0.3
+    oceanFoamWindThreshold: 3
+    oceanFoamCoverage: 0.9
+    oceanFoamStrength: 1.5
+    oceanFoamFeather: 0.7
+    oceanFoamStreakStretch: 1.7
+    oceanFoamTextureInfluence: 0.8
+    oceanFoamFaceBias: 0.85
+    oceanFoamDrift: 0.2
+  windWaveSettings:
+    windWaves: 0
+  reflectionSettings:
+    useScreenSpaceReflection: 0
+    usePlanarReflection: 1
+    realRefraction: 1
+    planarClipDepth: 0.007
+    reflectionStrength: 0.15
+    envReflectionIntensity: 0.3
+    fresnelFloor: 0.25
+    fresnelPower: 3.3
+  detailNormalSettings:
+    texture: {fileID: 2800000, guid: 62664aadf524b76e2b375fdbd6c85003, type: 3}
+    strength: 0.5
+    tileMeters: 8
+    farTileMeters: 250
+    farTileDistance: 700
+    farScrollSpeed: 3
+    hexTiling: 1
+  underwaterSurfaceSettings:
+    reflectionStrength: 0.15
+    mirrorWaterBlend: 0.8
+    mirrorShafts: 0.25
+    detailNormalStrength: 1.3
+  foamSettings:
+    foam: 1
+    foamDecayRate: 1.25
+    wetnessMemory: 1
+    wetnessDryTime: 30
+    foamGenThreshold: 0.35
+    foamMinWaveHeight: 0.09
+    foamDeposit: 0.45
+    foamBreakStrength: 0.4
+    foamCrestBias: 0.7
+    foamHeadroom: 1
+    foamPatternSize: 5
+    foamStrength: 0.5
+    foamFeather: 0.5
+    foamCoreCut: 0.1
+    foamBorderWidth: 0
+  foamPatternTexture: {fileID: 2800000, guid: a5f2ef87d189d12951522a62b6df8920, type: 3}
+  oceanWhitecapTexture: {fileID: 2800000, guid: a374a10bbe76021021500e6b2fc9d34f, type: 3}

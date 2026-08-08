@@ -159,6 +159,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             Sync(ref _showObjectInteraction, nameof(_showObjectInteraction), load);
             Sync(ref _showObjectInteractionAdvanced, nameof(_showObjectInteractionAdvanced), load);
+            Sync(ref _showPresets, nameof(_showPresets), load);
             Sync(ref _showSplash, nameof(_showSplash), load);
 
             Sync(ref _showQuality, nameof(_showQuality), load);
@@ -194,6 +195,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             // Physically-based Jerlov water colour: writes Fog Extinction + body/scatter colour.
             DrawJerlovWaterTypeSelector();
+
+            // Look presets: capture this body's look, or apply a saved one (per its domain flags).
+            DrawPresetSection();
 
             _tab = (InspectorTab)WaterEditorUI.TabBar((int)_tab, TabLabels);
             switch (_tab)
