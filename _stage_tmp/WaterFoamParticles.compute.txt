@@ -205,13 +205,6 @@ float _Drag;              // 1/sec velocity relaxation toward the driven speed
 // drawing overlapping quads; a fullscreen composite turns density into connected, lit foam). ----
 RWStructuredBuffer<uint> DensityBuffer; // per density texel: fixed-point accumulated foam weight
 RWStructuredBuffer<uint> DensityDepth;  // per density texel: min eye depth (millimetres) for occlusion
-// KWS LOD tiers: a fleck's DOT SIZE is the resolution of the buffer it lands in. Tier 0 is the
-// base buffer above; tiers 1/2 halve the resolution per step, so one splat covers 2x/4x the
-// screen. Only ripple-crest flecks use the tiers (projected size + per-particle random
-// threshold jitter, KWS's +-35%); floating foam keeps its tier-0 disc veil. Depth stays
-// base-resolution: one occlusion field serves all tiers (the tier splat floods its footprint).
-RWStructuredBuffer<uint> DensityBufferTier1;
-RWStructuredBuffer<uint> DensityBufferTier2;
 RWStructuredBuffer<uint> TileCounts;    // per screen tile: spray spawns this frame (budget)
 
 uint2    _DensitySize;       // density buffer dimensions (a fraction of the camera target)
@@ -239,19 +232,6 @@ static const uint DEPTH_CLEAR = 0xFFFFFFFFu;
 // Splat footprint clamp (density texels). Small pool sizes keep the per-particle loop bounded;
 // the composite's dilation closes any remaining pinholes between splats.
 static const int SPLAT_RADIUS_MAX = 3;
-// LOD tier selection (crest flecks): projected DIAMETER thresholds in tier-0 texels, each
-// wobbled +-JITTER_FRACTION per particle so same-distance flecks spread across neighbouring
-// tiers and the dots read in three sizes (KWS: particleScreenSize + rand * lod * 0.35 <= lod).
-static const float DENSITY_TIER0_MAX_DIAMETER_TEXELS = 1.5;
-static const float DENSITY_TIER1_MAX_DIAMETER_TEXELS = 3.0;
-static const float DENSITY_TIER_JITTER_FRACTION = 0.35;
-
-// Integer halving per tier - the composite derives its sizes with the SAME formula, so the
-// index math of the pair can never disagree.
-uint2 DensityTierSize(uint tier)
-{
-    return max(uint2(1u, 1u), uint2(_DensitySize.x >> tier, _DensitySize.y >> tier));
-}
 // Screen tile grid for the spray budget (KWS buckets splash into 64px tiles; a fixed 16x16
 // grid is resolution-independent and keeps the counter buffer tiny).
 static const uint TILE_GRID = 16;
@@ -270,32 +250,9 @@ static const float CREST_FLECK_MIN_LOCAL_AMPLITUDE = 1e-6;
 // KWS accepts only a minority of energetic source texels, then emits a local cluster from each
 // accepted source. Keeping the source decision sparse is what reads as distinct trails instead
 // of a uniform dusting along the entire crest.
-static const float CREST_FLECK_SOURCE_SELECTION_CHANCE = 0.5;
-static const uint CREST_FLECK_MAX_SPAWNS_PER_TEXEL = 12u;
-static const float CREST_FLECK_CLUSTER_STRENGTH_MULTIPLIER = 12.0;
-// The foam-mask re-emission source stays SPARSE and small-clustered: it exists to keep decayed
-// wake areas alive as scattered clumps, not to become a second full-density field (the
-// "dispatched everywhere" failure). Crest sources keep the dense treatment above.
-static const float CREST_FLECK_FOAM_SOURCE_SELECTION_CHANCE = 0.1;
-static const uint CREST_FLECK_FOAM_MAX_SPAWNS_PER_TEXEL = 2u;
-// FRONT COHERENCE - the MEASURED discriminator (numpy harness of this sim, 2026-08-07:
-// on the moving-emitter + splash scenario it concentrates spawn probability on the primary
-// ring at ~4x the leading-ring share of relative flow divergence, which could not separate
-// the ring from the dust at all - every trailing crest is a real compressive front too).
-// The sim's VERTICAL velocity (info.g) is single-signed across a first-arrival wavefront -
-// the whole neighbourhood rises together - while the trailing dispersive train and the
-// interference chop behind a moving source alternate sign across the 13-tap cross, so
-// |sum| / sum(abs) reads near 1 at the energy front and near 0 everywhere behind it. THIS
-// is what separates the primary ripple from the dust field. Dimensionless, so every body
-// scale gates identically. The +-6 reach spans roughly one trailing-train wavelength;
-// that span is what makes the train cancel itself.
-static const float CREST_FLECK_COHERENCE_LO = 0.6;
-static const float CREST_FLECK_COHERENCE_HI = 0.9;
-static const float CREST_FLECK_COHERENCE_ABS_EPS = 1e-9;
-// Spawn-direction epsilon: keeps the cluster's normalize() finite when a leading crest
-// spawns before the passive flow layer has built up under it (KWS's normalize(v + (0,
-// 0.001)) idiom).
-static const float CREST_FLECK_FLOW_EPSILON = 0.001;
+static const float CREST_FLECK_SOURCE_SELECTION_CHANCE = 0.35;
+static const uint CREST_FLECK_MAX_SPAWNS_PER_TEXEL = 5u;
+static const float CREST_FLECK_CLUSTER_STRENGTH_MULTIPLIER = 5.0;
 // KWS offsets its cluster by pow(deltaTime * 15, 2): 0.0625 texels at its 60 Hz reference rate.
 // The compact seed lets subsequent live-flow advection, rather than spawn smearing, form a trail.
 static const float CREST_FLECK_CLUSTER_OFFSET_TEXELS = 0.0625;
@@ -313,22 +270,7 @@ static const float CREST_FLECK_UNDULATION_RATE = 1.5;
 static const float CREST_FLECK_UNDULATION_SPEED = 0.08;
 static const float CREST_FLECK_HISTORY_HERTZ = 15.0;
 static const float CREST_FLECK_AUTHORED_DRIFT_MAX_FLOW_FRACTION = 0.25;
-static const float CREST_FLECK_INACTIVE_FLOW_FADE_SECONDS = 0.75;
-// Foam-mask feedback (KWS OR-acceptance): spawn accepts on the persistent sim foam mask OR the
-// live crest, so an area that churned once keeps emitting flecks while its foam decays -
-// sustained trails instead of one puff per crest pass. MIN/RANGE map the mask to a source
-// strength; WEIGHT caps how strong a pure mask source can get vs a live crest.
-static const float CREST_FLECK_FOAM_MASK_MIN = 0.3;
-static const float CREST_FLECK_FOAM_MASK_RANGE = 0.5;
-static const float CREST_FLECK_FOAM_MASK_WEIGHT = 0.5;
-// Clump pull (KWS FoamClumping): a drag UP the shared foam noise gradient gathers flecks
-// into lanes/patches instead of a uniform dusting. Same field the floating foam uses.
-// KWS gates the attraction by MID-LIFE (sine envelope) x SLOWNESS, so grouping peaks exactly
-// once the crest that threw the fleck has passed. FLOOR keeps a trace of pull always on
-// (KWS's +0.1); SLOW_SPEED = planar speed (m/s) at which the slowness gate fully closes.
-static const float CREST_FLECK_CLUMP_SPEED = 0.15;
-static const float CREST_FLECK_CLUMP_FLOOR = 0.25;
-static const float CREST_FLECK_CLUMP_SLOW_SPEED = 0.5;
+static const float CREST_FLECK_INACTIVE_FLOW_FADE_SECONDS = 0.25;
 
 // Surf plunging-lip spray (CURL-3, the KWS crash moment): a spawn on a cresting PLUNGING front is
 // forced to ballistic spray thrown shoreward off the lip. The gate reads the front's canonical
@@ -680,102 +622,38 @@ bool TryClaimRippleCrestFleckSlot(out uint slot)
         return false;
     }
 
-    // Own budget, own pool claim: routing through TryClaimAmbientSlot made crest flecks ALSO
-    // consume the ambient _MaxSpawnPerFrame budget, so on a foamy body the two sources starved
-    // each other and crest rings showed missing dots. The pool ring still arbitrates fairly
-    // (dead-slot probes only) - saturation drops spawns, never kills live foam.
-    return ClaimPoolSlot(slot);
+    return TryClaimAmbientSlot(slot);
 }
 
 bool TryGetRippleCrestFleckCandidate(int2 texel, float3 texelWorld, out float crestStrength,
-                                     out float2 localFlow, out float foamSourced)
+                                     out float2 localFlow)
 {
     crestStrength = 0.0;
     localFlow = 0.0;
-    foamSourced = 0.0;
     if (_RippleCrestFlecksEnabled <= 0.5 || _RippleCrestFleckAmount <= 0.0) return false;
 
     float4 info = Sim.Load(int3(texel, 0));
     float rippleFade = SimWindowRippleFade(WorldToSim(texelWorld).xz);
     float metresPerPoolHeight = VolumeExtentSafe().y;
     float crestHeight = FoamRippleHeightSafe(info.r) * rippleFade * metresPerPoolHeight;
+    if (crestHeight <= CREST_FLECK_MIN_HEIGHT_METERS) return false;
+
+    float4 leftInfo = Sim.Load(int3(ClampTexel(texel + int2(-1, 0)), 0));
+    float4 rightInfo = Sim.Load(int3(ClampTexel(texel + int2( 1, 0)), 0));
+    float4 downInfo = Sim.Load(int3(ClampTexel(texel + int2(0, -1)), 0));
+    float4 upInfo = Sim.Load(int3(ClampTexel(texel + int2(0,  1)), 0));
+
+    float neighbourAverageHeight = (leftInfo.r + rightInfo.r + downInfo.r + upInfo.r) * 0.25;
+    float positivePeakHeight = max(0.0, info.r - neighbourAverageHeight);
+    float localAmplitude = max(abs(info.r), CREST_FLECK_MIN_LOCAL_AMPLITUDE);
+    float peakness = positivePeakHeight / localAmplitude;
+    if (peakness <= CREST_FLECK_PEAKNESS_MIN) return false;
 
     float2 flow = SimHorizontalFlow.Load(int3(texel, 0));
-    // Round 2's universal flow gate here was WRONG, and it is why the primary ring carried no
-    // flecks: the passive flow layer BUILDS UP behind a first-arrival crest (~0.001 m/s per
-    // step from -g*grad(h)*dt), so the 0.01 m/s bar rejected exactly the leading front and
-    // accepted only the wake behind it - dust inside the ring, nothing ON it. The crest path
-    // now spawns regardless of flow (the spawn direction is epsilon-guarded); only the
-    // foam-mask RE-EMISSION path below still requires transport.
-    bool hasLiveFlow = dot(flow, flow) >= CREST_FLECK_MIN_FLOW_SPEED_SQUARED;
 
-    // Foam-mask feedback path (KWS OR-acceptance): the sim's advected, slowly-decaying foam
-    // mask keeps this texel emitting after the crest that churned it has passed. Faded by the
-    // same window fade as the crest height so the two paths agree at the sim border.
-    float foamMask = FoamTex.Load(int3(texel, 0)) * rippleFade;
-    float foamStrength = saturate((foamMask - CREST_FLECK_FOAM_MASK_MIN)
-                                  / CREST_FLECK_FOAM_MASK_RANGE)
-                       * CREST_FLECK_FOAM_MASK_WEIGHT;
-    // Re-emission without transport would freeze into the inactive fade next frame - the
-    // foam-mask source keeps the flow requirement the crest path just dropped.
-    if (!hasLiveFlow) foamStrength = 0.0;
-
-    bool crestCandidate = crestHeight > CREST_FLECK_MIN_HEIGHT_METERS;
-    if (!crestCandidate && foamStrength <= 0.0) return false;
-
-    float heightStrength = 0.0;
-    if (crestCandidate)
-    {
-        // WIDE (+/-2) peakness stencil - the sim foam generation's own anti-noise trick:
-        // grid-frequency chop alternates sign texel-to-texel, so it reads FLAT at this scale
-        // and never qualifies as a crest, while a real ring front (several texels wide)
-        // keeps its full peak signal. The +/-1 stencil scored the chop HIGHER than the ring.
-        float4 leftInfo = Sim.Load(int3(ClampTexel(texel + int2(-2, 0)), 0));
-        float4 rightInfo = Sim.Load(int3(ClampTexel(texel + int2( 2, 0)), 0));
-        float4 downInfo = Sim.Load(int3(ClampTexel(texel + int2(0, -2)), 0));
-        float4 upInfo = Sim.Load(int3(ClampTexel(texel + int2(0,  2)), 0));
-
-        float neighbourAverageHeight = (leftInfo.r + rightInfo.r + downInfo.r + upInfo.r) * 0.25;
-        float positivePeakHeight = max(0.0, info.r - neighbourAverageHeight);
-        float localAmplitude = max(abs(info.r), CREST_FLECK_MIN_LOCAL_AMPLITUDE);
-        float peakness = positivePeakHeight / localAmplitude;
-        if (peakness > CREST_FLECK_PEAKNESS_MIN)
-            heightStrength = saturate((crestHeight - CREST_FLECK_MIN_HEIGHT_METERS)
-                                      / CREST_FLECK_HEIGHT_RANGE_METERS);
-
-        // FRONT-COHERENCE gate (see the constant block): computed on the sim's own vertical
-        // velocity, so the discriminator needs no flow-layer reads. The +-2 taps reuse the
-        // peakness loads; +-4/+-6 extend the cross to the trailing-train wavelength.
-        if (heightStrength > 0.0)
-        {
-            float4 left4Info = Sim.Load(int3(ClampTexel(texel + int2(-4, 0)), 0));
-            float4 right4Info = Sim.Load(int3(ClampTexel(texel + int2( 4, 0)), 0));
-            float4 down4Info = Sim.Load(int3(ClampTexel(texel + int2(0, -4)), 0));
-            float4 up4Info = Sim.Load(int3(ClampTexel(texel + int2(0,  4)), 0));
-            float4 left6Info = Sim.Load(int3(ClampTexel(texel + int2(-6, 0)), 0));
-            float4 right6Info = Sim.Load(int3(ClampTexel(texel + int2( 6, 0)), 0));
-            float4 down6Info = Sim.Load(int3(ClampTexel(texel + int2(0, -6)), 0));
-            float4 up6Info = Sim.Load(int3(ClampTexel(texel + int2(0,  6)), 0));
-            float signedSum = info.g
-                            + leftInfo.g + rightInfo.g + downInfo.g + upInfo.g
-                            + left4Info.g + right4Info.g + down4Info.g + up4Info.g
-                            + left6Info.g + right6Info.g + down6Info.g + up6Info.g;
-            float absSum = abs(info.g)
-                         + abs(leftInfo.g) + abs(rightInfo.g) + abs(downInfo.g) + abs(upInfo.g)
-                         + abs(left4Info.g) + abs(right4Info.g) + abs(down4Info.g) + abs(up4Info.g)
-                         + abs(left6Info.g) + abs(right6Info.g) + abs(down6Info.g) + abs(up6Info.g);
-            float frontCoherence = abs(signedSum)
-                                 / max(absSum, CREST_FLECK_COHERENCE_ABS_EPS);
-            heightStrength *= smoothstep(CREST_FLECK_COHERENCE_LO, CREST_FLECK_COHERENCE_HI,
-                                         frontCoherence);
-        }
-    }
-
-    crestStrength = max(heightStrength, foamStrength);
-    if (crestStrength <= 0.0) return false;
-    // A live crest owns the texel; only crest-less foam re-emission is treated as the
-    // sparser, smaller-cluster foam-mask source (see the FOAM_SOURCE constants).
-    foamSourced = (heightStrength > 0.0) ? 0.0 : 1.0;
+    float heightStrength = saturate((crestHeight - CREST_FLECK_MIN_HEIGHT_METERS)
+                                    / CREST_FLECK_HEIGHT_RANGE_METERS);
+    crestStrength = heightStrength;
     localFlow = flow;
     return true;
 }
@@ -792,41 +670,24 @@ float3 CrestFleckJitterWorld(int2 texel, uint spawnIndex)
 }
 
 bool TrySpawnRippleCrestFlecks(int2 texel, float3 texelWorld, float crestStrength,
-                               float2 localFlow, float foamSourced)
+                               float2 localFlow)
 {
 
     float clusterStrength = saturate(crestStrength * _RippleCrestFleckAmount);
-    // Crest sources select often (dense dots ON the crest); foam-mask re-emission stays sparse.
-    float sourceSelectionChance = lerp(CREST_FLECK_SOURCE_SELECTION_CHANCE,
-                                       CREST_FLECK_FOAM_SOURCE_SELECTION_CHANCE, foamSourced);
-    float probability = clusterStrength * sourceSelectionChance;
-    // Stochastic distance LOD (KWS): fleck emission thins beyond the plateau of the spawn
-    // range. The crest path had NO distance falloff, so the camera-following window filled
-    // the whole view with equal-density dots at every distance - the "dispatched everywhere"
-    // read. Same plateau/keep-alive constants as the ambient path; 0 = LOD off (no camera).
-    if (_SpawnMaxDistance > 0.0)
-    {
-        float distanceNorm = saturate(distance(texelWorld.xz, _SpawnCameraXZ)
-                                      / _SpawnMaxDistance);
-        float distanceThinning = smoothstep(SPAWN_LOD_PLATEAU, 1.0, distanceNorm);
-        probability *= saturate(1.0 - distanceThinning + SPAWN_LOD_KEEP_ALIVE);
-    }
+    float probability = clusterStrength * CREST_FLECK_SOURCE_SELECTION_CHANCE;
     // Unlike ambient foam, ripple flecks use a per-texel roll (the same KWS idiom). The generic
     // world-cell key has a 0.25 m floor, so it selects whole square chunks of a small ripple and
     // leaves visible gaps around the ring.
     if (Rand01((uint2)texel, _FrameSeed ^ 0x7F4A7C15u) >= probability) return false;
     if (_ExclusionCount > 0.5 && InsideParticleExclusion(texelWorld)) return false;
 
-    // Epsilon keeps the direction finite for a leading crest whose flow hasn't built yet.
-    float2 flowDirection = normalize(localFlow + float2(0.0, CREST_FLECK_FLOW_EPSILON));
+    float2 flowDirection = normalize(localFlow);
     float2 perpendicularDirection = float2(-flowDirection.y, flowDirection.x);
     float3 flowWorld = HorizontalFlowWorld(localFlow);
     float2 texelWorldSize = SimExtentSafe().xz * (2.0 / _Size);
     uint spawnCount = min(max(1u, (uint)ceil(clusterStrength
                                                * CREST_FLECK_CLUSTER_STRENGTH_MULTIPLIER)),
                           CREST_FLECK_MAX_SPAWNS_PER_TEXEL);
-    if (foamSourced > 0.5)
-        spawnCount = min(spawnCount, CREST_FLECK_FOAM_MAX_SPAWNS_PER_TEXEL);
     bool spawned = false;
     // KWS turns stronger dynamic-wave cells into a compact cluster, rather than merely raising
     // the odds of one point. The jitter keeps that cluster on the source texel instead of making
@@ -874,20 +735,16 @@ void Spawn(uint3 id : SV_DispatchThreadID)
     float3 texelWorld = TexelToWorld(texel);
     uint2 spawnKey = WorldSpawnKey(texelWorld.xz);
 
-    // Ripple-crest flecks spawn on EVERY body kind. The OCEAN_FFT_GLUE variant used to compile
-    // this block out along with the ambient gate, which silently meant "no wake flecks on any
-    // FFT ocean" - the exact scene KWS is judged against. Only AMBIENT spawning stays
-    // ocean-gated (below); this kind reads the ripple sim, which runs on oceans too (wakes).
+#ifndef OCEAN_FFT_GLUE
     float crestStrength;
     float2 crestLocalFlow;
-    float crestFoamSourced;
     bool isRippleCrest = TryGetRippleCrestFleckCandidate(texel, texelWorld, crestStrength,
-                                                          crestLocalFlow, crestFoamSourced);
+                                                          crestLocalFlow);
     if (isRippleCrest)
     {
-        TrySpawnRippleCrestFlecks(texel, texelWorld, crestStrength, crestLocalFlow,
-                                  crestFoamSourced);
+        TrySpawnRippleCrestFlecks(texel, texelWorld, crestStrength, crestLocalFlow);
     }
+#endif
 
     float foam = FoamTex.Load(int3(texel, 0));
     float excess = foam - _SpawnThreshold;
@@ -1274,19 +1131,6 @@ void Update(uint3 id : SV_DispatchThreadID)
                 particle.worldPos.xz += perpendicularFlow
                                       * (signedNoise * CREST_FLECK_UNDULATION_SPEED * _DeltaTime);
             }
-            // Clump pull, OUTSIDE the flow gate so it keeps acting while a fleck slows and its
-            // ripple dies: pull UP the shared foam noise gradient toward its maxima, gated by
-            // MID-LIFE x SLOWNESS - strongest exactly AFTER the crest has passed - with a small
-            // always-on floor. Mirrors KWS's clumpingLifetime * clumpingByVelocity attraction.
-            float clumpNormalizedLife = saturate(particle.age / max(particle.life, 1e-4));
-            float clumpLifeGate = saturate(sin(clumpNormalizedLife * (PARTICLE_TWO_PI * 0.5)) * 4.0);
-            float clumpSlowGate = 1.0 - saturate(length(particle.velocity.xz)
-                                                 / CREST_FLECK_CLUMP_SLOW_SPEED);
-            float clumpFactor = saturate(clumpLifeGate * clumpSlowGate + CREST_FLECK_CLUMP_FLOOR);
-            float2 clumpGrad = FoamNoiseGrad(particle.worldPos.xz * FOAM_NOISE_SCALE
-                                             + _FoamTime * FOAM_NOISE_DRIFT);
-            particle.worldPos.xz += clumpGrad
-                                  * (CREST_FLECK_CLUMP_SPEED * clumpFactor * _DeltaTime);
         }
         else
         {
@@ -1312,18 +1156,10 @@ void Update(uint3 id : SV_DispatchThreadID)
 [numthreads(UPDATE_THREAD_GROUP_SIZE, 1, 1)]
 void ClearDensity(uint3 id : SV_DispatchThreadID)
 {
-    // One dispatch clears every tier: the base tier is the largest, so its thread count
-    // covers the halved tiers with per-tier bounds checks.
     uint texelCount = _DensitySize.x * _DensitySize.y;
-    if (id.x < texelCount)
-    {
-        DensityBuffer[id.x] = 0u;
-        DensityDepth[id.x] = DEPTH_CLEAR;
-    }
-    uint2 tier1Size = DensityTierSize(1u);
-    if (id.x < tier1Size.x * tier1Size.y) DensityBufferTier1[id.x] = 0u;
-    uint2 tier2Size = DensityTierSize(2u);
-    if (id.x < tier2Size.x * tier2Size.y) DensityBufferTier2[id.x] = 0u;
+    if (id.x >= texelCount) return;
+    DensityBuffer[id.x] = 0u;
+    DensityDepth[id.x] = DEPTH_CLEAR;
 }
 
 // One thread per pool slot (KWS RenderParticlesToScreenSpaceBuffer): every live FLOATING
@@ -1358,42 +1194,6 @@ void RasterizeDensity(uint3 id : SV_DispatchThreadID)
     // Projected footprint in density texels (vertical focal term / eye depth), clamped so
     // the loop stays bounded; the composite's dilation closes pinholes beyond the clamp.
     float radiusPx = particle.size * _DensityProj11 * (float)_DensitySize.y * 0.5 / eyeDepth;
-
-    if (particle.kind == KIND_RIPPLE_CREST)
-    {
-        // KWS LOD-tier POINT splat: one InterlockedAdd into ONE texel of the tier whose
-        // resolution matches the fleck's projected size - the buffer's texel footprint IS the
-        // dot size, so flecks read in three sizes with no disc pre-blur. The jitter spreads
-        // same-distance flecks across neighbouring tiers.
-        float diameterPx = radiusPx * 2.0;
-        float tierJitter = 1.0 + (particle.seed - 0.5) * 2.0 * DENSITY_TIER_JITTER_FRACTION;
-        uint tier;
-        if (diameterPx <= DENSITY_TIER0_MAX_DIAMETER_TEXELS * tierJitter) tier = 0u;
-        else if (diameterPx <= DENSITY_TIER1_MAX_DIAMETER_TEXELS * tierJitter) tier = 1u;
-        else tier = 2u;
-
-        uint2 tierSize = DensityTierSize(tier);
-        uint2 tierPixel = min((uint2)(uv * (float2)tierSize), tierSize - uint2(1u, 1u));
-        uint tierIndex = tierPixel.y * tierSize.x + tierPixel.x;
-        if (tier == 0u)      InterlockedAdd(DensityBuffer[tierIndex], fixedWeight);
-        else if (tier == 1u) InterlockedAdd(DensityBufferTier1[tierIndex], fixedWeight);
-        else                 InterlockedAdd(DensityBufferTier2[tierIndex], fixedWeight);
-
-        // Depth floods the tier texel's whole base-resolution footprint (<= 4x4 mins), so the
-        // composite's occlusion/SV_Depth never reads an empty depth under a big dot and
-        // alpha-kills its rim (the scene-depth soft fade treats DEPTH_CLEAR as "behind").
-        uint side = 1u << tier;
-        uint2 baseOrigin = tierPixel * side;
-        for (uint by = 0u; by < side; by++)
-            for (uint bx = 0u; bx < side; bx++)
-            {
-                uint2 bp = min(baseOrigin + uint2(bx, by), _DensitySize - uint2(1u, 1u));
-                InterlockedMin(DensityDepth[bp.y * _DensitySize.x + bp.x], depthMm);
-            }
-        return;
-    }
-
-    // Floating foam keeps the disc splat - its job is a connected tier-0 veil.
     int radius = clamp((int)radiusPx, 1, SPLAT_RADIUS_MAX);
     int radiusSq = radius * radius;
 

@@ -318,7 +318,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7c2b6569e97b14744848833682c436b7, type: 3}
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterFoamParticles
-  useParticles: 0
+  useParticles: 1
   volume: {fileID: 78187644}
   particleCompute: {fileID: 7200000, guid: 60b46151fe09abd4b97f5f1feaa54593, type: 3}
   particleMaterial: {fileID: 2100000, guid: 28fcccd712d481e4888246c158e55772, type: 2}
@@ -525,7 +525,7 @@ MonoBehaviour:
   _legacyWaveDirectionSpread: 2
   _legacyWaveNormalStrength: 1
   foamSettings:
-    foam: 1
+    foam: 0
     foamGenRate: 1.33
     foamDecay: 0.867
     foamDecayResidual: 0.9912
@@ -547,7 +547,7 @@ MonoBehaviour:
     foamWakeRadiusScale: 1.5
     foamColor: {r: 1, g: 1, b: 1, a: 1}
     foamPatternSize: 0.5
-    foamStrength: 0.9
+    foamStrength: 0.89
     foamFeather: 0.27
     foamCoreCut: 0.045
     foamBorderWidth: 0
@@ -710,7 +710,7 @@ MonoBehaviour:
     damping: 0.9951
     rippleViscosity: 0
     stepsPerFrame: 2
-    rippleStrength: 0.05
+    rippleStrength: 0.0672
     rippleRadius: 0.05
     rippleChoppiness: 0
     wakeStartForceCap: 0.5

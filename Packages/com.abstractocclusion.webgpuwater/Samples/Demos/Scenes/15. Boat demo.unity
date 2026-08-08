@@ -720,9 +720,22 @@ MonoBehaviour:
   crownMinStrength: 0.25
   crownBaseSize: 0.4
   crownLifetime: 0.5
+  crownLaunchHeight: 1
+  crownLaunchSpread: 1
   crownTint: {r: 0.95, g: 0.98, b: 1, a: 1}
   crownOpacity: 1
+  cpuFallbackOpacity: 1
   jetParticles: {fileID: 914295529}
+  entryStreaksEnabled: 1
+  entryStreakAmount: 1
+  entryStreakHeight: 1
+  entryStreakWidth: 1
+  entryStreakGravity: 1
+  entryStreakOpacity: 1
+  entryStreakMinStrength: 0.2
+  entryStreakLifetimeRange: {x: 0.75, y: 1.5}
+  entryStreakSizeRange: {x: 0.35, y: 0.5}
+  entryStreakTint: {r: 0.95, g: 0.98, b: 1, a: 1}
 --- !u!1 &612971047
 GameObject:
   m_ObjectHideFlags: 0
@@ -1698,7 +1711,7 @@ ParticleSystem:
     gravityModifier:
       serializedVersion: 2
       minMaxState: 0
-      scalar: 1.2
+      scalar: 0.12232416
       minScalar: 0
       maxCurve:
         serializedVersion: 2
@@ -16073,9 +16086,9 @@ MonoBehaviour:
   sun: {fileID: 177695280}
   tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
   sky: {fileID: 8900000, guid: 85bd64faed533b54a88c144de0f680b6, type: 3}
-  foamPatternTexture: {fileID: 2800000, guid: a5f2ef87d189d12951522a62b6df8920, type: 3}
-  foamPatternGrid: {x: 1, y: 1}
-  foamPatternFps: 0
+  foamPatternTexture: {fileID: 2800000, guid: 0df415d28a3d4b4449f218789bea2891, type: 3}
+  foamPatternGrid: {x: 4, y: 4}
+  foamPatternFps: 10
   foamReliefStrength: 1
   oceanWhitecapTexture: {fileID: 2800000, guid: 1ee279c16b027ad48a8eb248749ff66c, type: 3}
   oceanWhitecapGrid: {x: 1, y: 1}
@@ -16114,10 +16127,10 @@ MonoBehaviour:
     foamGenRate: 1.6
     foamDecay: 0.824
     foamDecayResidual: 0.9053
-    foamDecayRate: 3.27
+    foamDecayRate: 0.66
     wetnessMemory: 0
     wetnessDryTime: 3
-    foamSpread: 0.139
+    foamSpread: 0.053
     foamGenThreshold: 0.116
     foamMinWaveHeight: 0.2
     foamAdvect: 2
@@ -16126,15 +16139,15 @@ MonoBehaviour:
     foamDeposit: 0.283
     foamBreakStrength: 0.265
     foamBreakRange: 2.12
-    foamCrestBias: 0.621
+    foamCrestBias: 0.069
     foamHeadroom: 1
-    foamWakeStrength: 0.52
+    foamWakeStrength: 1.32
     foamWakeRadiusScale: 2.99
     foamColor: {r: 1, g: 1, b: 1, a: 1}
-    foamPatternSize: 5
-    foamStrength: 0.96
+    foamPatternSize: 8
+    foamStrength: 0.85
     foamFeather: 0.489
-    foamCoreCut: 0.729
+    foamCoreCut: 0.837
     foamBorderWidth: 0
     foamContactDepth: 0.06
   objectInteractionSettings:
@@ -16186,12 +16199,12 @@ MonoBehaviour:
     largeCausticRippleScale: 3
     largeCausticRippleStrength: 1
     largeCausticProjectionSoften: 0
-    oceanFoamWindThreshold: 3
+    oceanFoamWindThreshold: 8
     oceanFoamCoverage: 1.1
     oceanFoamStrength: 2
     oceanFoamFadeRate: 2
     oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
-    oceanFoamTileSize: 10
+    oceanFoamTileSize: 5
     oceanFoamFeather: 0.612
     oceanFoamStreakStretch: 1.75
     oceanFoamTextureInfluence: 0.35
@@ -16414,6 +16427,12 @@ MonoBehaviour:
   maxSpawnPerFrame: 256
   sprayChance: 0.15
   sprayLaunchSpeed: 0.6
+  rippleCrestFlecksEnabled: 0
+  rippleCrestFleckAmount: 1
+  rippleCrestFleckMaxPerFrame: 256
+  rippleCrestFleckLifetimeRange: {x: 0.4, y: 0.8}
+  rippleCrestFleckSizeRange: {x: 0.01, y: 0.025}
+  rippleCrestFleckMotion: 0.6
   lifeRange: {x: 1.5, y: 4}
   sizeRange: {x: 0.02, y: 0.06}
   sizeHeroPower: 1
@@ -16421,6 +16440,9 @@ MonoBehaviour:
   sprayMaterial: {fileID: 0}
   sprayLifeRange: {x: 0.5, y: 1.2}
   spraySizeRange: {x: 0.02, y: 0.05}
+  surfaceFoamOpacity: 1
+  sprayOpacity: 1
+  bubbleOpacity: 1
   sprayFlipbookGrid: {x: 2, y: 2}
   sprayFlipbookFps: 10
   depositLifeRange: {x: 0.5, y: 1}

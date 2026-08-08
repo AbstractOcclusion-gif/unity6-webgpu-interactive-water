@@ -35,7 +35,7 @@ namespace AbstractOcclusion.WebGpuWater
         [Min(0f)] [SerializeField] float radius = 0f;
 
         [Tooltip("Master gain on the injected wake. Raise for a stronger bow wave, lower for a subtle ripple.")]
-        [Range(0f, 4f)] [SerializeField] float strength = 1f;
+        [Range(0f, 4f)] [SerializeField] internal float strength = 1f;
 
         [Tooltip("Ignore any single-frame move larger than this (world units) - a teleport or respawn - so " +
                  "it doesn't fire one huge splash. Normal motion is far below this.")]

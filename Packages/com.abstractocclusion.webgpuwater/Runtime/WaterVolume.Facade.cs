@@ -299,6 +299,8 @@ namespace AbstractOcclusion.WebGpuWater
 
         /// <summary>Sim state texture (height, velocity, normal.xz) for GPU consumers.</summary>
         public RenderTexture SimStateTexture => _water?.Texture;
+        /// <summary>Local horizontal ripple-flow texture for isolated crest-fleck transport.</summary>
+        public RenderTexture SimHorizontalFlowTexture => _water?.HorizontalFlowTexture;
         /// <summary>Current foam-amount texture (R channel) for GPU consumers.</summary>
         public RenderTexture FoamMaskTexture => _water?.FoamTexture;
         /// <summary>Grid resolution of the active sim (per side), fixed at startup.</summary>

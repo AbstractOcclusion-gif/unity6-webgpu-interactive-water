@@ -32,6 +32,7 @@ namespace AbstractOcclusion.WebGpuWater
         const int VerticesPerParticle = 6;
         const int CounterCount = 4; // ring cursor + ambient, burst and crest-fleck frame counts
                                     // (MUST match the COUNTER_* layout in the compute)
+        const int CrestFleckHistoryPositionStrideBytes = sizeof(float) * 3;
 
         // ---- Screen-space density foam (KWS). MUST match WaterFoamParticles.compute. ----
         const int TileGrid = 16;                    // spray-budget screen tiles per axis
@@ -156,6 +157,11 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_ParticleOpacity = Shader.PropertyToID("_ParticleOpacity");
         static readonly int ID_Counters = Shader.PropertyToID("Counters");
         static readonly int ID_Sim = Shader.PropertyToID("Sim");
+        static readonly int ID_SimHorizontalFlow = Shader.PropertyToID("SimHorizontalFlow");
+        static readonly int ID_CrestFleckPreviousPositions =
+            Shader.PropertyToID("CrestFleckPreviousPositions");
+        static readonly int ID_CrestFleckPreviousPositionsShader =
+            Shader.PropertyToID("_CrestFleckPreviousPositions");
         static readonly int ID_FoamTex = Shader.PropertyToID("FoamTex");
         static readonly int ID_Size = WaterShaderProps.Size;
         static readonly int ID_SimEdgeFadeTexels = Shader.PropertyToID("_SimEdgeFadeTexels");
@@ -224,6 +230,8 @@ namespace AbstractOcclusion.WebGpuWater
         // Density foam + spawn quality (compute + composite shader).
         static readonly int ID_DensityBuffer = Shader.PropertyToID("DensityBuffer");
         static readonly int ID_DensityDepth = Shader.PropertyToID("DensityDepth");
+        static readonly int ID_DensityBufferTier1 = Shader.PropertyToID("DensityBufferTier1");
+        static readonly int ID_DensityBufferTier2 = Shader.PropertyToID("DensityBufferTier2");
         static readonly int ID_TileCounts = Shader.PropertyToID("TileCounts");
         static readonly int ID_DensitySize = Shader.PropertyToID("_DensitySize");
         static readonly int ID_DensityViewProj = Shader.PropertyToID("_DensityViewProj");
@@ -237,6 +245,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_OceanFftAmplitude = Shader.PropertyToID("_OceanFftAmplitude");
         static readonly int ID_FoamDensityShader = Shader.PropertyToID("_FoamDensity");
         static readonly int ID_FoamDensityDepthShader = Shader.PropertyToID("_FoamDensityDepth");
+        static readonly int ID_FoamDensityTier1Shader = Shader.PropertyToID("_FoamDensityTier1");
+        static readonly int ID_FoamDensityTier2Shader = Shader.PropertyToID("_FoamDensityTier2");
         static readonly int ID_DensityInvViewProj = Shader.PropertyToID("_DensityInvViewProj");
         static readonly int ID_DensityCamPos = Shader.PropertyToID("_DensityCamPos");
         static readonly int ID_DensityCamForward = Shader.PropertyToID("_DensityCamForward");
@@ -301,7 +311,7 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("Crest-fleck density multiplier. One matches the KWS-style default recipe.")]
         [Range(0f, 4f)] [SerializeField] internal float rippleCrestFleckAmount = 1f;
         [Tooltip("Hard cap on crest flecks emitted each frame. Keeps a strong ripple from filling the shared pool.")]
-        [Range(16, 1024)] [SerializeField] internal int rippleCrestFleckMaxPerFrame = 256;
+        [Range(16, 4096)] [SerializeField] internal int rippleCrestFleckMaxPerFrame = 256;
         [Tooltip("Lifetime range of flecks emitted directly from ripple crests.")]
         [SerializeField] internal Vector2 rippleCrestFleckLifetimeRange = new Vector2(0.4f, 0.8f);
         [Tooltip("World half-size range of ripple crest flecks.")]
@@ -386,10 +396,15 @@ namespace AbstractOcclusion.WebGpuWater
         [Range(0f, 30f)] [SerializeField] internal float flipbookFps = 0f;
 
         GraphicsBuffer _particles;
+        GraphicsBuffer _crestFleckPreviousPositions;
         GraphicsBuffer _counters;
         GraphicsBuffer _tileCounts;
         GraphicsBuffer _density;
         GraphicsBuffer _densityDepth;
+        // KWS LOD tiers: half- and quarter-resolution splat buffers - a crest fleck's dot
+        // size is the resolution of the tier it lands in (see WaterFoamParticles.compute).
+        GraphicsBuffer _densityTier1;
+        GraphicsBuffer _densityTier2;
         GraphicsBuffer _burstRequests;
         readonly System.Collections.Generic.List<BurstRequest> _pendingBursts =
             new System.Collections.Generic.List<BurstRequest>(MaxBurstsPerFrame);
@@ -493,6 +508,9 @@ namespace AbstractOcclusion.WebGpuWater
             _capacityPow2 = WaterParticlePool.Allocate<FoamParticle>(
                 capacity, volume.FoamParticleBudget, UpdateThreadGroupSize, CounterCount,
                 out _particles, out _counters);
+            _crestFleckPreviousPositions = new GraphicsBuffer(GraphicsBuffer.Target.Structured,
+                _capacityPow2, CrestFleckHistoryPositionStrideBytes);
+            _crestFleckPreviousPositions.SetData(new Vector3[_capacityPow2]);
             _tileCounts = new GraphicsBuffer(GraphicsBuffer.Target.Structured, TileCount, sizeof(uint));
             _tileCounts.SetData(new uint[TileCount]);
             _burstRequests = new GraphicsBuffer(GraphicsBuffer.Target.Structured, MaxBurstsPerFrame, BurstStride);
@@ -520,10 +538,13 @@ namespace AbstractOcclusion.WebGpuWater
             RenderPipelineManager.beginCameraRendering -= OnBeginCameraRendering;
             _densityPending = false;
             _particles?.Dispose(); _particles = null;
+            _crestFleckPreviousPositions?.Dispose(); _crestFleckPreviousPositions = null;
             _counters?.Dispose(); _counters = null;
             _tileCounts?.Dispose(); _tileCounts = null;
             _density?.Dispose(); _density = null;
             _densityDepth?.Dispose(); _densityDepth = null;
+            _densityTier1?.Dispose(); _densityTier1 = null;
+            _densityTier2?.Dispose(); _densityTier2 = null;
             _burstRequests?.Dispose(); _burstRequests = null;
             _pendingBursts.Clear();
             _densitySize = Vector2Int.zero;
@@ -535,10 +556,18 @@ namespace AbstractOcclusion.WebGpuWater
             if (size == _densitySize && _density != null) return;
             _density?.Dispose();
             _densityDepth?.Dispose();
+            _densityTier1?.Dispose();
+            _densityTier2?.Dispose();
             _densitySize = size;
             int count = Mathf.Max(1, size.x * size.y);
             _density = new GraphicsBuffer(GraphicsBuffer.Target.Structured, count, sizeof(uint));
             _densityDepth = new GraphicsBuffer(GraphicsBuffer.Target.Structured, count, sizeof(uint));
+            // Tier sizes use the SAME integer halving as DensityTierSize in the compute and
+            // the composite, so all three agree on every odd-size edge case.
+            int countTier1 = Mathf.Max(1, Mathf.Max(1, size.x >> 1) * Mathf.Max(1, size.y >> 1));
+            int countTier2 = Mathf.Max(1, Mathf.Max(1, size.x >> 2) * Mathf.Max(1, size.y >> 2));
+            _densityTier1 = new GraphicsBuffer(GraphicsBuffer.Target.Structured, countTier1, sizeof(uint));
+            _densityTier2 = new GraphicsBuffer(GraphicsBuffer.Target.Structured, countTier2, sizeof(uint));
         }
 
         // LateUpdate so the volume's Update has already stepped the sim and refreshed its
@@ -563,8 +592,10 @@ namespace AbstractOcclusion.WebGpuWater
             // Defensive: OnEnable can bail before allocating (compute/material assigned later in
             // the inspector, then the component re-enabled mid-setup) - never dispatch or draw
             // with a dead pool.
-            if (_particles == null || _counters == null || particleCompute == null) return;
-            if (volume.SimStateTexture == null || volume.FoamMaskTexture == null) return;
+            if (_particles == null || _crestFleckPreviousPositions == null || _counters == null ||
+                particleCompute == null) return;
+            if (volume.SimStateTexture == null || volume.SimHorizontalFlowTexture == null ||
+                volume.FoamMaskTexture == null) return;
             // Ambient spawning needs the 2D foam sim ON or an ocean (FFT crests as source).
             // Event bursts do NOT: with both ambient sources off, keep dispatching through
             // the burst window so pump/impact splashes still spray (the Spawn kernel is
@@ -702,9 +733,11 @@ namespace AbstractOcclusion.WebGpuWater
             cs.Dispatch(_kBeginFrame, TileCount / UpdateThreadGroupSize, 1, 1);
 
             cs.SetBuffer(_kSpawn, ID_Particles, _particles);
+            cs.SetBuffer(_kSpawn, ID_CrestFleckPreviousPositions, _crestFleckPreviousPositions);
             cs.SetBuffer(_kSpawn, ID_Counters, _counters);
             cs.SetBuffer(_kSpawn, ID_TileCounts, _tileCounts);
             cs.SetTexture(_kSpawn, ID_Sim, volume.SimStateTexture);
+            cs.SetTexture(_kSpawn, ID_SimHorizontalFlow, volume.SimHorizontalFlowTexture);
             cs.SetTexture(_kSpawn, ID_FoamTex, volume.FoamMaskTexture);
 
             // Ocean FFT glue: enable the keyword + bind the cascade layout so the kernels place
@@ -749,7 +782,9 @@ namespace AbstractOcclusion.WebGpuWater
             // Only the resources the Update kernel actually reads: binding an unused
             // slot is a hard error on some backends.
             cs.SetBuffer(_kUpdate, ID_Particles, _particles);
+            cs.SetBuffer(_kUpdate, ID_CrestFleckPreviousPositions, _crestFleckPreviousPositions);
             cs.SetTexture(_kUpdate, ID_Sim, volume.SimStateTexture);
+            cs.SetTexture(_kUpdate, ID_SimHorizontalFlow, volume.SimHorizontalFlowTexture);
             // Update places floating foam on the FFT swell (SurfaceWorldY), so the OCEAN_FFT_GLUE
             // variant reads the spatial cascade + amplitude (a missing bind is a hard error on
             // WebGPU). Amplitude is set here so Update reads the real swell height rather than
@@ -784,7 +819,8 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (!useParticles) return; // master gate: never dispatch the deferred density splat while off
             if (!_densityPending || cam != _densityCamera) return;
-            if (_particles == null || _density == null || _densityDepth == null) return;
+            if (_particles == null || _density == null || _densityDepth == null ||
+                _densityTier1 == null || _densityTier2 == null) return;
 
             ComputeShader cs = particleCompute;
             Matrix4x4 gpuProj = GL.GetGPUProjectionMatrix(cam.projectionMatrix, false);
@@ -795,6 +831,8 @@ namespace AbstractOcclusion.WebGpuWater
             int texelCount = _densitySize.x * _densitySize.y;
             cs.SetBuffer(_kClearDensity, ID_DensityBuffer, _density);
             cs.SetBuffer(_kClearDensity, ID_DensityDepth, _densityDepth);
+            cs.SetBuffer(_kClearDensity, ID_DensityBufferTier1, _densityTier1);
+            cs.SetBuffer(_kClearDensity, ID_DensityBufferTier2, _densityTier2);
             cs.Dispatch(_kClearDensity,
                         (texelCount + UpdateThreadGroupSize - 1) / UpdateThreadGroupSize, 1, 1);
 
@@ -806,6 +844,8 @@ namespace AbstractOcclusion.WebGpuWater
             cs.SetBuffer(_kRasterizeDensity, ID_Particles, _particles);
             cs.SetBuffer(_kRasterizeDensity, ID_DensityBuffer, _density);
             cs.SetBuffer(_kRasterizeDensity, ID_DensityDepth, _densityDepth);
+            cs.SetBuffer(_kRasterizeDensity, ID_DensityBufferTier1, _densityTier1);
+            cs.SetBuffer(_kRasterizeDensity, ID_DensityBufferTier2, _densityTier2);
             // The 2D sim is read on BOTH paths now: the ocean glue adds the interactive ripple
             // (the wake) on top of the swell, exactly as the surface mesh does, so leaving Sim
             // unbound on oceans would be the unbound-resource error this bind pattern exists to
@@ -919,6 +959,7 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 volume.WriteBodyProps(_mpb);
                 _mpb.SetBuffer(ID_ParticlesShader, _particles);
+                _mpb.SetBuffer(ID_CrestFleckPreviousPositionsShader, _crestFleckPreviousPositions);
                 WaterParticlePool.WriteFlipbook(_mpb, flipbookGrid, flipbookFps);
                 if (profile != null && profile.look.drive) profile.WriteLook(_mpb, surfaceFoamOpacity);
                 else WriteLayerOpacity(_mpb, particleMaterial, surfaceFoamOpacity);
@@ -947,6 +988,7 @@ namespace AbstractOcclusion.WebGpuWater
             Material sprayDrawMaterial = sprayMaterial != null ? sprayMaterial : particleMaterial;
             volume.WriteBodyProps(_sprayMpb);
             _sprayMpb.SetBuffer(ID_ParticlesShader, _particles);
+            _sprayMpb.SetBuffer(ID_CrestFleckPreviousPositionsShader, _crestFleckPreviousPositions);
             WaterParticlePool.WriteFlipbook(_sprayMpb, sprayFlipbookGrid, sprayFlipbookFps);
             if (profile != null && profile.look.drive) profile.WriteSprayLook(_sprayMpb, sprayOpacity);
             else WriteLayerOpacity(_sprayMpb, sprayDrawMaterial, sprayOpacity);
@@ -964,14 +1006,17 @@ namespace AbstractOcclusion.WebGpuWater
 
             // Crest flecks stay surface-bound and use FoamParticles.shader's analytic KWS-style
             // dot branch. Their simulation kind remains KIND_RIPPLE_CREST, so they never inherit
-            // ballistic spray motion or depend on a droplet texture.
+            // ballistic spray motion or depend on a droplet texture. In DENSITY mode the veil
+            // owns them (RasterizeDensity splats the same particles into the LOD tiers), so the
+            // quad pass is skipped - drawing both was a double representation of every fleck.
             volume.WriteBodyProps(_crestFleckMpb);
             _crestFleckMpb.SetBuffer(ID_ParticlesShader, _particles);
+            _crestFleckMpb.SetBuffer(ID_CrestFleckPreviousPositionsShader, _crestFleckPreviousPositions);
             if (profile != null && profile.look.drive) profile.WriteSprayLook(_crestFleckMpb, surfaceFoamOpacity);
             else WriteLayerOpacity(_crestFleckMpb, particleMaterial, surfaceFoamOpacity);
             _crestFleckMpb.SetFloat(ID_DrawKind, DrawKindCrestFleck);
 
-            if (!reroute)
+            if (!reroute && !_densityPending)
             {
                 var crestFleckRp = new RenderParams(particleMaterial)
                 {
@@ -988,6 +1033,7 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 volume.WriteBodyProps(_bubbleMpb);
                 _bubbleMpb.SetBuffer(ID_ParticlesShader, _particles);
+                _bubbleMpb.SetBuffer(ID_CrestFleckPreviousPositionsShader, _crestFleckPreviousPositions);
                 if (profile != null && profile.look.drive) profile.WriteLook(_bubbleMpb, bubbleOpacity);
                 else WriteLayerOpacity(_bubbleMpb, particleMaterial, bubbleOpacity);
                 _bubbleMpb.SetFloat(ID_DrawKind, DrawKindBubble);
@@ -1017,7 +1063,8 @@ namespace AbstractOcclusion.WebGpuWater
         internal void RenderAfterFog(RasterCommandBuffer cmd, Camera camera)
         {
             if (!_afterFogArmed || !isActiveAndEnabled) return;
-            if (_particles == null || volume == null || particleMaterial == null) return;
+            if (_particles == null || _crestFleckPreviousPositions == null || volume == null ||
+                particleMaterial == null) return;
 
             int vertexCount = _capacityPow2 * VerticesPerParticle;
             if (!_rerouteDensity)
@@ -1037,8 +1084,11 @@ namespace AbstractOcclusion.WebGpuWater
             Material sprayDrawMaterial = sprayMaterial != null ? sprayMaterial : particleMaterial;
             cmd.DrawProcedural(Matrix4x4.identity, sprayDrawMaterial, 0,
                                MeshTopology.Triangles, vertexCount, 1, _sprayMpb);
-            cmd.DrawProcedural(Matrix4x4.identity, particleMaterial, 0,
-                               MeshTopology.Triangles, vertexCount, 1, _crestFleckMpb);
+            // Density mode owns the crest flecks (they are splatted into the LOD tiers the
+            // composite above just drew) - the quad pass on top was a double representation.
+            if (!_rerouteDensity)
+                cmd.DrawProcedural(Matrix4x4.identity, particleMaterial, 0,
+                                   MeshTopology.Triangles, vertexCount, 1, _crestFleckMpb);
 
             // Bubble pass rides the reroute like the others; its block was filled in Draw().
             if (bubbleAmount > 0f)
@@ -1079,6 +1129,8 @@ namespace AbstractOcclusion.WebGpuWater
         {
             _densityMpb.SetBuffer(ID_FoamDensityShader, _density);
             _densityMpb.SetBuffer(ID_FoamDensityDepthShader, _densityDepth);
+            _densityMpb.SetBuffer(ID_FoamDensityTier1Shader, _densityTier1);
+            _densityMpb.SetBuffer(ID_FoamDensityTier2Shader, _densityTier2);
             _densityMpb.SetVector(ID_DensitySize, new Vector4(_densitySize.x, _densitySize.y, 0f, 0f));
             _densityMpb.SetFloat(ID_DensityWeightScale, DensityWeightScale);
             // World-position reconstruction inputs for the breakup pattern. This block is

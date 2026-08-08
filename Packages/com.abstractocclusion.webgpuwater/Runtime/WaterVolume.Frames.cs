@@ -37,7 +37,13 @@ namespace AbstractOcclusion.WebGpuWater
         void ApplySimAnisotropy()
         {
             if (_water == null) return;
-            if (_windowed) { _water.SetAnisotropy(new Vector2(0.25f, 0.25f), Vector2.one); return; }
+            if (_windowed)
+            {
+                Vector3 windowExtent = SimHalfExtent;
+                _water.SetAnisotropy(new Vector2(0.25f, 0.25f), Vector2.one);
+                _water.SetHorizontalFlowGeometry(new Vector2(windowExtent.x, windowExtent.z), windowExtent.y);
+                return;
+            }
 
             float ex = VolumeExtentSafe.x;
             float ez = VolumeExtentSafe.z;
@@ -47,6 +53,7 @@ namespace AbstractOcclusion.WebGpuWater
             var waveWeight = new Vector2(0.25f * minSq / (ex * ex), 0.25f * minSq / (ez * ez));
             var dropScale = new Vector2(ex / avg, ez / avg);
             _water.SetAnisotropy(waveWeight, dropScale);
+            _water.SetHorizontalFlowGeometry(new Vector2(ex, ez), VolumeExtentSafe.y);
         }
 
 #if UNITY_EDITOR

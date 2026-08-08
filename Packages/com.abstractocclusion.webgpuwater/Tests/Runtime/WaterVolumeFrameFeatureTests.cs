@@ -1,6 +1,9 @@
 using NUnit.Framework;
 using System.Reflection;
 using UnityEngine;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 namespace AbstractOcclusion.WebGpuWater.Tests
 {
@@ -33,6 +36,14 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         static readonly Vector2 RippleCrestFleckLifetimeRange = new Vector2(0.4f, 0.8f);
         static readonly Vector2 RippleCrestFleckSizeRange = new Vector2(0.01f, 0.025f);
         const float RippleCrestFleckMotion = 0.6f;
+        const int FlowGradientResolution = 256;
+        const float FlowGradientVerticalExtent = 2f;
+        const float ExpectedFlowGradientX = 32f;
+        const float ExpectedFlowGradientZ = 16f;
+        const int FlowTextureResolution = 8;
+        const string WaterSimComputePath =
+            "Packages/com.abstractocclusion.webgpuwater/Runtime/Shaders/WaterSim.compute";
+        static readonly Vector2 FlowGradientHalfExtent = new Vector2(4f, 8f);
         static readonly int VolumeCenterProperty = Shader.PropertyToID("_VolumeCenter");
         static readonly int SceneLightCountProperty = Shader.PropertyToID(SceneLightCountName);
         static readonly int SceneLightSpotDirectionProperty = Shader.PropertyToID(SceneLightSpotDirectionName);
@@ -261,6 +272,56 @@ namespace AbstractOcclusion.WebGpuWater.Tests
                 Object.DestroyImmediate(host);
             }
         }
+
+        [Test]
+        public void HorizontalFlowGradient_UsesTheBodyFrameOnEachAxis()
+        {
+            Vector2 gradient = WaterSimulation.CalculateHorizontalFlowGradient(
+                FlowGradientHalfExtent, FlowGradientVerticalExtent, FlowGradientResolution);
+
+            Assert.That(gradient.x, Is.EqualTo(ExpectedFlowGradientX).Within(FloatTolerance));
+            Assert.That(gradient.y, Is.EqualTo(ExpectedFlowGradientZ).Within(FloatTolerance));
+        }
+
+        [Test]
+        public void ParticleDefaults_KeepRippleCrestFlecksDisabled()
+        {
+            GameObject host = new GameObject("Ripple Crest Fleck Defaults Test");
+            try
+            {
+                WaterFoamParticles particles = host.AddComponent<WaterFoamParticles>();
+                Assert.That(particles.rippleCrestFlecksEnabled, Is.False);
+            }
+            finally
+            {
+                Object.DestroyImmediate(host);
+            }
+        }
+
+#if UNITY_EDITOR
+        [Test]
+        public void HorizontalFlowTextures_ArePerBodyRgFloatPingPongTargets()
+        {
+            ComputeShader compute = AssetDatabase.LoadAssetAtPath<ComputeShader>(WaterSimComputePath);
+            Assert.That(compute, Is.Not.Null);
+
+            var first = new WaterSimulation(compute, FlowTextureResolution);
+            var second = new WaterSimulation(compute, FlowTextureResolution);
+            try
+            {
+                Assert.That(first.HorizontalFlowTexture, Is.Not.Null);
+                Assert.That(first.HorizontalFlowTexture.format, Is.EqualTo(RenderTextureFormat.RGFloat));
+                Assert.That(first.HorizontalFlowTexture.width, Is.EqualTo(FlowTextureResolution));
+                Assert.That(first.HorizontalFlowTexture, Is.Not.SameAs(first.Texture));
+                Assert.That(first.HorizontalFlowTexture, Is.Not.SameAs(second.HorizontalFlowTexture));
+            }
+            finally
+            {
+                first.Dispose();
+                second.Dispose();
+            }
+        }
+#endif
 
         [Test]
         public void WakeFoamDose_UsesWorldSpeedIndependentlyOfFrameDuration()

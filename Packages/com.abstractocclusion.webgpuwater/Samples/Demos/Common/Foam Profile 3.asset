@@ -22,16 +22,24 @@ MonoBehaviour:
     sizeHeroPower: 4.59
   ambient:
     drive: 1
-    spawnThreshold: 0.1
-    spawnRate: 150
+    spawnThreshold: 0.695
+    spawnRate: 15
     maxSpawnPerFrame: 1024
-    sprayChance: 0.45
-    sprayLaunchSpeed: 3.82
+    sprayChance: 0.5
+    sprayLaunchSpeed: 0.89
+    rippleCrestFlecksEnabled: 1
+    rippleCrestFleckAmount: 2
+    rippleCrestFleckMaxPerFrame: 512
+    rippleCrestFleckLifetimeRange: {x: 0.2, y: 0.25}
+    rippleCrestFleckSizeRange: {x: 0.01, y: 0.02}
+    rippleCrestFleckMotion: 1
+    surfaceFoamOpacity: 1
+    sprayOpacity: 1
     lifeRange: {x: 0.5, y: 1}
     sizeRange: {x: 0.3, y: 0.6}
     spawnMaxDistance: 124
     sprayLifeRange: {x: 0.1, y: 0.2}
-    spraySizeRange: {x: 1, y: 2}
+    spraySizeRange: {x: 0.05, y: 0.08}
     depositLifeRange: {x: 1, y: 1.5}
     depositSizeRange: {x: 0.3, y: 0.6}
   veil:
@@ -49,11 +57,24 @@ MonoBehaviour:
     outwardSpread: 3
     dropletSize: 0.4
     lifetime: {x: 1, y: 1.5}
-    crownMinStrength: 0
-    crownBaseSize: 2
-    crownLifetime: 0.5
+    crownMinStrength: 0.085
+    crownBaseSize: 5
+    crownLifetime: 1
+    crownLaunchHeight: 1
+    crownLaunchSpread: 1
     crownTint: {r: 1, g: 1, b: 1, a: 1}
     crownOpacity: 1
+    cpuFallbackOpacity: 1
+    entryStreaksEnabled: 1
+    entryStreakAmount: 1
+    entryStreakHeight: 1
+    entryStreakWidth: 1
+    entryStreakGravity: 1
+    entryStreakOpacity: 1
+    entryStreakMinStrength: 0.2
+    entryStreakLifetimeRange: {x: 0.75, y: 1.5}
+    entryStreakSizeRange: {x: 0.35, y: 0.5}
+    entryStreakTint: {r: 0.95, g: 0.98, b: 1, a: 1}
   bubbles:
     drive: 1
     bubbleAmount: 0.5
@@ -61,3 +82,4 @@ MonoBehaviour:
     bubbleLifeRange: {x: 2, y: 4}
     bubbleSizeRange: {x: 0.015, y: 0.05}
     bubbleWobble: 1
+    opacity: 1

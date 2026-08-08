@@ -73,11 +73,6 @@ Shader "AbstractOcclusion/WebGpuWater/FoamDensityComposite"
 
             StructuredBuffer<uint> _FoamDensity;      // fixed-point accumulated weight per texel
             StructuredBuffer<uint> _FoamDensityDepth; // min eye depth per texel (millimetres)
-            // KWS LOD tiers (crest flecks): half- and quarter-resolution splat buffers. A
-            // coarser texel covers more screen, so summing the tiers into the density gives
-            // three dot sizes for free (KWS's f0 + f1 + f2).
-            StructuredBuffer<uint> _FoamDensityTier1;
-            StructuredBuffer<uint> _FoamDensityTier2;
             float2 _DensitySize;
             float  _DensityWeightScale;
             float4 _Tint;
@@ -139,25 +134,6 @@ Shader "AbstractOcclusion/WebGpuWater/FoamDensityComposite"
                 return _FoamDensityDepth[(uint)p.y * (uint)_DensitySize.x + (uint)p.x];
             }
 
-            // Tier sizes derived exactly as the splat compute derives them (integer halving
-            // per tier), so the index math of the pair can never disagree.
-            int2 DensityTierSize(int tier)
-            {
-                return max(int2(1, 1), (int2)_DensitySize >> tier);
-            }
-
-            uint LoadDensityTier1(int2 p, int2 size)
-            {
-                p = clamp(p, int2(0, 0), size - 1);
-                return _FoamDensityTier1[(uint)p.y * (uint)size.x + (uint)p.x];
-            }
-
-            uint LoadDensityTier2(int2 p, int2 size)
-            {
-                p = clamp(p, int2(0, 0), size - 1);
-                return _FoamDensityTier2[(uint)p.y * (uint)size.x + (uint)p.x];
-            }
-
             // Perspective eye depth (metres) -> raw device depth, the exact inverse of
             // LinearEyeDepth: raw = (1/eye - _ZBufferParams.w) / _ZBufferParams.z. Handles
             // reversed-Z via the params themselves; saturate clamps the empty-texel far case.
@@ -183,18 +159,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamDensityComposite"
                 uint dR = LoadDensity(px + int2( 1, 0));
                 uint dD = LoadDensity(px + int2( 0,-1));
                 uint dU = LoadDensity(px + int2( 0, 1));
-                uint tier0Raw = max(d0, max(max(dL, dR), max(dD, dU)));
-
-                // LOD tiers (KWS f0 + f1 + f2): tier 1/2 texels are already 2x/4x screen size,
-                // so they read UNDILATED - a point splat fills its whole coarse texel, there
-                // are no pinholes to close - and SUM with the dilated base tier, so piles of
-                // different-size dots still accumulate toward solid white.
-                int2 tier1Size = DensityTierSize(1);
-                uint t1 = LoadDensityTier1((int2)(i.uv01 * (float2)tier1Size), tier1Size);
-                int2 tier2Size = DensityTierSize(2);
-                uint t2 = LoadDensityTier2((int2)(i.uv01 * (float2)tier2Size), tier2Size);
-
-                uint densityRaw = tier0Raw + t1 + t2;
+                uint densityRaw = max(d0, max(max(dL, dR), max(dD, dU)));
                 if (densityRaw == 0u) return fixed4(0, 0, 0, 0);
 
                 uint depthMm = min(LoadDepth(px),

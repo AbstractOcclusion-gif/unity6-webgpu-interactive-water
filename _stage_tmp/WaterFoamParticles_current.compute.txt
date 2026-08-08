@@ -278,20 +278,18 @@ static const float CREST_FLECK_CLUSTER_STRENGTH_MULTIPLIER = 12.0;
 // "dispatched everywhere" failure). Crest sources keep the dense treatment above.
 static const float CREST_FLECK_FOAM_SOURCE_SELECTION_CHANCE = 0.1;
 static const uint CREST_FLECK_FOAM_MAX_SPAWNS_PER_TEXEL = 2u;
-// FRONT COHERENCE - the MEASURED discriminator (numpy harness of this sim, 2026-08-07:
-// on the moving-emitter + splash scenario it concentrates spawn probability on the primary
-// ring at ~4x the leading-ring share of relative flow divergence, which could not separate
-// the ring from the dust at all - every trailing crest is a real compressive front too).
-// The sim's VERTICAL velocity (info.g) is single-signed across a first-arrival wavefront -
-// the whole neighbourhood rises together - while the trailing dispersive train and the
-// interference chop behind a moving source alternate sign across the 13-tap cross, so
-// |sum| / sum(abs) reads near 1 at the energy front and near 0 everywhere behind it. THIS
-// is what separates the primary ripple from the dust field. Dimensionless, so every body
-// scale gates identically. The +-6 reach spans roughly one trailing-train wavelength;
-// that span is what makes the train cancel itself.
-static const float CREST_FLECK_COHERENCE_LO = 0.6;
-static const float CREST_FLECK_COHERENCE_HI = 0.9;
-static const float CREST_FLECK_COHERENCE_ABS_EPS = 1e-9;
+// RELATIVE flow divergence (THE actual KWS discriminator, made scale-invariant): neighbour
+// flow difference on the CHOP-CANCELLING +/-2 stencil, divided by the local coherent speed.
+// A first-arrival ring front (flow ramps from 0 across the stencil) and a churn rim both
+// read near 1; smooth translation reads near 0; grid-frequency chop alternates sign
+// texel-to-texel and cancels in the +/-2 difference entirely - the same trick the sim's
+// foam generation uses against exactly this noise. LO..HI are RATIOS, not speeds, so a
+// centimetre pool ripple and a metre ocean wake gate identically (the round-4 absolute m/s
+// thresholds could not serve both scales).
+static const float CREST_FLECK_DIVERGENCE_LO = 0.1;
+static const float CREST_FLECK_DIVERGENCE_HI = 0.5;
+static const float CREST_FLECK_DIVERGENCE_FLOOR = 0.1;
+static const float CREST_FLECK_DIVERGENCE_SPEED_FLOOR = 0.01; // m/s denominator floor (0/0 guard)
 // Spawn-direction epsilon: keeps the cluster's normalize() finite when a leading crest
 // spawns before the passive flow layer has built up under it (KWS's normalize(v + (0,
 // 0.001)) idiom).
@@ -743,31 +741,27 @@ bool TryGetRippleCrestFleckCandidate(int2 texel, float3 texelWorld, out float cr
             heightStrength = saturate((crestHeight - CREST_FLECK_MIN_HEIGHT_METERS)
                                       / CREST_FLECK_HEIGHT_RANGE_METERS);
 
-        // FRONT-COHERENCE gate (see the constant block): computed on the sim's own vertical
-        // velocity, so the discriminator needs no flow-layer reads. The +-2 taps reuse the
-        // peakness loads; +-4/+-6 extend the cross to the trailing-train wavelength.
+        // KWS accepts on DIVERGENCE, not crest shape: weight the crest source by the local
+        // RELATIVE flow compression (see the constant block) so ring fronts and churn rims
+        // spawn full clusters while smooth translation emits a trickle. The strength carries
+        // probability, cluster size AND alpha - the shape of KWS's iteration count.
         if (heightStrength > 0.0)
         {
-            float4 left4Info = Sim.Load(int3(ClampTexel(texel + int2(-4, 0)), 0));
-            float4 right4Info = Sim.Load(int3(ClampTexel(texel + int2( 4, 0)), 0));
-            float4 down4Info = Sim.Load(int3(ClampTexel(texel + int2(0, -4)), 0));
-            float4 up4Info = Sim.Load(int3(ClampTexel(texel + int2(0,  4)), 0));
-            float4 left6Info = Sim.Load(int3(ClampTexel(texel + int2(-6, 0)), 0));
-            float4 right6Info = Sim.Load(int3(ClampTexel(texel + int2( 6, 0)), 0));
-            float4 down6Info = Sim.Load(int3(ClampTexel(texel + int2(0, -6)), 0));
-            float4 up6Info = Sim.Load(int3(ClampTexel(texel + int2(0,  6)), 0));
-            float signedSum = info.g
-                            + leftInfo.g + rightInfo.g + downInfo.g + upInfo.g
-                            + left4Info.g + right4Info.g + down4Info.g + up4Info.g
-                            + left6Info.g + right6Info.g + down6Info.g + up6Info.g;
-            float absSum = abs(info.g)
-                         + abs(leftInfo.g) + abs(rightInfo.g) + abs(downInfo.g) + abs(upInfo.g)
-                         + abs(left4Info.g) + abs(right4Info.g) + abs(down4Info.g) + abs(up4Info.g)
-                         + abs(left6Info.g) + abs(right6Info.g) + abs(down6Info.g) + abs(up6Info.g);
-            float frontCoherence = abs(signedSum)
-                                 / max(absSum, CREST_FLECK_COHERENCE_ABS_EPS);
-            heightStrength *= smoothstep(CREST_FLECK_COHERENCE_LO, CREST_FLECK_COHERENCE_HI,
-                                         frontCoherence);
+            float2 flowLeft2 = SimHorizontalFlow.Load(int3(ClampTexel(texel + int2(-2, 0)), 0));
+            float2 flowRight2 = SimHorizontalFlow.Load(int3(ClampTexel(texel + int2( 2, 0)), 0));
+            float2 flowDown2 = SimHorizontalFlow.Load(int3(ClampTexel(texel + int2(0, -2)), 0));
+            float2 flowUp2 = SimHorizontalFlow.Load(int3(ClampTexel(texel + int2(0,  2)), 0));
+            // Sign-preserving coherent speed (chop self-cancels) for the denominator.
+            float2 coherentFlow = (flow + flowLeft2 + flowRight2 + flowDown2 + flowUp2) * 0.2;
+            float coherentSpeed = length(coherentFlow);
+            // Per-texel divergence over the 4-texel span; chop cancels in the difference.
+            float divergence = abs((flowRight2.x - flowLeft2.x)
+                                   + (flowUp2.y - flowDown2.y)) * 0.25;
+            float relativeDivergence = divergence
+                                     / max(coherentSpeed, CREST_FLECK_DIVERGENCE_SPEED_FLOOR);
+            float divergenceGate = smoothstep(CREST_FLECK_DIVERGENCE_LO,
+                                              CREST_FLECK_DIVERGENCE_HI, relativeDivergence);
+            heightStrength *= lerp(CREST_FLECK_DIVERGENCE_FLOOR, 1.0, divergenceGate);
         }
     }
 
