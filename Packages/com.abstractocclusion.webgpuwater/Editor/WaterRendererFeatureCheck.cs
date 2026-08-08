@@ -1,14 +1,15 @@
 // WebGpuWater - editor-side presence check for the package's URP renderer features.
-// Five of the package's effects live on the URP RENDERER asset, not on a water body: underwater fog,
-// screen-space caustics, the mesh-chunk and mesh-exclusion depth prepasses, and the ocean god-ray
-// atmosphere. Every one of them SELF-GATES, which means a missing feature is silent - the effect is
+// Six of the package's effects live on the URP RENDERER asset, not on a water body: underwater fog,
+// screen-space caustics, the mesh-chunk and mesh-exclusion depth prepasses, the ocean god-ray
+// atmosphere, and Unity scene fog on the skybox. Every one of them SELF-GATES, which means a
+// missing feature is silent - the effect is
 // simply absent, and that reads as "this feature is broken" rather than "this feature was never
 // installed". Listing the absences at authoring time is the whole point of this file.
 //
 // PRESENCE ONLY, deliberately. A need-aware check would have to answer "does THIS scene want fog?",
-// and only three of the five runtime gates have an authoring-time predicate at all
+// and only three of the six runtime gates have an authoring-time predicate at all
 // (WaterVolume.UnderwaterFogActive is camera-submerged, which means nothing while editing). Inventing
-// the missing two would trade a missing warning for a WRONG one, so this reports absence as
+// the missing three would trade a missing warning for a WRONG one, so this reports absence as
 // information and leaves the judgement to the user - the same honesty as the
 // "only needed if you use those features" wording on the Always Included Shaders warning.
 //
@@ -45,6 +46,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             ("WaterChunkDepthFeature",        "Mesh-footprint water chunks"),
             ("WaterExclusionDepthFeature",    "Mesh-shaped exclusion volumes"),
             ("LargeBodyAtmosphereFeature",    "Ocean god-ray shafts"),
+            ("WaterSkyFogFeature",            "Unity scene fog on the skybox"),
         };
 
         /// <summary>What the ACTIVE render pipeline is missing, plus the renderer asset to point at.</summary>

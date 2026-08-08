@@ -57,6 +57,7 @@ Shader "AbstractOcclusion/WebGpuWater/SplashParticles"
             CGPROGRAM
             #pragma vertex vert
             #pragma fragment frag
+            #pragma multi_compile_fog
             #include "UnityCG.cginc"
             // Foam lighting + erosion dissolve, matched to WaterSurface/FoamParticles so
             // every foam-like element in the scene shades consistently.
@@ -95,6 +96,7 @@ Shader "AbstractOcclusion/WebGpuWater/SplashParticles"
             float _TransmissionStrength;
             float3 _LightDir; // globals published by the primary WaterVolume (toward the sun)
             // _SunColor comes from WaterFog.hlsl, reached TRANSITIVELY via WaterParticleFog.hlsl - declaring it here again is a redefinition.
+            float _CameraUnderwater;
             sampler2D _CameraDepthTexture;
 
             struct appdata
@@ -115,7 +117,22 @@ Shader "AbstractOcclusion/WebGpuWater/SplashParticles"
                 float3 worldPos  : TEXCOORD4; // for the per-fragment exclusion dissolve
                 float3 fogMul    : TEXCOORD5; // camera->splash fog transmittance (1 when fog is off)
                 float3 fogAdd    : TEXCOORD6; // camera->splash fog in-scatter (0 when fog is off)
+                float sceneFogFactor : TEXCOORD7;
             };
+
+            float SceneFogFactor(float eyeDepth)
+            {
+                #if defined(FOG_LINEAR)
+                    return saturate(eyeDepth * unity_FogParams.z + unity_FogParams.w);
+                #elif defined(FOG_EXP)
+                    return saturate(exp2(-unity_FogParams.y * eyeDepth));
+                #elif defined(FOG_EXP2)
+                    float fogDepth = unity_FogParams.x * eyeDepth;
+                    return saturate(exp2(-fogDepth * fogDepth));
+                #else
+                    return 1.0;
+                #endif
+            }
 
             // Sun direction expressed in the VerticalBillboard frame the lightmaps were
             // baked in: +Y = world up, +Z = horizontal toward the camera, +X = right.
@@ -152,7 +169,9 @@ Shader "AbstractOcclusion/WebGpuWater/SplashParticles"
                 // upward-facing foam so brightness tracks the sun's height and color.
                 float wrapped = FoamWrappedDiffuseNdotL(_LightDir.y);
                 float3 worldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
-                o.fade = float2(wrapped, -mul(UNITY_MATRIX_V, float4(worldPos, 1.0)).z);
+                float eyeDepth = -mul(UNITY_MATRIX_V, float4(worldPos, 1.0)).z;
+                o.fade = float2(wrapped, eyeDepth);
+                o.sceneFogFactor = SceneFogFactor(eyeDepth);
 
                 float3 lightDir = normalize(_LightDir + 1e-5);
                 float3 viewDir = normalize(worldPos - _WorldSpaceCameraPos + 1e-5);
@@ -232,6 +251,8 @@ Shader "AbstractOcclusion/WebGpuWater/SplashParticles"
                 // Per-splash underwater fog (identity on fog-off frames), after all the lit
                 // terms - shine and transmission fog out with the rest of the sprite.
                 lit = lit * i.fogMul + i.fogAdd;
+                if (_CameraUnderwater < 0.5)
+                    lit = lerp(unity_FogColor.rgb, lit, i.sceneFogFactor);
 
                 return fixed4(lit, alpha);
             }

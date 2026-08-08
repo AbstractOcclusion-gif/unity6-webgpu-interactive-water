@@ -109,6 +109,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             #pragma vertex vert
             #pragma fragment frag
             #pragma target 4.0
+            #pragma multi_compile_fog
             // Main-light shadow keywords: this pass samples the shadow map BY HAND (it is CGPROGRAM, so
             // it can't include URP's Shadows.hlsl) to gate the analytic floor caustic. Needs "Transparent
             // Receive Shadows" ON in the active Renderer asset, else the keyword is never set (caustic
@@ -293,6 +294,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                                           foamWorldDdx, foamWorldDdy, bodyInscatter, swashFoamLayer);
                 outColor = FinalCompositeStage(i, geom, outColor, oceanFoamLayer, pondFoamLayer,
                                                surfFoamLayer, swashFoamLayer);
+                // Scene fog owns the above-water match against terrain and props. Keep the
+                // debug return below unfogged: it represents data rather than the final look.
+                UNITY_APPLY_FOG(i.fogCoord, outColor);
                 // Debug views LAST, so they REPLACE the finished colour rather than perturb it.
                 // Uniform branch: one compare per pixel whenever _WaterDebugMode is 0.
                 float3 debugColor;
@@ -419,6 +423,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             #pragma vertex vert
             #pragma fragment fragFoamOverlay
             #pragma target 4.0
+            #pragma multi_compile_fog
             // This IS the after-fog redraw: keep PondFoamLayer's overlay-skip gate out.
             #define WATER_FOAM_OVERLAY_PASS 1
             #include "UnityCG.cginc"
@@ -483,6 +488,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 WaterGeomStage geom = EvaluateSurfaceGeometry(i);
                 FoamLayer foam = PondFoamLayer(i, geom);
                 clip(foam.alpha - FOAM_OVERLAY_MIN_ALPHA);
+                UNITY_APPLY_FOG(i.fogCoord, foam.look);
                 return fixed4(foam.look, foam.alpha);
             }
             ENDCG

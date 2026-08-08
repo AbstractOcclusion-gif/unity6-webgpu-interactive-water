@@ -169,11 +169,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // ---- create section --------------------------------------------------
         void DrawCreateSection()
         {
+            WaterKind previousKind = _kind;
             _kind = (WaterKind)EditorGUILayout.EnumPopup(
                 new GUIContent("Type", "Legacy analytic pool (walls/floor/caustics, no fog), a bare water " +
                                        "surface, a surface with underwater fog, or experimental open-water " +
                                        "ocean (large-body + horizon clipmap)."),
                 _kind);
+            if (_kind != previousKind)
+                ApplyKindPrefills(previousKind);
 
             _extent = EditorGUILayout.Vector3Field(
                 new GUIContent("Size (extent)", "Half-extents of the water volume: X/Z horizontal, Y depth. " +
@@ -340,6 +343,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             ApplyFoam(body);
             bool openWater = ApplyOpenWater(body);
             ApplyLookDefaults(body);
+            if (_kind == WaterKind.OpenWaterOcean)
+                ApplyOceanLookDefaults(body);
 
             ApplyCameraMode(body);
 
@@ -368,10 +373,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // the refracted occluder path is the opt-in; ON by surprise reads as "harsh shadows"),
         // a light fog density, wind waves scaled to the body's REAL size, and the package's
         // default surface textures. Values are the wizard's opinion only - the body's own
-        // inspector serializes and can change every one afterwards.
+        // inspector serializes and can change every one afterwards. The Ocean kind then layers
+        // the beach-derived ocean look on top (WaterWizardWindow.OceanDefaults.cs), overriding
+        // several of these.
         const float DefaultFogDensity = 0.2f;
         const float DefaultDetailNormalStrength = 0.2f;
-        const float OceanGodRayDepthFade = 0.05f; // per metre; ocean-scale reach (pool default is 0.5)
         // Default texture files under WaterBuildKit.DefaultTexturesRoot. Note the deliberate
         // crossover: the Foam2 sheet reads best as the ocean WHITECAP and the OceanWhitecap
         // sheet as the turbulence FOAM pattern (chosen by eye, not by filename).
@@ -394,17 +400,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 LoadDefaultTexture(DetailNormalTextureFile);
             serialized.FindProperty(WaterVolumePropertyPaths.DetailNormalStrength).floatValue =
                 DefaultDetailNormalStrength;
-            // Ocean bodies express "god rays" through the fullscreen ocean shafts (the legacy
-            // god-ray box the build kit rigs is pool-scaled); same shared default intensity. The
-            // depth fade is re-scaled too: the pool default (0.5/m) kills 99% of a beam by 10 m,
-            // so ocean shafts never plunged - 0.05/m puts the half-depth around 14 m.
-            if (_kind == WaterKind.OpenWaterOcean && _godRays)
-            {
-                serialized.FindProperty(WaterVolumePropertyPaths.LargeGodRayDensity).floatValue =
-                    DefaultGodRayDensity;
-                serialized.FindProperty(WaterVolumePropertyPaths.GodRayDepthFade).floatValue =
-                    OceanGodRayDepthFade;
-            }
+            // Ocean god rays (the fullscreen shafts) belong to the ocean look pass -
+            // ApplyOceanLookDefaults, which runs right after this and owns every ocean-only value.
             serialized.ApplyModifiedProperties(); // rides the Create Water undo group
         }
 

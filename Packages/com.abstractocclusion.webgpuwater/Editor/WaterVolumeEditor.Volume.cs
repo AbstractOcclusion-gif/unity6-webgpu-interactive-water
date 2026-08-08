@@ -23,7 +23,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     WaterVolumePropertyPaths.FogColor,
                     WaterVolumePropertyPaths.FogExtinction,
                     WaterVolumePropertyPaths.FogDensity,
-                    "waterFogSettings.waterOpacity",
+                    WaterVolumePropertyPaths.WaterOpacity,
                     "waterFogSettings.lightScatter");
                 EditorGUILayout.HelpBox(
                     WaterFogReachSummary(Prop(WaterVolumePropertyPaths.FogExtinction).colorValue,

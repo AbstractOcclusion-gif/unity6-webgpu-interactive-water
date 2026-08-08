@@ -36,6 +36,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
             #pragma vertex vert
             #pragma fragment frag
             #pragma target 4.0
+            #pragma multi_compile_fog
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
             #include "WaterChunkPrimitive.hlsl" // ChunkIntersect / ChunkSurfaceNormalPool (+ WaterShared: IOR_*)
@@ -174,6 +175,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
             {
                 float4 positionCS : SV_POSITION;
                 float3 positionWS : TEXCOORD0;
+                half fogFactor : TEXCOORD1;
             };
 
             // The box mesh is authored in POOL space [-1,1]; the volume frame places it in the world,
@@ -183,6 +185,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
                 Varyings o;
                 o.positionWS = PoolToWorld(IN.positionOS.xyz);
                 o.positionCS = TransformWorldToHClip(o.positionWS);
+                o.fogFactor = ComputeFogFactor(o.positionCS.z);
                 return o;
             }
 
@@ -357,7 +360,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
                     float nearFade = saturate(1.0 - entryT / CHUNK_MENISCUS_MAX_DISTANCE);
                     float meniscus = _ChunkMeniscus * CHUNK_MENISCUS_DARKEN * atLine * nearFade;
                     clip(meniscus - CHUNK_COLUMN_EPSILON);                // outside the line: disc owns it
-                    return half4(0.0, 0.0, 0.0, meniscus);               // premultiplied darken over the disc
+                    float3 meniscusColor = float3(0.0, 0.0, 0.0);
+                    if (_ChunkCameraUnderwater < 0.5)
+                        meniscusColor = unity_FogColor.rgb * meniscus * (1.0 - IN.fogFactor);
+                    return half4(meniscusColor, meniscus);               // premultiplied darken over the disc
                 }
 
                 // Entry surface normal (top entries were discarded above, so no UP branch remains):
@@ -442,7 +448,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
                     float coverage = max(opacity.r, max(opacity.g, opacity.b));
                     float3 sheen = cameraInWater ? float3(0.0, 0.0, 0.0) : reflection;
                     float3 veil = (inscatter * opacity + sheen) * depthDarken;
-                    return half4(veil + shaftGlow, coverage); // shafts add over the fog veil
+                    float3 color = veil + shaftGlow;
+                    if (!cameraInWater)
+                        color = lerp(unity_FogColor.rgb * coverage, color, IN.fogFactor);
+                    return half4(color, coverage); // shafts add over the fog veil
                 }
 
                 // FULL tier: refract the backdrop sample by the view ray bending at the surface.
@@ -462,6 +471,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
                 color += reflection;
                 color *= depthDarken;
                 color += shaftGlow; // volumetric shafts add after the depth darken (they are their own light)
+                color = MixFog(color, IN.fogFactor);
                 return half4(color, 1.0);
             }
             ENDHLSL

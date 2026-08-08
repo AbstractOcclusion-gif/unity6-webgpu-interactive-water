@@ -120,6 +120,7 @@
                 float2 largeWaveSourceXZ : TEXCOORD3; // undisplaced world xz of the open-water wave,
                                                       // so the fragment normal reads the SOURCE point
                                                       // (not the chop-displaced worldPos)
+                UNITY_FOG_COORDS(4)
             };
 
             // Coordinate fed to the wind-wave layer (WaveHeight/WaveSlope). Bounded bodies sample in
@@ -285,6 +286,7 @@
                 viewPos.z += _PatchDepthBias; // view forward is -Z, so +Z moves toward the camera (nearer)
                 o.pos = mul(UNITY_MATRIX_P, viewPos);
                 o.screenPos = ComputeScreenPos(o.pos);
+                UNITY_TRANSFER_FOG(o, o.pos);
                 return o;
             }
 

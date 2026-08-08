@@ -22,11 +22,13 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string PlanarReflection = "reflectionSettings.usePlanarReflection";
         internal const string RealRefraction = "reflectionSettings.realRefraction";
         internal const string BodyType = "bodyType";
+        internal const string JerlovWaterType = "jerlovWaterType"; // stored reference (inspector dropdown + Jerlov writer)
         internal const string EnableLargeBodyWindow = "enableLargeBodyWindow";
 
         // Water fog block (wizard look defaults + the Jerlov preset writer).
         internal const string FogDensity = "waterFogSettings.fogDensity";
         internal const string WaterFog = "waterFogSettings.waterFog";
+        internal const string WaterOpacity = "waterFogSettings.waterOpacity";
 
         // Detail-normal block (Textures section; wizard look defaults).
         internal const string DetailNormalTexture = "detailNormalSettings.texture";

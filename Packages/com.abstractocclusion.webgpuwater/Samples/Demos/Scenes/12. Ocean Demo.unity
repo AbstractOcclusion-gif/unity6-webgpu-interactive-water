@@ -14,10 +14,10 @@ OcclusionCullingSettings:
 RenderSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 10
-  m_Fog: 0
+  m_Fog: 1
   m_FogColor: {r: 0.5, g: 0.5, b: 0.5, a: 1}
   m_FogMode: 3
-  m_FogDensity: 0.01
+  m_FogDensity: 0.008
   m_LinearFogStart: 0
   m_LinearFogEnd: 300
   m_AmbientSkyColor: {r: 0.212, g: 0.227, b: 0.259, a: 1}
@@ -6072,7 +6072,7 @@ MonoBehaviour:
     openWater: 1
     largeWaveAmplitude: 1
     largeWaveChoppiness: 1.09
-    significantWaveHeight: 3
+    significantWaveHeight: 5
     peakWavelength: 120
     peakSharpness: 3.3
     waveScale: 1
@@ -6331,6 +6331,12 @@ MonoBehaviour:
   maxSpawnPerFrame: 256
   sprayChance: 0.15
   sprayLaunchSpeed: 0.6
+  rippleCrestFlecksEnabled: 0
+  rippleCrestFleckAmount: 1
+  rippleCrestFleckMaxPerFrame: 256
+  rippleCrestFleckLifetimeRange: {x: 0.4, y: 0.8}
+  rippleCrestFleckSizeRange: {x: 0.01, y: 0.025}
+  rippleCrestFleckMotion: 0.6
   lifeRange: {x: 1.5, y: 4}
   sizeRange: {x: 0.02, y: 0.06}
   sizeHeroPower: 1
@@ -6338,6 +6344,9 @@ MonoBehaviour:
   sprayMaterial: {fileID: 0}
   sprayLifeRange: {x: 0.5, y: 1.2}
   spraySizeRange: {x: 0.02, y: 0.05}
+  surfaceFoamOpacity: 1
+  sprayOpacity: 1
+  bubbleOpacity: 1
   sprayFlipbookGrid: {x: 2, y: 2}
   sprayFlipbookFps: 10
   depositLifeRange: {x: 0.5, y: 1}
@@ -6414,8 +6423,22 @@ MonoBehaviour:
   crownMinStrength: 0.25
   crownBaseSize: 0.4
   crownLifetime: 0.5
+  crownLaunchHeight: 1
+  crownLaunchSpread: 1
   crownTint: {r: 0.95, g: 0.98, b: 1, a: 1}
   crownOpacity: 1
+  cpuFallbackOpacity: 1
+  jetParticles: {fileID: 0}
+  entryStreaksEnabled: 1
+  entryStreakAmount: 1
+  entryStreakHeight: 1
+  entryStreakWidth: 1
+  entryStreakGravity: 1
+  entryStreakOpacity: 1
+  entryStreakMinStrength: 0.2
+  entryStreakLifetimeRange: {x: 0.75, y: 1.5}
+  entryStreakSizeRange: {x: 0.35, y: 0.5}
+  entryStreakTint: {r: 0.95, g: 0.98, b: 1, a: 1}
 --- !u!1 &1664993624
 GameObject:
   m_ObjectHideFlags: 0

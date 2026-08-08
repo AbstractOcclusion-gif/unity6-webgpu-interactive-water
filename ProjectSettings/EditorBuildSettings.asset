@@ -23,7 +23,7 @@ EditorBuildSettings:
     path: Packages/com.abstractocclusion.webgpuwater/Samples/Demos/Scenes/12. Ocean
       Demo.unity
     guid: 2dff43b3dd4552d4dba442407956b3cc
-  - enabled: 1
+  - enabled: 0
     path: Packages/com.abstractocclusion.webgpuwater/Samples/Demos/Scenes/14. IslandDemo.unity
     guid: 6247a18baca1218408733b56ce13307e
   - enabled: 0

@@ -53,6 +53,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamDensityComposite"
             #pragma vertex vert
             #pragma fragment frag
             #pragma target 4.5 // structured buffers in the fragment stage
+            #pragma multi_compile_fog
             #include "UnityCG.cginc"
             #include "WaterFoamCommon.hlsl" // FoamLitColor / FoamWrappedDiffuseNdotL
 
@@ -95,6 +96,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamDensityComposite"
             float3 _DensityCamForward;
             float3 _LightDir; // globals published by the primary WaterVolume
             float3 _SunColor;
+            float _CameraUnderwater;
             sampler2D _CameraDepthTexture;
 
             struct v2f
@@ -164,6 +166,20 @@ Shader "AbstractOcclusion/WebGpuWater/FoamDensityComposite"
             float EyeDepthToRawDepth(float eyeDepth)
             {
                 return saturate((1.0 / max(eyeDepth, 1e-4) - _ZBufferParams.w) / _ZBufferParams.z);
+            }
+
+            float SceneFogFactor(float eyeDepth)
+            {
+                #if defined(FOG_LINEAR)
+                    return saturate(eyeDepth * unity_FogParams.z + unity_FogParams.w);
+                #elif defined(FOG_EXP)
+                    return saturate(exp2(-unity_FogParams.y * eyeDepth));
+                #elif defined(FOG_EXP2)
+                    float fogDepth = unity_FogParams.x * eyeDepth;
+                    return saturate(exp2(-fogDepth * fogDepth));
+                #else
+                    return 1.0;
+                #endif
             }
 
             fixed4 frag(v2f i, out float outDepth : SV_Depth) : SV_Target
@@ -245,7 +261,11 @@ Shader "AbstractOcclusion/WebGpuWater/FoamDensityComposite"
                 // normal); the default _Tint carries KWS's cool sea-foam cast.
                 float wrapped = FoamWrappedDiffuseNdotL(_LightDir.y);
                 float3 lit = FoamLitColor(_Tint.rgb, _SunColor, wrapped);
-                return fixed4(lit * alpha, alpha); // premultiplied
+                float3 premultipliedColor = lit * alpha;
+                if (_CameraUnderwater < 0.5)
+                    premultipliedColor = lerp(unity_FogColor.rgb * alpha, premultipliedColor,
+                                              SceneFogFactor(foamEye));
+                return fixed4(premultipliedColor, alpha); // premultiplied
             }
             ENDCG
         }

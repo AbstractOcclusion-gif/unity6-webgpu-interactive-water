@@ -43,6 +43,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
             #pragma vertex vert
             #pragma fragment frag
             #pragma target 4.0
+            #pragma multi_compile_fog
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
             #include "WaterFog.hlsl"       // WaterInscatterColor + DownwellingAttenuation + fog globals
@@ -206,6 +207,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
             {
                 float4 positionCS : SV_POSITION;
                 float3 positionWS : TEXCOORD0;
+                half fogFactor : TEXCOORD1;
             };
 
             Varyings vert(Attributes IN)
@@ -213,6 +215,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
                 Varyings o;
                 o.positionWS = TransformObjectToWorld(IN.positionOS.xyz);
                 o.positionCS = TransformWorldToHClip(o.positionWS);
+                o.fogFactor = ComputeFogFactor(o.positionCS.z);
                 return o;
             }
 
@@ -357,6 +360,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
                 color *= submerged;
                 coverage *= submerged;
                 clip(coverage - WALL_MIN_COVERAGE); // fully dry fragments skip the blend entirely
+                if (_CameraUnderwater < 0.5)
+                    color = lerp(unity_FogColor.rgb * coverage, color, IN.fogFactor);
                 return half4(color, coverage);
             }
             ENDHLSL

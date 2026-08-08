@@ -40,6 +40,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             #pragma target 4.5
             #pragma vertex vert
             #pragma fragment frag
+            #pragma multi_compile_fog
             #include "UnityCG.cginc"
             #include "WaterCommon.hlsl" // _WaterTex + SampleWaterBilinear, _LightDir
             #include "WaterWaves.hlsl"  // WaveHeight (ambient wind-wave layer)
@@ -139,6 +140,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             // _LargeBody (1 = open water, picks the large-body glue below) comes from
             // WaterVolume.hlsl - already included; do not redeclare.
             // _SunColor comes from WaterFog.hlsl, reached TRANSITIVELY via WaterParticleFog.hlsl - declaring it here again is a redefinition.
+            float _CameraUnderwater;
             float4 _Tint;
             float _ParticleOpacity;
             float _VelocityStretch;
@@ -318,7 +320,22 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 float3 worldPos  : TEXCOORD4; // for the per-fragment exclusion dissolve
                 float3 fogMul    : TEXCOORD5; // camera->sprite fog transmittance (1 when fog is off)
                 float3 fogAdd    : TEXCOORD6; // camera->sprite fog in-scatter (0 when fog is off)
+                float sceneFogFactor : TEXCOORD7;
             };
+
+            float SceneFogFactor(float eyeDepth)
+            {
+                #if defined(FOG_LINEAR)
+                    return saturate(eyeDepth * unity_FogParams.z + unity_FogParams.w);
+                #elif defined(FOG_EXP)
+                    return saturate(exp2(-unity_FogParams.y * eyeDepth));
+                #elif defined(FOG_EXP2)
+                    float fogDepth = unity_FogParams.x * eyeDepth;
+                    return saturate(exp2(-fogDepth * fogDepth));
+                #else
+                    return 1.0;
+                #endif
+            }
 
             // Degenerate output for dead slots: w = 0 collapses the triangle.
             v2f Dead()
@@ -327,6 +344,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 o.pos = float4(0, 0, 0, 0);
                 o.uv = 0; o.screenPos = 0; o.litColor = 0; o.fade = 0; o.worldPos = 0;
                 o.fogMul = 1; o.fogAdd = 0;
+                o.sceneFogFactor = 1;
                 return o;
             }
 
@@ -524,7 +542,9 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 o.uv = uv;
                 o.screenPos = ComputeScreenPos(o.pos);
                 o.litColor = FoamLitColor(_Tint.rgb, _SunColor, wrapped);
-                o.fade = float2(envelope, -mul(UNITY_MATRIX_V, float4(worldVertex, 1.0)).z);
+                float eyeDepth = -mul(UNITY_MATRIX_V, float4(worldVertex, 1.0)).z;
+                o.fade = float2(envelope, eyeDepth);
+                o.sceneFogFactor = SceneFogFactor(eyeDepth);
                 o.worldPos = worldVertex;
                 // After-fog reroute frames (WaterParticleFog.hlsl): the fullscreen fog no longer
                 // paints this sprite, so price the camera->sprite wet path here. Identity
@@ -613,6 +633,8 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 // Per-sprite underwater fog (identity on fog-off frames): applied after the
                 // texture multiply, exact because the fog lerp is linear in the color.
                 float3 rgb = i.litColor * sprite.rgb * i.fogMul + i.fogAdd;
+                if (_CameraUnderwater < 0.5)
+                    rgb = lerp(unity_FogColor.rgb, rgb, i.sceneFogFactor);
 
                 return fixed4(rgb, alpha);
             }

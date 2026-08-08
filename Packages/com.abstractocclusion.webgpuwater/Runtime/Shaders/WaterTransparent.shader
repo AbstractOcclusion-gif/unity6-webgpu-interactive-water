@@ -54,6 +54,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTransparent"
             #pragma vertex vert
             #pragma fragment frag
             #pragma target 4.0
+            #pragma multi_compile_fog
             // ONE 4-way set, exactly as URP's own Lit.shader declares it (the receiver's note:
             // two independent pragmas compile unreachable *_SCREEN cross products).
             #pragma multi_compile_fragment _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
@@ -75,6 +76,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTransparent"
             // sheet and the receivers feed the in-scatter, so a prop's tint cannot drift from the
             // water around it. _SunColor is declared by WaterFog.hlsl.
             float3 _LightDir;
+            float _CameraUnderwater;
 
             CBUFFER_START(UnityPerMaterial)
                 float4 _BaseColor;
@@ -162,6 +164,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTransparent"
                 fogMul = lerp(float3(1.0, 1.0, 1.0), fogMul, strength);
                 fogAdd *= strength;
                 color = WebGpuWaterApplyFog(color, fogMul, fogAdd);
+
+                // The water-medium term above is the below-surface optical path. Unity fog is
+                // a scene-atmosphere term, so it is applied only while the camera remains in air.
+                if (_CameraUnderwater < 0.5)
+                    color = MixFog(color, ComputeFogFactor(IN.positionCS.z));
 
                 return half4(color, alpha);
             }
