@@ -4,6 +4,7 @@
 // (this body's renderers, and WaterMembership'd objects) or into the global shader
 // state (the primary body's fallback for objects without a membership) - so the
 // values are derived once and the two paths can never drift.
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace AbstractOcclusion.WebGpuWater
@@ -42,6 +43,10 @@ namespace AbstractOcclusion.WebGpuWater
         // through per-object indices no fullscreen draw has. One list, one integral, and the
         // submerged fog + the from-above surface glow can never read different lights.
         const int MaxSceneLights = 8; // KEEP IN SYNC with WATER_SCENE_LIGHT_MAX (WaterFog.hlsl)
+        // Light creation/destruction is rare compared with rendering. Cache the scene lookup so
+        // armed fog does not allocate a Light[] every frame; the cached entries themselves are
+        // still evaluated each frame, keeping transforms, intensity and enabled state current.
+        const float SceneLightCacheRefreshSeconds = 0.5f;
         // Points publish this as cos(outerCone): the cone term saturates to 1 for any direction.
         const float PointLightConeSentinel = -2f;
         const float SpotConeRangeEpsilon = 1e-4f; // guards 1/(cosInner - cosOuter) on degenerate spots
@@ -53,6 +58,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly Vector4[] s_SceneLightColorCone = new Vector4[MaxSceneLights];
         static readonly Vector4[] s_SceneLightSpotDir = new Vector4[MaxSceneLights];
         static readonly float[] s_SceneLightDistSq = new float[MaxSceneLights];
+        static readonly List<Light> s_SceneLights = new List<Light>();
+        static float s_SceneLightCacheRefreshAt;
         static readonly int ID_FogDensity = WaterShaderProps.WaterFogDensity;
         static readonly int ID_FogEnabled = WaterShaderProps.WaterFogEnabled;
         static readonly int ID_WaterOpacity = Shader.PropertyToID("_WaterOpacity");
@@ -449,9 +456,8 @@ namespace AbstractOcclusion.WebGpuWater
         // the field block above for why URP's arrays are deliberately not read). Runs once per
         // frame from the primary body's PublishUnderwater, and does real work only while a body
         // has Light Scatter authored above 0 - disarmed frames publish count 0 so a stale list
-        // can never glow. FindObjectsByType each armed frame is bounded by the scene's light
-        // count and profiled trivial next to the sim; nearest-to-camera wins the cap so the
-        // lights that matter survive it.
+        // can never glow. The scene lookup is refreshed at a low cadence; the cached lights are
+        // still evaluated every frame, so dynamic lights remain fully live.
         void PublishSceneLights(bool armed)
         {
             if (!armed)
@@ -461,11 +467,11 @@ namespace AbstractOcclusion.WebGpuWater
             }
             Camera eye = _body.targetCamera;
             Vector3 eyePos = eye != null ? eye.transform.position : _body.VolumeCenter;
-            Light[] lights = Object.FindObjectsByType<Light>(FindObjectsSortMode.None);
+            RefreshSceneLightCache();
             int count = 0;
-            for (int i = 0; i < lights.Length; i++)
+            for (int i = 0; i < s_SceneLights.Count; i++)
             {
-                Light light = lights[i];
+                Light light = s_SceneLights[i];
                 if (light == null || !light.isActiveAndEnabled || light.intensity <= 0f) continue;
                 if (light.type != LightType.Point && light.type != LightType.Spot) continue;
                 Vector3 pos = light.transform.position;
@@ -509,6 +515,16 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalVectorArray(ID_SceneLightColorCone, s_SceneLightColorCone);
             Shader.SetGlobalVectorArray(ID_SceneLightSpotDir, s_SceneLightSpotDir);
             Shader.SetGlobalFloat(ID_SceneLightCount, count);
+        }
+
+        static void RefreshSceneLightCache()
+        {
+            if (Time.unscaledTime < s_SceneLightCacheRefreshAt) return;
+
+            s_SceneLightCacheRefreshAt = Time.unscaledTime + SceneLightCacheRefreshSeconds;
+            Light[] discoveredLights = Object.FindObjectsByType<Light>(FindObjectsSortMode.None);
+            s_SceneLights.Clear();
+            s_SceneLights.AddRange(discoveredLights);
         }
 
         /// <summary>Screen-space waterline (meniscus) tunables for the fog material's waterline

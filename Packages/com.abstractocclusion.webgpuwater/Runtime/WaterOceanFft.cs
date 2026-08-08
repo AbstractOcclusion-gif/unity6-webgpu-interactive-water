@@ -242,6 +242,13 @@ namespace AbstractOcclusion.WebGpuWater
         float _sampledSizePrev, _sampledTimePrev;
         bool _hasPrevField;
 
+        // The complete height field is only needed by CPU consumers (buoyancy, accurate
+        // submersion and displaced-space interaction placement). Keeping the last request alive
+        // briefly covers the physics/render cadence and async landing latency without moving a
+        // 256 KiB field across the GPU/CPU boundary for decorative oceans.
+        const int ReadbackDemandWindowFrames = 12;
+        int _lastReadbackDemandFrame = -1000;
+
         // The debug view shows the readable preview, not the raw signed displacement.
         // Null in release builds: the preview array is a debug aid and is neither allocated nor
         // dispatched there (see TryAllocate / the gated preview dispatch).
@@ -598,6 +605,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal void RequestHeightReadback()
         {
             if (!_ready || !_readback.CanRequest) return;
+            if (Time.frameCount - _lastReadbackDemandFrame > ReadbackDemandWindowFrames) return;
             _pendingCenter = _bakedCenter;
             _pendingSize = _bakedSize;
             _pendingTime = _bakedTime;
@@ -664,6 +672,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal bool TrySampleField(float worldX, float worldZ, out Vector3 heightSlope,
                                      out float verticalRate)
         {
+            StampReadbackDemand();
             heightSlope = Vector3.zero;
             verticalRate = 0f;
             if (!_heightReady || _heightCpu == null || _sampledSize <= 0f) return false;
@@ -718,6 +727,7 @@ namespace AbstractOcclusion.WebGpuWater
         // analytic-vs-FFT mismatch. Fog-gate only; buoyancy keeps the plain TrySampleField.
         internal bool TrySampleHeightLatest(float worldX, float worldZ, out float height)
         {
+            StampReadbackDemand();
             height = 0f;
             if (!_heightReady || _heightCpu == null || _sampledSize <= 0f) return false;
             if (!TryFieldUV(_sampledCenter, _sampledSize, worldX, worldZ, out float u, out float v)) return false;
@@ -732,6 +742,7 @@ namespace AbstractOcclusion.WebGpuWater
         /// actually be drawn (deferred-improvement #1, now done for the injection path).</summary>
         internal bool TrySampleDisplacementLatest(float worldX, float worldZ, out Vector2 dispXZ)
         {
+            StampReadbackDemand();
             dispXZ = Vector2.zero;
             if (!_heightReady || _heightCpu == null || _sampledSize <= 0f) return false;
             if (!TryFieldUV(_sampledCenter, _sampledSize, worldX, worldZ, out float u, out float v)) return false;
@@ -739,6 +750,8 @@ namespace AbstractOcclusion.WebGpuWater
             dispXZ = new Vector2(c.r, c.b);
             return true;
         }
+
+        void StampReadbackDemand() => _lastReadbackDemandFrame = Time.frameCount;
 
         // Derive the cascade layout from the authored peak wavelength, then integrate the spectrum over
         // that exact lattice for the gains that make Significant Height and Swell Height read in metres.

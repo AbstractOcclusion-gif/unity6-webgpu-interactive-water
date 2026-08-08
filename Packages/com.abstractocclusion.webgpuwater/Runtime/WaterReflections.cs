@@ -48,7 +48,12 @@ namespace AbstractOcclusion.WebGpuWater
             for (int i = 0; i < bodies.Count; i++)
             {
                 WaterVolume body = bodies[i];
-                if (body != null && body.WantsPlanar) _candidates.Add(body);
+                // The scheduler has already resolved this body's target-camera visibility before
+                // reflection policy is queried. A culled body has no visible surface that could
+                // sample a mirror, so it must neither consume the finite mirror budget nor keep
+                // a lower-priority visible body on the sky/SSR fallback.
+                if (body != null && body.WantsPlanar && body.IsVisibleToCamera)
+                    _candidates.Add(body);
             }
 
             if (_candidates.Count > MaxActivePlanarBodies)

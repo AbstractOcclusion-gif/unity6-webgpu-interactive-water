@@ -136,7 +136,10 @@ namespace AbstractOcclusion.WebGpuWater
         // degrades to SSR / sky.
         void RenderPlanarMirror(Camera cam)
         {
-            if (!EffectiveUsePlanar)
+            // A culled surface cannot contribute its planar texture to this camera. Retire the
+            // mirror immediately instead of recording a second scene render for a texture no
+            // visible water pixel can sample.
+            if (!EffectiveUsePlanar || !IsVisibleToCamera)
             {
                 RetirePlanarMirror();
                 return;

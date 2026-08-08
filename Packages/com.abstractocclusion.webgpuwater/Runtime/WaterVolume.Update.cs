@@ -69,7 +69,11 @@ namespace AbstractOcclusion.WebGpuWater
                 }
             }
 
-            Publisher.PublishSharedGlobals(); // sun, ambient, tiles (the wave clock is per body)
+            // Sun, ambient and exclusion data are scene-global. Publishing them from every body
+            // repeated the same native shader writes and made the result depend on body update
+            // order when scenes authored different light references. The primary is the package's
+            // established global authority for membership-less renderers and camera passes.
+            if (isPrimary) Publisher.PublishSharedGlobals();
             EnsureWaveBank();
             BedBaker.EnsureBaked();           // picks up useBedDepth being toggled on at runtime
             ShoreDepth.EnsureBaked(); // Layer A: keep the seabed field available for this body's property block
