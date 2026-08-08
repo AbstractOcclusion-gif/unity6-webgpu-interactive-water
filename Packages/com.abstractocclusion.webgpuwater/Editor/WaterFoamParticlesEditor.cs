@@ -178,6 +178,13 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "splash emitter at the same asset in one click.",
                     MessageType.Warning);
 
+            var profile = _profile.objectReferenceValue as WaterFoamProfile;
+            if (!densityMode && profile != null && profile.veil.drive)
+                EditorGUILayout.HelpBox(
+                    "Density Veil is enabled in the assigned Foam Profile, but this component is set to " +
+                    "Quads. The veil is inactive until Render Mode is changed to Screen-Space Density.",
+                    MessageType.Warning);
+
             DrawFoamProfileLink();
 
             if (!DeviceSupportsDensity())

@@ -18,7 +18,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         SerializedProperty _popDuration, _driftStrength, _driftDamping, _surfaceRideHeight;
         SerializedProperty _crownParticles, _crownMinStrength, _crownBaseSize, _crownLifetime,
             _crownLaunchHeight, _crownLaunchSpread;
-        SerializedProperty _crownTint, _crownOpacity, _cpuFallbackOpacity;
+        SerializedProperty _crownTint, _crownOpacity, _dropletOpacity;
         SerializedProperty _jetParticles, _entryStreaksEnabled, _entryStreakAmount, _entryStreakHeight,
             _entryStreakWidth, _entryStreakGravity, _entryStreakOpacity, _entryStreakMinStrength,
             _entryStreakLifetimeRange, _entryStreakSizeRange, _entryStreakTint;
@@ -54,7 +54,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             _crownLaunchSpread = serializedObject.FindProperty("crownLaunchSpread");
             _crownTint = serializedObject.FindProperty("crownTint");
             _crownOpacity = serializedObject.FindProperty("crownOpacity");
-            _cpuFallbackOpacity = serializedObject.FindProperty("cpuFallbackOpacity");
+            _dropletOpacity = serializedObject.FindProperty("dropletOpacity");
             _jetParticles = serializedObject.FindProperty("jetParticles");
             _entryStreaksEnabled = serializedObject.FindProperty("entryStreaksEnabled");
             _entryStreakAmount = serializedObject.FindProperty("entryStreakAmount");
@@ -143,8 +143,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 EditorGUILayout.PropertyField(_outwardSpread);
                 EditorGUILayout.PropertyField(_dropletSize);
                 EditorGUILayout.PropertyField(_lifetime);
-                EditorGUILayout.PropertyField(_cpuFallbackOpacity,
-                    new GUIContent("CPU Fallback Opacity"));
+                EditorGUILayout.PropertyField(_dropletOpacity,
+                    new GUIContent("Splash Droplet Opacity",
+                        "Opacity of impact droplets in both the GPU and CPU-fallback paths. " +
+                        "Ambient water spray has its own control in the Foam Profile."));
             }
         }
 

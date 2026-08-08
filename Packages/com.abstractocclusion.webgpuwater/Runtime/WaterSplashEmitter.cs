@@ -178,7 +178,11 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] internal Color crownTint = CrownStartColor;
         [Tooltip("Crown opacity multiplier on top of the tint's alpha.")]
         [Range(0f, 1f)] [SerializeField] internal float crownOpacity = 1f;
-        [Range(0f, 1f)] [SerializeField] internal float cpuFallbackOpacity = 1f;
+        [Tooltip("Opacity of impact droplets before the global Shared Look opacity is applied. " +
+                 "Controls both GPU-routed and CPU-fallback splash droplets; ambient sea spray is separate.")]
+        [Range(0f, 1f)]
+        [UnityEngine.Serialization.FormerlySerializedAs("cpuFallbackOpacity")]
+        [SerializeField] internal float dropletOpacity = 1f;
         [Tooltip("Optional stretched water-column layer emitted with the crown. Leave empty to disable.")]
         [SerializeField] internal ParticleSystem jetParticles;
         [Header("Entry streaks")]
@@ -391,7 +395,8 @@ namespace AbstractOcclusion.WebGpuWater
                 // Droplet life/size travel WITH the request: pump/splash bursts obey THIS
                 // component (or the profile's Splash section), not the ambient-mist ranges.
                 gpuSpray.QueueSplashBurst(surfacePos, strength, radius, count, upSpeed, outSpeed,
-                                          lifetime, dropletSize, petal, arcHalfRadians, elevationRadians);
+                                          lifetime, dropletSize, petal, arcHalfRadians, elevationRadians,
+                                          dropletOpacity);
                 if (allowCrown) EmitCrown(surfacePos, strength, radius);
                 return;
             }
@@ -419,12 +424,33 @@ namespace AbstractOcclusion.WebGpuWater
                 // near-opaque on a hard slam. colorOverLifetime multiplies on top.
                 Color dropletColor = DriftStartColor;
                 dropletColor.a *= (AlphaStrengthFloor + AlphaStrengthGain * strength)
-                                  * EffectiveOpacity(cpuFallbackOpacity);
+                                  * EffectiveOpacity(dropletOpacity);
                 ep.startColor = dropletColor;
                 particles.Emit(ep, 1);
             }
 
             if (allowCrown) EmitCrown(surfacePos, strength, radius);
+        }
+
+        /// <summary>
+        /// Whether an allowed accent emit at this strength can produce a crown cloud or entry streaks.
+        /// The pump asks after <see cref="EmitSplash"/> has applied any linked profile, so its continuous
+        /// run only consumes the one-shot accent once something visible was actually eligible to emit.
+        /// </summary>
+        internal bool HasImpactAccentAt(float strength)
+        {
+            float clampedStrength = Mathf.Clamp01(strength);
+            bool crownEligible = IsCrownEligibleAt(clampedStrength);
+            bool jetsEligible = jetParticles != null && entryStreaksEnabled
+                             && entryStreakAmount > 0f && clampedStrength >= entryStreakMinStrength;
+            return crownEligible || jetsEligible;
+        }
+
+        internal bool HasCrownParticles => crownParticles != null;
+
+        internal bool IsCrownEligibleAt(float strength)
+        {
+            return crownParticles != null && Mathf.Clamp01(strength) >= crownMinStrength;
         }
 
         // A caller's direction flattened to horizontal and normalised, or ZERO when there isn't one.

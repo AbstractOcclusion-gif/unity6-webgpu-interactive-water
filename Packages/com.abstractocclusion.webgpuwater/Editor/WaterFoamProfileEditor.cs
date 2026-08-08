@@ -109,7 +109,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             _ambientExpanded = WaterEditorUI.SectionWithToggle("Ambient Source & Foam Ranges", _ambientExpanded,
                 ambient.FindPropertyRelative(DriveField), () => DrawAmbientSection(ambient));
             _veilExpanded = WaterEditorUI.SectionWithToggle("Density Veil", _veilExpanded,
-                veil.FindPropertyRelative(DriveField), () => DrawSectionFields(veil));
+                veil.FindPropertyRelative(DriveField), () => DrawVeilSection(veil));
             _splashExpanded = WaterEditorUI.SectionWithToggle("Splash & Pump Bursts", _splashExpanded,
                 splash.FindPropertyRelative(DriveField), () => DrawSectionFields(splash));
             _bubbleExpanded = WaterEditorUI.SectionWithToggle("Bubbles", _bubbleExpanded,
@@ -142,6 +142,16 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             DrawGroup(ambient, RippleCrestFleckFields, drawn);
 
             DrawRemainingFields(ambient, drawn);
+        }
+
+        static void DrawVeilSection(SerializedProperty veil)
+        {
+            if (veil.FindPropertyRelative(DriveField).boolValue)
+                EditorGUILayout.HelpBox(
+                    "Density Veil only renders on Water Foam Particles set to Screen-Space Density. " +
+                    "Bodies using Quads ignore these settings and render their foam sprites instead.",
+                    MessageType.Warning);
+            DrawSectionFields(veil);
         }
 
         static void DrawGroup(SerializedProperty section,

@@ -326,6 +326,14 @@ float3 SampleEnvironment(float3 worldRay)
     return SampleEnvironmentGrad(worldRay, ddx(worldRay), ddy(worldRay));
 }
 
+// Horizon haze is atmospheric transmission, not a water reflection. It must not inherit the
+// artist's reflection brightness or the synthetic sun-glint term, or dense haze turns into a
+// view-direction-dependent bright/dark band whenever those reflection controls are adjusted.
+float3 SampleRawSkyEnvironment(float3 worldRay)
+{
+    return texCUBEgrad(_Sky, worldRay, ddx(worldRay), ddy(worldRay)).rgb;
+}
+
 // Sky environment at a roughness-selected mip: a rough surface reflects a BLURRED
 // sky. Explicit LOD, so it is WGSL-safe in any control flow; if the bound cube has
 // no mips the lod clamps to 0 and this degrades to the old sharp mirror.

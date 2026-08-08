@@ -724,7 +724,7 @@ MonoBehaviour:
   crownLaunchSpread: 1
   crownTint: {r: 0.95, g: 0.98, b: 1, a: 1}
   crownOpacity: 1
-  cpuFallbackOpacity: 1
+  dropletOpacity: 1
   jetParticles: {fileID: 914295529}
   entryStreaksEnabled: 1
   entryStreakAmount: 1
@@ -883,6 +883,14 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 0}
     m_Modifications:
+    - target: {fileID: 39380900867808791, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: emitter
+      value: 
+      objectReference: {fileID: 403365479}
+    - target: {fileID: 39380900867808791, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: minImpactSpeed
+      value: 0.1
+      objectReference: {fileID: 0}
     - target: {fileID: 2289032453173115939, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: radius
       value: 0.5
@@ -1007,9 +1015,101 @@ PrefabInstance:
       propertyPath: m_Layer
       value: 4
       objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: emitter
+      value: 
+      objectReference: {fileID: 403365479}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: horizontalPlowWeight
+      value: 0.25
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: continuousAmountScale
+      value: 0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: continuousRatePerSecond
+      value: 20
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: continuousPlowMultiplier
+      value: 1.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: probes.Array.data[2].mode
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: continuousCrownRatePerSecond
+      value: 4
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: probes.Array.data[1].emission
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: probes.Array.data[2].emission
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: continuousCrownTriggerStrength
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: probes.Array.data[0].waterMotion
+      value: 2
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: probes.Array.data[1].amountBoost
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: probes.Array.data[1].waterMotion
+      value: 2
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: probes.Array.data[2].amountBoost
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: probes.Array.data[2].waterMotion
+      value: 2
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: probes.Array.data[3].amountBoost
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: probes.Array.data[3].waterMotion
+      value: 2
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: probes.Array.data[4].amountBoost
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: probes.Array.data[4].waterMotion
+      value: 2
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: probes.Array.data[1].ignoreSurfaceBand
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: probes.Array.data[2].ignoreSurfaceBand
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: probes.Array.data[3].ignoreSurfaceBand
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: probes.Array.data[4].ignoreSurfaceBand
+      value: 1
+      objectReference: {fileID: 0}
     - target: {fileID: 9087477482550035349, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: enginePower
-      value: 9
+      value: 20
       objectReference: {fileID: 0}
     m_RemovedComponents:
     - {fileID: 281386409395102035, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
@@ -16088,7 +16188,7 @@ MonoBehaviour:
   sky: {fileID: 8900000, guid: 85bd64faed533b54a88c144de0f680b6, type: 3}
   foamPatternTexture: {fileID: 2800000, guid: 0df415d28a3d4b4449f218789bea2891, type: 3}
   foamPatternGrid: {x: 4, y: 4}
-  foamPatternFps: 10
+  foamPatternFps: 15
   foamReliefStrength: 1
   oceanWhitecapTexture: {fileID: 2800000, guid: 1ee279c16b027ad48a8eb248749ff66c, type: 3}
   oceanWhitecapGrid: {x: 1, y: 1}
@@ -16124,10 +16224,10 @@ MonoBehaviour:
   _legacyWaveNormalStrength: 1
   foamSettings:
     foam: 1
-    foamGenRate: 1.6
-    foamDecay: 0.824
+    foamGenRate: 0.96
+    foamDecay: 0.87
     foamDecayResidual: 0.9053
-    foamDecayRate: 0.66
+    foamDecayRate: 1.24
     wetnessMemory: 0
     wetnessDryTime: 3
     foamSpread: 0.053
@@ -16136,18 +16236,18 @@ MonoBehaviour:
     foamAdvect: 2
     foamFromSpeed: 18.7
     foamFromCurvature: 62.1
-    foamDeposit: 0.283
+    foamDeposit: 0.787
     foamBreakStrength: 0.265
     foamBreakRange: 2.12
     foamCrestBias: 0.069
     foamHeadroom: 1
-    foamWakeStrength: 1.32
+    foamWakeStrength: 0.47
     foamWakeRadiusScale: 2.99
     foamColor: {r: 1, g: 1, b: 1, a: 1}
-    foamPatternSize: 8
-    foamStrength: 0.85
-    foamFeather: 0.489
-    foamCoreCut: 0.837
+    foamPatternSize: 4
+    foamStrength: 1.06
+    foamFeather: 0.066
+    foamCoreCut: 0.746
     foamBorderWidth: 0
     foamContactDepth: 0.06
   objectInteractionSettings:
@@ -16285,7 +16385,7 @@ MonoBehaviour:
     farTileDistance: 200
     scrollSpeed: 0.5
     farScrollSpeed: 0.5
-    hexTiling: 0
+    hexTiling: 1
     windResponse: 1
     crestBoost: 0.5
     distanceBoost: 0.35

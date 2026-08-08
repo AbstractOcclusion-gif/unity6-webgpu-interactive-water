@@ -113,7 +113,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             // Corner expansion + flipbook cell come from WaterParticleCommon.hlsl (shared
             // with the other particle draw shaders).
 
-            // MUST match FoamParticle in WaterFoamParticles.compute (48 bytes).
+            // MUST match FoamParticle in WaterFoamParticles.compute (52 bytes).
             struct FoamParticle
             {
                 float3 worldPos;
@@ -124,6 +124,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 float  seed;
                 float  kind;
                 float  strength;
+                float  opacity;
             };
             StructuredBuffer<FoamParticle> _Particles;
             // A crest-only companion buffer retains a short motion history without changing the
@@ -514,7 +515,8 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                                    + axisY * (corner.y * sizeWorld);
 
                 // ---- life envelope ----
-                float envelope = FoamParticleEnvelope(particle.age, particle.life) * particle.strength;
+                float envelope = FoamParticleEnvelope(particle.age, particle.life)
+                               * particle.strength * particle.opacity;
                 if (bubbleClampedToSurface)
                 {
                     // Only the transmitted share reaches an above-water camera; at grazing angles

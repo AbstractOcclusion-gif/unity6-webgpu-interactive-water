@@ -45,6 +45,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const int MaxListedSilentProbes = 12;
         // Share of probes out of band that stops being noise and starts being the explanation.
         const float BandTroubleFraction = 0.5f;
+        const string SignalReadoutFormat = "water {0:0.###}, boat {1:0.###}, selected {2:0.###}";
 
         static readonly Color BoatColor = new Color(0.4f, 0.8f, 1.0f);
         static readonly Color RockColor = new Color(1.0f, 0.75f, 0.35f);
@@ -99,6 +100,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             EditorGUILayout.LabelField("Burst diagnostics", EditorStyles.boldLabel);
 
             DrawProbeFiringReadout(pump);
+            DrawSignalReadout(pump);
+            DrawCrownReadout(pump);
             DrawPoolBudgetReadout(pump);
         }
 
@@ -153,6 +156,46 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             if (firing == counts.Length) return;
             EditorGUILayout.LabelField("Silent probes", DescribeSilentProbes(counts));
+        }
+
+        static void DrawSignalReadout(WaterSprayPump pump)
+        {
+            float[] waterSignals = pump.ProbeWaterSignals;
+            float[] boatSignals = pump.ProbeBoatSignals;
+            float[] triggerSignals = pump.ProbeTriggerSignals;
+            if (waterSignals == null || boatSignals == null || triggerSignals == null) return;
+
+            float waterPeak = 0f;
+            float boatPeak = 0f;
+            float triggerPeak = 0f;
+            int count = Mathf.Min(waterSignals.Length, Mathf.Min(boatSignals.Length, triggerSignals.Length));
+            for (int index = 0; index < count; index++)
+            {
+                waterPeak = Mathf.Max(waterPeak, waterSignals[index]);
+                boatPeak = Mathf.Max(boatPeak, boatSignals[index]);
+                triggerPeak = Mathf.Max(triggerPeak, triggerSignals[index]);
+            }
+
+            EditorGUILayout.LabelField("Peak trigger signal",
+                string.Format(SignalReadoutFormat, waterPeak, boatPeak, triggerPeak));
+        }
+
+        static void DrawCrownReadout(WaterSprayPump pump)
+        {
+            SprayCrownGate[] crownGates = pump.ProbeCrownGates;
+            if (crownGates == null || crownGates.Length == 0) return;
+
+            var tally = new int[System.Enum.GetValues(typeof(SprayCrownGate)).Length];
+            for (int index = 0; index < crownGates.Length; index++) tally[(int)crownGates[index]]++;
+
+            var line = new System.Text.StringBuilder();
+            for (int index = 0; index < tally.Length; index++)
+            {
+                if (tally[index] == 0) continue;
+                if (line.Length > 0) line.Append(",  ");
+                line.Append($"{(SprayCrownGate)index} {tally[index]}");
+            }
+            EditorGUILayout.LabelField("Last crown event", line.ToString());
         }
 
         // This frame's rejection reasons, counted. Every gate looks the same on screen - no spray - so

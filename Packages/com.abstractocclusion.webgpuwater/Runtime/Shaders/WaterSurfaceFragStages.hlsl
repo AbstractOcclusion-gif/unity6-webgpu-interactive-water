@@ -1418,13 +1418,19 @@ float HorizonSkyWeight(float2 uv)
 }
 
 // The horizontal direction a view ray looks along - "where is the sky at the horizon on this
-// bearing" - unit length by construction. Every haze path needs it, and every one of them used to be
-// handed incomingRay instead, which points camera->surface: from a camera above the water that aims
-// steeply DOWN, so the environment cube was read well BELOW the horizon.
+// bearing". Every haze path needs it, and every one of them used to be handed incomingRay instead,
+// which points camera->surface: from a camera above the water that aims steeply DOWN, so the
+// environment cube was read well BELOW the horizon. Near vertical, there is no meaningful bearing;
+// return a finite placeholder and let the confidence path below fade it out.
 #define HORIZON_AZIMUTH_MIN 1e-4   // below this the view ray is straight down; there is no azimuth
+#define HORIZON_FALLBACK_DIRECTION float3(0.0, 0.0, 1.0)
 float3 HorizonDirection(float3 viewRay)
 {
-    return float3(viewRay.x, 0.0, viewRay.z) / max(length(viewRay.xz), HORIZON_AZIMUTH_MIN);
+    float azimuthLength = length(viewRay.xz);
+    float3 normalizedAzimuth = float3(viewRay.x, 0.0, viewRay.z)
+                            / max(azimuthLength, HORIZON_AZIMUTH_MIN);
+    float azimuthValidity = smoothstep(0.0, HORIZON_AZIMUTH_MIN, azimuthLength);
+    return normalize(lerp(HORIZON_FALLBACK_DIRECTION, normalizedAzimuth, azimuthValidity));
 }
 
 // One horizon-sky colour sample: a horizontal 5-tap blur of the opaque texture, each tap weighted by
@@ -1576,8 +1582,9 @@ float3 FinalCompositeStage(v2f i, WaterGeomStage g, float3 outColor,
             // Every reason to keep the per-azimuth sample, as a PRODUCT of smooth terms - all three
             // must hold. The hard "if (... ) toCentre = 1.0" this replaces was a binary flip with no
             // blend: the same step-instead-of-blend shape that caused the god-ray and waterline pops.
+            float azimuthConfidence = smoothstep(HORIZON_AZIMUTH_MIN, HORIZON_AZIMUTH_FADE, azimuthLen);
             float keepPerAzimuth =
-                  smoothstep(HORIZON_AZIMUTH_MIN, HORIZON_AZIMUTH_FADE, azimuthLen)
+                  azimuthConfidence
                 * smoothstep(HORIZON_FORWARD_MIN, HORIZON_FORWARD_FADE, horizonClip.w)
                 * smoothstep(0.0, HORIZON_EDGE_BLEND, edgeMinY);
             float toCentre = 1.0 - keepPerAzimuth;
@@ -1620,8 +1627,9 @@ float3 FinalCompositeStage(v2f i, WaterGeomStage g, float3 outColor,
             // skybox's underside. Last resort, and WEIGHTED: the cube does not match the rendered
             // skybox exactly, and a hard switch between the two prints a visible band (tried
             // 2026-07-22, rejected - see the horizon-haze notes).
-            float skyConfidence = lerp(perAzimuthSky, centreSky, useCentre) * horizonRowOnScreen;
-            skyAtHorizon = lerp(SampleEnvironment(horizonDir), opaqueSky, skyConfidence);
+            float skyConfidence = lerp(perAzimuthSky, centreSky, useCentre)
+                                * horizonRowOnScreen * azimuthConfidence;
+            skyAtHorizon = lerp(SampleRawSkyEnvironment(horizonDir), opaqueSky, skyConfidence);
         }
         else
         {
@@ -1629,7 +1637,7 @@ float3 FinalCompositeStage(v2f i, WaterGeomStage g, float3 outColor,
             // (uniform gate, implicit derivatives allowed here). Along the HORIZON direction, not
             // the view ray: the view ray points down at the water, so the cube would be read well
             // below the horizon.
-            skyAtHorizon = SampleEnvironment(horizonDir);
+            skyAtHorizon = SampleRawSkyEnvironment(horizonDir);
         }
         // _HorizonHazeColor stays an optional bias: alpha 0 (default) = pure auto-match;
         // raise alpha to pull the haze toward a fixed atmosphere colour.

@@ -120,8 +120,11 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("Crown flipbook tint, applied per emit as the particle start color.")]
             public Color crownTint = new Color(0.95f, 0.98f, 1f, 1f);
             [Range(0f, 1f)] public float crownOpacity = 1f;
-            [Tooltip("Opacity of CPU fallback droplets before the global Shared Look opacity is applied.")]
-            [Range(0f, 1f)] public float cpuFallbackOpacity = 1f;
+            [Tooltip("Opacity of impact droplets before the global Shared Look opacity is applied. " +
+                     "Controls both GPU-routed and CPU-fallback splash droplets; ambient sea spray is separate.")]
+            [Range(0f, 1f)]
+            [UnityEngine.Serialization.FormerlySerializedAs("cpuFallbackOpacity")]
+            public float dropletOpacity = 1f;
             [Header("Entry streaks")]
             [Tooltip("Enable the narrow entry streaks emitted before the crown cloud.")]
             public bool entryStreaksEnabled = true;
@@ -229,7 +232,7 @@ namespace AbstractOcclusion.WebGpuWater
             emitter.crownLaunchSpread = splash.crownLaunchSpread;
             emitter.crownTint = splash.crownTint;
             emitter.crownOpacity = splash.crownOpacity;
-            emitter.cpuFallbackOpacity = splash.cpuFallbackOpacity;
+            emitter.dropletOpacity = splash.dropletOpacity;
             emitter.entryStreaksEnabled = splash.entryStreaksEnabled;
             emitter.entryStreakAmount = splash.entryStreakAmount;
             emitter.entryStreakHeight = splash.entryStreakHeight;

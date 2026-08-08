@@ -43,7 +43,7 @@ namespace AbstractOcclusion.WebGpuWater
         const int CompositeVertexCount = 3;         // one fullscreen triangle
 
         // ---- CPU-event splash bursts (spray unification). MUST match BurstRequest in
-        // WaterFoamParticles.compute (64 bytes) and MAX_BURST_DROPLETS there. ----
+        // WaterFoamParticles.compute (68 bytes) and MAX_BURST_DROPLETS there. ----
         // Internal so authoring tools QUOTE these caps instead of carrying copies of the numbers.
         // Per-frame GPU upload cap. Overflow CARRIES OVER to later frames (FIFO) instead of being
         // dropped: a hull outline wants 20-40 probes firing together, and the old drop always ate
@@ -69,9 +69,11 @@ namespace AbstractOcclusion.WebGpuWater
             // zero, flows here as zero, and hits the kernel's untouched r0 * 2pi line.
             public float dirX, dirZ, arcHalfRadians;
             // Lifts (or flattens) the whole burst in its own vertical plane; ZERO is untouched.
-            // Independent of the arc - a full-ring burst tilts just as happily as a petal - and it
-            // rounds the request to a clean 64 bytes.
+            // Independent of the arc - a full-ring burst tilts just as happily as a petal.
             public float elevationRadians;
+            // Per-impact visual control. Kept in the request rather than on the body-wide pool so
+            // a boat splash can fade without muting ambient whitecap spray.
+            public float dropletOpacity;
         }
         static readonly int BurstStride = Marshal.SizeOf<BurstRequest>();
 
@@ -135,14 +137,14 @@ namespace AbstractOcclusion.WebGpuWater
         // per-frame GPU random seed from the plain frame counter.
         const uint FrameSeedHashPrime = 2654435761u;
 
-        // One particle = 12 floats. MUST match FoamParticle in the compute + shader - and that is now
+        // One particle = 13 floats. MUST match FoamParticle in the compute + shader - and that is now
         // machine-checked, see WaterWaveConstantsValidator's FoamParticle layout check.
         [StructLayout(LayoutKind.Sequential)]
         struct FoamParticle
         {
             public Vector3 worldPos;
             public Vector3 velocity;
-            public float age, life, size, seed, kind, strength;
+            public float age, life, size, seed, kind, strength, opacity;
         }
 
         /// <summary>Bytes per GPU particle. The ONE derived source for every consumer's buffer stride.</summary>
@@ -251,6 +253,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_DensityCamPos = Shader.PropertyToID("_DensityCamPos");
         static readonly int ID_DensityCamForward = Shader.PropertyToID("_DensityCamForward");
         static readonly int ID_SizeHeroPower = Shader.PropertyToID("_SizeHeroPower");
+        static readonly int ID_DensityStampTex = Shader.PropertyToID("_DensityStampTex");
+        static readonly int ID_DensityStampGrid = Shader.PropertyToID("_DensityStampGrid");
         static readonly int ID_BurstRequests = Shader.PropertyToID("BurstRequests");
         static readonly int ID_BurstRequestCount = Shader.PropertyToID("_BurstRequestCount");
         static readonly int ID_FoamTime = Shader.PropertyToID("_FoamTime");
@@ -846,6 +850,10 @@ namespace AbstractOcclusion.WebGpuWater
             cs.SetBuffer(_kRasterizeDensity, ID_DensityDepth, _densityDepth);
             cs.SetBuffer(_kRasterizeDensity, ID_DensityBufferTier1, _densityTier1);
             cs.SetBuffer(_kRasterizeDensity, ID_DensityBufferTier2, _densityTier2);
+            cs.SetTexture(_kRasterizeDensity, ID_DensityStampTex, ResolveDensityStampTexture());
+            Vector2Int densityStampGrid = ResolveDensityStampGrid();
+            cs.SetVector(ID_DensityStampGrid,
+                         new Vector4(densityStampGrid.x, densityStampGrid.y, 0f, 0f));
             // The 2D sim is read on BOTH paths now: the ocean glue adds the interactive ripple
             // (the wake) on top of the swell, exactly as the surface mesh does, so leaving Sim
             // unbound on oceans would be the unbound-resource error this bind pattern exists to
@@ -874,7 +882,7 @@ namespace AbstractOcclusion.WebGpuWater
                                      int dropletCount, float upSpeed, float outSpeed,
                                      Vector2 dropletLifeRange, float dropletSize,
                                      Vector2 petalDirection = default, float arcHalfRadians = Mathf.PI,
-                                     float elevationRadians = 0f)
+                                     float elevationRadians = 0f, float dropletOpacity = 1f)
         {
 #if UNITY_EDITOR
             BeginBurstFrame();
@@ -917,7 +925,8 @@ namespace AbstractOcclusion.WebGpuWater
                 dirX = petalDirection.x,
                 dirZ = petalDirection.y,
                 arcHalfRadians = Mathf.Max(0f, arcHalfRadians),
-                elevationRadians = elevationRadians
+                elevationRadians = elevationRadians,
+                dropletOpacity = Mathf.Clamp01(dropletOpacity)
             });
             // Keep the sim/draw alive (even with ambient foam OFF) until everything this burst
             // made has fully lived: the longer of airborne-droplet or bubble-plume life, plus
@@ -1144,6 +1153,25 @@ namespace AbstractOcclusion.WebGpuWater
             _densityMpb.SetVector(ID_DensityCamForward, densityCamTransform.forward);
             // Veil values from the master profile ride over the material (assets stay clean).
             if (profile != null) profile.WriteVeil(_densityMpb);
+        }
+
+        Texture ResolveDensityStampTexture()
+        {
+            if (profile != null && profile.look.drive && profile.look.particleAtlas != null)
+                return profile.look.particleAtlas;
+
+            Texture texture = particleMaterial != null
+                ? particleMaterial.GetTexture(WaterShaderProps.ParticleTex)
+                : null;
+            return texture != null ? texture : Texture2D.whiteTexture;
+        }
+
+        Vector2Int ResolveDensityStampGrid()
+        {
+            Vector2Int grid = profile != null && profile.look.drive
+                ? profile.look.flipbookGrid
+                : flipbookGrid;
+            return new Vector2Int(Mathf.Max(1, grid.x), Mathf.Max(1, grid.y));
         }
     }
 }

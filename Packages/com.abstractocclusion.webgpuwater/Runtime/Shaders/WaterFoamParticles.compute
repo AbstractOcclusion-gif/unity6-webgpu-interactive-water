@@ -132,7 +132,7 @@ static const float SPAWN_LOD_KEEP_ALIVE = 0.02;
 // where the gradient is one visible shape instead of scattered sprites.
 static const float SPAWN_LOD_PLATEAU = 0.6;
 
-// One particle = 48 bytes. MUST match FoamParticle in FoamParticles.shader and
+// One particle = 52 bytes. MUST match FoamParticle in FoamParticles.shader and
 // the stride in WaterFoamParticles.cs.
 struct FoamParticle
 {
@@ -144,6 +144,7 @@ struct FoamParticle
     float  seed;     // 0..1, fixed per particle (sprite variant, yaw, jitter)
     float  kind;     // KIND_SURFACE or KIND_SPRAY
     float  strength; // foam amount at spawn, scales opacity
+    float  opacity;  // per-particle visual opacity; impact bursts can differ from ambient spray
 };
 
 RWStructuredBuffer<FoamParticle> Particles;
@@ -218,6 +219,8 @@ uint2    _DensitySize;       // density buffer dimensions (a fraction of the cam
 float4x4 _DensityViewProj;   // camera GPU view-projection (same matrix family the render uses)
 float    _DensityProj11;     // projection [1][1]: vertical focal term for projected-size estimates
 float    _DensityWeightScale;// fixed-point units per 1.0 of foam weight
+Texture2D<float4> _DensityStampTex;
+float2 _DensityStampGrid;
 
 // Spawn quality (KWS trio)
 float2 _SpawnCameraXZ;       // camera ground position for the stochastic distance LOD
@@ -346,7 +349,7 @@ static const float CREST_FLECK_CLUMP_SLOW_SPEED = 0.5;
 // queue burst requests on the CPU; the SpawnBurst kernel throws KIND_SPRAY droplets from
 // the same pool, so ALL airborne droplets share one tech path + one look (the Shuriken
 // system keeps only the one-shot crown flipbook). MUST match BurstRequest in
-// WaterFoamParticles.cs (64 bytes) and MAX_BURST_DROPLETS <= the kernel thread count. ----
+// WaterFoamParticles.cs (68 bytes) and MAX_BURST_DROPLETS <= the kernel thread count. ----
 struct BurstRequest
 {
     float3 center;   // world surface position of the impact
@@ -369,6 +372,7 @@ struct BurstRequest
     // Lifts (or flattens) the whole burst in its own vertical plane. ZERO is the untouched original.
     // Independent of the arc: a full-ring burst tilts just as happily as a petal.
     float  elevationRadians;
+    float  dropletOpacity;
 };
 StructuredBuffer<BurstRequest> BurstRequests;
 uint _BurstRequestCount;
@@ -857,6 +861,7 @@ bool TrySpawnRippleCrestFlecks(int2 texel, float3 texelWorld, float crestStrengt
         particle.seed = r1;
         particle.kind = KIND_RIPPLE_CREST;
         particle.strength = crestStrength;
+        particle.opacity = 1.0;
         Particles[slot] = particle;
         CrestFleckPreviousPositions[slot] = particle.worldPos;
         spawned = true;
@@ -984,6 +989,7 @@ void Spawn(uint3 id : SV_DispatchThreadID)
     particle.seed = r2;
     particle.kind = spray ? KIND_SPRAY : KIND_SURFACE;
     particle.strength = saturate(foam);
+    particle.opacity = 1.0;
     Particles[slot] = particle;
 }
 
@@ -1071,6 +1077,7 @@ void SpawnBurst(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID)
     particle.seed = r0;
     particle.kind = KIND_SPRAY;
     particle.strength = saturate(burst.strength);
+    particle.opacity = saturate(burst.dropletOpacity);
     Particles[slot] = particle;
 
     // ---- Bubble plume (KIND_BUBBLE): the same impact that throws droplets UP drives air
@@ -1096,6 +1103,7 @@ void SpawnBurst(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID)
     bubble.seed = r2;
     bubble.kind = KIND_BUBBLE;
     bubble.strength = saturate(burst.strength);
+    bubble.opacity = 1.0;
     Particles[bubbleSlot] = bubble;
 }
 
@@ -1113,6 +1121,7 @@ void DepositFrom(inout FoamParticle particle, uint slot)
                          Rand01(depositKey, _FrameSeed));
     particle.size = lerp(_DepositSizeMin, _DepositSizeMax,
                          Rand01(depositKey, _FrameSeed ^ 0x9E3779B9u));
+    particle.opacity = 1.0;
 }
 
 // One thread per pool slot: integrate, convert landed spray (or a surfaced bubble) to
@@ -1393,19 +1402,37 @@ void RasterizeDensity(uint3 id : SV_DispatchThreadID)
         return;
     }
 
-    // Floating foam keeps the disc splat - its job is a connected tier-0 veil.
+    // Preserve the actual foam silhouette while accumulating: the old filled-disc stamp
+    // discarded atlas alpha, so density foam could only ever read as round blobs. The stamp
+    // is screen-aligned like the billboard it replaces and selects a stable atlas cell from
+    // the particle seed, matching the quad path's per-particle variation.
     int radius = clamp((int)radiusPx, 1, SPLAT_RADIUS_MAX);
-    int radiusSq = radius * radius;
+    int stampDiameter = radius * 2 + 1;
+    uint stampWidth, stampHeight;
+    _DensityStampTex.GetDimensions(stampWidth, stampHeight);
+    int columns = max((int)_DensityStampGrid.x, 1);
+    int rows = max((int)_DensityStampGrid.y, 1);
+    int cellCount = columns * rows;
+    int cell = min((int)(particle.seed * cellCount), cellCount - 1);
+    int2 cellOrigin = int2(cell % columns, cell / columns);
 
     int2 centre = (int2)(uv * (float2)_DensitySize);
     for (int dy = -radius; dy <= radius; dy++)
         for (int dx = -radius; dx <= radius; dx++)
         {
-            if (dx * dx + dy * dy > radiusSq) continue;
             int2 p = centre + int2(dx, dy);
             if (any(p < 0) || p.x >= (int)_DensitySize.x || p.y >= (int)_DensitySize.y) continue;
+
+            float2 localUv = (float2(dx, dy) + radius + 0.5) / stampDiameter;
+            float2 atlasUv = (float2(cellOrigin) + localUv) / float2(columns, rows);
+            uint2 stampPixel = min((uint2)(atlasUv * float2(stampWidth, stampHeight)),
+                                   uint2(stampWidth - 1u, stampHeight - 1u));
+            float stampAlpha = _DensityStampTex.Load(int3(stampPixel, 0)).a;
+            uint stampWeight = (uint)(fixedWeight * saturate(stampAlpha));
+            if (stampWeight == 0u) continue;
+
             uint index = (uint)p.y * _DensitySize.x + (uint)p.x;
-            InterlockedAdd(DensityBuffer[index], fixedWeight);
+            InterlockedAdd(DensityBuffer[index], stampWeight);
             InterlockedMin(DensityDepth[index], depthMm);
         }
 }

@@ -43,6 +43,14 @@ namespace AbstractOcclusion.WebGpuWater
         Continuous, // steady stream while the trigger holds, rate scaling with the trigger speed
     }
 
+    /// <summary>Which vertical movement of the water can drive a Rock or Both probe.</summary>
+    public enum WaterSprayWaterMotion
+    {
+        Rising,  // default: a wave climbing into the probe
+        Falling, // water receding away from the probe
+        Both,    // either direction of water motion
+    }
+
     /// <summary>Why a probe did or did not spray on a given frame.</summary>
     /// <remarks>Every one of these reads as the same thing on screen - no spray - so they are named and
     /// counted rather than inferred. Returned unconditionally (an enum return costs nothing over void)
@@ -59,6 +67,18 @@ namespace AbstractOcclusion.WebGpuWater
         BelowMinSpeed,
     }
 
+    /// <summary>Why a probe did or did not ask its emitter for a crown on its latest emit.</summary>
+    internal enum SprayCrownGate
+    {
+        NotTriggered,
+        NoEmitter,
+        NoCrownParticles,
+        BelowCrownStrength,
+        BelowContinuousCrownTrigger,
+        WaitingForContinuousCrownCadence,
+        Requested,
+    }
+
     [DisallowMultipleComponent]
     public class WaterSprayPump : MonoBehaviour
     {
@@ -69,6 +89,9 @@ namespace AbstractOcclusion.WebGpuWater
         const float DefaultEmitCooldownSeconds = 0.06f;
         const float DefaultSprayRadius = 0.25f;
         const float DefaultPlowWeight = 0.5f;
+        const float DefaultContinuousPlowMultiplier = 2f;
+        const float DefaultContinuousCrownTriggerStrength = 0.75f;
+        const float DefaultContinuousCrownRate = 0.75f;
         // Continuous emission defaults + shaping. The rate floor keeps a just-triggered probe
         // audible instead of one emit every few seconds; the accumulator cap stops a hitched
         // frame from banking a machine-gun volley.
@@ -123,9 +146,14 @@ namespace AbstractOcclusion.WebGpuWater
 
             [Tooltip("Burst = discrete splashes paced by the emit cooldown (impacts, wave slams). " +
                      "Continuous = a steady stream while the trigger holds, its rate scaling with " +
-                     "speed - a planing bow sheet, a rock in a standing bore. The crown flipbook " +
-                     "plays only on the FIRST emit of each continuous run.")]
+                     "speed - a planing bow sheet, a rock in a standing bore. The crown/jet accent " +
+                     "plays only on the first continuous emit strong enough to produce it.")]
             public WaterSprayEmission emission;
+
+            [Tooltip("Which vertical water movement can trigger the water-driven part of Rock or Both: " +
+                     "Rising = a wave climbing into the probe, Falling = receding water, Both = either. " +
+                     "Boat probes use their own descent and plow signal regardless of this setting.")]
+            public WaterSprayWaterMotion waterMotion;
 
             [Tooltip("Emit even while this probe sits outside Surface Band - for probes that ride " +
                      "above the waterline (spray rails, a planing bow lifting out) or plunge deep. " +
@@ -166,6 +194,10 @@ namespace AbstractOcclusion.WebGpuWater
                  "trigger, so a hull gliding fast across calm water sprays with no vertical motion. 0 = off.")]
         [Min(0f)] [SerializeField] float horizontalPlowWeight = DefaultPlowWeight;
 
+        [Tooltip("Extra horizontal-plow response for Continuous Boat/Both probes. Keeps a planing bow " +
+                 "spraying at practical boat speeds without making one-shot impact bursts too sensitive.")]
+        [Min(0f)] [SerializeField] float continuousPlowMultiplier = DefaultContinuousPlowMultiplier;
+
         [Tooltip("Minimum seconds between two bursts from ONE probe, so a sustained impact doesn't emit every frame.")]
         [Min(0f)] [SerializeField] float emitCooldownSeconds = DefaultEmitCooldownSeconds;
 
@@ -181,6 +213,12 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("Droplet-count scale of EACH continuous emit (multiplies the probe's own Amount " +
                  "Boost). Small values at a steady rate spread a burst's volume through time.")]
         [Range(0.05f, 1f)] [SerializeField] float continuousAmountScale = DefaultContinuousAmountScale;
+        [Tooltip("Normalized trigger strength required before a Continuous probe starts its Crown/jet accents. " +
+                 "Droplet spray starts below this as usual. 1 waits for full trigger strength.")]
+        [Range(0f, 1f)] [SerializeField] float continuousCrownTriggerStrength = DefaultContinuousCrownTriggerStrength;
+        [Tooltip("Crown/jet accents per second from EACH Continuous probe once it reaches Crown Trigger Strength. " +
+                 "This is paced independently from the droplet stream, keeping a boat wake alive without a crown per droplet emit.")]
+        [Range(0.1f, 10f)] [SerializeField] float continuousCrownRatePerSecond = DefaultContinuousCrownRate;
 
         [Header("Petals")]
         [Tooltip("Width of each burst's wedge. 360 is the full ring every splash threw before hull " +
@@ -233,6 +271,10 @@ namespace AbstractOcclusion.WebGpuWater
 
         SprayProbeGate[] _probeGates;
         float[] _probeBandDistances;
+        float[] _probeWaterSignals;
+        float[] _probeBoatSignals;
+        float[] _probeTriggerSignals;
+        SprayCrownGate[] _probeCrownGates;
 
         /// <summary>What stopped each probe on the most recent frame (or that it fired).</summary>
         internal SprayProbeGate[] ProbeGates => _probeGates;
@@ -241,6 +283,18 @@ namespace AbstractOcclusion.WebGpuWater
         /// Surface Band: a hull whose probes all read further than the band is not a trigger problem, it
         /// is a band that is too tight for how far the surface varies along the hull.</summary>
         internal float[] ProbeBandDistances => _probeBandDistances;
+
+        /// <summary>Water-motion contribution to each probe's latest trigger decision.</summary>
+        internal float[] ProbeWaterSignals => _probeWaterSignals;
+
+        /// <summary>Boat-motion contribution to each probe's latest trigger decision.</summary>
+        internal float[] ProbeBoatSignals => _probeBoatSignals;
+
+        /// <summary>Final trigger signal after source selection for each probe.</summary>
+        internal float[] ProbeTriggerSignals => _probeTriggerSignals;
+
+        /// <summary>Why each probe did or did not request a crown on its most recent actual emit.</summary>
+        internal SprayCrownGate[] ProbeCrownGates => _probeCrownGates;
 #endif
 
         // Drop stale history so a re-enable (or leaving and re-entering the water) can't diff across the
@@ -310,7 +364,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (!sample.Valid)
             {
                 _states[index].HasHistory = false; // no reading this frame: don't diff across the gap
-                _states[index].ContinuousRunActive = false;
+                ResetContinuousRun(ref _states[index]);
 #if UNITY_EDITOR
                 _probeGates[index] = SprayProbeGate.OutsideBody;
 #endif
@@ -337,18 +391,24 @@ namespace AbstractOcclusion.WebGpuWater
             bool continuous = probes[index].emission == WaterSprayEmission.Continuous;
             if (!state.HasHistory)
             {
-                state.ContinuousRunActive = false;
+                ResetContinuousRun(ref state);
                 return SprayProbeGate.NoHistory;    // need two frames to measure a speed
             }
             if (!probes[index].ignoreSurfaceBand && Mathf.Abs(world.y - surfaceHeight) > surfaceBand)
             {
-                state.ContinuousRunActive = false;
+                ResetContinuousRun(ref state);
                 return SprayProbeGate.OutOfBand;
             }
             // The cooldown paces BURST probes only; a continuous probe is paced by its rate
             // accumulator below and must not be silenced between emits.
             if (!continuous && Time.time < state.NextEmitTime) return SprayProbeGate.CoolingDown;
-            if (activeEmitter == null) return SprayProbeGate.NoEmitter; // body has no emitter, or opts out
+            if (activeEmitter == null)
+            {
+#if UNITY_EDITOR
+                _probeCrownGates[index] = SprayCrownGate.NoEmitter;
+#endif
+                return SprayProbeGate.NoEmitter; // body has no emitter, or opts out
+            }
 
             Vector3 previous = state.PreviousProbePosition;
             float surfaceRise = (surfaceHeight - state.PreviousSurfaceHeight) / deltaSeconds; // > 0 water rising
@@ -358,15 +418,43 @@ namespace AbstractOcclusion.WebGpuWater
             var horizontalStep = new Vector2(world.x - previous.x, world.z - previous.z);
             float horizontalSpeed = horizontalStep.magnitude / deltaSeconds;
 
-            float signal = TriggerSignal(mode, surfaceRise, probeDescent, horizontalPlowWeight * horizontalSpeed);
+            float waterSignal = WaterMotionSignal(surfaceRise, probes[index].waterMotion);
+            float plowMultiplier = continuous ? continuousPlowMultiplier : 1f;
+            float boatSignal = Mathf.Max(0f, probeDescent)
+                             + horizontalPlowWeight * plowMultiplier * horizontalSpeed;
+            float signal = TriggerSignal(mode, waterSignal, boatSignal);
+#if UNITY_EDITOR
+            _probeWaterSignals[index] = waterSignal;
+            _probeBoatSignals[index] = boatSignal;
+            _probeTriggerSignals[index] = signal;
+#endif
             if (signal < minImpactSpeed)
             {
-                state.ContinuousRunActive = false;
+                ResetContinuousRun(ref state);
                 return SprayProbeGate.BelowMinSpeed;
             }
 
             float span = Mathf.Max(MinImpactSpeedSpan, maxImpactSpeed - minImpactSpeed);
             float strength = Mathf.Clamp01((signal - minImpactSpeed) / span);
+            bool continuousCrownReady = !continuous || strength >= continuousCrownTriggerStrength;
+            bool continuousCrownDue = false;
+            if (continuous)
+            {
+                if (!continuousCrownReady)
+                {
+                    ResetContinuousCrownCadence(ref state);
+                }
+                else if (!state.HasEmittedContinuousCrown)
+                {
+                    continuousCrownDue = true;
+                }
+                else
+                {
+                    state.ContinuousCrownAccumulator = Mathf.Min(
+                        state.ContinuousCrownAccumulator + continuousCrownRatePerSecond * deltaSeconds, 1f);
+                    continuousCrownDue = state.ContinuousCrownAccumulator >= 1f;
+                }
+            }
 
             // Continuous pacing: a fractional emit budget accrues at a strength-scaled rate and one
             // emit is spent per whole unit. The fraction persists between frames, so low rates add
@@ -392,13 +480,27 @@ namespace AbstractOcclusion.WebGpuWater
             // strength IS the normalised trigger speed. Reusing it rather than normalising the speed a
             // second time keeps the rake tied to maxImpactSpeed instead of drifting from it.
             Vector3 petalDirection = ResolvePetalDirection(index, horizontalStep, strength);
-            // A steady sheet flashing its crown ring at emit rate reads as a strobe: a continuous
-            // run plays the crown on its FIRST emit only, then again on the next fresh run.
-            bool allowCrown = !continuous || !state.ContinuousRunActive;
+            // Crown chunks are a distinct accent layer. Their independent cadence keeps a planing wake
+            // alive, but avoids stamping one crown cloud for every droplet burst from every bow probe.
+            bool allowCrown = !continuous || continuousCrownDue;
             activeEmitter.EmitSplash(surfacePoint, strength, sprayRadius, amountScale,
                                      petalDirection, petalArcDegrees, petalElevationDegrees, allowCrown);
-            if (continuous) state.ContinuousRunActive = true;
-            else state.NextEmitTime = Time.time + StaggeredCooldown(ref state, index, probeCount);
+            if (continuous)
+            {
+                if (allowCrown && activeEmitter.HasImpactAccentAt(strength))
+                {
+                    state.HasEmittedContinuousCrown = true;
+                    state.ContinuousCrownAccumulator = 0f;
+                }
+            }
+            else
+            {
+                state.NextEmitTime = Time.time + StaggeredCooldown(ref state, index, probeCount);
+            }
+#if UNITY_EDITOR
+            _probeCrownGates[index] = ResolveCrownGate(activeEmitter, strength, continuous,
+                                                        continuousCrownReady, continuousCrownDue);
+#endif
 #if UNITY_EDITOR
             _probeEmitCounts[index]++;
 #endif
@@ -452,17 +554,55 @@ namespace AbstractOcclusion.WebGpuWater
             return Quaternion.AngleAxis(angleToAstern * Mathf.Clamp01(rake), Vector3.up) * outward;
         }
 
-        // Rock keys off the water alone (a static probe's own motion shouldn't matter); Boat keys off the
-        // point driving in - its vertical plunge plus the horizontal plow term; Both is their union.
-        static float TriggerSignal(WaterSprayMode mode, float surfaceRise, float probeDescent, float horizontalPlow)
+        // Keep water and boat contributions independent until source selection. Adding the signed values
+        // made a falling wave cancel a fast boat's plow, so the old Both mode was neither source - it was
+        // an accidental cancellation gate.
+        static float TriggerSignal(WaterSprayMode mode, float waterSignal, float boatSignal)
         {
             switch (mode)
             {
-                case WaterSprayMode.Rock: return surfaceRise;
-                case WaterSprayMode.Boat: return probeDescent + horizontalPlow;
-                default:                  return surfaceRise + probeDescent + horizontalPlow;
+                case WaterSprayMode.Rock: return waterSignal;
+                case WaterSprayMode.Boat: return boatSignal;
+                default:                  return Mathf.Max(waterSignal, boatSignal);
             }
         }
+
+        static float WaterMotionSignal(float surfaceRise, WaterSprayWaterMotion waterMotion)
+        {
+            switch (waterMotion)
+            {
+                case WaterSprayWaterMotion.Falling: return Mathf.Max(0f, -surfaceRise);
+                case WaterSprayWaterMotion.Both: return Mathf.Abs(surfaceRise);
+                default: return Mathf.Max(0f, surfaceRise);
+            }
+        }
+
+        static void ResetContinuousRun(ref ProbeState state)
+        {
+            state.EmitAccumulator = 0f;
+            ResetContinuousCrownCadence(ref state);
+        }
+
+        static void ResetContinuousCrownCadence(ref ProbeState state)
+        {
+            state.ContinuousCrownAccumulator = 0f;
+            state.HasEmittedContinuousCrown = false;
+        }
+
+#if UNITY_EDITOR
+        static SprayCrownGate ResolveCrownGate(WaterSplashEmitter activeEmitter, float strength, bool continuous,
+                                                bool continuousCrownReady, bool continuousCrownDue)
+        {
+            if (!activeEmitter.HasCrownParticles) return SprayCrownGate.NoCrownParticles;
+            if (continuous && !continuousCrownReady)
+                return SprayCrownGate.BelowContinuousCrownTrigger;
+            if (continuous && !continuousCrownDue)
+                return SprayCrownGate.WaitingForContinuousCrownCadence;
+            return activeEmitter.IsCrownEligibleAt(strength)
+                ? SprayCrownGate.Requested
+                : SprayCrownGate.BelowCrownStrength;
+        }
+#endif
 
         // Grow-on-demand buffers, rebuilt only when the probe count changes (e.g. edited in the Inspector).
         void EnsureBuffers(int count)
@@ -476,6 +616,10 @@ namespace AbstractOcclusion.WebGpuWater
             _probeEmitCounts = new int[count];
             _probeGates = new SprayProbeGate[count];
             _probeBandDistances = new float[count];
+            _probeWaterSignals = new float[count];
+            _probeBoatSignals = new float[count];
+            _probeTriggerSignals = new float[count];
+            _probeCrownGates = new SprayCrownGate[count];
 #endif
         }
 
@@ -497,9 +641,11 @@ namespace AbstractOcclusion.WebGpuWater
             // and every burst after it keeps the plain cooldown.
             public bool HasEmitted;
             // Continuous emission: the fractional emit budget (whole units are spent as emits), and
-            // whether a run is in flight - its first emit played the crown, later ones must not.
+            // Crown accents have their own rate so a boat's crown layer stays continuous without
+            // matching the much denser droplet-emission cadence.
             public float EmitAccumulator;
-            public bool ContinuousRunActive;
+            public float ContinuousCrownAccumulator;
+            public bool HasEmittedContinuousCrown;
         }
     }
 }
