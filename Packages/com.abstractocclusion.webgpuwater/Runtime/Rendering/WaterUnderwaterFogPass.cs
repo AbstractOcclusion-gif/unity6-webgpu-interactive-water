@@ -38,6 +38,7 @@ namespace AbstractOcclusion.WebGpuWater
         const int SurfaceDepthShaderPass = 1;
 
         static readonly int ID_OceanSurfaceEyeDepth = Shader.PropertyToID("_OceanSurfaceEyeDepth");
+        static readonly int ID_OceanSurfaceOwnership = Shader.PropertyToID("_OceanSurfaceOwnership");
         static readonly int ID_OceanSurfaceDepthValid = Shader.PropertyToID("_OceanSurfaceDepthValid");
         static readonly int ID_OceanSurfacePrepassScale = Shader.PropertyToID("_OceanSurfacePrepassScale");
 
@@ -101,17 +102,19 @@ namespace AbstractOcclusion.WebGpuWater
             // mid-frame render-target switch, which costs far more on the WebGPU backend than
             // native. Leaving the validity global at 0 is the state a pond or a non-ocean fog source
             // already ships every frame, so this adds no new case for the shader to handle.
-            // Also gated on the fog actually RUNNING this frame: this pass is enqueued for
-            // WaterlineActive alone too (a straddling near plane arms the line before the fog),
-            // and on those frames the fog draws - the prepass's ONLY consumer - are skipped
-            // below, so the ~20 displaced-mesh draws and the camera-sized R32F target were
-            // recorded and thrown away on the exact crossing frames where a hitch shows most.
-            // Validity stays 0, the state a pond or non-ocean fog source already ships every frame.
-            if (WaterVolume.UnderwaterFogActive
+            // The waterline transition now consumes the same rendered ownership as the fog, so
+            // straddle-only frames are readers too. Recording before either consumer prevents the
+            // analytic meniscus from leading a moving crest by a frame while the camera is static.
+            if ((WaterVolume.UnderwaterFogActive || WaterVolume.WaterlineActive)
                 && fogSource != null && fogSource.IsOceanClipmap && !fogSource.UnderwaterFogSimple)
             {
                 s_SurfaceRenderers.Clear();
-                fogSource.CollectOceanSurfaceRenderers(s_SurfaceRenderers);
+                // One canonical mesh per clipmap level/patch/base sheet. The prepass renders it
+                // two-sided and classifies SV_IsFrontFace in the fragment shader, following the
+                // KWS mask pattern. Drawing the coincident above/under renderer twins made their
+                // depth-equal fragments fight wherever strong chop reversed a triangle or two LOD
+                // rings overlapped, producing long wrong-side bands in the ownership texture.
+                fogSource.CollectAboveSurfaceRenderers(s_SurfaceRenderers);
                 if (s_SurfaceRenderers.Count > 0)
                 {
                     RecordSurfaceDepthPrepass(renderGraph, cameraColor);
@@ -189,9 +192,9 @@ namespace AbstractOcclusion.WebGpuWater
             public bool warpActive;
         }
 
-        // Draw every live ocean-surface renderer's mesh with its OWN matrix, material and property
-        // block through WaterSurface.shader's depth pass, so the prepass displacement matches the
-        // visible surface exactly (whatever uniforms reach the real draw reach this one).
+        // Draw every canonical above-surface mesh with its OWN matrix, material and property block
+        // through WaterSurface.shader's two-sided depth pass, so displacement matches the visible
+        // surface without submitting the coincident under-surface twin.
         void RecordSurfaceDepthPrepass(RenderGraph renderGraph, TextureHandle sizeSource)
         {
             // Camera-sized R32F colour (linear eye depth; clear 0 = "no surface") + its own depth
@@ -207,6 +210,20 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalFloat(ID_OceanSurfacePrepassScale, appliedScale);
             TextureHandle color = renderGraph.CreateTexture(colorDesc);
 
+            // R = rendered wet ownership (0 above/front, 1 under/back), G = validity. Clear
+            // validity is 0, so near-clipped pixels and exclusion holes can blend back to the
+            // analytic classification instead of absence being mistaken for air. Bilinear reads
+            // of this low-resolution target provide the stable transition KWS gets from its mask.
+            TextureDesc ownershipDesc = renderGraph.GetTextureDesc(sizeSource);
+            ownershipDesc.name = "_OceanSurfaceOwnership";
+            ownershipDesc.colorFormat = GraphicsFormat.R8G8_UNorm;
+            ownershipDesc.depthBufferBits = DepthBits.None;
+            ownershipDesc.msaaSamples = MSAASamples.None;
+            ownershipDesc.clearBuffer = true;
+            ownershipDesc.clearColor = Color.clear;
+            ApplyPrepassScale(ref ownershipDesc);
+            TextureHandle ownership = renderGraph.CreateTexture(ownershipDesc);
+
             TextureDesc depthDesc = renderGraph.GetTextureDesc(sizeSource);
             depthDesc.name = "OceanSurfaceDepthBuffer";
             depthDesc.colorFormat = GraphicsFormat.None;
@@ -221,9 +238,11 @@ namespace AbstractOcclusion.WebGpuWater
             data.renderers = s_SurfaceRenderers;
             data.block = _scratchBlock;
             builder.SetRenderAttachment(color, 0, AccessFlags.Write);
+            builder.SetRenderAttachment(ownership, 1, AccessFlags.Write);
             builder.SetRenderAttachmentDepth(depth, AccessFlags.Write);
             builder.AllowPassCulling(false);                          // driven by our own list
             builder.SetGlobalTextureAfterPass(color, ID_OceanSurfaceEyeDepth); // fog reads it later this frame
+            builder.SetGlobalTextureAfterPass(ownership, ID_OceanSurfaceOwnership);
             builder.SetRenderFunc((PrepassData d, RasterGraphContext ctx) =>
             {
                 for (int i = 0; i < d.renderers.Count; i++)

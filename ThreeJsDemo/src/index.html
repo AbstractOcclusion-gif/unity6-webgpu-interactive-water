@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebGPU Ocean — ThreeJSWaterPort demo</title>
+<style>
+  html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#0a0e14; }
+  #app { position:fixed; inset:0; }
+  canvas { display:block; }
+  #overlay {
+    position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    background:radial-gradient(ellipse at 50% 40%, #16202e 0%, #0a0e14 70%);
+    color:#cfe3f5; font:14px/1.5 "Segoe UI", system-ui, sans-serif; z-index:10; transition:opacity .6s;
+  }
+  #overlay.hidden { opacity:0; pointer-events:none; }
+  #overlay h1 { font-weight:300; letter-spacing:.25em; font-size:20px; margin:0 0 18px; color:#8fd0ff; }
+  #bar { width:340px; height:3px; background:#233246; border-radius:2px; overflow:hidden; }
+  #bar > div { height:100%; width:0%; background:linear-gradient(90deg,#3b9dd8,#9be8ff); transition:width .15s; }
+  #stage { margin-top:12px; color:#7a93ad; font-size:12px; letter-spacing:.08em; }
+  #err { margin-top:16px; max-width:640px; color:#ff9d8f; white-space:pre-wrap; font:12px/1.4 monospace; display:none; }
+  #help {
+    position:fixed; left:12px; bottom:10px; z-index:5; color:#cfe3f5aa; font:12px/1.6 "Segoe UI", system-ui, sans-serif;
+    text-shadow:0 1px 2px #0008; pointer-events:none;
+  }
+  #help b { color:#fff; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="overlay">
+  <h1>WEBGPU&nbsp;OCEAN</h1>
+  <div id="bar"><div></div></div>
+  <div id="stage">starting…</div>
+  <div id="err"></div>
+</div>
+<div id="help"><b>W A S D</b> move &nbsp;·&nbsp; <b>Q / E</b> down / up &nbsp;·&nbsp; hold <b>right mouse</b> look &nbsp;·&nbsp; <b>Shift</b> boost &nbsp;·&nbsp; dive under the surface</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.webgpu.js",
+    "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.webgpu.js",
+    "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.tsl.js",
+    "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.20/dist/lil-gui.esm.min.js"
+  }
+}
+</script>
+<script type="module" src="./main.js"></script>
+</body>
+</html>

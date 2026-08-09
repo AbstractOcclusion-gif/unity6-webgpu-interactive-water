@@ -1023,6 +1023,8 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
 
             TEXTURE2D(_LargeGodRayTex);
             SAMPLER(sampler_LargeGodRayTex);
+            TEXTURE2D(_OceanSurfaceOwnership);
+            SAMPLER(sampler_OceanSurfaceOwnership);
 
             // Declared locally rather than via their owning headers (WaterExclusion.hlsl is a
             // heavy include for three floats; precedent: WaterExclusionWall / WaterParticleFog
@@ -1030,6 +1032,8 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             float _ExclusionCount;
             float _CameraDryVolume;
             float _UnderwaterSurfaceY;
+            float _OceanSurfaceDepthValid;
+            float _OceanSurfacePrepassScale;
             // The From Air knob, read here for the same reason the raymarch pass reads it: with it
             // at 0 no pane pixel can exist, and the mask below can therefore stay armed.
             float _LargeGodRayFromAir;
@@ -1043,6 +1047,23 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 o.positionCS = GetFullScreenTriangleVertexPosition(IN.vertexID);
                 o.uv = GetFullScreenTriangleTexCoord(IN.vertexID);
                 return o;
+            }
+
+            float2 OceanOwnershipSample(float2 uv)
+            {
+                return SAMPLE_TEXTURE2D_LOD(_OceanSurfaceOwnership,
+                                            sampler_OceanSurfaceOwnership, saturate(uv), 0).rg;
+            }
+
+            float OceanRenderedCoverage(float2 uv, float analyticCoverage,
+                                        float2 screenDirection)
+            {
+                float2 prepassSize = max(_ScaledScreenParams.xy * _OceanSurfacePrepassScale, 1.0);
+                float2 offset = screenDirection / prepassSize;
+                float2 ownership = OceanOwnershipSample(uv) * 0.5;
+                ownership += OceanOwnershipSample(uv + offset) * 0.25;
+                ownership += OceanOwnershipSample(uv - offset) * 0.25;
+                return saturate(ownership.r + analyticCoverage * (1.0 - ownership.g));
             }
 
             half4 FragComposite(Varyings input) : SV_Target
@@ -1073,7 +1094,19 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
 #else
                 float gap = SurfaceSignedGap(nearWorld);
 #endif
-                float coverage = WaterlineCoverage(gap, fwidth(gap), 0.0);
+                float2 gapGradient = float2(ddx(gap), ddy(gap));
+                float coverage = WaterlineCoverage(gap,
+                                                   abs(gapGradient.x) + abs(gapGradient.y), 0.0);
+#ifndef WATER_FOG_SIMPLE
+                if (_OceanSurfaceDepthValid > 0.5)
+                {
+                    float gradientLength = length(gapGradient);
+                    float2 screenDirection = gradientLength > WATERLINE_GRADIENT_MIN
+                                           ? gapGradient / gradientLength
+                                           : float2(0.0, 1.0);
+                    coverage = OceanRenderedCoverage(input.uv, coverage, screenDirection);
+                }
+#endif
 
                 // NOT where a from-air pane can exist: that view draws shafts ABOVE the waterline
                 // (through a carve window), and this pass cannot tell a pane pixel from an air

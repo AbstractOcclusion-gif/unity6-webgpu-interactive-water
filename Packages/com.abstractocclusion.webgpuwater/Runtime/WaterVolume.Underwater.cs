@@ -299,13 +299,10 @@ namespace AbstractOcclusion.WebGpuWater
         // box-clips the fog per pixel, so this CPU gate only has to be roughly right.
         const float UnderwaterFootprintMargin = 1.25f;
 
-        // Water intersects the view as soon as the camera's NEAR PLANE dips below the surface (partial
-        // submersion, KWS-style), not only when the whole camera is under - otherwise a shallow pond
-        // never triggers. Sample the four near-plane corners (plus the eye) and run on the lowest.
-        // The surface height is WAVE-AWARE at the camera's xz (not the flat rest plane), so the
-        // waterline tracks the swell and the fog stops toggling frame-to-frame at a bobbing crest.
-        // 'nearPlaneStraddles' additionally reports the surface sitting INSIDE the near plane's
-        // vertical span - the partial-submersion band the waterline meniscus pass draws over.
+        // Keep three distinct readings here. The wave envelope arms the fog before it can affect a
+        // pixel; the near-plane corners detect a screen-space waterline for the meniscus; only the
+        // camera position says the EYE is submerged. Conflating the latter two switches every
+        // _CameraUnderwater consumer while water merely touches a screen edge.
         bool ComputeCameraSubmerged(Camera cam, out float surfaceY, out bool nearPlaneStraddles)
         {
             surfaceY = SurfaceHeightAtCamera(cam);
@@ -319,15 +316,9 @@ namespace AbstractOcclusion.WebGpuWater
             // a window stays fogged - Crest's carved-volume behaviour. A CPU gate here was tried and
             // reverted: it unarmed the whole fullscreen pass and killed ALL fog from inside the room.
 
-            // KWS-style partial submersion: every near-plane corner is tested against the surface
-            // height AT ITS OWN xz. The old single camera-xz height mis-timed the gate on a CALM
-            // ocean - a slow low swell keeps the corner-local heights different from the camera's
-            // for seconds at a time, so the fog armed/disarmed at visibly wrong moments (fast seas
-            // hid the error; ponds never gate). The two BOTTOM corners are additionally tested with
-            // a small DOWNWARD prediction offset: the FFT height readback is ~1-2 frames stale, so
-            // the gate arms a touch early instead of late (KWS's OceanWavesPredictionOffset trick).
-            // Hysteresis rides the per-corner threshold: once submerged, a corner must rise a little
-            // ABOVE its surface to count dry again, so a bobbing crest can't toggle the fog.
+            // The near-plane corners sample the surface at their own xz so the meniscus follows the
+            // projected wave instead of a single camera-local height. Hysteresis belongs only to
+            // the eye-medium decision below; applying it to the corners would move the visible line.
             float near = cam.nearClipPlane;
             float hysteresis = _wasCameraSubmerged ? SubmergeHysteresis : -SubmergeHysteresis;
             // Ceiling arming the OCEAN fog pass. REWRITTEN 2026-07-31: each corner used to be
@@ -343,23 +334,17 @@ namespace AbstractOcclusion.WebGpuWater
             // admits nothing changes no pixel (the property this band was always meant to
             // have); it merely runs.
             float fogArmCeilingY = VolumeCenter.y + SurfaceHeightEnvelope() + FogArmBandMeters;
-            int cornersUnder = 0;
             int straddleUnder = 0;
             int straddleAbove = 0;
             int cornersNearOrUnder = 0;
-            bool predictedUnder = false;
             for (int i = 0; i < NearPlaneCornersViewport.Length; i++)
             {
                 Vector2 viewport = NearPlaneCornersViewport[i];
                 Vector3 corner = cam.ViewportToWorldPoint(new Vector3(viewport.x, viewport.y, near));
                 float cornerSurfaceY = SurfaceHeightAtWorldXZ(corner.x, corner.z);
-                if (corner.y < cornerSurfaceY + hysteresis) cornersUnder++;
                 // Padded both-ways counts for the waterline-straddle test below.
                 if (corner.y < cornerSurfaceY + WaterlineArmPad) straddleUnder++;
                 if (corner.y > cornerSurfaceY - WaterlineArmPad) straddleAbove++;
-                // Bottom corners (viewport y = 0) double as the early-arm prediction points.
-                if (viewport.y < 0.5f && corner.y - WavePredictionMeters < cornerSurfaceY + hysteresis)
-                    predictedUnder = true;
                 // Envelope ceiling - see fogArmCeilingY above. Deliberately NOT cornerSurfaceY:
                 // the stale per-corner height is exactly what made this gate flap in a heavy sea.
                 if (corner.y < fogArmCeilingY) cornersNearOrUnder++;
@@ -380,9 +365,17 @@ namespace AbstractOcclusion.WebGpuWater
             // their local surface (padded so the line is armed before its band touches the edge).
             nearPlaneStraddles = inFootprint && straddleUnder > 0 && straddleAbove > 0;
 
-            bool partial = inFootprint && (cornersUnder > 0 || predictedUnder);
-            _wasCameraSubmerged = partial;
-            return partial;
+            // CameraSubmerged is consumed as a statement about the EYE, not about the near plane.
+            // The former implementation returned true when ANY near-plane corner was wet and even
+            // biased the bottom corners downward to predict a future crossing. That prediction is
+            // useful for arming a fullscreen pass, but publishing it as _CameraUnderwater switched
+            // camera-wide surface/foam/exclusion behaviour while the visible waterline was still at
+            // a screen edge. Keep the broad envelope and straddle tests above for early arming; only
+            // the camera position decides which medium contains the lens.
+            bool eyeUnderSurface = inFootprint
+                                && cam.transform.position.y < surfaceY + hysteresis;
+            _wasCameraSubmerged = eyeUnderSurface;
+            return eyeUnderSurface;
         }
 
         // The four near-plane corners in viewport space; the y = 0 pair are also the KWS-style
@@ -391,9 +384,6 @@ namespace AbstractOcclusion.WebGpuWater
         {
             new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(0f, 1f), new Vector2(1f, 1f)
         };
-        // Downward test offset (metres) absorbing the FFT readback staleness, so the fog arms a
-        // touch early rather than late on descent (KWS's OceanWavesPredictionOffset equivalent).
-        const float WavePredictionMeters = 0.1f;
         // Extra pad on top of the wave-envelope arm ceiling (fogArmCeilingY at the arming site).
         // The envelope bounds where the surface CAN be; this pad covers the near plane's own
         // vertical extent and camera travel within a frame.

@@ -135,13 +135,10 @@ float3 WaterFogDebugUnpainted(float armWeight, float wetSpanLen, float pathLen)
 }
 
 // WHICH SHEET TWIN WON, straight off the prepass RT, before any span rule interprets it.
-// _OceanSurfaceEyeDepth is written as LinearEyeDepth * visibleSide, where visibleSide is a
-// PER-MATERIAL constant (+1 above sheet / -1 under sheet) and the two sheets are coincident
-// geometry separated only by their cull state. Wherever they are edge-on - the far waterline -
-// which fragment survives ZTest LEqual is settled by depth precision, per pixel, and the winner
-// decides whether OceanPrepassPath suppresses this pixel's fog entirely (PREPASS_AIR -> pathLen
-// 0). This view shows that decision with nothing layered on top: isolated RED in a BLUE field is
-// the coin toss, and each of those pixels is unfogged.
+// _OceanSurfaceEyeDepth is written as LinearEyeDepth * visibleSide from one canonical two-sided
+// surface rasterization. RED is the air-facing side and BLUE the underwater-facing side. Because
+// the ownership pass no longer submits coincident material twins, an opposite-colour island now
+// identifies an actual displaced triangle/LOD continuity fault rather than depth-equal overwrite.
 float3 WaterFogDebugSheetSide()
 {
     if (g_WaterFogDebugSheetSigned > 0.0) return float3(1.0, 0.0, 0.0); // ABOVE sheet -> fog suppressed

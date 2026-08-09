@@ -100,13 +100,10 @@ namespace AbstractOcclusion.WebGpuWater
             FogMaskVsSpan = 12,
 
             /// <summary>The RAW prepass sign this pixel's span rule was decided on
-            /// (_OceanSurfaceEyeDepth): RED = the ABOVE sheet won here (fog suppressed by the
-            /// from-air ownership rule), BLUE = the UNDER sheet won, BLACK = no surface
-            /// rasterised at all. The above/under sheets are COINCIDENT twins separated only by
-            /// culling, so wherever they are edge-on - the far waterline - the winner is decided
-            /// by depth precision rather than by geometry. Isolated RED inside a BLUE field is
-            /// that coin toss, and every one of those pixels is fogless. The branch view cannot
-            /// show it: it paints the whole legitimately-from-air region the same green.</summary>
+            /// (_OceanSurfaceEyeDepth): RED = the air-facing side, BLUE = the underwater-facing
+            /// side, BLACK = no surface rasterised. It comes from one canonical two-sided surface,
+            /// so opposite-colour islands identify displaced triangle/LOD continuity faults rather
+            /// than coincident above/under twins fighting at equal depth.</summary>
             FogSheetSide = 13,
 
             // ---- Surface views added after the fog block ----

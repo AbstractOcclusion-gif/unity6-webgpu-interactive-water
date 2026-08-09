@@ -321,15 +321,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
         // matrix, material and property block - never by the camera (no LightMode tag, and the
         // camera only ever renders Pass 0 of a surface material).
         //
-        // Cull [_Cull], NOT Cull Off. The above and under sheets are COINCIDENT twins with
-        // opposite culling (_Cull 2 / _Underwater 0, and _Cull 1 / _Underwater 1), so Cull Off
-        // rasterised four fragments at one depth and the winner was a coin toss - which made the
-        // sign written below meaningless. Mirroring Pass 0's own cull state leaves exactly the
-        // fragment the camera actually sees, which is also the only thing the fog should price.
+        // This pass is intentionally two-sided and is submitted with ONE canonical surface mesh
+        // per level. Like KWS's water mask, SV_IsFrontFace determines which medium owns the pixel.
+        // The visible pass still uses its authored above/under twins; only this ownership mask
+        // avoids redrawing those coincident twins into the same depth buffer.
         Pass
         {
             Name "OceanSurfaceEyeDepth"
-            Cull [_Cull]
+            Cull Off
             ZWrite On
             ZTest LEqual
 
@@ -356,7 +355,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             #include "WaterSurfaceDetailNormal.hlsl"
             #include "WaterSurfaceVertStage.hlsl"
 
-            float4 fragDepth(v2f i) : SV_Target
+            struct OceanSurfaceDepthOutput
+            {
+                float4 signedEyeDepth : SV_Target0;
+                float2 ownership      : SV_Target1;
+            };
+
+            OceanSurfaceDepthOutput fragDepth(v2f i, bool isFrontFace : SV_IsFrontFace)
             {
                 // The near-field patch already owns these pixels (see PatchCoversBaseSheet).
                 // Coincident sheets at different tessellations, so whichever wins the depth test
@@ -389,9 +394,24 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 // a from-above surface (the turquoise band at the crossing). This is the same
                 // ownership KWS encodes as mask 0.25 = front / 0.75 = back
                 // (KWS_WaterFragPass.cginc fragDepth) and Crest gets for free from draw order.
-                // _Underwater is a per-material float, so it is exact and needs no winding guess.
-                float visibleSide = (_Underwater > 0.5) ? -1.0 : 1.0;
-                return float4(LinearEyeDepth(i.pos.z) * visibleSide, 0.0, 0.0, 1.0);
+                // Match the actual raster convention of the canonical ocean grid: front faces are
+                // seen from air and back faces from underwater. Deriving both from this single
+                // rasterization prevents a coincident renderer from overwriting classification.
+                float wetOwnership = isFrontFace ? 0.0 : 1.0;
+                float visibleSide = lerp(1.0, -1.0, wetOwnership);
+                // Store the PHYSICAL displaced-surface depth, not SV_POSITION depth. The latter
+                // includes _PatchDepthBias, whose only job is to choose a raster winner across the
+                // patch/clipmap overlap. Feeding that artificial offset to the fog moved its ray
+                // crossing at every ownership seam even though both meshes describe one surface.
+                // Hardware depth above remains biased, so overlap ordering is unchanged; only the
+                // semantic value handed to the fog is now the unbiased world-space surface.
+                float physicalEyeDepth = -mul(UNITY_MATRIX_V, float4(i.worldPos, 1.0)).z;
+                OceanSurfaceDepthOutput output;
+                output.signedEyeDepth = float4(physicalEyeDepth * visibleSide, 0.0, 0.0, 1.0);
+                // R is premultiplied wet ownership, G says a rendered surface owns the texel.
+                // Clear (0,0) therefore means "unknown/fallback", never "air".
+                output.ownership = float2(wetOwnership, 1.0);
+                return output;
             }
             ENDCG
         }

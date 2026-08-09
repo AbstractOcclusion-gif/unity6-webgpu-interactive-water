@@ -51,6 +51,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // WaterUnderwaterFogPass. When valid, the fog's crossing comes from this - the rendered
         // surface itself - instead of the bounded analytic march.
         TEXTURE2D(_OceanSurfaceEyeDepth);
+        TEXTURE2D(_OceanSurfaceOwnership); SAMPLER(sampler_OceanSurfaceOwnership);
         float _OceanSurfaceDepthValid; // 1 = the prepass ran this frame (set by the fog pass)
         // Prepass resolution as a fraction of camera resolution (WaterUnderwaterFogPass publishes
         // it beside the validity flag). The RT is read with pixel LOADs, so every load coordinate
@@ -112,6 +113,39 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // WATERLINE_CARVE_OVER_COVER_PIXELS moved to WaterWaterline.hlsl beside the curve it
         // shifts: the exclusion wall now mirrors this coverage to hand off against it, so the
         // number has to have exactly one home.
+
+        int2 OceanSurfacePrepassPixel(float2 uv)
+        {
+            int2 pixelMax = max(int2(_ScaledScreenParams.xy * _OceanSurfacePrepassScale) - int2(1, 1),
+                                int2(0, 0));
+            return clamp(int2(uv * _ScaledScreenParams.xy * _OceanSurfacePrepassScale),
+                         int2(0, 0), pixelMax);
+        }
+
+        float OceanSurfaceSignedAtUV(float2 uv)
+        {
+            return LOAD_TEXTURE2D(_OceanSurfaceEyeDepth, OceanSurfacePrepassPixel(uv)).r;
+        }
+
+        float2 OceanOwnershipSample(float2 uv)
+        {
+            return SAMPLE_TEXTURE2D_LOD(_OceanSurfaceOwnership,
+                                        sampler_OceanSurfaceOwnership, saturate(uv), 0).rg;
+        }
+
+        float OceanRenderedCoverage(float2 uv, float analyticCoverage, float2 screenDirection)
+        {
+            // Three bilinear mask reads span two prepass texels (roughly six full-resolution
+            // pixels at the 0.5 scale). Accumulate premultiplied wet coverage and validity
+            // independently: invalid near-clip/exclusion samples hand exactly their missing share
+            // back to the analytic path instead of pulling the result toward air.
+            float2 prepassTexel = 1.0 / max(_ScaledScreenParams.xy * _OceanSurfacePrepassScale, 1.0);
+            float2 offset = screenDirection * prepassTexel;
+            float2 ownership = OceanOwnershipSample(uv) * 0.5;
+            ownership += OceanOwnershipSample(uv + offset) * 0.25;
+            ownership += OceanOwnershipSample(uv - offset) * 0.25;
+            return saturate(ownership.r + analyticCoverage * (1.0 - ownership.g));
+        }
 
         // False-colour views for THIS pass (WaterFogDebug.hlsl), inert unless _WaterDebugMode
         // selects one. Included here rather than with the headers at the top on purpose: it reads
@@ -300,8 +334,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // Prepass-space pixel: the RT is _OceanSurfacePrepassScale x camera resolution.
             // Clamped against the RT's own max coord (an out-of-range load is undefined, not 0,
             // and odd camera sizes floor-divide - uv ~1 could land one texel past the edge).
-            int2 prepassPixelMax = int2(_ScaledScreenParams.xy * _OceanSurfacePrepassScale) - int2(1, 1);
-            int2 prepassPixel = min(int2(uv * _ScaledScreenParams.xy * _OceanSurfacePrepassScale), prepassPixelMax);
+            int2 prepassPixelMax = max(int2(_ScaledScreenParams.xy * _OceanSurfacePrepassScale) - int2(1, 1),
+                                      int2(0, 0));
+            int2 prepassPixel = OceanSurfacePrepassPixel(uv);
             float surfaceSigned = LOAD_TEXTURE2D(_OceanSurfaceEyeDepth, prepassPixel).r;
             float surfaceEye = abs(surfaceSigned);
             // INSTRUMENT ONLY. Stamped here rather than re-loaded by the view: which of the two
@@ -349,9 +384,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // Corroboration belongs to the ONE decision it was introduced for: whether to zero the
             // span. It is applied at that return, below the carve check.
             bool sheetSeenFromAir = surfaceSigned > 0.0;
-            // Eye depth is view-space Z; divide by the ray/forward cosine for distance along the ray.
+            // Eye depth is measured from the real camera, while `cam` is the visible near-plane
+            // point for ocean fog. Convert to distance along the camera ray, then remove that
+            // hidden camera-to-near segment so the integrated span and ArmWeight start together.
             float3 camForward = -UNITY_MATRIX_V[2].xyz;
-            float hitDist = surfaceEye / max(dot(dir, camForward), 1e-4);
+            float cameraToStart = dot(cam - _WorldSpaceCameraPos, dir);
+            float hitDist = surfaceEye / max(dot(dir, camForward), 1e-4) - cameraToStart;
             float3 hit;
             if (surfaceEye > 0.0 && hitDist < rayLen)
             {
@@ -588,6 +626,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
 
             if (_UnderwaterUnbounded > 0.5)
             {
+                // The image begins at the camera near plane, not at the hidden projection origin.
+                // ArmWeight already classifies this exact point, including perspective/FOV and
+                // near-clip distance. Starting the ocean integral there keeps its hard span choice
+                // and soft reveal mask on the same geometric boundary during partial submersion.
+                cam = ComputeWorldSpacePosition(uv, UNITY_NEAR_CLIP_VALUE, UNITY_MATRIX_I_VP);
                 // Ocean: the below-surface span. Simple is a COMPILE-TIME fork, not a uniform
                 // branch, so the variant has no call site into the march at all and the crossing
                 // machinery above is absent from its module. The remaining runtime gate
@@ -765,7 +808,25 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // Derivative taken BEFORE the per-pixel top-face select below: fwidth needs its
             // neighbours on the same code path, and the bounded/unbounded split alone is a
             // uniform global so the gap is now computed for BOTH body kinds unconditionally.
-            float coverage = WaterlineCoverage(classifyGap, fwidth(classifyGap), overCoverPixels);
+            float2 gapGradient = float2(ddx(classifyGap), ddy(classifyGap));
+            float coverage = WaterlineCoverage(classifyGap,
+                                               abs(gapGradient.x) + abs(gapGradient.y),
+                                               overCoverPixels);
+            // On a Full-tier ocean the visible displaced mesh owns the classification wherever it
+            // rasterised. Horizontal FFT/Gerstner chop makes that surface non-single-valued, so an
+            // independent height query at the final world XZ can legitimately select the opposite
+            // medium for a frame. The signed prepass is the exact surface draw: positive is the
+            // air-facing sheet (the surface shader owns the column), negative is the underside
+            // (the volume owns it). Zero is a real hole/near-clip/exclusion and deliberately falls
+            // back to the analytic coverage so dry-volume carving and off-mesh rays keep working.
+            if (_UnderwaterUnbounded > 0.5 && _OceanSurfaceDepthValid > 0.5)
+            {
+                float gradientLength = length(gapGradient);
+                float2 screenDirection = gradientLength > WATERLINE_GRADIENT_MIN
+                                       ? gapGradient / gradientLength
+                                       : float2(0.0, 1.0);
+                return OceanRenderedCoverage(uv, coverage, screenDirection);
+            }
             if (_UnderwaterUnbounded > 0.5) return coverage;
             // Bounded body. A finite fog VOLUME meant to be seen from OUTSIDE (stand at the
             // aquarium glass and look into the murk) - so a ray entering through a WALL or the
@@ -1163,7 +1224,6 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             #define WATERLINE_WARP_BAND_SCALE      6.0
             #define WATERLINE_WARP_MAX             0.06
             #define WATERLINE_WARP_COVER_EDGE      0.15
-
             half4 FragWaterline(Varyings input) : SV_Target
             {
                 // World position of this pixel ON the near plane (not the scene depth): the
@@ -1190,9 +1250,30 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 // Metres of gap per screen pixel at this pixel (derivatives in uniform control
                 // flow, WGSL-safe): dividing by it turns the world gap into a pixel distance
                 // from the line, making the band thickness a true pixel count.
-                float metersPerPixel = max(fwidth(gap), WATERLINE_METERS_PER_PIXEL_MIN);
+                float2 gapGradient = float2(ddx(gap), ddy(gap));
+                float metersPerPixel = max(abs(gapGradient.x) + abs(gapGradient.y),
+                                           WATERLINE_METERS_PER_PIXEL_MIN);
                 float pixelsFromLine = abs(gap) / metersPerPixel;
                 float band = 1.0 - smoothstep(0.0, max(_WaterlineWidthPx, 1.0), pixelsFromLine);
+                float tensionMask = 1.0 - saturate(pixelsFromLine /
+                                                   (max(_WaterlineWidthPx, 1.0) * WATERLINE_WARP_BAND_SCALE));
+                // Full-tier ocean: both the dark line and lens tension come from the SAME filtered
+                // ownership coverage as the fog. 4*c*(1-c) is zero in either medium and one at the
+                // rendered 50% boundary. Invalid mask share was already restored analytically by
+                // OceanRenderedCoverage, preserving near-clip and exclusion behaviour.
+                if (_UnderwaterUnbounded > 0.5 && _OceanSurfaceDepthValid > 0.5)
+                {
+                    float gradientLength = length(gapGradient);
+                    float2 searchDirection = gradientLength > WATERLINE_METERS_PER_PIXEL_MIN
+                                           ? gapGradient / gradientLength
+                                           : float2(0.0, 1.0);
+                    float analyticCoverage = WaterlineCoverage(gap, metersPerPixel, 0.0);
+                    float renderedCoverage = OceanRenderedCoverage(input.uv, analyticCoverage,
+                                                                    searchDirection);
+                    float renderedEdge = saturate(4.0 * renderedCoverage * (1.0 - renderedCoverage));
+                    band = renderedEdge;
+                    tensionMask = renderedEdge;
+                }
                 float lineAlpha = band * _WaterlineStrength;
 
                 // Lens tension (KWS half-line): in a wider band around the line, re-sample the
@@ -1203,8 +1284,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 float gapPerUvY = ddy(gap);
                 if (_WaterlineWarp > 0.0)
                 {
-                    float warpBandPx = max(_WaterlineWidthPx, 1.0) * WATERLINE_WARP_BAND_SCALE;
-                    float m = 1.0 - saturate(pixelsFromLine / warpBandPx);
+                    float m = tensionMask;
                     float offset = _WaterlineWarp * WATERLINE_WARP_MAX * 4.0 * m * (1.0 - m);
                     // ddy(gap)'s sign says which way screen-y runs relative to the surface, so
                     // the pull points toward the air side on every platform orientation and
