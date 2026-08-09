@@ -73,6 +73,9 @@ All notable changes to this package are documented here.
   fullscreen fog's crossing march makes that ~290 per pixel. Documented where it will be read.
 
 ### Changed
+- **Demo sample containment pass.** Shared post-processing now ships with the sample, scene-specific
+  generated assets live beside their demo materials, Catapult and City Night join the numbered scene
+  catalog, and demo water textures resolve to the canonical `Runtime/Defaults/Textures` assets.
 - **Chunk/exclusion shader registration is opt-in.** The package no longer silently appends four
   shaders to the project's Always Included Shaders on import (every entry there compiles into every
   build). Use **Window > AbstractOcclusion > WebGpuWater > Register Chunk Shaders For Builds**, or

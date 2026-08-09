@@ -474,8 +474,40 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                         return;
                     }
 
+                    // THE THIRD EXCEPTION (2026-08-09), from the raging-sea repro, seen live in
+                    // fog view 8 as a whole RED band at partial submersion: the RAY STARTS IN
+                    // WATER. rayStartsWet is the shared WaterlineCoverage contour saying the near
+                    // plane is submerged, yet the nearest RASTERISED sheet shows its AIR side -
+                    // which happens whenever the ray's own exit crossing sits closer than the
+                    // sheet rasterises (a barely-submerged lens between crests: the local exit is
+                    // inside the near-clip strip) or the sheet at the exit is edge-on/sub-pixel
+                    // (the far crest silhouettes - the 'small holes at distance'). The from-air
+                    // premise covers only the column BEHIND the sheet; the column between the EYE
+                    // and its own exit belongs to nobody, and zeroing it dropped the fog for the
+                    // whole band in one frame - the transition pop.
+                    //
+                    // Price [eye -> exit] with the SAME validated crossing search the two carve
+                    // exceptions above use, but END THE RAY AT THE RENDERED SHEET, not the opaque
+                    // scene: past the sheet is its own reflection/refraction imagery (the
+                    // PREPASS_WET rule below states the identical bound), and handing the marcher
+                    // the skybox endpoint would resurrect the authority-inversion bug this file's
+                    // header fixed (analytic both-under fogging the whole ray to the far plane).
+                    // The march starts at the camera and self-blends to the flat line past its
+                    // reach, so the span shrinks CONTINUOUSLY to zero as the lens breaks the
+                    // surface - a hard pop becomes a feather by construction. Cost is confined to
+                    // mask-wet from-air pixels: the partial-submersion band and the silhouette
+                    // dashes, both already the marching set's size class.
+                    if (rayStartsWet)
+                    {
+                        float3 sheetEnd = cam + dir * hitDist;
+                        OceanWavyPath(sheetEnd, cam, rayStartsWet, pathLen, deepestY,
+                                      surfaceRefY, wetStart);
+                        return;
+                    }
+
                     // ONLY HERE. Suppressing the span outright needs the premise that this pixel is
-                    // genuinely water seen FROM THE AIR. A real above-water view is a large contiguous
+                    // genuinely water seen FROM THE AIR - and, per the exception above, that the
+                    // ray reached it through AIR. A real above-water view is a large contiguous
                     // region - the straddling-frame band this rule was written for, every pixel of
                     // which has a from-air neighbour. A grazing SILHOUETTE of the coincident sheet
                     // twins is one pixel tall with no sheet above or below it, and zeroing those left
@@ -801,14 +833,26 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
 #ifdef WATER_FOG_SIMPLE
             classifyGap = classifyPoint.y - _UnderwaterSurfaceY;
 #else
-            classifyGap = SurfaceSignedGap(classifyPoint);
+            classifyGap = SurfaceSignedGapChopInverted(classifyPoint);
 #endif
             float overCoverPixels = (_CameraDryVolume > 0.5) ? WATERLINE_CARVE_OVER_COVER_PIXELS
                                                              : 0.0;
             // Derivative taken BEFORE the per-pixel top-face select below: fwidth needs its
             // neighbours on the same code path, and the bounded/unbounded split alone is a
             // uniform global so the gap is now computed for BOTH body kinds unconditionally.
-            float2 gapGradient = float2(ddx(classifyGap), ddy(classifyGap));
+#ifdef WATER_FOG_SIMPLE
+            float gapSmooth = classifyGap; // flat plane: already smooth
+#else
+            // Slopes from the SMOOTH vertical read, position from the accurate one. The
+            // chop-inverted gap is a fixed-point search that can converge to DIFFERENT wave
+            // sources on adjacent pixels near pinched crests, so its screen derivatives
+            // spike pixel-to-pixel and the feather width / search direction fizz, reshuffling
+            // every frame. The vertical field is C1 by construction and its slope is the
+            // right magnitude for a pixel metric, so the feather stays calm while the line
+            // itself stays on the inverted (true) waterline.
+            float gapSmooth = SurfaceSignedGap(classifyPoint);
+#endif
+            float2 gapGradient = float2(ddx(gapSmooth), ddy(gapSmooth));
             float coverage = WaterlineCoverage(classifyGap,
                                                abs(gapGradient.x) + abs(gapGradient.y),
                                                overCoverPixels);
@@ -1245,12 +1289,19 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
 #ifdef WATER_FOG_SIMPLE
                 float gap = nearWorld.y - _UnderwaterSurfaceY;
 #else
-                float gap = SurfaceSignedGap(nearWorld);
+                float gap = SurfaceSignedGapChopInverted(nearWorld);
 #endif
                 // Metres of gap per screen pixel at this pixel (derivatives in uniform control
                 // flow, WGSL-safe): dividing by it turns the world gap into a pixel distance
                 // from the line, making the band thickness a true pixel count.
-                float2 gapGradient = float2(ddx(gap), ddy(gap));
+#ifdef WATER_FOG_SIMPLE
+                float gapSmooth = gap; // flat plane: already smooth
+#else
+                // Slopes from the smooth vertical field - see ArmWeight's note. Position
+                // (pixelsFromLine's numerator) keeps the chop-inverted gap.
+                float gapSmooth = SurfaceSignedGap(nearWorld);
+#endif
+                float2 gapGradient = float2(ddx(gapSmooth), ddy(gapSmooth));
                 float metersPerPixel = max(abs(gapGradient.x) + abs(gapGradient.y),
                                            WATERLINE_METERS_PER_PIXEL_MIN);
                 float pixelsFromLine = abs(gap) / metersPerPixel;
@@ -1281,7 +1332,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 // lens while crossing. The m*(1-m) curve is zero AT the line and at the band
                 // edge, peaking between - the image bulges beside the line, not on it. Uniform
                 // branch (_WaterlineWarp is a global), and all derivatives sit above it.
-                float gapPerUvY = ddy(gap);
+                float gapPerUvY = ddy(gapSmooth);
                 if (_WaterlineWarp > 0.0)
                 {
                     float m = tensionMask;

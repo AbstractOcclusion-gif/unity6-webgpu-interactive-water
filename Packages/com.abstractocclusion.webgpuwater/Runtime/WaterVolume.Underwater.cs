@@ -291,8 +291,46 @@ namespace AbstractOcclusion.WebGpuWater
             Publisher.PublishUnderwater(eyeInWater ? 1f : 0f, surfaceY, IsOceanClipmap ? 1f : 0f,
                                         fogSimple ? 1f : 0f, UnderwaterFogActive ? 1f : 0f,
                                         eyeInDryVolume ? 1f : 0f);
+            if (WaterDebugView.LogFogGates)
+                LogFogGateState(eyeCamera, eyeInWater, eyeInDryVolume, surfaceY,
+                                nearPlaneStraddles);
             // Screen-space caustics are gated PER BODY (AnyCausticProjectionBody / CollectCausticProjectionBodies),
             // not from this primary-only path, so a secondary chunk drives its own projection independently.
+        }
+
+        // ---- Console gate log (WaterDebugView 'Log Fog Gates') ---------------------------
+        // The fog debug views are per-pixel and GPU-side, which makes them impossible to QUOTE:
+        // a pop is a single-frame flip, and a screenshot of the frame after it proves nothing.
+        // This logs the CPU half of the system - every gate the views can only imply - as one
+        // filterable line ON CHANGE of any gate, plus a heartbeat so a quiet log still proves
+        // the logger is alive. Reading the line: 'gap' is camY - surfY (negative = eye under the
+        // predicted surface), and a CHANGE line names the frame a pop happened on - correlate it
+        // with what the eye saw that frame.
+        const int FogGateLogHeartbeatFrames = 60;
+        int _fogGateLogLastState = -1;
+        int _fogGateLogLastFrame;
+
+        void LogFogGateState(Camera cam, bool eyeInWater, bool eyeInDryVolume, float surfaceY,
+                             bool nearPlaneStraddles)
+        {
+            int state = (eyeInWater ? 1 : 0)
+                      | (eyeInDryVolume ? 2 : 0)
+                      | (UnderwaterFogActive ? 4 : 0)
+                      | (WaterlineActive ? 8 : 0)
+                      | (_fogNearSurface ? 16 : 0)
+                      | (nearPlaneStraddles ? 32 : 0);
+            bool changed = state != _fogGateLogLastState;
+            if (!changed && Time.frameCount - _fogGateLogLastFrame < FogGateLogHeartbeatFrames)
+                return;
+            _fogGateLogLastState = state;
+            _fogGateLogLastFrame = Time.frameCount;
+            float camY = cam.transform.position.y;
+            Debug.LogFormat(LogType.Log, LogOption.NoStacktrace, null, "{0}", $"[FogGates] f={Time.frameCount}{(changed ? " CHANGE" : "")} " +
+                      $"camY={camY:F3} surfY={surfaceY:F3} gap={camY - surfaceY:F3} " +
+                      $"env={SurfaceHeightEnvelope():F2} eyeWet={(eyeInWater ? 1 : 0)} " +
+                      $"dry={(eyeInDryVolume ? 1 : 0)} fog={(UnderwaterFogActive ? 1 : 0)} " +
+                      $"line={(WaterlineActive ? 1 : 0)} nearSurf={(_fogNearSurface ? 1 : 0)} " +
+                      $"straddle={(nearPlaneStraddles ? 1 : 0)}");
         }
 
         // A little beyond the [-1,1] footprint so an edge-on view of a pond still triggers; the shader
@@ -316,9 +354,9 @@ namespace AbstractOcclusion.WebGpuWater
             // a window stays fogged - Crest's carved-volume behaviour. A CPU gate here was tried and
             // reverted: it unarmed the whole fullscreen pass and killed ALL fog from inside the room.
 
-            // The near-plane corners sample the surface at their own xz so the meniscus follows the
-            // projected wave instead of a single camera-local height. Hysteresis belongs only to
-            // the eye-medium decision below; applying it to the corners would move the visible line.
+            // The near-plane corners are exact camera geometry (ViewportToWorldPoint carries
+            // FOV/aspect/roll). Hysteresis belongs only to the eye-medium decision below;
+            // applying it to the corners would move the arming band.
             float near = cam.nearClipPlane;
             float hysteresis = _wasCameraSubmerged ? SubmergeHysteresis : -SubmergeHysteresis;
             // Ceiling arming the OCEAN fog pass. REWRITTEN 2026-07-31: each corner used to be
@@ -333,7 +371,24 @@ namespace AbstractOcclusion.WebGpuWater
             // the CAMERA moves. Over-arming is the intended trade: an armed pass whose mask
             // admits nothing changes no pixel (the property this band was always meant to
             // have); it merely runs.
-            float fogArmCeilingY = VolumeCenter.y + SurfaceHeightEnvelope() + FogArmBandMeters;
+            float envelope = SurfaceHeightEnvelope();
+            float fogArmCeilingY = VolumeCenter.y + envelope + FogArmBandMeters;
+            // Waterline straddle band. REWRITTEN 2026-08-09, on the fog gate's own doctrine
+            // (above): each corner used to be tested against its STALE per-corner readback
+            // height with the fixed WaterlineArmPad, which is exactly the shape the fog arm
+            // abandoned - in a heavy sea the readback lag alone exceeds the pad, so the
+            // meniscus pass popped off while the crossing was still ON SCREEN (worst with a
+            // STATIC camera: nothing else moves to mask a one-frame absence). The straddle
+            // now brackets the ENVELOPE band around the rest plane - no readback in the test
+            // at all, so a static camera cannot flap it. Over-arming is the same intended
+            // trade as the fog: the meniscus is per-pixel (rendered ownership on Full,
+            // analytic otherwise) and self-extinguishes when the line is off screen - an
+            // armed pass whose band is off screen draws nothing. Ponds keep today's
+            // behaviour by construction: their envelope is 0, so the band reduces to
+            // rest +- WaterlineArmPad, the exact test this replaces. Also deletes four
+            // stale readback samples per frame - the corners no longer read the field.
+            float waterlineCeilingY = VolumeCenter.y + envelope + WaterlineArmPad;
+            float waterlineFloorY = VolumeCenter.y - envelope - WaterlineArmPad;
             int straddleUnder = 0;
             int straddleAbove = 0;
             int cornersNearOrUnder = 0;
@@ -341,12 +396,11 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 Vector2 viewport = NearPlaneCornersViewport[i];
                 Vector3 corner = cam.ViewportToWorldPoint(new Vector3(viewport.x, viewport.y, near));
-                float cornerSurfaceY = SurfaceHeightAtWorldXZ(corner.x, corner.z);
-                // Padded both-ways counts for the waterline-straddle test below.
-                if (corner.y < cornerSurfaceY + WaterlineArmPad) straddleUnder++;
-                if (corner.y > cornerSurfaceY - WaterlineArmPad) straddleAbove++;
-                // Envelope ceiling - see fogArmCeilingY above. Deliberately NOT cornerSurfaceY:
-                // the stale per-corner height is exactly what made this gate flap in a heavy sea.
+                // Envelope band both ways - see the straddle note above. Deliberately NOT a
+                // per-corner readback height: staleness is what made this gate flap.
+                if (corner.y < waterlineCeilingY) straddleUnder++;
+                if (corner.y > waterlineFloorY) straddleAbove++;
+                // Envelope ceiling - see fogArmCeilingY above.
                 if (corner.y < fogArmCeilingY) cornersNearOrUnder++;
             }
             _fogNearSurface = cornersNearOrUnder > 0;
@@ -361,8 +415,9 @@ namespace AbstractOcclusion.WebGpuWater
                            && Mathf.Abs(pool.z) <= UnderwaterFootprintMargin;
             }
 
-            // The waterline crosses the screen while the near plane has corners on BOTH sides of
-            // their local surface (padded so the line is armed before its band touches the edge).
+            // The waterline CAN cross the screen while the near plane has corners on both
+            // sides of the envelope band - a superset of every crossing the surface can
+            // actually make this frame, the arming rule's required property.
             nearPlaneStraddles = inFootprint && straddleUnder > 0 && straddleAbove > 0;
 
             // CameraSubmerged is consumed as a statement about the EYE, not about the near plane.
@@ -439,11 +494,19 @@ namespace AbstractOcclusion.WebGpuWater
         {
             float y = VolumeCenter.y;
             if (!openWater) return y;
-            // Fog gate: use the latest FFT height readback (~1-2 frames stale; tolerable because the fog
-            // shader's per-pixel waterline is already current and reads the same FFT surface - the gate only
-            // arms the pass). Falls back to the plain field / analytic sample when the readback isn't
-            // available (non-FFT body, first frames, or the point outside the readback region).
-            if (OceanFftActive && _oceanFft.TrySampleHeightLatest(x, z, out float fftHeight))
+            // Fog gate + submerge flip: the FFT height readback, DEAD-RECKONED to the current
+            // wave clock (TrySampleHeightPredicted). "~1-2 frames stale is tolerable" was true
+            // only of the fog PASS (its per-pixel waterline is live); the SUBMERGE flip taken
+            // from this same height feeds SCREEN-WIDE uniforms (_CameraUnderwater: the
+            // exclusion wall's reconstruction handoff, the foam overlay routing), and in a
+            // heavy sea the surface at the eye moves ~3-5 m/s, so the stale reading mistimed
+            // those flips by a frame - the transition popping with a STATIC camera while a
+            // moving one masked it. The measured-rate prediction is KWS's
+            // OceanWavesPredictionOffset ("async readback can't have 100% accuracy...
+            // ~1 frame delay") without the authored knob. Falls back to the plain field /
+            // analytic sample when the readback isn't available (non-FFT body, first
+            // frames, or the point outside the readback region).
+            if (OceanFftActive && _oceanFft.TrySampleHeightPredicted(x, z, _waveTime, out float fftHeight))
                 // Run the extrapolated (current-time) swell through the SAME shore/surf treatment the
                 // readback path (SampleLargeWaveField) and the GPU FFT branch (LargeBodyWaveHeight) use, so
                 // the submerge gate matches the rendered shore surface near shore: shoal attenuation +

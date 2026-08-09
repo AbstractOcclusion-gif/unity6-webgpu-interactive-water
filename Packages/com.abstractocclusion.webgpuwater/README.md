@@ -47,6 +47,17 @@ materials. All waters reuse the editable project foam profile at
 and quality defaults remain under the package's `Runtime/Defaults` folder. Drag on the surface for ripples; drop a Rigidbody with
 `WaterBuoyancy` in and it floats, rocks, and rides the wind waves.
 
+## Demo scenes
+
+Import **Demo Scenes** from Package Manager to get the numbered sample catalog. The scenes
+progress from the original and classic pools through lakes, underwater rendering, open water,
+reflections, buoyancy, splashes, ocean, boats, chunks, exclusion volumes, catapult impacts, and
+the animated city-night sky.
+
+Sample-specific materials, lighting settings, and the shared post-processing Volume Profile are
+contained in the imported sample. Canonical water textures, meshes, skies, profiles, and shaders
+remain package-owned under `Runtime/Defaults`; sample scenes reference those assets directly.
+
 ## Quality tiers & mobile preview
 
 The **WaterQuality** asset ships **High / Medium / Low** cost tiers (auto hardware

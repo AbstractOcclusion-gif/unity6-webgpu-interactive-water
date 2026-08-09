@@ -12,7 +12,7 @@
     "samples": [
         {
             "displayName": "Demo Scenes",
-            "description": "Example water scenes (classic pool, deep and terrain lakes, multi-lake, underwater, open water, reflections, custom object pool) plus their demo-specific materials. Core meshes, textures, sky, and quality defaults ship with the package. Import to try WebGpuWater immediately.",
+            "description": "Numbered examples covering pools, lakes, ocean, underwater rendering, reflections, buoyancy, splashes, chunks, exclusion volumes, boats, catapult impacts, and the animated city-night sky. Includes demo-specific materials and shared sample assets.",
             "path": "Samples~/Demos"
         }
     ],

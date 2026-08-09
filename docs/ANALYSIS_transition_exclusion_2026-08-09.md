@@ -119,22 +119,16 @@ waterline and the sheet's crest silhouette part company by the horizontal displa
 a sliver of nothing, sometimes overlap. That is the imperfect stitch, and it is the same defect as
 RC3, which is why one fix (below) addresses both.
 
-### RC5 — a real sorting race: the wall vs the depth-writing sheet
-The sheet renders in the **Transparent queue with ZWrite On, Blend Off**
-(`WaterSurface.shader:96-106` — deliberately, for the opaque-copy trick). The wall is also
-Transparent queue, ZWrite Off, alpha-blended (`WaterExclusionWall.shader:31-40`). Unity orders
-transparents by renderer-bounds distance, and clipmap sheets have huge camera-anchored bounds while
-the wall's bounds are the small volume mesh — so their relative order is essentially arbitrary and
-can flip when a clipmap level re-anchors, patch bounds change, or the camera height oscillates on a
-swell. When the wall happens to draw **before** a sheet twin that is *behind* it, the sheet (Blend
-Off + ZWrite On, no depth yet written by the wall) simply **overwrites the wall's blended pixels**
-for that frame. That is a literal one-frame "wrong sorting" pop, independent of every gate above.
-The user-transparent reroute (`WaterRestoreOpaqueDepth`) already exists because this class of
-problem was met once before; the wall never got the same treatment. Fix is ordering, not math:
-guarantee the wall draws after every sheet twin (render-queue offset or an explicit after-sheet
-draw event). Z-test then resolves occlusion correctly because the sheet wrote depth, and where the
-sheet discarded (the carve) the wall shows — today's intent, made deterministic. No exclusion math
-changes.
+### RC5 — the wall/sheet sorting race — **ALREADY FIXED ON DISK (hand-shipped)**
+The mechanism was real: sheet = Transparent queue, ZWrite On, Blend Off
+(`WaterSurface.shader:96-106`), wall = Transparent, ZWrite Off, blended — bounds-distance sorting
+made their order arbitrary, and a wall drawn before a sheet twin behind it got overwritten for a
+frame. **Correction after checking the current C#:** `WaterExclusionVolume.cs` already carries
+`WallRenderQueueOffset = 10` with a comment describing exactly this flip ("surface-vs-wall draw
+order FLIPPED as the camera moved… an explicit offset makes the order a fact"), applied in
+`ResolveWallMaterial`. So this cause is closed on disk; it is kept here because the same race still
+exists for any OTHER ZWrite-Off transparent sharing queue 3000 with the sheet, and because the fix
+pattern (explicit queue offset, matching `ChunkShellRenderQueueOffset`) is the one to reuse.
 
 ### RC6 — the little things (FOV / near / far audit you asked for)
 The near-plane corner machinery is FOV/aspect/roll-exact (`ViewportToWorldPoint` per corner), so no
@@ -222,19 +216,50 @@ in this top-down draw (we want "where is the water surface", not "where did the 
 sheet") so carve holes keep their current analytic/prepass handling, and none of the carve kernels
 (`ExclusionRayLength`, pushes, pane) change at all.
 
-**F4 — Deterministic wall/sheet order (RC5).** Give the wall a render-queue offset above every
-sheet twin (or dispatch it from an explicit after-sheet injection point). One-line class of change,
-removes the one-frame overwrite pops entirely, zero effect on exclusion math. Worth doing first —
-it is the only cause here that produces a pop even with perfect gates.
+**F4 — Deterministic wall/sheet order (RC5).** ~~Give the wall a render-queue offset above every
+sheet twin.~~ **Already on disk** — `WallRenderQueueOffset = 10`, hand-shipped. Nothing to do.
 
 **F5 — Micro-hardening (optional, after the above).** Generalise gather-max over-cover (KWS's rule)
 to the ownership sample so half-res quantisation always errs wet-side; consider 0.75× prepass scale
 if the 2-px edge is still visible after F3; keep the corroboration test as-is (it is our
 MaskArtifacts analogue and the carve-rim exemption is load-bearing).
 
-Suggested order: **F4 → F2 → F1 → F3 → F5.** F4/F2/F1 are small, independently testable, and each
-kills a distinct pop; F3 is the structural one that makes the raging-sea transition and the
+Suggested order: **F2 → F1 → F3 → F5** (F4 was already done by hand). F2/F1 are small and
+independently testable; F3 is the structural one that makes the raging-sea transition and the
 exclusion stitch converge on a single rendered truth.
+
+---
+
+## 6. SHIPPED 2026-08-09 (one-shot, authorized "git is fresh") — F2 + F1, UNTESTED
+
+Two files, C#-only, no shader edits, no exclusion math touched. Applied byte-precise on-device
+(mixed CRLF/LF preserved outside the edited spans).
+
+**F2 — envelope-armed waterline gate** (`WaterVolume.Underwater.cs`, new md5
+`2f19f955d890f2df629074dc025d0b48`). `ComputeCameraSubmerged`'s straddle test no longer reads the
+stale per-corner readback heights: the corners are tested against the wave-ENVELOPE band
+(`rest ± (SurfaceHeightEnvelope() + WaterlineArmPad)`), the same doctrine as the 2026-07-31 fog-arm
+rewrite. A static camera can no longer flap `WaterlineActive` (meniscus + scene-copy + the
+straddle-frame prepass trigger), and four readback samples per frame are deleted. Ponds are
+byte-equivalent by construction (envelope 0 ⇒ rest ± pad, the old test).
+
+**F1 — dead-reckoned submerge flip** (`WaterVolume.Underwater.cs` +
+`WaterOceanFft.cs`, new md5 `e6866b86abbb418b138b09b78a12ea07`). New
+`WaterOceanFft.TrySampleHeightPredicted(x, z, atTime)`: the landed readback height extrapolated by
+the already-measured `VerticalRateAt` × landing age, clamped ±1 m (`HeightPredictClampMeters`).
+`SurfaceHeightAtWorldXZ` now calls it with `_waveTime`, so the eye's submerge flip (and
+`_UnderwaterSurfaceY`, i.e. the Simple-tier waterline and every camSurf reference) tracks the
+current-frame surface instead of the 1–2-frame-stale one. This is KWS's readback-latency
+prediction, measured instead of authored. Degrades to exactly the old value until a second
+readback landing exists, or when the wave clock is paused/scrubbed.
+
+**Test checklist (static camera, raging sea — the repro):** 1) hold the camera at the waterline in
+a heavy sea: the meniscus band must never vanish for a frame while the crossing is on screen;
+2) same spot near an exclusion volume: the wall's reconstructed backdrop must stop popping a frame
+early as crests swallow the lens; 3) pond regression: transition behaviour unchanged; 4) Simple
+tier: flat waterline should now track the swell slightly better, not worse; 5) buoyancy unchanged
+(it keeps `TrySampleField`, untouched). Expected residual: the chop seam at the near-clip strip /
+carve rims (RC3/RC4) — that is F3, not shipped.
 
 ---
 

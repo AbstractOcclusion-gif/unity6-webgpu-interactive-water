@@ -77,6 +77,55 @@ float SurfaceSignedGap(float3 world)
     return world.y - SurfaceHeightAtXZ(world.xz);
 }
 
+// ---- Chop-aware classification gap ---------------------------------------------------
+// SurfaceHeightAtXZ reads the field STRAIGHT DOWN, but the large-body layer displaces
+// horizontally (FFT chop / Gerstner pinch): the crest drawn over this xz was SOURCED metres
+// away, so a vertical read can disagree with the rendered surface by whole wave heights in a
+// heavy sea. For pixels with NO rasterised prepass sample (sky above the wave silhouette,
+// the near-clip strip, off-mesh rays) that lie decided the waterline - fog painted over open
+// sky just before submersion, blinking as each crest rolled through. Fixed-point inversion
+// of the horizontal displacement (Crest's InvertDisplacement move): find the SOURCE xz whose
+// displaced column actually lands here and read the height THERE. Two correction steps plus
+// the final read = 3 field evaluations, paid only at classification points (near plane /
+// carve exit), which share nearly one xz across the whole screen - cache-hot by construction.
+// Ponds and bounded bodies skip the loop entirely (_LargeBody = 0); the wind-wave layer
+// stays a vertical read (its ripples carry no horizontal displacement worth inverting).
+float SurfaceHeightAtXZChopInverted(float2 worldXZ)
+{
+    float3 poolAtRest = WorldToPool(float3(worldXZ.x, _VolumeCenter.y, worldXZ.y));
+    float2 poolXZ = poolAtRest.xz;
+    float2 windSampleXZ = (_OceanWorldWaves > 0.5)
+                        ? (worldXZ / max(_WaveMetersPerUnit, WAVE_METERS_MIN))
+                        : poolXZ;
+    float surfaceY = PoolToWorld(float3(poolXZ.x, WaveHeight(windSampleXZ), poolXZ.y)).y;
+    if (_LargeBody > 0.5)
+    {
+        float2 srcXZ = worldXZ;
+        float height = 0.0;
+        [unroll]
+        for (int i = 0; i < 3; i++)
+        {
+            ShoreData shore = ShoreSample(srcXZ);
+            SurfWaveSample surf = EvaluateSurfWaves(srcXZ, shore.depth, shore.sdfDist,
+                                                    shore.toShore, shore.slopeTan,
+                                                    shore.influence, _SurfBeatTime);
+            float2 disp;
+            LargeBodyWaveHeightDispShore(srcXZ, shore, surf, height, disp);
+            srcXZ = worldXZ - disp;
+        }
+        surfaceY += height;
+    }
+    return surfaceY;
+}
+
+// Signed gap against the chop-inverted height - the CLASSIFICATION twin of SurfaceSignedGap.
+// The marches keep the cheap vertical read on purpose (40 steps x 3 field evaluations would
+// be ruinous, and the mask wins anyway: a span the mask zeroes never paints).
+float SurfaceSignedGapChopInverted(float3 world)
+{
+    return world.y - SurfaceHeightAtXZChopInverted(world.xz);
+}
+
 // ---- Displaced-surface height envelope ----------------------------------------------
 // Conservative half-band (metres) around the rest plane that brackets every height the displaced
 // surface can reach this frame: the swell reach (an amplitude multiple), the surf-front crest

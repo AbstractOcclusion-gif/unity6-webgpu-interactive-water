@@ -735,6 +735,33 @@ namespace AbstractOcclusion.WebGpuWater
             return true;
         }
 
+        // Ceiling (metres) on the dead-reckoning correction below. The measured rate is a
+        // first-order fact about a surface whose curvature peaks at the crest turnover, so
+        // a long extrapolation overshoots exactly where the flip timing matters most; one
+        // metre covers the realistic age x rate product (a couple of frames x a heavy
+        // sea's ~3-5 m/s) without letting a glitched landing throw the gate a swell away.
+        const float HeightPredictClampMeters = 1f;
+
+        /// <summary>As <see cref="TrySampleHeightLatest"/>, dead-reckoned to <paramref name="atTime"/>
+        /// (the caller's wave clock): height + measured vertical rate x the landing's age, clamped
+        /// to +-<see cref="HeightPredictClampMeters"/>. WHY: the landing is ~1-2 frames stale,
+        /// which the fog PASS tolerates (its per-pixel waterline is live) but the camera SUBMERGE
+        /// flip taken from this height does not - that flip drives screen-wide uniforms
+        /// (_CameraUnderwater: the exclusion wall's reconstruction handoff, the foam overlay
+        /// routing), so a mistimed flip pops the whole frame at the crossing. KWS ships the same
+        /// correction as an authored knob (OceanWavesPredictionOffset); measuring the rate needs
+        /// no knob. Identical to the un-predicted landing until a second landing has arrived
+        /// (rate 0), and whenever the wave clock is paused or scrubbed (non-positive age).</summary>
+        internal bool TrySampleHeightPredicted(float worldX, float worldZ, float atTime, out float height)
+        {
+            if (!TrySampleHeightLatest(worldX, worldZ, out height)) return false;
+            float rate = VerticalRateAt(worldX, worldZ, height);
+            float age = atTime - _sampledTime;
+            if (rate == 0f || age <= 0f) return true;
+            height += Mathf.Clamp(rate * age, -HeightPredictClampMeters, HeightPredictClampMeters);
+            return true;
+        }
+
         /// <summary>Latest landed horizontal Gerstner displacement (metres, world xz) at a world xz -
         /// the .xz lanes the bake carries beside the height. Same region/staleness caveats as
         /// <see cref="TrySampleHeightLatest"/>. Consumer: WaterVolume.InvertLargeWaveChopXZ, which

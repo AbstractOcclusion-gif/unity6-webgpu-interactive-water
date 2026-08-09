@@ -169,6 +169,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal static void ResetStaticState()
         {
             FogViewActive = false;
+            LogFogGates = false;
             Shader.SetGlobalFloat(ID_WaterDebugMode, 0f);
         }
 
@@ -176,6 +177,15 @@ namespace AbstractOcclusion.WebGpuWater
                  "the Fog modes replace the whole frame and only appear while the fullscreen " +
                  "underwater fog pass is armed. Off restores normal shading.")]
         [SerializeField] Mode mode = Mode.Off;
+
+        [Tooltip("Log the CPU fog gates to the console: one line per FLIP of any gate (the " +
+                 "transition pops are single-frame flips, unquotable from a screenshot) plus a " +
+                 "heartbeat. Filter the console on [FogGates].")]
+        [SerializeField] bool logFogGates;
+
+        /// <summary>CPU mirror of the toggle above (read by WaterVolume's underwater gate).
+        /// Static like FogViewActive, cleared on the same paths, for the same reason.</summary>
+        internal static bool LogFogGates { get; private set; }
 
         static readonly int ID_WaterDebugMode = Shader.PropertyToID("_WaterDebugMode");
 
@@ -199,6 +209,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             Shader.SetGlobalFloat(ID_WaterDebugMode, 0f);
             FogViewActive = false;
+            LogFogGates = false;
         }
 
         // ONE writer for both halves of the selection - the shader global the views read, and the
@@ -210,6 +221,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             Shader.SetGlobalFloat(ID_WaterDebugMode, (float)mode);
             FogViewActive = mode >= FirstFogMode;
+            LogFogGates = logFogGates;
         }
     }
 }

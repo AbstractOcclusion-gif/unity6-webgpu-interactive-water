@@ -1092,9 +1092,16 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
 #ifdef WATER_FOG_SIMPLE
                 float gap = nearWorld.y - _UnderwaterSurfaceY;
 #else
-                float gap = SurfaceSignedGap(nearWorld);
+                float gap = SurfaceSignedGapChopInverted(nearWorld);
 #endif
-                float2 gapGradient = float2(ddx(gap), ddy(gap));
+#ifdef WATER_FOG_SIMPLE
+                float gapSmooth = gap; // flat plane: already smooth
+#else
+                // Slopes from the smooth vertical field, position from the inverted one -
+                // same split as the fog's ArmWeight (see its note).
+                float gapSmooth = SurfaceSignedGap(nearWorld);
+#endif
+                float2 gapGradient = float2(ddx(gapSmooth), ddy(gapSmooth));
                 float coverage = WaterlineCoverage(gap,
                                                    abs(gapGradient.x) + abs(gapGradient.y), 0.0);
 #ifndef WATER_FOG_SIMPLE

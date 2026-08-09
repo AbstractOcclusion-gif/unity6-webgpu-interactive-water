@@ -35,6 +35,12 @@ Wizard**). A modern URP port and expansion of Evan Wallace's
   ScriptableObjects, and key shader uniforms.
 - **Quality tiers & mobile preview** — below.
 
+The Package Manager **Demo Scenes** sample is a numbered catalog covering the original pool,
+lake and terrain variants, underwater rendering, open water and ocean, reflections, buoyancy,
+splashes, boats, chunks, exclusion volumes, catapult impacts, and the animated city-night sky.
+Its editable demo materials and shared Volume Profile are sample-owned; immutable water defaults
+remain under the package's `Runtime/Defaults` folder.
+
 ## Quality tiers & visual tuning
 
 The **WaterQuality** asset ships three cost tiers — **High**, **Medium**, **Low** —

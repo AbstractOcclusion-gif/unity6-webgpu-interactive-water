@@ -169,17 +169,13 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // The crown material: the packed photographic chunk atlas (KWS WaterSplash
         // construction) + backlit transmission, which reads the atlas' thickness channel.
         // Doubles as the one-click upgrade for crown materials created on the old 8x8
-        // procedural flipbook: the texture is swapped and six-way lighting is switched
-        // OFF, because the baked light sheets match the old flipbook's frames, not the
-        // chunk atlas - relighting chunks with them would shade garbage.
+        // procedural flipbook: the texture is swapped to the canonical packed atlas.
         static Material CreateOrUpgradeCrownMaterial(string materialFolder)
         {
             var material = LoadOrCreateSplashMaterial(materialFolder + "/SplashCrown.mat",
                 LoadRequiredDefault<Texture2D>(SplashCrownSheetPath, "splash crown sheet"));
             if (material == null) return null;
 
-            if (material.HasProperty(SixWayProperty))
-                material.SetFloat(SixWayProperty, 0f);
             if (material.HasProperty(TransmissionStrengthProperty) &&
                 Mathf.Approximately(material.GetFloat(TransmissionStrengthProperty), 0f))
             {

@@ -100,10 +100,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // Shuriken splash rendering (lit + soft-fade replacement for Sprites/Default).
         internal const string ShaderSplashParticles = WaterShaderNames.SplashParticles;
         internal static string SplashCrownSheetPath => DefaultTexturesRoot + "/WaterSplashChunks_4x1.png";
-        // The chunk atlas has no baked six-way light sheets (those belonged to the old 8x8
-        // procedural flipbook), so the upgrade switches the crown material to the scalar
-        // foam lighting. Backlit transmission stays: it reads the atlas' thickness channel.
-        const string SixWayProperty = "_SixWay";
+        // Backlit transmission reads the packed atlas' thickness channel.
         const string TransmissionStrengthProperty = "_TransmissionStrength";
         const float DefaultCrownTransmission = 1.0f;
         // KWS-style packed droplet (R mass / G shine / B dissolve noise / A thickness).
