@@ -12,7 +12,7 @@
     "samples": [
         {
             "displayName": "Demo Scenes",
-            "description": "Example water scenes (classic pool, deep and terrain lakes, multi-lake, underwater, open water, reflections, custom object pool) plus the generated meshes, sky, and materials they depend on. Import to try WebGpuWater immediately.",
+            "description": "Example water scenes (classic pool, deep and terrain lakes, multi-lake, underwater, open water, reflections, custom object pool) plus their demo-specific materials. Core meshes, textures, sky, and quality defaults ship with the package. Import to try WebGpuWater immediately.",
             "path": "Samples~/Demos"
         }
     ],

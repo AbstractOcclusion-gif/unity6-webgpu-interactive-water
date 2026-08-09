@@ -35,6 +35,9 @@ namespace AbstractOcclusion.WebGpuWater
         [System.Serializable]
         public sealed class RippleSettings
         {
+            [Tooltip("Allow mouse clicks, pointer drags, and touch taps that hit this water surface " +
+                     "to inject ripples and splash effects. Camera orbit remains available when off.")]
+            public bool pointerWaterInteraction = true;
             [Tooltip("Propagation stiffness. Higher = faster waves. Stable up to ~2.0.")]
             [Range(0.1f, 2.0f)] public float waveSpeed = 0.6f;
             [Tooltip("Velocity damping per step. Lower = ripples die out faster.")]
@@ -78,6 +81,7 @@ namespace AbstractOcclusion.WebGpuWater
         // Same-named forwarding accessors keep every reader unchanged. RippleStrength/RippleRadius stay
         // public get/set (sample scripting API) targeting the settings; the rest are read-only.
         internal float waveSpeed => rippleSettings.waveSpeed;
+        internal bool PointerWaterInteraction => rippleSettings.pointerWaterInteraction;
         internal float damping => rippleSettings.damping;
         internal float rippleViscosity => rippleSettings.rippleViscosity;
         internal int stepsPerFrame => rippleSettings.stepsPerFrame;

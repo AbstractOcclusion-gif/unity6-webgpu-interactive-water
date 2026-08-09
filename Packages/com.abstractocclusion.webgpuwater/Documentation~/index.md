@@ -16,13 +16,19 @@ Wizard**). A modern URP port and expansion of Evan Wallace's
 
 - **[Getting Started](GettingStarted.md)** — requirements, install, the Water Wizard,
   core components, the scripting API, and troubleshooting. Read this first.
+- **[Authoring, Limitations, and Experimental Features](AuthoringLimitations.md)** — the
+  practical guardrails: wind-driven sea state, GPU readback, wake/splash ownership, rendering
+  boundaries, and what to validate before shipping.
+- **[Feature Guide](FeatureGuide.md)** — the current system map: topology, waves, physics,
+  interactions, foam, shore/exclusion, rendering, quality, and tooling.
 - **[Particle & Foam System](ParticleSystem.md)** — how foam and spray spawn: the
   event → simulation → particles chain, the GPU foam pool vs. the Shuriken splash/crown
   (and which is a fallback), the spawn decision, timing, and every tuning knob. Illustrated.
 - **[WebGpuWater — Complete Documentation (PDF)](WebGpuWater_Documentation.pdf)** — the
   full system reference: architecture, every module in depth (simulation, waves & FFT
   ocean, buoyancy, foam, rendering/optics, the surface shader, shorelines/exclusion/chunks,
-  authoring), plus engineering notes and troubleshooting.
+  authoring), plus engineering notes and troubleshooting. The Markdown guides above are the
+  authority for newly added features and current experimental-status notes while the PDF catches up.
 - **[WebGpuWater — API Reference (PDF)](WebGpuWater_API_Reference.pdf)** — the public
   scripting surface symbol by symbol: `WaterVolume`, the height-query seam, components,
   ScriptableObjects, and key shader uniforms.

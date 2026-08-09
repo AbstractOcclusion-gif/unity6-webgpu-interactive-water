@@ -9,6 +9,13 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 {
     internal static partial class WaterBuildKit
     {
+        internal static T LoadRequiredDefault<T>(string path, string description) where T : Object
+        {
+            T asset = AssetDatabase.LoadAssetAtPath<T>(path);
+            if (asset == null)
+                Debug.LogError(LogPrefix + $"required packaged {description} is missing at '{path}'.");
+            return asset;
+        }
 
         // Overwrite-in-place via CopySerialized so scene references keep their GUID/fileID - but
         // that copy lands IN MEMORY only, and nothing marked the asset dirty: the next asset
@@ -30,48 +37,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             return m;
         }
 
-        // Create-once mesh asset: reuse what's on disk (the builders' meshes are deterministic
-        // functions of named constants), build only when missing. Delete the asset to regenerate
-        // after changing the constants.
-        static Mesh LoadOrSaveMesh(string path, System.Func<Mesh> build)
-        {
-            var existing = AssetDatabase.LoadAssetAtPath<Mesh>(path);
-            return existing != null ? existing : SaveAsset(build(), path);
-        }
-
-        static Cubemap LoadOrSaveCubemap(string path, System.Func<Cubemap> build)
-        {
-            var existing = AssetDatabase.LoadAssetAtPath<Cubemap>(path);
-            return existing != null ? existing : SaveCubemap(build(), path);
-        }
-
-        // Write a generated PNG and configure its importer in one guarded path: the old inline
-        // copies cast AssetImporter.GetAtPath unchecked right after an unchecked File.WriteAllBytes,
-        // so a failed write/import NRE'd halfway through a build.
-        static Texture2D SavePngAsset(string path, Texture2D tex, System.Action<TextureImporter> configure)
-        {
-            try
-            {
-                File.WriteAllBytes(path, tex.EncodeToPNG());
-            }
-            catch (System.IO.IOException ioException)
-            {
-                Debug.LogError($"[WebGpuWater] Could not write '{path}': {ioException.Message}");
-                return null;
-            }
-            AssetDatabase.ImportAsset(path);
-            if (AssetImporter.GetAtPath(path) is TextureImporter importer)
-            {
-                configure(importer);
-                importer.SaveAndReimport();
-            }
-            else
-            {
-                Debug.LogError($"[WebGpuWater] '{path}' imported without a TextureImporter; texture settings not applied.");
-            }
-            return AssetDatabase.LoadAssetAtPath<Texture2D>(path);
-        }
-
         // Create-once: reuse the material already at 'path' (preserving any hand-tuning) instead of
         // overwriting it, so rebuilding a scene - or building a different one - never resets it.
         internal static Material LoadOrCreateMaterial(string path, Shader shader, System.Action<Material> configure = null)
@@ -85,29 +50,5 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             return m;
         }
 
-        // Same in-place idiom as SaveAsset, with the same persistence requirement.
-        internal static Cubemap SaveCubemap(Cubemap c, string path)
-        {
-            var existing = AssetDatabase.LoadAssetAtPath<Cubemap>(path);
-            if (existing != null)
-            {
-                EditorUtility.CopySerialized(c, existing);
-                EditorUtility.SetDirty(existing);
-                AssetDatabase.SaveAssets();
-                return existing;
-            }
-            AssetDatabase.CreateAsset(c, path);
-            AssetDatabase.SaveAssets();
-            return c;
-        }
-
-        internal static WaterQuality LoadOrCreateWaterQuality(string path)
-        {
-            var existing = AssetDatabase.LoadAssetAtPath<WaterQuality>(path);
-            if (existing != null) return existing;
-            var q = ScriptableObject.CreateInstance<WaterQuality>();
-            AssetDatabase.CreateAsset(q, path);
-            return q;
-        }
     }
 }

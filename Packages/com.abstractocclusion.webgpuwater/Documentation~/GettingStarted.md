@@ -30,13 +30,29 @@ Support: abstractocclusion@outlook.com
 ## Quick start — Water Wizard
 
 **Window > AbstractOcclusion > WebGpuWater > Water Wizard** is the single authoring window.
-It builds a complete water body in your scene: simulation volume, surface renderers,
-splash emitter, quality asset, and a tweakable material saved into your project
-(`Assets/WebGLWater/Generated`). The package itself stays read-only — everything the
-wizard writes lands in your `Assets/` folder, editable and yours.
+It builds a complete water body in your scene. Immutable meshes, textures, sky, and the
+default quality policy come from the package's `Runtime/Defaults` folder. Each new water
+gets independent editable materials and a foam profile under
+`Assets/WebGpuWater/Waters/<Water Name>/`.
 
 Press Play: click/drag the surface for ripples, drop a Rigidbody with `WaterBuoyancy`
 into the pool and it floats, rocks, and rides the wind waves.
+
+## Wind-driven ambient sea state
+
+For an open-water body, **Motion > Ocean Sea State > Wind Drives Ambient Sea State** turns
+the single Wind Speed control into an opt-in local-weather control. It drives the FFT wind
+sea, small wind-wave layer, detail normals, and wind-gated whitecaps together. Wakes, impact
+ripples, and remote swell remain independent.
+
+The authored **Significant Wave Height** and **Peak Wavelength** are the exact sea you get at
+**Reference Wind Speed**. For example, to author a raging 15 m/s sea: set Wind Speed and
+Reference Wind Speed to 15 m/s, then tune height and wavelength. Lower wind speeds scale that
+local wind sea down; 0 m/s makes it flat.
+
+Swell is deliberately not driven by this option: a calm local wind can still carry long waves
+from a distant storm. For runtime weather, animate Wind Speed gradually because changing the
+FFT wind-sea size refreshes its spectrum.
 
 ## Core components
 
@@ -56,6 +72,15 @@ into the pool and it floats, rocks, and rides the wind waves.
   update intervals, and particle caps.
 - **WaterProbe / WaterRippleEmitter / WaterMembership** — sampling, scripted ripple
   emission, and explicit body association for gameplay objects.
+
+### Wake and splash choice
+
+- Use **WaterSphereInteractor** for a boat or moving floater's continuous directional wake.
+  Its **Vertical Force Cap** limits a plunge/heave disturbance without weakening the travelling
+  horizontal wake.
+- Use **WaterSplash** for a one-time Rigidbody entry splash.
+- Use **WaterBreachSplash** only for repeated surface crossings such as projectiles, fish, or
+  diving birds. It uses live GPU-height readback and is not needed for a boat wake.
 
 ## Scripting quick reference
 

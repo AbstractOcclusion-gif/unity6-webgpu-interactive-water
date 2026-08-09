@@ -39,6 +39,17 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0f, LargeWaveChoppinessMax)] public float largeWaveChoppiness = DefaultLargeWaveChoppiness;
 
             [Header("Ocean sea state (FFT spectrum)")]
+            [Tooltip("Makes Wind Speed drive every ambient wind-made layer: the FFT wind sea, small wind " +
+                     "waves and detail normals. At 0 m/s the local wind sea is flat; at Reference Wind " +
+                     "Speed the authored height and wavelength are used. Remote Swell, wakes " +
+                     "and impact ripples remain independent. Off keeps the manually authored sea state. " +
+                     "For runtime weather, change wind gradually because the FFT spectrum must refresh.")]
+            public bool windDrivesAmbientSeaState = false;
+            [Tooltip("Wind speed (m/s) at which this ocean's authored Significant Wave Height and Peak " +
+                     "Wavelength are used exactly. Set this to your storm maximum to author the raging " +
+                     "state there; lower wind then scales it down. Used only when Wind Drives Ambient Sea " +
+                     "State is enabled.")]
+            [Min(AmbientWindReferenceSpeedMin)] public float ambientWindReferenceSpeed = DefaultAmbientWindReferenceSpeed;
             [Tooltip("SIGNIFICANT WAVE HEIGHT (metres): the average height of the biggest third of the " +
                      "waves, which is what 'a 2 m sea' means. This is the honest amount of water the " +
                      "spectrum carries - independent of wavelength, so raising it makes the SAME waves " +
@@ -328,10 +339,13 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField, HideInInspector, FormerlySerializedAs("oceanFoamTileSize")] float _legacyOceanFoamTileSize = DefaultOceanFoamTileSize;
         [SerializeField, HideInInspector, FormerlySerializedAs("oceanFoamFeather")] float _legacyOceanFoamFeather = DefaultOceanFoamFeather;
 
-        // The open-water swell shares the body's wind settings so one wind drives both wave scales.
-        // ReferenceWind maps the default breeze (windSpeed 3) to a x1 swell; stronger wind grows it,
-        // calm flattens it. Both the shader publisher and the CPU buoyancy read these, so they match.
+        // Legacy reference for the analytic large-wave field and detail normals when ambient wind
+        // coupling is off. The opt-in ambient mode uses the per-ocean reference speed below instead.
         const float LargeWaveReferenceWind = 3f;
+        const float DefaultAmbientWindReferenceSpeed = 3f;
+        const float AmbientWindReferenceSpeedMin = 0.01f;
+        const float WindSeaHeightExponent = 1f;
+        const float WindSeaLengthExponent = 2f / 3f;
         // Crest's _Chop range; beyond this the Gerstner surface self-intersects (pinch-through) and the
         // buoyancy inversion stops converging, so the knob is clamped here.
         const float LargeWaveChoppinessMax = 2f;
@@ -385,10 +399,23 @@ namespace AbstractOcclusion.WebGpuWater
         internal float LargeWaveAmplitudeEffective => IsOceanClipmap
             ? largeWaveAmplitude
             : largeWaveAmplitude * (windSpeed / LargeWaveReferenceWind);
-        internal float SignificantWaveHeight => ocean.significantWaveHeight;
-        /// <summary>Authored peak wavelength AFTER the Gulliver/giant scale multiplier.</summary>
+        internal bool WindDrivesAmbientSeaState => ocean.windDrivesAmbientSeaState;
+        internal float AmbientWindReferenceSpeed => WindDrivesAmbientSeaState
+            ? Mathf.Max(AmbientWindReferenceSpeedMin, ocean.ambientWindReferenceSpeed)
+            : LargeWaveReferenceWind;
+        float WindSeaGrowth(float exponent)
+        {
+            if (!WindDrivesAmbientSeaState) return 1f;
+            float windRatio = Mathf.Max(0f, windSpeed) / AmbientWindReferenceSpeed;
+            return Mathf.Pow(windRatio, exponent);
+        }
+
+        /// <summary>Wind sea height after optional ambient wind response. Swell remains independent.</summary>
+        internal float SignificantWaveHeight => ocean.significantWaveHeight * WindSeaGrowth(WindSeaHeightExponent);
+        /// <summary>Peak wavelength after optional wind response and the Gulliver/giant scale multiplier.</summary>
         internal float PeakWavelengthEffective => Mathf.Max(OceanPeakWavelengthMin,
-                                                            ocean.peakWavelength * Mathf.Max(OceanWaveScaleMin, ocean.waveScale));
+                                                            ocean.peakWavelength * Mathf.Max(OceanWaveScaleMin, ocean.waveScale)
+                                                            * WindSeaGrowth(WindSeaLengthExponent));
         internal float PeakSharpness => ocean.peakSharpness;
         internal float SeaDepth => ocean.seaDepth;
         internal float OceanCascadeReach => ocean.cascadeReach;

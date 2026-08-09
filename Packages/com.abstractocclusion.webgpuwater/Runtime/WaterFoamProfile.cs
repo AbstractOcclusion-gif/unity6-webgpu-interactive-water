@@ -50,6 +50,7 @@ namespace AbstractOcclusion.WebGpuWater
         [System.Serializable]
         public sealed class AmbientSection
         {
+            [Tooltip("When enabled, this profile overwrites the matching WaterFoamParticles component values every frame.")]
             public bool drive = true;
             [Range(0f, 1f)] public float spawnThreshold = 0.25f;
             [Range(0f, 200f)] public float spawnRate = 30f;
@@ -100,15 +101,23 @@ namespace AbstractOcclusion.WebGpuWater
         [System.Serializable]
         public sealed class SplashSection
         {
+            [Tooltip("When enabled, this profile overwrites the matching WaterSplashEmitter component values. These controls shape impact and pump bursts, not ambient airborne droplets or ripple flecks.")]
             public bool drive = true;
+            [Tooltip("Maximum number of ballistic impact/pump droplets requested by one burst. This does not control ripple flecks or foam-mask clumps.")]
             [Range(1, 128)] public int maxParticlesPerBurst = 48;
+            [Tooltip("Upward velocity multiplier for ballistic impact/pump droplets.")]
             [Range(0f, 3f)] public float upwardBias = 1f;
+            [Tooltip("Horizontal velocity multiplier for ballistic impact/pump droplets.")]
             [Range(0f, 3f)] public float outwardSpread = 1.3f;
+            [Tooltip("World-space half-size of impact/pump droplets; approximate visible width is twice this value. These are ballistic droplets, not mist or ripple flecks.")]
             public float dropletSize = 0.02f;
+            [Tooltip("Lifetime range in seconds of ballistic impact/pump droplets.")]
             public Vector2 lifetime = new Vector2(0.6f, 1.3f);
             [Header("Crown")]
             [Range(0f, 1f)] public float crownMinStrength = 0.25f;
+            [Tooltip("Base world-space size of the splash crown emitted at a sufficiently strong impact.")]
             public float crownBaseSize = 0.4f;
+            [Tooltip("Lifetime in seconds of the splash crown.")]
             public float crownLifetime = 0.5f;
             [Tooltip("Vertical launch multiplier for the crown cloud. Lower values keep it close to the surface.")]
             [Range(0f, 3f)] public float crownLaunchHeight = 1f;
@@ -126,16 +135,21 @@ namespace AbstractOcclusion.WebGpuWater
             [UnityEngine.Serialization.FormerlySerializedAs("cpuFallbackOpacity")]
             public float dropletOpacity = 1f;
             [Header("Entry streaks")]
-            [Tooltip("Enable the narrow entry streaks emitted before the crown cloud.")]
+            [Tooltip("Enable narrow ballistic water-entry streaks emitted before the crown. These are neither mist nor ripple flecks.")]
             public bool entryStreaksEnabled = true;
+            [Tooltip("Multiplier for the number of entry streaks emitted by an impact.")]
             [Range(0f, 2f)] public float entryStreakAmount = 1f;
+            [Tooltip("Vertical size multiplier for entry streaks.")]
             [Range(0f, 3f)] public float entryStreakHeight = 1f;
+            [Tooltip("Width multiplier for entry streaks.")]
             [Range(0.1f, 3f)] public float entryStreakWidth = 1f;
             [Range(0f, 2f)] public float entryStreakGravity = 1f;
             [Tooltip("Opacity of entry streaks before the global Shared Look opacity is applied.")]
             [Range(0f, 1f)] public float entryStreakOpacity = 1f;
             [Range(0f, 1f)] public float entryStreakMinStrength = 0.2f;
+            [Tooltip("Lifetime range in seconds of water-entry streaks.")]
             public Vector2 entryStreakLifetimeRange = new Vector2(0.75f, 1.5f);
+            [Tooltip("Base world-space size range of entry streak sprites before the Height and Width multipliers.")]
             public Vector2 entryStreakSizeRange = new Vector2(0.35f, 0.5f);
             public Color entryStreakTint = new Color(0.95f, 0.98f, 1f, 1f);
         }

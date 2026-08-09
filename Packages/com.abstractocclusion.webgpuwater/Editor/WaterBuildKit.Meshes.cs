@@ -1,6 +1,4 @@
-// WebGpuWater build kit - procedural meshes (surface grid, pool shell, god-ray box) and the
-// renderer GameObjects that carry them.
-using System.IO;
+// WebGpuWater build kit - renderer GameObjects that carry packaged meshes.
 using UnityEditor;
 using UnityEngine;
 using AbstractOcclusion.WebGpuWater;
@@ -35,70 +33,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             foreach (Renderer renderer in renderers)
                 if (renderer != null) renderer.gameObject.layer = layer;
-        }
-
-        // XY-plane grid in [-1,1], z = 0. Shared with the runtime (the Low tier rebuilds a
-        // coarser grid on weak devices), so the actual builder lives in WaterMeshBuilder.
-        internal static Mesh BuildGrid(int detail) => WaterMeshBuilder.BuildGrid(detail);
-
-        // Open-top box: floor at y=-1, walls up to y=2/12, spanning x,z in [-1,1]. Faces inward.
-        internal static Mesh BuildPool()
-        {
-            const float top = 2f / 12f;
-            const float lo = -1f;
-            var v = new System.Collections.Generic.List<Vector3>();
-            var t = new System.Collections.Generic.List<int>();
-
-            void Quad(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3)
-            {
-                int i = v.Count;
-                v.Add(p0); v.Add(p1); v.Add(p2); v.Add(p3);
-                t.Add(i); t.Add(i + 1); t.Add(i + 2);
-                t.Add(i); t.Add(i + 2); t.Add(i + 3);
-            }
-
-            Quad(new Vector3(-1, lo, -1), new Vector3(-1, lo, 1), new Vector3(1, lo, 1), new Vector3(1, lo, -1));
-            Quad(new Vector3(-1, lo, -1), new Vector3(1, lo, -1), new Vector3(1, top, -1), new Vector3(-1, top, -1));
-            Quad(new Vector3(1, lo, 1), new Vector3(-1, lo, 1), new Vector3(-1, top, 1), new Vector3(1, top, 1));
-            Quad(new Vector3(-1, lo, 1), new Vector3(-1, lo, -1), new Vector3(-1, top, -1), new Vector3(-1, top, 1));
-            Quad(new Vector3(1, lo, -1), new Vector3(1, lo, 1), new Vector3(1, top, 1), new Vector3(1, top, -1));
-
-            var mesh = new Mesh { name = "Pool" };
-            mesh.SetVertices(v);
-            mesh.SetTriangles(t, 0);
-            mesh.RecalculateNormals();
-            mesh.bounds = new Bounds(Vector3.zero, Vector3.one * HugeMeshBoundsSize);
-            return mesh;
-        }
-
-        // Closed box in POOL space: y in [-1,0], x,z in [-1,1]. Outward-wound (like a primitive
-        // cube) so the GodRays pass's Cull Front renders the back faces.
-        internal static Mesh BuildGodRayBox()
-        {
-            const float lo = -1f, hi = 0f;
-            var v = new System.Collections.Generic.List<Vector3>();
-            var t = new System.Collections.Generic.List<int>();
-
-            void Quad(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3)
-            {
-                int i = v.Count;
-                v.Add(p0); v.Add(p1); v.Add(p2); v.Add(p3);
-                t.Add(i); t.Add(i + 1); t.Add(i + 2);
-                t.Add(i); t.Add(i + 2); t.Add(i + 3);
-            }
-
-            Quad(new Vector3(-1, hi, -1), new Vector3(-1, hi, 1), new Vector3(1, hi, 1), new Vector3(1, hi, -1));
-            Quad(new Vector3(-1, lo, -1), new Vector3(1, lo, -1), new Vector3(1, lo, 1), new Vector3(-1, lo, 1));
-            Quad(new Vector3(-1, lo, -1), new Vector3(-1, hi, -1), new Vector3(1, hi, -1), new Vector3(1, lo, -1));
-            Quad(new Vector3(1, lo, 1), new Vector3(1, hi, 1), new Vector3(-1, hi, 1), new Vector3(-1, lo, 1));
-            Quad(new Vector3(-1, lo, 1), new Vector3(-1, hi, 1), new Vector3(-1, hi, -1), new Vector3(-1, lo, -1));
-            Quad(new Vector3(1, lo, -1), new Vector3(1, hi, -1), new Vector3(1, hi, 1), new Vector3(1, lo, 1));
-
-            var mesh = new Mesh { name = "GodRayBox" };
-            mesh.SetVertices(v);
-            mesh.SetTriangles(t, 0);
-            mesh.bounds = new Bounds(Vector3.zero, Vector3.one * HugeMeshBoundsSize);
-            return mesh;
         }
 
     }

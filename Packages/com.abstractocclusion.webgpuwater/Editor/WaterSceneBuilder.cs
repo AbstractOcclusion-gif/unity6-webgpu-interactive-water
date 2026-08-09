@@ -16,7 +16,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // World-space gap between the primary body's edge and a newly added secondary body,
         // so the two footprints never touch (touching footprints made BodyContaining ambiguous).
         const float SecondaryBodyGapMeters = 1f;
-        const string WaterVolumePrefabPath = WaterBuildKit.Root + "/WaterVolume.prefab";
+        const string WaterVolumePrefabFolder = WaterBuildKit.WatersRoot + "/WaterVolumePrefab";
+        const string WaterVolumePrefabPath = WaterVolumePrefabFolder + "/WaterVolume.prefab";
         const string WaterVolumeObjectName = "WaterVolume";
         const string DemoMaterialsRoot = WaterBuildKit.Root + "/Demos/Materials/";
 
@@ -27,7 +28,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             // Asset half only (TryBuildSharedAssets): a prefab build must not rig a camera/sun/
             // splash into the open scene the way CreateContext does.
-            if (!TryBuildSharedAssets(Gen, buildPoolMaterial: false, out BuildContext ctx)) return;
+            EnsureFolder(WaterVolumePrefabFolder);
+            if (!TryBuildSharedAssets(WaterVolumePrefabFolder, buildPoolMaterial: false,
+                                      out BuildContext ctx)) return;
 
             // The build is temporary scene state: the creators register undo entries, so reverting
             // the group below both destroys the temp objects AND leaves no stale undo steps behind.
@@ -61,7 +64,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         // Retrofit GPU foam particles onto an existing body. Demo scenes are create-once,
         // so they don't pick the feature up automatically; this wires the compute, the
-        // procedural-quad material (shared, in Generated/) and the component in one click.
+        // procedural-quad materials owned by that water and the component in one click.
         internal static void AddFoamParticlesToSelection()
         {
             var selected = Selection.activeGameObject;
@@ -76,7 +79,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 Debug.LogWarning("[WebGpuWater] That body already has foam particles.");
                 return;
             }
-            EnsureGenFolder();
             Undo.SetCurrentGroupName("Add Foam Particles");
             AddFoamParticles(volume, MaterialFolderForActiveScene());
 
@@ -93,9 +95,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             Debug.Log($"[WebGpuWater] Foam particles added to '{volume.name}' and Foam enabled.");
         }
 
-        // Upgrade the shared splash materials (Generated/SplashDroplet.mat + SplashCrown.mat)
-        // to the lit splash shader in place. They are shared by every demo scene, so one
-        // click upgrades them all; hand-tuned values on matching properties are kept.
+        // Upgrade each body's splash materials to the lit splash shader in place.
         internal static void UpgradeSplashMaterialsMenu()
         {
             UpgradeSplashMaterials();
@@ -135,7 +135,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         // The per-demo material folder for the open scene ("3. Terrain Lake" ->
         // Demos/Materials/TerrainLake), so a retrofitted material lives (and is tweaked)
-        // next to that demo's other materials. Falls back to Generated/ for custom scenes.
+        // next to that demo's other materials. Custom scenes receive a unique water folder.
         static string MaterialFolderForActiveScene()
         {
             string sceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
@@ -143,7 +143,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             foreach (char c in sceneName)
                 if (char.IsLetter(c)) compact.Append(c);
             string candidate = DemoMaterialsRoot + compact;
-            return AssetDatabase.IsValidFolder(candidate) ? candidate : Gen;
+            if (AssetDatabase.IsValidFolder(candidate)) return candidate;
+            return MaterialsFolder(CreateUniqueWaterFolder());
         }
 
         // Adds a SECOND (non-primary) water body next to the primary, sharing the sun, camera,

@@ -105,6 +105,12 @@ namespace AbstractOcclusion.WebGpuWater
 
             Vector2 m = MousePos();
 
+            if (!_owner.PointerWaterInteraction)
+            {
+                HandleMouseWithoutWaterInteraction(m);
+                return;
+            }
+
             if (MouseDown())
             {
                 _oldMouse = m;
@@ -132,11 +138,35 @@ namespace AbstractOcclusion.WebGpuWater
             }
         }
 
+        // With pointer-water interaction disabled, the left pointer remains a camera-orbit input.
+        // Switching the toggle during a water drag transfers ownership without carrying a stale body.
+        void HandleMouseWithoutWaterInteraction(Vector2 mousePosition)
+        {
+            if (MouseDown() || (_mode == PointerMode.AddDrops && MouseHeld()))
+            {
+                _oldMouse = mousePosition;
+                _dragBody = null;
+                _mode = PointerMode.Orbit;
+                return;
+            }
+
+            if (MouseHeld())
+            {
+                DuringDrag(mousePosition);
+                return;
+            }
+
+            if (!MouseUp()) return;
+            _mode = PointerMode.None;
+            _dragBody = null;
+        }
+
 #if ENABLE_INPUT_SYSTEM
         // Touch: fire one ripple where a finger taps the water. Drags (camera) and multi-touch (pinch) are
         // ignored here so they don't double up with the FlyCamera gestures.
         void HandleTouchRipple(Touchscreen touchscreen)
         {
+            if (!_owner.PointerWaterInteraction) return;
             if (MultiTouch()) return; // 2+ fingers -> camera pinch owns it
 
             var primary = touchscreen.primaryTouch;

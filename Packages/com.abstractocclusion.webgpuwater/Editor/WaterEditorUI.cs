@@ -248,8 +248,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             if (!GUILayout.Button("Create & Assign Foam Profile (one place for foam + splash)"))
                 return;
 
-            WaterBuildKit.EnsureGenFolder();
-            var created = WaterBuildKit.LoadOrCreateFoamProfile(WaterBuildKit.Gen);
+            string profilesFolder = WaterBuildKit.ResolveOrCreateProfilesFolder(body);
+            var created = WaterBuildKit.LoadOrCreateFoamProfile(profilesFolder);
             if (body != null)
             {
                 WaterBuildKit.AssignFoamProfileToBody(body, created);

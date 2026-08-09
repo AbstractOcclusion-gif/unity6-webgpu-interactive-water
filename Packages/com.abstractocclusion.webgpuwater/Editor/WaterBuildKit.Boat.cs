@@ -101,7 +101,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // Mesh-carve dry interior (optional convex proxy): the carve-mesh contract is NORMALISED
         // vertices spanning -0.5..0.5 (WaterExclusionVolume.carveMesh tooltip) - assigning a raw
         // hull mesh by hand carves at the wrong scale/offset, so this path normalises the proxy
-        // and saves the normalised copy as a Generated asset. CONVEX proxies only for a clean
+        // and saves the normalised copy under the project's WebGpuWater/Boats folder. CONVEX proxies only for a clean
         // carve: the mesh prepass keeps ONE front + ONE back face per pixel, so a concave
         // cavity biases the exit face (documented on the field itself).
         const float DryInteriorMeshShrink = 0.95f;   // slight inset keeps the cut edge behind the hull plating
@@ -256,11 +256,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 Bounds proxyBounds = dryMesh.bounds;
                 dry.transform.localPosition = proxyBounds.center;
 
-                EnsureGenFolder();
+                EnsureFolder(BoatAssetsRoot);
                 var meshVolume = dry.AddComponent<WaterExclusionVolume>();
                 meshVolume.shape = WaterExclusionVolume.Shape.Mesh;
                 meshVolume.carveMesh = SaveAsset(BuildNormalizedCarveMesh(dryMesh),
-                                                 Gen + "/" + dryMesh.name + DryInteriorMeshSuffix + ".asset");
+                                                 BoatAssetsRoot + "/" + dryMesh.name + DryInteriorMeshSuffix + ".asset");
                 meshVolume.meshProxy = WaterExclusionVolume.Shape.Box; // sun shadow / particles / CPU point test
                 meshVolume.size = Vector3.Max(proxyBounds.size * DryInteriorMeshShrink,
                                               DryInteriorMinEdge * Vector3.one);
@@ -284,7 +284,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // Normalised copy of the proxy for the carve-mesh contract (-0.5..0.5 span): vertices
         // recentred and divided by the bounds; triangles/winding untouched (positive scale).
         // The ORIGINAL bounds become the volume's Size, so the carve lands exactly where the
-        // proxy was authored. SaveAsset overwrites the Generated copy on rebuild, so an edited
+        // proxy was authored. SaveAsset overwrites the Boats copy on rebuild, so an edited
         // proxy regenerates instead of serving a stale normalisation.
         static Mesh BuildNormalizedCarveMesh(Mesh source)
         {

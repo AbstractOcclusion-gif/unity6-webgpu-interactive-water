@@ -13,6 +13,13 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 {
     public partial class WaterVolumeEditor
     {
+        void DrawPointerInteractionSection()
+        {
+            _showPointerInteraction = WaterEditorUI.Section(
+                "Pointer Interaction", _showPointerInteraction, () =>
+                    DrawFields("rippleSettings.pointerWaterInteraction"));
+        }
+
         void DrawObjectInteractionSection()
         {
             _showObjectInteraction = WaterEditorUI.Section("Object Interaction", _showObjectInteraction, () =>

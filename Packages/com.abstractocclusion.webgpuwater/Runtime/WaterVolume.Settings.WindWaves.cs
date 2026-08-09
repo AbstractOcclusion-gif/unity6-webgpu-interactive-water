@@ -127,7 +127,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal float waveHeightMeters => windWaveSettings.waveHeightMeters;
         internal float waveGrouping => windWaveSettings.waveGrouping;
         internal float waveCrestSharpness => windWaveSettings.waveCrestSharpness;
-        internal float windWaveResponse => windWaveSettings.windResponse;
+        internal float windWaveResponse => WindDrivesAmbientSeaState ? 1f : windWaveSettings.windResponse;
         internal float waveAnimationSpeed => windWaveSettings.waveAnimationSpeed;
 
         // Authored size scaled by the wind, blended by the response knob. At response 0 the authored
@@ -135,14 +135,15 @@ namespace AbstractOcclusion.WebGpuWater
         // the default breeze is unaffected either way.
         float WindWaveGrowth(float exponent)
         {
-            float ratio = Mathf.Max(windSpeed, 0f) / WindWaveReferenceSpeed;
+            float referenceSpeed = WindDrivesAmbientSeaState ? AmbientWindReferenceSpeed : WindWaveReferenceSpeed;
+            float ratio = Mathf.Max(windSpeed, 0f) / referenceSpeed;
             return Mathf.Lerp(1f, Mathf.Pow(ratio, exponent), Mathf.Clamp01(windWaveResponse));
         }
         internal float WaveLengthEffective => waveLengthMeters * WindWaveGrowth(WindWaveLengthExponent);
         internal float WaveHeightEffective => waveHeightMeters * WindWaveGrowth(WindWaveHeightExponent);
         /// <summary>True when the wind is actually moving the authored values (readout gate).</summary>
         internal bool WindWaveResponseActive
-            => windWaveResponse > 0f && !Mathf.Approximately(windSpeed, WindWaveReferenceSpeed);
+            => windWaveResponse > 0f && !Mathf.Approximately(windSpeed, AmbientWindReferenceSpeed);
         internal float waveDirectionSpread => windWaveSettings.waveDirectionSpread;
         internal float waveNormalStrength => windWaveSettings.waveNormalStrength;
 

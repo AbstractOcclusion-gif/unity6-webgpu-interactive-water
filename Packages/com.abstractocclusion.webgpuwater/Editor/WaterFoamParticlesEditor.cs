@@ -216,13 +216,16 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         void WireSelected()
         {
-            WaterBuildKit.EnsureGenFolder();
             foreach (Object obj in targets)
             {
                 var particles = obj as WaterFoamParticles;
                 if (particles == null) continue;
                 Undo.RecordObject(particles, "Wire Foam Assets");
-                WaterBuildKit.WireFoamAssets(particles, WaterBuildKit.Gen);
+                WaterVolume volume = particles.volume != null
+                    ? particles.volume
+                    : particles.GetComponentInParent<WaterVolume>();
+                WaterBuildKit.WireFoamAssets(
+                    particles, WaterBuildKit.ResolveOrCreateMaterialsFolder(volume));
             }
             serializedObject.Update();
         }

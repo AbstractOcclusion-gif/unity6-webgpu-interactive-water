@@ -11,14 +11,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
     internal static partial class WaterBuildKit
     {
         // ---------------------------------------------------------------- context
-        // Build the shared assets and scene rig for a build. Materials go into 'assetFolder' (one
-        // folder per scene) so building or rebuilding one scene never overwrites another's tuned
-        // materials. Shared deterministic assets (meshes, sky, tiles, quality) stay in Generated.
+        // Load immutable package defaults and create the editable assets owned by one water.
         // Returns false (with a dialog) when a required shader is missing, so callers can abort.
-        internal static bool CreateContext(Transform sceneRoot, out BuildContext ctx, string assetFolder,
+        internal static bool CreateContext(Transform sceneRoot, out BuildContext ctx, string waterFolder,
                                            bool buildPoolMaterial = true)
         {
-            if (!TryBuildSharedAssets(assetFolder, buildPoolMaterial, out ctx)) return false;
+            if (!TryBuildSharedAssets(waterFolder, buildPoolMaterial, out ctx)) return false;
             RigScene(ctx, sceneRoot);
             return true;
         }
@@ -26,22 +24,29 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // The pure ASSET half of a build (meshes, sky, tiles, quality, materials) - no scene
         // mutation, so the prefab builder can reuse it without also rigging a camera/sun
         // into the open scene. Camera/Orbit/Sun stay null until RigScene fills them.
-        internal static bool TryBuildSharedAssets(string assetFolder, bool buildPoolMaterial, out BuildContext ctx)
+        internal static bool TryBuildSharedAssets(string waterFolder, bool buildPoolMaterial, out BuildContext ctx)
         {
             ctx = null;
-            EnsureGenFolder();
-            EnsureFolder(assetFolder);
+            if (string.IsNullOrEmpty(waterFolder))
+            {
+                Debug.LogError(LogPrefix + "water asset folder is required.");
+                return false;
+            }
+            string materialsFolder = MaterialsFolder(waterFolder);
+            string profilesFolder = ProfilesFolder(waterFolder);
+            EnsureFolder(materialsFolder);
+            EnsureFolder(profilesFolder);
             if (!TryLoadShaders(out ShaderSet shaders)) return false;
 
-            // Create-once (delete the Generated/ asset to regenerate): the meshes/sky are
-            // deterministic functions of the constants above, so rebuilding + CopySerialized on
-            // every click only cost import time and dirtied version control for identical bytes.
-            var grid = LoadOrSaveMesh(GridMeshPath, () => BuildGrid(GridDetail));
-            var poolMesh = LoadOrSaveMesh(PoolMeshPath, BuildPool);
-            var sky = LoadOrSaveCubemap(SkyCubemapPath, () => BuildSky(SkyCubemapSize));
-            var tiles = LoadOrBuildTiles(TilesTexturePath);
-            var quality = LoadOrCreateWaterQuality(WaterQualityAssetPath);
-            var (matAbove, matUnder, matPool) = CreateWaterMaterials(shaders.Water, shaders.Pool, buildPoolMaterial, assetFolder);
+            var grid = LoadRequiredDefault<Mesh>(GridMeshPath, "water grid");
+            var poolMesh = LoadRequiredDefault<Mesh>(PoolMeshPath, "pool mesh");
+            var sky = LoadRequiredDefault<Cubemap>(SkyCubemapPath, "sky cubemap");
+            var tiles = LoadRequiredDefault<Texture2D>(TilesTexturePath, "pool tiles");
+            var quality = LoadRequiredDefault<WaterQuality>(WaterQualityAssetPath, "water quality");
+            if (grid == null || poolMesh == null || sky == null || tiles == null || quality == null)
+                return false;
+            var (matAbove, matUnder, matPool) = CreateWaterMaterials(
+                shaders.Water, shaders.Pool, buildPoolMaterial, materialsFolder);
 
             ctx = new BuildContext
             {
@@ -54,7 +59,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 MatAbove = matAbove,
                 MatUnder = matUnder,
                 MatPool = matPool,
-                Folder = assetFolder
+                WaterFolder = waterFolder,
+                MaterialsFolder = materialsFolder,
+                ProfilesFolder = profilesFolder
             };
             return true;
         }
@@ -110,22 +117,22 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             }
             if (withGodRays)
             {
-                var godGO = CreateGodRays(rendGO.transform, ctx.Folder);
+                var godGO = CreateGodRays(rendGO.transform, ctx.MaterialsFolder);
                 if (godGO != null) volume.godRayRenderer = godGO.GetComponent<Renderer>();
             }
 
-            if (withFoamParticles) AddFoamParticles(volume, ctx.Folder);
+            if (withFoamParticles) AddFoamParticles(volume, ctx.MaterialsFolder);
 
             // The body owns its splash: the authored emitter (drift droplets + flipbook crown) lives
             // under this body's frame, not as a loose scene-root object. Off = this body stays silent.
             volume.provideSplashEmitter = withSplash;
-            if (withSplash) volume.splashEmitter = CreateSplashEmitter(volume.transform);
+            if (withSplash) volume.splashEmitter = CreateSplashEmitter(volume.transform, ctx.MaterialsFolder);
 
             // ONE profile is the single tweak surface for foam + splash: auto-create it and
             // point BOTH components at it, so a new body is configured from one asset instead
             // of two components carrying duplicated knobs.
             if (withFoamParticles || withSplash)
-                AssignFoamProfileToBody(volume, LoadOrCreateFoamProfile(ctx.Folder));
+                AssignFoamProfileToBody(volume, LoadOrCreateFoamProfile(ctx.ProfilesFolder));
 
             EditorUtility.SetDirty(volume);
             return volume;
@@ -200,19 +207,26 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             EditorUtility.SetDirty(particles);
         }
 
-        // Load (or create) the body's shared foam+splash profile: ONE asset per material folder,
+        // Clone the packaged baseline into the water's own profile folder.
         // the single surface both components read. Its sections default to Drive=on, so it takes
         // over the instant it is assigned.
-        internal static WaterFoamProfile LoadOrCreateFoamProfile(string materialFolder)
+        internal static WaterFoamProfile LoadOrCreateFoamProfile(string profilesFolder)
         {
-            string path = materialFolder + "/WaterFoamProfile.asset";
+            EnsureFolder(profilesFolder);
+            string path = profilesFolder + "/WaterFoamProfile.asset";
             var existing = AssetDatabase.LoadAssetAtPath<WaterFoamProfile>(path);
             if (existing != null) return existing;
 
-            var profile = ScriptableObject.CreateInstance<WaterFoamProfile>();
-            AssetDatabase.CreateAsset(profile, path);
+            var template = LoadRequiredDefault<WaterFoamProfile>(DefaultFoamProfilePath,
+                                                                 "default foam profile");
+            if (template == null) return null;
+            if (!AssetDatabase.CopyAsset(DefaultFoamProfilePath, path))
+            {
+                Debug.LogError(LogPrefix + $"could not copy the default foam profile to '{path}'.");
+                return null;
+            }
             AssetDatabase.SaveAssets();
-            return profile;
+            return AssetDatabase.LoadAssetAtPath<WaterFoamProfile>(path);
         }
 
         // Point BOTH of a body's foam components (GPU foam particles + splash emitter) at one

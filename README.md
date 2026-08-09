@@ -246,9 +246,9 @@ or via **Window ▸ Package Manager ▸ + ▸ Add package from disk…** pointed
    make them **Floatable** or **Interactable**, then press **Create Water Surface**.
 4. Press **Play**.
 
-The wizard generates the meshes, materials, a procedural sky cubemap and a fallback tile
-texture under `Assets/WebGLWater/Generated/` (in your project, not the read-only package), and
-wires up the camera and the `WaterVolume`. One-off utilities — create prefab, add foam particles
+The wizard references immutable meshes, textures, sky, and quality defaults shipped under the
+package's `Runtime/Defaults/` folder. It creates independent editable materials and a foam profile
+under `Assets/WebGpuWater/Waters/<Water Name>/`, then wires the camera and `WaterVolume`. One-off utilities — create prefab, add foam particles
 to a selection, assign foam textures, upgrade splash materials, add a secondary body — live in
 the same window under **Utilities**.
 
@@ -319,18 +319,23 @@ may need (face-culling direction, caustic Y-flip, color space).
 
 ## Using it in a game
 
-The water is a self-contained **`WaterVolume`** component you drop into any scene; several bodies
-coexist (each drives its own sim and pushes per-body state through a `MaterialPropertyBlock`), and
-the gameplay primitives are already there — world-space height queries, `AddRipple`, buoyancy and
-submersion tests. That makes it usable for contained water in a real **desktop-URP** game today.
+The water is a self-contained **`WaterVolume`** component; several bodies can coexist, with
+per-body state driven through a `MaterialPropertyBlock`. The gameplay primitives include
+world-space height queries, `AddRipple`, buoyancy, submersion tests, wakes, and entry splashes.
+`WaterQuality` provides shipping tiers, while optional systems such as FFT ocean, shore, planar
+reflection, GPU readback, and particles still need validation in the actual target scene.
 
-Still on the roadmap before it's turnkey for every target: a high-level gameplay event API
-(enter/exit water, a clean façade over the internals), many-body performance culling and quality
-tiers, scene-view handles for the volume, and hardening the `AsyncGPUReadback` buoyancy path on
-WebGPU/mobile (where readback is unreliable, objects sink rather than float). See
-[`docs/game-integration-plan.md`](docs/game-integration-plan.md).
+For the current authoring routes and their boundaries, read the package
+[`Feature Guide`](Packages/com.abstractocclusion.webgpuwater/Documentation~/FeatureGuide.md) and
+[`Authoring Limits & Validation`](Packages/com.abstractocclusion.webgpuwater/Documentation~/AuthoringLimitations.md).
+In particular, always handle a failed surface-query result: asynchronous GPU readback can be
+unavailable or stale, and supported paths fall back to analytic water rather than making a
+Rigidbody sink.
 
 ## Known limitations
+
+The two package guides linked above are the maintained source for current limitations and
+shipping checks; this section is a concise public summary.
 
 **Two scales in one component, and the big one is younger.** Small and mid-size bodies run the
 **contained heightfield** solver — pools, ponds, lakes — and that path is the settled, well-tested

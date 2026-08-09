@@ -15,9 +15,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         public ComputeShader Compute;
     }
 
-    // Shared assets built once per scene build and threaded through the body/prop creators, so
-    // several water bodies reuse one grid/sky/material set (each body still instances its own
-    // surface material at runtime, so sharing the asset is safe).
+    // Package defaults plus the project-owned folders created for one water body.
     internal sealed class BuildContext
     {
         public ShaderSet Shaders;
@@ -30,6 +28,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         public OrbitCamera Orbit;
         public Light Sun;
         public Material MatAbove, MatUnder, MatPool;
-        public string Folder; // per-build asset folder for this scene's materials
+        public string WaterFolder;
+        public string MaterialsFolder;
+        public string ProfilesFolder;
     }
 }

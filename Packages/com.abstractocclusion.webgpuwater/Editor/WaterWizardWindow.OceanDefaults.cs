@@ -126,6 +126,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         static void WriteOceanSpectrum(SerializedObject serialized)
         {
+            RequireProperty(serialized, WaterVolumePropertyPaths.AmbientWindReferenceSpeed).floatValue =
+                RequireProperty(serialized, WaterVolumePropertyPaths.WindSpeed).floatValue;
             RequireProperty(serialized, WaterVolumePropertyPaths.SignificantWaveHeight).floatValue = OceanSignificantWaveHeight;
             RequireProperty(serialized, WaterVolumePropertyPaths.PeakWavelength).floatValue = OceanPeakWavelengthMeters;
             RequireProperty(serialized, "ocean.cascadeReach").floatValue = OceanCascadeReachDefault;

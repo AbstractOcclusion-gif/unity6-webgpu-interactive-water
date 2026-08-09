@@ -80,13 +80,15 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 "Small Wind Waves (ripple layer)", _showWindWaves, Prop("windWaveSettings.windWaves"), () =>
             {
                 EditorGUILayout.HelpBox(SmallWindWaveHelp, MessageType.None);
-                DrawFields(
-                    WaterVolumePropertyPaths.WaveHeightMeters,
-                    WaterVolumePropertyPaths.WaveLengthMeters,
-                    "windWaveSettings.windResponse",
-                    "windWaveSettings.waveAnimationSpeed",
-                    WaterVolumePropertyPaths.WaveGrouping,
-                    WaterVolumePropertyPaths.WaveCrestSharpness);
+                DrawFields(WaterVolumePropertyPaths.WaveHeightMeters, WaterVolumePropertyPaths.WaveLengthMeters);
+                bool ambientWindDriven = target is WaterVolume windWaveVolume
+                                         && windWaveVolume.WindDrivesAmbientSeaState;
+                if (ambientWindDriven)
+                    EditorGUILayout.LabelField("Wind Response", "Driven by Ambient Sea State", EditorStyles.miniLabel);
+                else
+                    DrawFields("windWaveSettings.windResponse");
+                DrawFields("windWaveSettings.waveAnimationSpeed", WaterVolumePropertyPaths.WaveGrouping,
+                           WaterVolumePropertyPaths.WaveCrestSharpness);
                 // The authored metres describe the reference breeze; show what the wind is actually
                 // making of them, so "my pond ignores the wind" and "why is it bigger than I typed"
                 // are both answered on the spot.
@@ -110,6 +112,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 "Ocean Sea State (open water)", _showOceanSwell, Prop(WaterVolumePropertyPaths.OpenWater), () =>
                 {
                     EditorGUILayout.HelpBox(SeaStateHelp, MessageType.None);
+                    DrawFields(WaterVolumePropertyPaths.WindDrivesAmbientSeaState);
+                    bool ambientWindDriven = target is WaterVolume oceanVolume
+                                             && oceanVolume.WindDrivesAmbientSeaState;
+                    if (ambientWindDriven)
+                        DrawFields(WaterVolumePropertyPaths.AmbientWindReferenceSpeed);
                     DrawFields(
                         WaterVolumePropertyPaths.SignificantWaveHeight,
                         WaterVolumePropertyPaths.PeakWavelength,
@@ -122,6 +129,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     // of wave will actually be seen out there.
                     if (target is WaterVolume seaVolume)
                     {
+                        if (seaVolume.WindDrivesAmbientSeaState)
+                            EditorGUILayout.LabelField(" ",
+                                $"At this wind: {seaVolume.SignificantWaveHeight:0.##} m high, " +
+                                $"{seaVolume.PeakWavelengthEffective:0.#} m peak wavelength",
+                                EditorStyles.miniLabel);
                         DrawSteepnessReadout(seaVolume);
                         DrawSeaSizeReadout(seaVolume);
                     }
@@ -150,8 +162,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         void DrawSteepnessReadout(WaterVolume volume)
         {
             float peak = volume.PeakWavelengthEffective;
-            if (peak <= 0f) return;
-            float steepness = volume.SignificantWaveHeight / peak;
+            float significantHeight = volume.SignificantWaveHeight;
+            if (peak <= 0f || significantHeight <= 0f) return;
+            float steepness = significantHeight / peak;
             string character = steepness >= BreakingSteepness ? "breaking - expect heavy whitecaps"
                              : steepness >= AgitatedSteepness ? "steep, agitated"
                              : steepness >= SwellSteepness ? "ordinary sea"
@@ -209,22 +222,29 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // the window the textbook 1.86x Hs figure assumes.
         const float ObservedWaveCount = 1000f;
 
-        // `largeWaveAmplitude` is a retired whole-field multiplier that no inspector draws
-        // (see MigrateOceanAmplitudeIntoMetresV12). Unbounded oceans are folded back to 1 on load, so
-        // this can only fire if that migration was bypassed - and if it ever does, every metre in this
-        // section is a lie by exactly this factor. Cheap invariant, loud failure.
+        // `largeWaveAmplitude` is a retired whole-field multiplier (see
+        // MigrateOceanAmplitudeIntoMetresV12). Unbounded oceans are folded back to 1 on load, so this
+        // can only fire if that migration was bypassed - and if it ever does, every metre in this
+        // section is a lie by exactly this factor. Expose the field only while broken: it gives the
+        // author a normal-inspector repair path without resurrecting it as a sea-state control.
         void DrawRetiredAmplitudeWarning()
         {
             if (!Prop(WaterVolumePropertyPaths.UnboundedOcean).boolValue) return;
-            float amplitude = Prop(WaterVolumePropertyPaths.LargeWaveAmplitude).floatValue;
+            SerializedProperty amplitudeProperty = Prop(WaterVolumePropertyPaths.LargeWaveAmplitude);
+            float amplitude = amplitudeProperty.floatValue;
             if (Mathf.Approximately(amplitude, NeutralLargeWaveAmplitude)) return;
             EditorGUILayout.HelpBox(
                 $"This ocean carries a retired wave-height multiplier of {amplitude:0.###}, so the sea "
-                + "is rendered at that fraction of every height above. Set it to 1 (Debug inspector) and "
+                + "is rendered at that fraction of every height above. Set the repair field below to 1 and "
                 + "re-author the heights in metres.", MessageType.Warning);
+            EditorGUILayout.PropertyField(amplitudeProperty, RetiredAmplitudeRepairLabel);
         }
 
         const float NeutralLargeWaveAmplitude = 1f;
+        static readonly GUIContent RetiredAmplitudeRepairLabel = new GUIContent(
+            "Legacy Height Multiplier",
+            "Compatibility value left by an older or flat-water setup. Set it to 1 so Significant "
+            + "Wave Height and Swell Height render in metres. This field disappears once repaired.");
 
         // Stokes' limiting steepness is 1/7; the other two are where a sea stops reading as one thing and
         // starts reading as another, taken from the fetch-limited steepness law (Hs/lambda ~ 1/14 at very
@@ -302,11 +322,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             "agitated chop and a long peak with the same height is a lazy ocean swell. Peak Sharpness " +
             "sets the character (1 = confused, 7 = organised corduroy) without changing the height. " +
             "Wave Scale multiplies the wavelength alone, for a miniature or a giant sea at the same " +
-            "steepness. Wind no longer touches any of this - it only steers direction and whitecaps.";
+            "steepness. Turn on Wind Drives Ambient Sea State to make Wind Speed scale the local wind sea; " +
+            "Swell remains independent.";
         const string WindHelp =
-            "Wind steers every wave layer and gates the whitecaps. It does NOT set wave size any more: " +
-            "the ocean's scale is Peak Wavelength (Ocean Sea State) and the ripple layer's is Fetch " +
-            "(Small Wind Waves).";
+            "Wind steers every wave layer and gates the whitecaps. Turn on Wind Drives Ambient Sea State " +
+            "in Ocean Sea State when this one speed should also take the local sea from flat to rough. " +
+            "Remote swell, wakes and impact ripples stay independent.";
         const string SmallWindWaveHelp =
             "The fine ripple layer that rides on top of everything else, everywhere on the body - " +
             "independent of the ocean's FFT sea state, and what a pool or a pond has instead. Height " +

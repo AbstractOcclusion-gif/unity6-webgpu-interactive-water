@@ -30,16 +30,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // top so the four sections are not guessed at from field names alone.
         const string SectionGuide =
             "What each section drives:\n" +
-            "• Shared Look — appearance shared by ALL foam particles (tint, opacity, sprite, foam " +
-            "flipbook, size bias). The splash crown keeps its own tint/opacity under Splash.\n" +
-            "• Ambient Source & Foam Ranges — how much foam the always-on surface sim makes, PLUS the " +
-            "floating-foam and landed-foam life/size ranges. Those ranges are NOT ambient-only: every " +
-            "source lands in the same pool, so crest foam and a boat's spray use them too.\n" +
-            "• Density Veil — the screen-space density wash (FoamDensityComposite), not sprites.\n" +
-            "• Splash & Pump Bursts — the droplet fan and crown ring thrown by impacts and spray pumps " +
-            "(WaterSplashEmitter). The droplet MATERIAL is not here: airborne droplets are one draw " +
-            "pass shared with the ambient mist, set on the Water Foam Particles component.\n" +
-            "• Bubbles — the underwater plume every splash/pump burst injects (WaterFoamParticles).";
+            "- Shared Look: appearance shared by foam particles (tint, opacity, sprite, flipbook and size bias).\n" +
+            "- Floating Foam: surface clumps spawned from the simulated foam mask. Ripples can feed that mask.\n" +
+            "- Ripple Crest Flecks: separate small dots emitted directly from moving ripple crests.\n" +
+            "- Ambient Airborne Droplets: the Spray Chance fraction of foam-mask spawns launched into the air.\n" +
+            "- Splash & Pump Bursts: impact/pump droplets and crowns; these are not mist or crest flecks.\n" +
+            "- Landed Foam: the surface patches left when airborne droplets land.\n" +
+            "- Density Veil: a connected screen-space foam wash, not another particle source.\n" +
+            "- Bubbles: the underwater plume injected by splash and pump bursts.";
 
         // The ambient section is drawn in explicit groups rather than field order, so it reads the same
         // way the component does: the particle you are looking at first, the source that feeds it after.
@@ -47,37 +45,36 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // missing just because this list was not updated.
         static readonly (string Field, string Label, string Tooltip)[] FloatingFoamFields =
         {
-            ("lifeRange", "Foam Lifetime", "Lifetime of a floating foam particle, in seconds."),
-            ("sizeRange", "Foam Size", "World half-size range of a floating foam particle."),
+            ("lifeRange", "Clump Lifetime", "Lifetime in seconds of floating clumps spawned from the simulated foam mask. Longer life increases the visible population even when Spawn Rate is low."),
+            ("sizeRange", "Clump Half-Size", "World-space half-size of foam-mask clumps. Approximate visible width is twice this value. This does not resize direct Ripple Crest Flecks."),
         };
 
         static readonly (string Field, string Label, string Tooltip)[] LandedFoamFields =
         {
             ("depositLifeRange", "Landed Lifetime",
              "Lifetime of the patch left by ANY droplet that lands - mist, surf lip or boat spray."),
-            ("depositSizeRange", "Landed Size", "World half-size of that patch."),
+            ("depositSizeRange", "Landed Half-Size", "World-space half-size of the landed patch; approximate visible width is twice this value."),
         };
 
         static readonly (string Field, string Label, string Tooltip)[] AmbientSourceFields =
         {
-            ("spawnThreshold", "Foam Threshold", "Foam level (0-1) below which the ambient source spawns nothing."),
-            ("spawnRate", "Spawn Rate", "Ambient spawns per second per square world unit of fully-foamed water."),
-            ("maxSpawnPerFrame", "Max Spawn Per Frame", "Per-frame cap on the AMBIENT source only."),
-            ("spawnMaxDistance", "Spawn Distance", "Distance LOD for the ambient source, in metres. 0 = no thinning."),
-            ("sprayChance", "Mist Chance", "Fraction of ambient spawns launched as airborne mist."),
-            ("sprayLaunchSpeed", "Mist Launch Speed", "Upward launch speed of those mist droplets."),
-            ("sprayLifeRange", "Mist Lifetime",
-             "AMBIENT MIST only. Splash and pump droplets carry their own life, set under Splash."),
-            ("spraySizeRange", "Mist Size", "Ambient mist only, for the same reason."),
+            ("spawnThreshold", "Mask Spawn Threshold", "Simulated foam-mask level (0-1) below which no floating clumps or ambient airborne droplets spawn. Increase this to keep weak ripple foam from producing particles."),
+            ("spawnRate", "Mask Spawn Rate", "Expected foam-mask spawns per second per square world unit of fully foamed water. This does not control direct Ripple Crest Flecks or impact/pump bursts."),
+            ("maxSpawnPerFrame", "Mask Max Per Frame", "Per-frame cap for foam-mask spawns only."),
+            ("spawnMaxDistance", "Mask Spawn Distance", "Distance LOD for foam-mask spawns, in metres. 0 disables distance thinning."),
+            ("sprayChance", "Airborne Droplet Chance", "Fraction of accepted foam-mask spawns launched as airborne droplets instead of remaining floating clumps. These are not impact droplets or ripple flecks."),
+            ("sprayLaunchSpeed", "Airborne Launch Speed", "Upward launch speed of foam-mask airborne droplets."),
+            ("sprayLifeRange", "Airborne Lifetime", "Foam-mask airborne droplets only. Impact and pump droplets use the Splash section."),
+            ("spraySizeRange", "Airborne Half-Size", "World-space half-size of foam-mask airborne droplets. Approximate visible width is twice this value."),
         };
 
         static readonly (string Field, string Label, string Tooltip)[] RippleCrestFleckFields =
         {
             ("rippleCrestFlecksEnabled", "Enabled", "Emit small floating flecks from moving ripple crests."),
-            ("rippleCrestFleckAmount", "Density", "Multiplies the number of flecks selected from each crest."),
+            ("rippleCrestFleckAmount", "Fleck Amount", "Multiplies the number of direct flecks selected from each moving ripple crest. Set to 0, or disable the source, to stop them."),
             ("rippleCrestFleckMaxPerFrame", "Max Per Frame", "Hard per-frame cap for this source."),
             ("rippleCrestFleckLifetimeRange", "Lifetime Range", "Lifetime range for ripple-crest flecks."),
-            ("rippleCrestFleckSizeRange", "Size Range", "World half-size range for ripple-crest flecks."),
+            ("rippleCrestFleckSizeRange", "Fleck Half-Size", "World-space half-size of direct ripple-crest flecks. Approximate visible width is twice this value."),
             ("rippleCrestFleckMotion", "Ripple Motion", "How strongly flecks keep their ripple-propagation motion."),
         };
 
@@ -128,17 +125,29 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             var drawn = new System.Collections.Generic.HashSet<string> { DriveField };
 
-            WaterEditorUI.SubHeading("Floating foam (every source)");
+            if (ambient.FindPropertyRelative(DriveField).boolValue)
+                EditorGUILayout.HelpBox(
+                    "Drive is enabled. This profile overwrites the matching Water Foam Particles " +
+                    "component values every frame. Tune them here, or turn Drive off to use the " +
+                    "component's local values.", MessageType.Info);
+
+            WaterEditorUI.SubHeading("Floating Foam - From Foam Mask");
             DrawGroup(ambient, FloatingFoamFields, drawn);
             WaterEditorUI.SubHeading("Landed foam (every source)");
             DrawGroup(ambient, LandedFoamFields, drawn);
-            WaterEditorUI.SubHeading("Ambient turbulence source");
-            EditorGUILayout.HelpBox("Only the ambient source reads these. Ocean crests and splash / pump " +
-                "bursts spawn regardless, so zeroing Spawn Rate does not stop a boat spraying.",
+            WaterEditorUI.SubHeading("Foam-Mask Spawn Source");
+            EditorGUILayout.HelpBox("Ripples and turbulence can raise the simulated foam mask. These controls " +
+                "turn that mask into floating clumps or airborne droplets. Direct ripple flecks and splash / " +
+                "pump bursts use their own controls, so lowering Mask Spawn Rate does not stop those sources.",
                 MessageType.None);
             DrawGroup(ambient, AmbientSourceFields, drawn);
 
             WaterEditorUI.SubHeading("Ripple Crest Flecks");
+            EditorGUILayout.HelpBox(
+                "Best suited to pools and other small-ripple water. Large or fast splash waves can " +
+                "produce dense, strongly stretched fleck ribbons that may look oversized. For scenes " +
+                "with heavy impacts, reduce Fleck Amount and Fleck Half-Size, or disable this source.",
+                MessageType.Warning);
             DrawGroup(ambient, RippleCrestFleckFields, drawn);
 
             DrawRemainingFields(ambient, drawn);

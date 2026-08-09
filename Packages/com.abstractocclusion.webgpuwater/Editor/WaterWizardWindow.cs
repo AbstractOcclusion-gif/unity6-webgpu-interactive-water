@@ -361,9 +361,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             int undoGroup = Undo.GetCurrentGroup();
 
             var root = NewUndoableGameObject(RootObjectName);
-            if (!CreateContext(root.transform, out BuildContext ctx, Gen, buildPoolMaterial: withPool))
+            string waterFolder = CreateUniqueWaterFolder();
+            if (!CreateContext(root.transform, out BuildContext ctx, waterFolder, buildPoolMaterial: withPool))
             {
                 Undo.RevertAllDownToGroup(undoGroup); // nothing persists from an aborted build
+                AssetDatabase.DeleteAsset(waterFolder);
                 return;
             }
 
@@ -646,7 +648,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                                                         "the model - which on a model split into several meshes " +
                                                         "shapes the carve around ALL of them at once, so name the " +
                                                         "hull here when that is not what you want. The build saves a " +
-                                                        "normalised copy into the Generated folder (the carve " +
+                                                        "normalised copy into the WebGpuWater/Boats folder (the carve " +
                                                         "contract needs a -0.5..0.5 span; assigning a raw mesh by " +
                                                         "hand carves at the wrong scale). Used AS AUTHORED unless " +
                                                         "Convexify is ticked, and the carve keeps one front and one " +
@@ -975,7 +977,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             WaterSplashEmitter emitter = body.splashEmitter != null
                 ? body.splashEmitter
                 : Object.FindFirstObjectByType<WaterSplashEmitter>();
-            if (emitter == null) emitter = CreateSplashEmitter(body.transform);
+            if (emitter == null)
+                emitter = CreateSplashEmitter(body.transform, ResolveOrCreateMaterialsFolder(body));
             Undo.RecordObject(body, "Add Water Splashes");
             body.splashEmitter = emitter;
             body.provideSplashEmitter = true; // retrofit turns the gate on so the body actually splashes

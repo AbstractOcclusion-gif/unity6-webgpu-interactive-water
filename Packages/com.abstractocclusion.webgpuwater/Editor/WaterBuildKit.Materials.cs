@@ -8,6 +8,32 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 {
     internal static partial class WaterBuildKit
     {
+        internal static string ResolveOrCreateMaterialsFolder(WaterVolume volume)
+        {
+            Material material = volume != null && volume.surfaceAbove != null
+                ? volume.surfaceAbove.sharedMaterial
+                : null;
+            string materialPath = AssetDatabase.GetAssetPath(material);
+            if (!string.IsNullOrEmpty(materialPath))
+            {
+                string existingFolder = Path.GetDirectoryName(materialPath).Replace('\\', '/');
+                if (existingFolder.StartsWith(WatersRoot + "/")) return existingFolder;
+            }
+
+            string materialsFolder = MaterialsFolder(CreateUniqueWaterFolder());
+            EnsureFolder(materialsFolder);
+            return materialsFolder;
+        }
+
+        internal static string ResolveOrCreateProfilesFolder(WaterVolume volume)
+        {
+            string materialsFolder = ResolveOrCreateMaterialsFolder(volume);
+            string waterFolder = Path.GetDirectoryName(materialsFolder).Replace('\\', '/');
+            string profilesFolder = ProfilesFolder(waterFolder);
+            EnsureFolder(profilesFolder);
+            return profilesFolder;
+        }
+
         // ---------------------------------------------------------------- materials
         // The above-water pass culls BACK faces; the underwater pass culls FRONT faces (inverted
         // from the shader's own defaults, which reads better here). The pool interior culls back
@@ -74,7 +100,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             EditorUtility.SetDirty(material);
         }
 
-        // Shipped art from the package's imported Runtime/Textures folder. Loaded through the
+        // Shipped art from the package's imported Runtime/Defaults/Textures folder. Loaded through the
         // AssetDatabase with NO importer rewrite: on a registry or tarball install the package
         // folder is IMMUTABLE, so a SaveAndReimport here would fail - and the authored .meta files
         // already carry the right settings. Null (with a loud warning) when the copy is missing, so
@@ -102,8 +128,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                                                      m.SetColor(PropGodRayColor, DefaultGodRayColor);
                                                      m.SetFloat(PropGodRayDensity, DefaultGodRayDensity);
                                                  });
-            var go = CreateRenderer(GodRaysObjectName, SaveAsset(BuildGodRayBox(), GodRayBoxMeshPath),
-                                    godRayMat, parent);
+            Mesh godRayMesh = LoadRequiredDefault<Mesh>(GodRayBoxMeshPath, "god-ray box mesh");
+            if (godRayMesh == null) return null;
+            var go = CreateRenderer(GodRaysObjectName, godRayMesh, godRayMat, parent);
             var gmr = go.GetComponent<MeshRenderer>();
             gmr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             gmr.receiveShadows = false;

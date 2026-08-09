@@ -81,6 +81,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         bool _showObjectInteraction = false;
         bool _showObjectInteractionAdvanced = false;
+        bool _showPointerInteraction = true;
         bool _showSplash = false;
 
         bool _showQuality = false;
@@ -117,6 +118,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             Sync(ref _showChunk, nameof(_showChunk), load);
             Sync(ref _showWiring, nameof(_showWiring), load);
             Sync(ref _showCamera, nameof(_showCamera), load);
+            Sync(ref _showPointerInteraction, nameof(_showPointerInteraction), load);
 
             Sync(ref _showRipple, nameof(_showRipple), load);
             Sync(ref _showRippleAdvanced, nameof(_showRippleAdvanced), load);
@@ -242,6 +244,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     break;
 
                 case InspectorTab.Interaction:
+                    DrawPointerInteractionSection();
                     DrawObjectInteractionSection();
                     DrawSplashSection();
                     break;

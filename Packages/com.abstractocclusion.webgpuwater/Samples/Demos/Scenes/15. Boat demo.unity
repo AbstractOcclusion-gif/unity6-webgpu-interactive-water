@@ -897,11 +897,15 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2289032453173115939, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: strength
-      value: 0.08
+      value: 0.06
       objectReference: {fileID: 0}
     - target: {fileID: 2289032453173115939, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: centerOffset.y
       value: -0.6
+      objectReference: {fileID: 0}
+    - target: {fileID: 2289032453173115939, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: verticalForceCap
+      value: 0.5
       objectReference: {fileID: 0}
     - target: {fileID: 3503852985712929184, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: m_Mass
@@ -932,6 +936,10 @@ PrefabInstance:
       value: 0.3
       objectReference: {fileID: 0}
     - target: {fileID: 3815383692066494255, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: dragCoefficients.y
+      value: 0.2
+      objectReference: {fileID: 0}
+    - target: {fileID: 3815383692066494255, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: surfaceRelativeDrag
       value: 1
       objectReference: {fileID: 0}
@@ -945,11 +953,15 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 3910971927850112354, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: strength
-      value: 0.08
+      value: 0.06
       objectReference: {fileID: 0}
     - target: {fileID: 3910971927850112354, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: centerOffset.y
       value: -0.6
+      objectReference: {fileID: 0}
+    - target: {fileID: 3910971927850112354, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: verticalForceCap
+      value: 0.5
       objectReference: {fileID: 0}
     - target: {fileID: 4128827499602973311, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: m_LocalPosition.y
@@ -1037,7 +1049,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: continuousAmountScale
-      value: 0.5
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: petalElevationDegrees
@@ -16267,14 +16279,14 @@ MonoBehaviour:
     wetnessMemory: 1
     wetnessDryTime: 30
     foamSpread: 0.2
-    foamGenThreshold: 0.3
-    foamMinWaveHeight: 0.09
+    foamGenThreshold: 0.716
+    foamMinWaveHeight: 0.166
     foamAdvect: 3
     foamFromSpeed: 6
     foamFromCurvature: 30
     foamDeposit: 0.45
-    foamBreakStrength: 0.6
-    foamBreakRange: 1.5
+    foamBreakStrength: 0.731
+    foamBreakRange: 3.59
     foamCrestBias: 0.028
     foamHeadroom: 1
     foamWakeStrength: 1
@@ -16304,8 +16316,10 @@ MonoBehaviour:
     openWater: 1
     largeWaveAmplitude: 1
     largeWaveChoppiness: 1.2
+    windDrivesAmbientSeaState: 1
+    ambientWindReferenceSpeed: 6
     significantWaveHeight: 15
-    peakWavelength: 400
+    peakWavelength: 350
     peakSharpness: 2
     waveScale: 1
     seaDepth: 0
@@ -16337,7 +16351,7 @@ MonoBehaviour:
     largeCausticProjectionSoften: 0
     oceanFoamWindThreshold: 2
     oceanFoamCoverage: 0.91
-    oceanFoamStrength: 2
+    oceanFoamStrength: 1.9
     oceanFoamFadeRate: 1.2
     oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
     oceanFoamTileSize: 8
@@ -16492,7 +16506,7 @@ MonoBehaviour:
   volumeScatterSettings:
     volumeScatter: 1
     scatterColor: {r: 0, g: 0.0323, b: 0.1223, a: 1}
-    scatterIntensity: 0.1
+    scatterIntensity: 0.48
     scatterAnisotropy: 0.5
     scatterAmbientTerm: 1
     scatterSunTerm: 1
@@ -16525,7 +16539,7 @@ MonoBehaviour:
   _legacyShorelineStrength: 0.8
   windWaveSettings:
     windWaves: 0
-    windSpeed: 3
+    windSpeed: 6.63
     windFromDegrees: 0
     waveLengthMeters: 1.2
     waveHeightMeters: 0.05
@@ -16801,6 +16815,7 @@ MonoBehaviour:
   centerOffset: {x: 0, y: -0.1, z: -1.59}
   radius: 0.25
   strength: 0.05
+  verticalForceCap: 0
   maxStepDistance: 5
   wakeFadeSpeed: 15
 --- !u!114 &2097037570
@@ -16818,6 +16833,7 @@ MonoBehaviour:
   centerOffset: {x: 0, y: -0.1, z: 1}
   radius: 0.4
   strength: 0.07
+  verticalForceCap: 0
   maxStepDistance: 5
   wakeFadeSpeed: 15
 --- !u!1660057539 &9223372036854775807

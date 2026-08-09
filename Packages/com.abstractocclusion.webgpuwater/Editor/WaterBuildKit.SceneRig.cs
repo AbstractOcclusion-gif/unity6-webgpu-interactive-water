@@ -69,7 +69,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // drives both children. "Droplet Spray" is the CPU fallback - bodies with an
         // active GPU WaterFoamParticles route droplets there instead, so it only bursts
         // on non-GPU bodies. "Crown Ring" always plays on both paths.
-        internal static WaterSplashEmitter CreateSplashEmitter(Transform parent)
+        internal static WaterSplashEmitter CreateSplashEmitter(Transform parent, string materialFolder)
         {
             var rootGO = NewUndoableGameObject(SplashRootName);
             rootGO.transform.SetParent(parent);
@@ -81,12 +81,13 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             WaterSplashEmitter.ConfigureForDrift(splashPS);
             var splashPSR = splashGO.GetComponent<ParticleSystemRenderer>();
             splashPSR.sharedMaterial = LoadOrCreateSplashMaterial(
-                SplashDropletMaterialPath, LoadOrBuildDroplet(DropletTexturePath));
+                materialFolder + "/SplashDroplet.mat",
+                LoadRequiredDefault<Texture2D>(DropletTexturePath, "packed splash droplet texture"));
             // Render mode is owned by ConfigureForDrift (stretched billboards: fast droplets
             // streak along their motion) - no override here.
             splashEmitter.particles = splashPS;
 
-            EnsureJetLayer(splashEmitter, CreateOrUpgradeCrownMaterial());
+            EnsureJetLayer(splashEmitter, CreateOrUpgradeCrownMaterial(materialFolder));
 
             var crownGO = NewUndoableGameObject(SplashCrownChildName);
             crownGO.transform.SetParent(rootGO.transform);
@@ -98,7 +99,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             // to the single crown card this system used to be.
             crownPSR.renderMode = ParticleSystemRenderMode.Billboard;
             crownPSR.pivot = Vector3.zero;
-            crownPSR.sharedMaterial = CreateOrUpgradeCrownMaterial();
+            crownPSR.sharedMaterial = CreateOrUpgradeCrownMaterial(materialFolder);
             splashEmitter.crownParticles = crownPS;
             return splashEmitter;
         }
@@ -107,12 +108,18 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // existing emitters in the open scene. New emitters receive it in CreateSplashEmitter.
         internal static void UpgradeSplashMaterials()
         {
-            EnsureGenFolder();
-            LoadOrCreateSplashMaterial(SplashDropletMaterialPath, LoadOrBuildDroplet(DropletTexturePath));
-            Material crownMaterial = CreateOrUpgradeCrownMaterial();
             foreach (WaterSplashEmitter emitter in Object.FindObjectsByType<WaterSplashEmitter>(
                          FindObjectsInactive.Include, FindObjectsSortMode.None))
             {
+                string materialFolder = ResolveMaterialFolder(emitter);
+                Material dropletMaterial = LoadOrCreateSplashMaterial(materialFolder + "/SplashDroplet.mat",
+                    LoadRequiredDefault<Texture2D>(DropletTexturePath, "packed splash droplet texture"));
+                Material crownMaterial = CreateOrUpgradeCrownMaterial(materialFolder);
+                if (emitter.particles != null)
+                {
+                    var dropletRenderer = emitter.particles.GetComponent<ParticleSystemRenderer>();
+                    if (dropletRenderer != null) dropletRenderer.sharedMaterial = dropletMaterial;
+                }
                 EnsureJetLayer(emitter, crownMaterial);
                 UpgradeCrownLayer(emitter, crownMaterial);
             }
@@ -165,10 +172,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // procedural flipbook: the texture is swapped and six-way lighting is switched
         // OFF, because the baked light sheets match the old flipbook's frames, not the
         // chunk atlas - relighting chunks with them would shade garbage.
-        static Material CreateOrUpgradeCrownMaterial()
+        static Material CreateOrUpgradeCrownMaterial(string materialFolder)
         {
-            var material = LoadOrCreateSplashMaterial(SplashCrownMaterialPath,
-                LoadOrProvisionPackagedSheet(SplashCrownSheetPath, CrownSheetPackageRelativePath));
+            var material = LoadOrCreateSplashMaterial(materialFolder + "/SplashCrown.mat",
+                LoadRequiredDefault<Texture2D>(SplashCrownSheetPath, "splash crown sheet"));
             if (material == null) return null;
 
             if (material.HasProperty(SixWayProperty))
@@ -180,6 +187,24 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             }
             EditorUtility.SetDirty(material);
             return material;
+        }
+
+        static string ResolveMaterialFolder(WaterSplashEmitter emitter)
+        {
+            if (emitter != null && emitter.crownParticles != null)
+            {
+                var renderer = emitter.crownParticles.GetComponent<ParticleSystemRenderer>();
+                string materialPath = renderer != null
+                    ? AssetDatabase.GetAssetPath(renderer.sharedMaterial)
+                    : null;
+                if (!string.IsNullOrEmpty(materialPath) && materialPath.StartsWith(ProjectAssetsPrefix))
+                    return Path.GetDirectoryName(materialPath).Replace('\\', '/');
+            }
+
+            string waterFolder = CreateUniqueWaterFolder();
+            string materialsFolder = MaterialsFolder(waterFolder);
+            EnsureFolder(materialsFolder);
+            return materialsFolder;
         }
 
         // A splash material on the lit shader (create-once). Also the one-click upgrade

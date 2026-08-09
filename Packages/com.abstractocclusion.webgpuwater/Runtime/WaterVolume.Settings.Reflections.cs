@@ -108,11 +108,11 @@ namespace AbstractOcclusion.WebGpuWater
         // Amplitude response to wind speed, shared by the top and the underside so ONE wind drives
         // both. sqrt, not linear: the authored range reaches 10 m/s, where a linear law would more
         // than triple the ripple while sqrt lands at 1.8x - clearly windier, still readable. Measured
-        // against the same LargeWaveReferenceWind breeze the ocean swell amplitude uses, so a body at
-        // the default wind is unchanged and one dial means the same thing across both wave systems.
+        // against the ambient sea state's reference wind when that mode is enabled. Otherwise the
+        // legacy reference breeze keeps existing bodies unchanged.
         internal float DetailNormalWindFactor
-            => Mathf.Lerp(1f, Mathf.Sqrt(windSpeed / LargeWaveReferenceWind),
-                          detailNormalSettings.windResponse);
+            => Mathf.Lerp(1f, Mathf.Sqrt(windSpeed / AmbientWindReferenceSpeed),
+                          WindDrivesAmbientSeaState ? 1f : detailNormalSettings.windResponse);
         // No texture -> strength 0: the shader's uniform gate then skips all four detail taps.
         internal float DetailNormalStrength
             => detailNormalSettings.texture != null

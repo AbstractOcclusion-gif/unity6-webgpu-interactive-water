@@ -24,10 +24,15 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string ProductName = "WebGPU Water";
         internal const string LogPrefix = "[WebGpuWater] ";
 
-        // Consumer-side, writable roots: generated meshes/materials/textures and the sample prefab
-        // are created into the OPEN project's Assets, never into this read-only package.
+        // Consumer-side writable roots. Each authored water owns one folder; immutable defaults
+        // live in the package and are referenced directly.
         internal const string Root = "Assets/WebGpuWater";
-        internal const string Gen = "Assets/WebGpuWater/Generated";
+        internal const string ProjectAssetsPrefix = "Assets/";
+        internal const string WatersRoot = Root + "/Waters";
+        internal const string BoatAssetsRoot = Root + "/Boats";
+        internal const string MaterialsFolderName = "Materials";
+        internal const string ProfilesFolderName = "Profiles";
+        internal const string DefaultWaterFolderName = "Water";
 
         // Immutable package assets loaded by path (compute shaders). They live inside the package,
         // whose root is RESOLVED (WaterPackagePaths) rather than assumed: an Asset Store
@@ -35,11 +40,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // resolve. Properties rather than consts for the same reason - the root is only known at
         // editor runtime.
         internal static string PackageShadersRoot => WaterPackagePaths.Asset("Runtime/Shaders");
+        internal static string PackageDefaultsRoot => WaterPackagePaths.Asset("Runtime/Defaults");
+        internal static string DefaultMeshesRoot => PackageDefaultsRoot + "/Meshes";
+        internal static string DefaultProfilesRoot => PackageDefaultsRoot + "/Profiles";
+        internal static string DefaultTexturesRoot => PackageDefaultsRoot + "/Textures";
         internal static string SimComputePath => PackageShadersRoot + "/WaterSim.compute";
         internal static string OceanFftComputePath => PackageShadersRoot + "/OceanFft.compute";
-
-        internal const int GridDetail = 200;
-        internal const int SkyCubemapSize = 128;
 
         // Scene-object names, shared with WaterSceneBuilder's body-cloning path so a rename
         // here can never silently break the clone naming there.
@@ -55,13 +61,13 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // top-level menus, so everything lives under Window/).
         internal const string MenuRoot = "Window/AbstractOcclusion/WebGpuWater/";
 
-        // Generated shared-asset paths (create-once; see LoadOrCreateMaterial et al).
-        internal const string GridMeshPath = Gen + "/WaterGrid.asset";
-        internal const string PoolMeshPath = Gen + "/Pool.asset";
-        internal const string GodRayBoxMeshPath = Gen + "/GodRayBox.asset";
-        internal const string SkyCubemapPath = Gen + "/SkyCubemap.cubemap";
-        internal const string TilesTexturePath = Gen + "/Tiles.png";
-        internal const string WaterQualityAssetPath = Gen + "/WaterQuality.asset";
+        internal static string GridMeshPath => DefaultMeshesRoot + "/WaterGrid.asset";
+        internal static string PoolMeshPath => DefaultMeshesRoot + "/Pool.asset";
+        internal static string GodRayBoxMeshPath => DefaultMeshesRoot + "/GodRayBox.asset";
+        internal static string SkyCubemapPath => DefaultTexturesRoot + "/SkyCubemap.cubemap";
+        internal static string TilesTexturePath => DefaultTexturesRoot + "/Tiles.png";
+        internal static string WaterQualityAssetPath => DefaultProfilesRoot + "/DefaultWaterQuality.asset";
+        internal static string DefaultFoamProfilePath => DefaultProfilesRoot + "/DefaultFoamProfile.asset";
 
         // Shader names: aliases of the runtime WaterShaderNames registry (one source; the
         // registry is internal and reachable via InternalsVisibleTo).
@@ -92,25 +98,15 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         // Shuriken splash rendering (lit + soft-fade replacement for Sprites/Default).
         internal const string ShaderSplashParticles = WaterShaderNames.SplashParticles;
-        internal const string SplashDropletMaterialPath = Gen + "/SplashDroplet.mat";
-        internal const string SplashCrownMaterialPath = Gen + "/SplashCrown.mat";
-        internal const string SplashCrownSheetPath = Gen + "/WaterSplashChunks_4x1.png";
-        // The chunk atlas ships inside the package's Samples~ folder, which Unity never
-        // imports. This is its path RELATIVE to the resolved package root; the wizard copies
-        // it out to the Gen path above on first build (see LoadOrProvisionPackagedSheet) so
-        // the splash is textured even in projects that never imported the demo samples.
-        const string CrownSheetPackageRelativePath =
-            "Samples~/Demos/Common/Assets/Textures/WaterSplashChunks_4x1.png";
+        internal static string SplashCrownSheetPath => DefaultTexturesRoot + "/WaterSplashChunks_4x1.png";
         // The chunk atlas has no baked six-way light sheets (those belonged to the old 8x8
         // procedural flipbook), so the upgrade switches the crown material to the scalar
         // foam lighting. Backlit transmission stays: it reads the atlas' thickness channel.
         const string SixWayProperty = "_SixWay";
         const string TransmissionStrengthProperty = "_TransmissionStrength";
         const float DefaultCrownTransmission = 1.0f;
-        // KWS-style packed droplet (R mass / G shine / B dissolve noise / A thickness). The
-        // legacy Gen/Droplet.png (RGB white, shape in A) is left on disk untouched for old
-        // materials still on the legacy shader path.
-        internal const string DropletTexturePath = Gen + "/DropletPacked.png";
+        // KWS-style packed droplet (R mass / G shine / B dissolve noise / A thickness).
+        internal static string DropletTexturePath => DefaultTexturesRoot + "/DropletPacked.png";
 
         const int FoamFlipbookCols = 4;
         const int FoamFlipbookRows = 4;
@@ -122,17 +118,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // ocean god-ray density so "god rays" mean the same strength on every body type.
         internal const float DefaultGodRayDensity = 0.8f;
 
-        // Authored art the wizard assigns onto a new body: the WaterVolume Textures block AND the
-        // foam/spray/veil material sprite slots. It all lives in the package's IMPORTED
-        // Runtime/Textures folder (with its authored .meta import settings - the detail map stays a
-        // Normal Map), unlike the crown sheet, which is provisioned out of Samples~ because it is
-        // copied into consumer-project Gen assets.
-        //
-        // These are FILE NAMES, not Gen paths: the sheets are shipped art, not build products, so
-        // they are read straight out of the package (LoadDefaultTexture). They used to be declared
-        // as Gen/<file> paths that NOTHING ever wrote, so every load silently returned null and the
-        // foam quads drew against Unity's 1x1 "white" fallback - opaque squares, no warning.
-        internal static string DefaultTexturesRoot => WaterPackagePaths.Asset("Runtime/Textures");
+        // Authored art the wizard assigns onto a new body. All defaults are imported package assets;
+        // the Wizard references them directly and never copies them into the consumer project.
         internal const string FoamParticleAtlasFile = "FoamParticleAtlas_2x2.png";
         // Round soft droplet sprite for the airborne spray pass (its own look, separate from foam).
         internal const string FoamDropletTexFile = "Droplet.png";
@@ -163,11 +150,16 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const int CrownSheetCols = 4;
         const int CrownSheetRows = 1;
 
-        // Generated meshes keep huge bounds so Unity's renderer culling can never wrongly cull
-        // a surface placed by the volume frame; real frustum culling is WaterVolume.CullBounds.
-        const float HugeMeshBoundsSize = 1000f;
+        internal static string CreateUniqueWaterFolder()
+        {
+            EnsureFolder(WatersRoot);
+            string path = AssetDatabase.GenerateUniqueAssetPath(WatersRoot + "/" + DefaultWaterFolderName);
+            EnsureFolder(path);
+            return path;
+        }
 
-        internal static void EnsureGenFolder() => EnsureFolder(Gen);
+        internal static string MaterialsFolder(string waterFolder) => waterFolder + "/" + MaterialsFolderName;
+        internal static string ProfilesFolder(string waterFolder) => waterFolder + "/" + ProfilesFolderName;
 
         // Create an asset folder (and any missing parents) if it doesn't exist yet.
         internal static void EnsureFolder(string assetFolder)
