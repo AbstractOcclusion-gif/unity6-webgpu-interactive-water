@@ -29,7 +29,7 @@ Material:
         m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
-    - _ParticleOpacity: 0
+    - _ParticleOpacity: 0.579
     - _SoftFadeDistance: 0.05
     - _VelocityStretch: 1.3
     m_Colors:

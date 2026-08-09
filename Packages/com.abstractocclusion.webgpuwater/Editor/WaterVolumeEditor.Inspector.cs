@@ -40,6 +40,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         bool _showRipple = false;
         bool _showRippleAdvanced = false;
+        bool _showWakeSafety = false;
         bool _showWind = true;
         bool _showWindWaves = false;
         bool _showWindWavesAdvanced = false;
@@ -119,6 +120,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             Sync(ref _showRipple, nameof(_showRipple), load);
             Sync(ref _showRippleAdvanced, nameof(_showRippleAdvanced), load);
+            Sync(ref _showWakeSafety, nameof(_showWakeSafety), load);
             Sync(ref _showWind, nameof(_showWind), load);
             Sync(ref _showWindWaves, nameof(_showWindWaves), load);
             Sync(ref _showWindWavesAdvanced, nameof(_showWindWavesAdvanced), load);

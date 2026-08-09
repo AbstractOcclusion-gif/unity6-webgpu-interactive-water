@@ -99,6 +99,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         [SerializeField] bool _splash = true;
         [SerializeField] bool _godRays = true;
         [SerializeField] bool _addFloorCollider = true;
+        [SerializeField] bool _useTerrainBed;
+        [SerializeField] Terrain _bedTerrain;
         [SerializeField] CameraMode _cameraMode = CameraMode.Orbit;
 
         [SerializeField] InteractionMode _objectMode = InteractionMode.Floatable;
@@ -189,7 +191,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             DrawSharedOptions();
 
             EditorGUILayout.Space(8f);
-            using (new EditorGUI.DisabledScope(!ExtentIsValid()))
+            using (new EditorGUI.DisabledScope(!CanCreateWater()))
             {
                 if (GUILayout.Button("Create Water", GUILayout.Height(30f)))
                     CreateWater();
@@ -249,6 +251,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                                                  "ripples. Higher = rounder ripples at more GPU cost."),
                 _rippleQuality);
 
+            DrawTerrainBedOptions();
+
             _cameraMode = (CameraMode)EditorGUILayout.EnumPopup(
                 new GUIContent("Camera", "Orbit: rotate/zoom around the water. Fly: free WASD movement, " +
                                          "Q/E down/up, hold right-mouse to look, Shift to boost."),
@@ -289,6 +293,32 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 _addFloorCollider);
         }
 
+        void DrawTerrainBedOptions()
+        {
+            _useTerrainBed = EditorGUILayout.Toggle(
+                new GUIContent("Use terrain bed", "Bake the selected Terrain heightmap as the water bed for depth, shoreline and clarity effects."),
+                _useTerrainBed);
+
+            using (new EditorGUI.DisabledScope(!_useTerrainBed))
+            {
+                EditorGUI.indentLevel++;
+                EditorGUI.BeginChangeCheck();
+                Terrain selectedTerrain = (Terrain)EditorGUILayout.ObjectField(
+                    new GUIContent("Terrain", "Terrain whose heightmap defines this water body's bed."),
+                    _bedTerrain, typeof(Terrain), allowSceneObjects: true);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    _bedTerrain = selectedTerrain;
+                    if (_bedTerrain != null)
+                        _useTerrainBed = true;
+                }
+                EditorGUI.indentLevel--;
+            }
+
+            if (_useTerrainBed && _bedTerrain == null)
+                EditorGUILayout.HelpBox("Select the Terrain that defines the water bed before creating the water body.", MessageType.Warning);
+        }
+
         bool ExtentIsValid()
         {
             return _extent.x >= MinExtentComponent
@@ -296,11 +326,18 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 && _extent.z >= MinExtentComponent;
         }
 
+        bool CanCreateWater() => ExtentIsValid() && (!_useTerrainBed || _bedTerrain != null);
+
         void CreateWater()
         {
             if (!ExtentIsValid())
             {
                 Debug.LogError($"[WebGpuWater] Water not created: every size component must be at least {MinExtentComponent}.");
+                return;
+            }
+            if (_useTerrainBed && _bedTerrain == null)
+            {
+                Debug.LogError("[WebGpuWater] Water not created: Use Terrain Bed requires a Terrain assignment.");
                 return;
             }
 
@@ -338,6 +375,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             body.rippleQuality = _rippleQuality;
             ApplyBaseType(body);
+            ApplyTerrainBed(body);
             ApplyCustomPoolTexture(body, withPool);
             ApplyReflection(body);
             ApplyFoam(body);
@@ -365,6 +403,20 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         void ApplyBaseType(WaterVolume body)
         {
             body.WaterFog = _kind == WaterKind.SurfaceWithFog;
+        }
+
+        void ApplyTerrainBed(WaterVolume body)
+        {
+            var serialized = new SerializedObject(body);
+            SerializedProperty useTerrainBed = serialized.FindProperty(WaterVolumePropertyPaths.UseBedDepth);
+            SerializedProperty terrainBed = serialized.FindProperty(WaterVolumePropertyPaths.BedTerrain);
+            if (useTerrainBed == null || terrainBed == null)
+                throw new System.InvalidOperationException(
+                    "[WebGpuWater] Wizard terrain-bed settings are missing from WaterVolume.");
+
+            useTerrainBed.boolValue = _useTerrainBed;
+            terrainBed.objectReferenceValue = _useTerrainBed ? _bedTerrain : null;
+            serialized.ApplyModifiedProperties(); // rides the Create Water undo group
         }
 
         // ---- authoring look defaults -----------------------------------------

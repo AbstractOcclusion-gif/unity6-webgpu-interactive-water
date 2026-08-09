@@ -1,6 +1,7 @@
-// WebGpuWater - full-screen skybox fog overlay. Opaque geometry renders after this pass, so only
-// the skybox/background receives the blend. The opacity is calculated from Unity RenderSettings
-// and the rendering camera's far clip, matching the colour a far-away fogged object converges to.
+// WebGpuWater - full-screen skybox fog overlay. URP has already written opaque depth when this
+// pass follows the skybox, so the triangle is placed at far depth and blends only untouched sky
+// pixels. This avoids requesting a sampled camera-depth texture and keeps later screen-space
+// passes on their existing depth path.
 Shader "AbstractOcclusion/WebGpuWater/WaterSkyFog"
 {
     Properties
@@ -15,7 +16,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSkyFog"
             Name "SkyFog"
             Blend SrcAlpha OneMinusSrcAlpha
             ZWrite Off
-            ZTest Always
+            ZTest Equal
             Cull Off
 
             HLSLPROGRAM
@@ -35,6 +36,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSkyFog"
             {
                 Varyings output;
                 output.positionCS = GetFullScreenTriangleVertexPosition(input.vertexID);
+                output.positionCS.z = UNITY_RAW_FAR_CLIP_VALUE * output.positionCS.w;
                 return output;
             }
 

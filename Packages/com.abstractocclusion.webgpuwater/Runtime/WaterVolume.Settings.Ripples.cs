@@ -61,6 +61,10 @@ namespace AbstractOcclusion.WebGpuWater
                      "without touching the developed wake SHAPE (built from many smaller pushes below the " +
                      "cap). 0 = off (no cap). Lower positive = softer onset; the sim velocity ceiling is 0.5.")]
             [Range(0f, 0.5f)] public float wakeStartForceCap = 0f;
+            [Tooltip("Caps the height ripple stamped when a Rigidbody first enters the water, taming " +
+                     "an over-tall impact ring without changing the splash particles. 0 = off (no cap). " +
+                     "Lower positive = softer impact ripple.")]
+            [Range(0f, 0.08f)] public float splashImpactRippleCap = 0f;
             [Tooltip("Seed the pool with random ripples on start.")]
             public bool seedRipplesOnStart = true;
             [Tooltip("Keep total water volume constant so the surface doesn't drift up/down.")]
@@ -79,6 +83,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal int stepsPerFrame => rippleSettings.stepsPerFrame;
         internal float rippleChoppiness => rippleSettings.rippleChoppiness;
         internal float wakeStartForceCap => rippleSettings.wakeStartForceCap;
+        internal float splashImpactRippleCap => rippleSettings.splashImpactRippleCap;
         internal bool seedRipplesOnStart => rippleSettings.seedRipplesOnStart;
         internal bool conserveVolume => rippleSettings.conserveVolume;
         internal float conserveMaxCorrection => rippleSettings.conserveMaxCorrection;

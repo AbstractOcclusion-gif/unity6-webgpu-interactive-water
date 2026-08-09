@@ -39,7 +39,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "rippleSettings.rippleStrength",
                     "rippleSettings.rippleRadius",
                     "rippleSettings.rippleChoppiness",
-                    "rippleSettings.wakeStartForceCap");
+                    "rippleSettings.splashImpactRippleCap");
+                _showWakeSafety = WaterEditorUI.SubSection("Wake Safety", _showWakeSafety, () =>
+                {
+                    EditorGUILayout.HelpBox("This cap applies to every wake interactor on this water body. " +
+                                            "To cap only a boat's plunge/heave wave, set Vertical Force Cap " +
+                                            "on that boat's Water Sphere Interactor.", MessageType.Info);
+                    DrawFields("rippleSettings.wakeStartForceCap");
+                });
                 _showRippleAdvanced = WaterEditorUI.SubSection("Advanced", _showRippleAdvanced, () =>
                 {
                     DrawFields("rippleSettings.stepsPerFrame", "rippleSettings.seedRipplesOnStart");

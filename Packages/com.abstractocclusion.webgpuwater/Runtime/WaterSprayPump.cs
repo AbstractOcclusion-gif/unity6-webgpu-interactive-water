@@ -92,6 +92,10 @@ namespace AbstractOcclusion.WebGpuWater
         const float DefaultContinuousPlowMultiplier = 2f;
         const float DefaultContinuousCrownTriggerStrength = 0.75f;
         const float DefaultContinuousCrownRate = 0.75f;
+        const float DefaultTurnRateForFullResponse = 90f;
+        const float DefaultTurnOutsideAmountBoost = 1f;
+        const float DefaultTurnOutsideSpawnOffset = 0.2f;
+        const float MinTurnRateForFullResponse = 0.01f;
         // Continuous emission defaults + shaping. The rate floor keeps a just-triggered probe
         // audible instead of one emit every few seconds; the accumulator cap stops a hitched
         // frame from banking a machine-gun volley.
@@ -220,6 +224,16 @@ namespace AbstractOcclusion.WebGpuWater
                  "This is paced independently from the droplet stream, keeping a boat wake alive without a crown per droplet emit.")]
         [Range(0.1f, 10f)] [SerializeField] float continuousCrownRatePerSecond = DefaultContinuousCrownRate;
 
+        [Header("Turning wake")]
+        [Tooltip("Yaw speed in degrees per second at which the outside side of a turning hull reaches its full spray response.")]
+        [Min(MinTurnRateForFullResponse)] [SerializeField] float turnRateForFullResponse = DefaultTurnRateForFullResponse;
+
+        [Tooltip("Extra droplet volume on the OUTSIDE of a turn. 1 adds 100% at the full turn rate; the inside side is unchanged.")]
+        [Min(0f)] [SerializeField] float turnOutsideAmountBoost = DefaultTurnOutsideAmountBoost;
+
+        [Tooltip("Moves the OUTSIDE burst away from the hull at the full turn rate, so its droplets begin beyond the boat exclusion volume.")]
+        [Min(0f)] [SerializeField] float turnOutsideSpawnOffset = DefaultTurnOutsideSpawnOffset;
+
         [Header("Petals")]
         [Tooltip("Width of each burst's wedge. 360 is the full ring every splash threw before hull " +
                  "fitting; narrow it and a probe throws a petal instead. Needs a probe direction, which " +
@@ -258,6 +272,8 @@ namespace AbstractOcclusion.WebGpuWater
         WaterSample[] _rippleSamples;   // interactive ripples included -> Rock, Both
         WaterSample[] _analyticSamples; // analytic surface only -> Boat
         ProbeState[] _states;
+        Vector3 _previousForward;
+        bool _hasForwardHistory;
 
 #if UNITY_EDITOR
         // Editor diagnostics (compiles to nothing in a build). This counts EMITS, not droplets: it is
@@ -301,8 +317,9 @@ namespace AbstractOcclusion.WebGpuWater
         // missing frames and fire a phantom burst.
         void OnDisable()
         {
-            if (_states == null) return;
-            for (int i = 0; i < _states.Length; i++) _states[i] = default;
+            if (_states != null)
+                for (int i = 0; i < _states.Length; i++) _states[i] = default;
+            _hasForwardHistory = false;
         }
 
         // LateUpdate: sample AFTER the sims have stepped this frame, so the surface reflects the current
@@ -315,6 +332,7 @@ namespace AbstractOcclusion.WebGpuWater
             int count = probes != null ? probes.Length : 0;
             if (count == 0) return;
             EnsureBuffers(count);
+            float signedYawRate = SampleSignedYawRate(deltaSeconds);
 
             for (int i = 0; i < count; i++)
                 _worldPoints[i] = transform.TransformPoint(probes[i].localOffset);
@@ -335,7 +353,26 @@ namespace AbstractOcclusion.WebGpuWater
             WaterSplashEmitter activeEmitter = emitter != null ? emitter : body.ResolveSplashEmitter();
 
             for (int i = 0; i < count; i++)
-                StepProbe(i, count, deltaSeconds, activeEmitter);
+                StepProbe(i, count, deltaSeconds, signedYawRate, activeEmitter);
+        }
+
+        float SampleSignedYawRate(float deltaSeconds)
+        {
+            Vector3 forward = transform.forward;
+            forward.y = 0f;
+            if (forward.sqrMagnitude < MinPetalLengthSquared) return 0f;
+            forward.Normalize();
+
+            if (!_hasForwardHistory)
+            {
+                _previousForward = forward;
+                _hasForwardHistory = true;
+                return 0f;
+            }
+
+            float yawDegrees = Vector3.SignedAngle(_previousForward, forward, Vector3.up);
+            _previousForward = forward;
+            return yawDegrees / deltaSeconds;
         }
 
         // At most two batched queries: one ripple-included (Rock/Both), one analytic-only (Boat). Each is
@@ -357,7 +394,8 @@ namespace AbstractOcclusion.WebGpuWater
                 body.SampleHeights(owner, 0f, _worldPoints, _analyticSamples, TriggerFields, excludeInteractiveRipples: true);
         }
 
-        void StepProbe(int index, int probeCount, float deltaSeconds, WaterSplashEmitter activeEmitter)
+        void StepProbe(int index, int probeCount, float deltaSeconds, float signedYawRate,
+                       WaterSplashEmitter activeEmitter)
         {
             WaterSprayMode mode = probes[index].mode;
             WaterSample sample = mode == WaterSprayMode.Boat ? _analyticSamples[index] : _rippleSamples[index];
@@ -377,7 +415,7 @@ namespace AbstractOcclusion.WebGpuWater
             _probeBandDistances[index] = Mathf.Abs(world.y - surfaceHeight);
             _probeGates[index] =
 #endif
-            TryEmit(index, probeCount, mode, world, surfaceHeight, deltaSeconds, activeEmitter);
+            TryEmit(index, probeCount, mode, world, surfaceHeight, deltaSeconds, signedYawRate, activeEmitter);
 
             _states[index].PreviousProbePosition = world;
             _states[index].PreviousSurfaceHeight = surfaceHeight;
@@ -385,7 +423,8 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         SprayProbeGate TryEmit(int index, int probeCount, WaterSprayMode mode, Vector3 world,
-                               float surfaceHeight, float deltaSeconds, WaterSplashEmitter activeEmitter)
+                               float surfaceHeight, float deltaSeconds, float signedYawRate,
+                               WaterSplashEmitter activeEmitter)
         {
             ref ProbeState state = ref _states[index];
             bool continuous = probes[index].emission == WaterSprayEmission.Continuous;
@@ -476,7 +515,10 @@ namespace AbstractOcclusion.WebGpuWater
             // Clamp01 saturation, which is why the boost felt untunable.
             float amountScale = Mathf.Max(MinAmountScale, BaseAmountScale + probes[index].amountBoost);
             if (continuous) amountScale *= continuousAmountScale; // small per-emit volume, steady stream
-            Vector3 surfacePoint = new Vector3(world.x, surfaceHeight, world.z);
+            float outsideTurnWeight = ResolveOutsideTurnWeight(index, signedYawRate);
+            amountScale *= 1f + turnOutsideAmountBoost * outsideTurnWeight;
+            Vector3 surfacePoint = new Vector3(world.x, surfaceHeight, world.z)
+                                 + ResolveOutsideSpawnOffset(index, outsideTurnWeight);
             // strength IS the normalised trigger speed. Reusing it rather than normalising the speed a
             // second time keeps the rake tied to maxImpactSpeed instead of drifting from it.
             Vector3 petalDirection = ResolvePetalDirection(index, horizontalStep, strength);
@@ -505,6 +547,38 @@ namespace AbstractOcclusion.WebGpuWater
             _probeEmitCounts[index]++;
 #endif
             return SprayProbeGate.Fired;
+        }
+
+        // A positive yaw rotates forward toward world-right. A left-side probe is therefore outside
+        // that turn; the signed side test makes the response work for either steering direction.
+        float ResolveOutsideTurnWeight(int index, float signedYawRate)
+        {
+            float fullResponseRate = Mathf.Max(MinTurnRateForFullResponse, turnRateForFullResponse);
+            float signedTurn = Mathf.Clamp(signedYawRate / fullResponseRate, -1f, 1f);
+            if (Mathf.Approximately(signedTurn, 0f)) return 0f;
+
+            Vector3 outward = transform.TransformDirection(probes[index].outwardLocal);
+            outward.y = 0f;
+            if (outward.sqrMagnitude < MinPetalLengthSquared) return 0f;
+            outward.Normalize();
+
+            Vector3 right = transform.right;
+            right.y = 0f;
+            if (right.sqrMagnitude < MinPetalLengthSquared) return 0f;
+            right.Normalize();
+
+            float side = Vector3.Dot(outward, right);
+            return Mathf.Max(0f, -signedTurn * side);
+        }
+
+        Vector3 ResolveOutsideSpawnOffset(int index, float outsideTurnWeight)
+        {
+            if (outsideTurnWeight <= 0f || turnOutsideSpawnOffset <= 0f) return Vector3.zero;
+
+            Vector3 outward = transform.TransformDirection(probes[index].outwardLocal);
+            outward.y = 0f;
+            if (outward.sqrMagnitude < MinPetalLengthSquared) return Vector3.zero;
+            return outward.normalized * (turnOutsideSpawnOffset * outsideTurnWeight);
         }
 
         // WaterFoamParticles DROPS the burst requests past its per-frame cap rather than deferring them,

@@ -5,9 +5,10 @@
 // RenderGraph handoff convention). Consumers LOAD them (texel fetch, no sampler) to take the DRY
 // column's entry/exit from the mesh instead of from the analytic proxy.
 //
-// Runs BeforeRenderingTransparents so both depths exist before the water surface and the exclusion
-// wall (transparent draws) read them this frame. Unlike the chunk twin, placement comes from the
-// DRAW MATRIX - an exclusion volume has a real transform, so the mesh needs no frame block.
+// Runs after opaque geometry and before the skybox. This makes the span available to the
+// screen-space caustic projection as well as the later transparent water/wall draws. Unlike the
+// chunk twin, placement comes from the DRAW MATRIX - an exclusion volume has a real transform, so
+// the mesh needs no frame block.
 //
 // WHY EVERY SHAPE, when only Mesh volumes are read back today. A Box or Sphere is not mesh-less -
 // the wall draws its unit cube/sphere every frame - so the analytic shapes were absent from these
@@ -27,9 +28,9 @@ namespace AbstractOcclusion.WebGpuWater
 {
     internal sealed class WaterExclusionDepthPass : ScriptableRenderPass
     {
-        // Before transparents: the surface and the wall both render in the transparent queue, so
-        // both depths must be written and bound global by the time they draw.
-        internal const RenderPassEvent InjectionPoint = RenderPassEvent.BeforeRenderingTransparents;
+        // Caustic projection follows the skybox. Publish the carve span before it so dry mesh
+        // interiors cannot receive screen-space underwater lighting.
+        internal const RenderPassEvent InjectionPoint = RenderPassEvent.AfterRenderingOpaques;
 
         const int FrontFaceShaderPass = 0; // Cull Back  -> entry depth
         const int BackFaceShaderPass  = 1; // Cull Front -> exit depth

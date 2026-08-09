@@ -183,6 +183,7 @@ namespace AbstractOcclusion.WebGpuWater
             public float Weight;
             public float Strength;
             public float WakeFoamDose;
+            public float VerticalForceCap;
         }
 
         // Taken from the struct, not written as a literal, so adding a field cannot silently desync
@@ -629,7 +630,7 @@ namespace AbstractOcclusion.WebGpuWater
         /// by <see cref="FlushInjections"/>, so a hull carrying several interactors costs ONE full-grid
         /// pass rather than one each. A scene with no interactor never dispatches at all.</summary>
         public void AddSphereInteraction(Vector2 center, float radius, Vector2 velXZ, float velY,
-                                         float weight, float strength, float wakeFoamDose)
+                                         float weight, float strength, float wakeFoamDose, float verticalForceCap)
         {
             radius = Mathf.Max(radius, MinDropTexelRadius / Resolution);
             if (_sphereCount >= MaxQueuedInjections) FlushSpheres();
@@ -642,6 +643,7 @@ namespace AbstractOcclusion.WebGpuWater
                 Weight = weight,
                 Strength = strength,
                 WakeFoamDose = Mathf.Max(0f, wakeFoamDose),
+                VerticalForceCap = Mathf.Max(0f, verticalForceCap),
             };
         }
 

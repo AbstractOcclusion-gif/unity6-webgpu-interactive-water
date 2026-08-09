@@ -143,6 +143,7 @@ struct WaterSphereInjection
     float  weight;   // submersion x user weight (0 = no effect)
     float  strength; // master gain on the injected acceleration
     float  wakeFoamDose; // world-speed/time foam source, independent of pool-height scaling
+    float  verticalForceCap; // cap on this stamp's plunge/heave push; 0 = off
 };
 
 StructuredBuffer<WaterDropInjection>   DropQueue;
@@ -465,7 +466,11 @@ void SphereInteract(uint3 id : SV_DispatchThreadID)
             if (sdf < 0.0) horizontalForce *= SPHERE_INNER_MULT;
         }
 
-        float wakePush = q.weight * (verticalForce + horizontalForce) * q.strength;
+        float verticalPush = q.weight * verticalForce * q.strength;
+        if (q.verticalForceCap > 0.0)
+            verticalPush = clamp(verticalPush, -q.verticalForceCap, q.verticalForceCap);
+        float horizontalPush = q.weight * horizontalForce * q.strength;
+        float wakePush = verticalPush + horizontalPush;
         // Cap the per-step push so a fresh stamp can't spike a too-tall crest (see _WakeStartForceCap).
         if (_WakeStartForceCap > 0.0)
             wakePush = clamp(wakePush, -_WakeStartForceCap, _WakeStartForceCap);

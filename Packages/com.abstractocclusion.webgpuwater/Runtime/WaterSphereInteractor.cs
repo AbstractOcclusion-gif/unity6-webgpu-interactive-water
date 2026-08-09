@@ -37,6 +37,11 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("Master gain on the injected wake. Raise for a stronger bow wave, lower for a subtle ripple.")]
         [Range(0f, 4f)] [SerializeField] internal float strength = 1f;
 
+        [Tooltip("Caps this interactor's vertical plunge/heave contribution to the wake, preventing a " +
+                 "boat falling after a swell from throwing an oversized symmetric wave. 0 = off. " +
+                 "Does not limit the horizontal travelling wake.")]
+        [Range(0f, 0.5f)] [SerializeField] float verticalForceCap = 0f;
+
         [Tooltip("Ignore any single-frame move larger than this (world units) - a teleport or respawn - so " +
                  "it doesn't fire one huge splash. Normal motion is far below this.")]
         [Min(0f)] [SerializeField] float maxStepDistance = 5f;
@@ -92,7 +97,8 @@ namespace AbstractOcclusion.WebGpuWater
 
             // The facade applies the submersion weight (an airborne or deeply-sunk sphere makes no wake),
             // so we always forward and let it gate.
-            WaterVolume.TrySphereInteractionAt(center, step, EffectiveRadius(), strength * speedRamp);
+            WaterVolume.TrySphereInteractionAt(center, step, EffectiveRadius(), strength * speedRamp,
+                                                verticalForceCap);
         }
 
         Vector3 CenterWorld() => transform.TransformPoint(centerOffset);

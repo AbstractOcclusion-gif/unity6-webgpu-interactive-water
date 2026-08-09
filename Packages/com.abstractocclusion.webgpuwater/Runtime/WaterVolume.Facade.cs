@@ -64,10 +64,16 @@ namespace AbstractOcclusion.WebGpuWater
         /// master gain. Out-of-footprint or fully-clear-of-water calls are ignored. Coordinate mapping
         /// mirrors <see cref="AddRipple"/> (affine, so velocity maps exactly under rotation).</summary>
         public void AddSphereInteraction(Vector3 worldPos, Vector3 worldStep, float radius, float strength)
+            => AddSphereInteraction(worldPos, worldStep, radius, strength, 0f);
+
+        /// <summary>Inject a moving sphere wake with an optional cap on its vertical plunge/heave
+        /// contribution. A cap of 0 preserves the uncapped legacy behaviour.</summary>
+        public void AddSphereInteraction(Vector3 worldPos, Vector3 worldStep, float radius, float strength,
+                                         float verticalForceCap)
         {
             if (_water == null) return;
             if (!AllFinite(worldPos) || !AllFinite(worldStep) ||
-                !float.IsFinite(radius) || !float.IsFinite(strength))
+                !float.IsFinite(radius) || !float.IsFinite(strength) || !float.IsFinite(verticalForceCap))
             { WarnNonFiniteInjection(); return; }
 
             // Submersion weight from the ANALYTIC waterline (rest + wind + swell, never the live ripples),
@@ -96,7 +102,7 @@ namespace AbstractOcclusion.WebGpuWater
                 // the object's own motion, not the chop's (which is near-equal at both endpoints).
                 _water.AddSphereInteraction(new Vector2(c.x, c.z), radius / SimHorizontalExtent,
                                             HorizontalStepInHeightUnits(worldStep), velY, weight, strength,
-                                            wakeFoamDose);
+                                            wakeFoamDose, verticalForceCap);
                 return;
             }
 
@@ -104,7 +110,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (pool.x < -1f || pool.x > 1f || pool.z < -1f || pool.z > 1f) return;
             _water.AddSphereInteraction(new Vector2(pool.x, pool.z), radius / VolumeHorizontalExtent,
                                         HorizontalStepInHeightUnits(worldStep), velY, weight, strength,
-                                        wakeFoamDose);
+                                        wakeFoamDose, verticalForceCap);
         }
 
         /// <summary>A sphere interactor's horizontal step in POOL-HEIGHT units, in the body frame.
@@ -143,10 +149,16 @@ namespace AbstractOcclusion.WebGpuWater
         /// (Crest-style velocity dipole). <paramref name="worldStep"/> is the displacement this physics
         /// step. Returns false if no water body contains the point.</summary>
         public static bool TrySphereInteractionAt(Vector3 worldPos, Vector3 worldStep, float radius, float strength)
+            => TrySphereInteractionAt(worldPos, worldStep, radius, strength, 0f);
+
+        /// <summary>Inject a moving sphere wake at a world position with an optional cap on the
+        /// vertical plunge/heave contribution. Returns false if no water body contains it.</summary>
+        public static bool TrySphereInteractionAt(Vector3 worldPos, Vector3 worldStep, float radius, float strength,
+                                                  float verticalForceCap)
         {
             WaterVolume body = BodyContaining(worldPos);
             if (body == null) return false;
-            body.AddSphereInteraction(worldPos, worldStep, radius, strength);
+            body.AddSphereInteraction(worldPos, worldStep, radius, strength, verticalForceCap);
             return true;
         }
 

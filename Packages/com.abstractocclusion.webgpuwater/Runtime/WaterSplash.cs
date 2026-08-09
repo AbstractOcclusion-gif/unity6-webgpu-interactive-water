@@ -72,11 +72,17 @@ namespace AbstractOcclusion.WebGpuWater
                     WaterSplashEmitter activeEmitter = emitter != null ? emitter : body.ResolveSplashEmitter();
                     if (activeEmitter != null)
                         activeEmitter.EmitSplash(new Vector3(center.x, surfaceY, center.z), strength, halfX * 2f);
+                    float impactRippleStrength = Mathf.Min(rippleStrength, speed * SpeedToRippleStrength);
                     body.AddRipple(center.x, center.z, Mathf.Clamp(halfX, MinRippleRadius, MaxRippleRadius),
-                                   Mathf.Min(rippleStrength, speed * SpeedToRippleStrength));
+                                   ApplyImpactRippleCap(impactRippleStrength, body.splashImpactRippleCap));
                 }
             }
             _wasUnder = under;
+        }
+
+        static float ApplyImpactRippleCap(float strength, float cap)
+        {
+            return cap > 0f ? Mathf.Min(strength, cap) : strength;
         }
     }
 }

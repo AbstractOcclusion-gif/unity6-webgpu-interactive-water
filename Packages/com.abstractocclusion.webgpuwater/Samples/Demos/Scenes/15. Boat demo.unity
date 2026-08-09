@@ -14,10 +14,10 @@ OcclusionCullingSettings:
 RenderSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 10
-  m_Fog: 0
+  m_Fog: 1
   m_FogColor: {r: 0.5, g: 0.5, b: 0.5, a: 1}
   m_FogMode: 3
-  m_FogDensity: 0.01
+  m_FogDensity: 0.005
   m_LinearFogStart: 0
   m_LinearFogEnd: 300
   m_AmbientSkyColor: {r: 0.212, g: 0.227, b: 0.259, a: 1}
@@ -93,8 +93,8 @@ LightmapSettings:
     m_ExportTrainingData: 0
     m_TrainingDataDestination: TrainingData
     m_LightProbeSampleCountMultiplier: 4
-  m_LightingDataAsset: {fileID: 112000000, guid: 93571b53bcb61f541a3fbf7f7a5c8539, type: 2}
-  m_LightingSettings: {fileID: 4890085278179872738, guid: 3fce83765da33f34bb893bf583bab7ad, type: 2}
+  m_LightingDataAsset: {fileID: 112000000, guid: cf58f89aa5d5fe247b2cf40706ecab4e, type: 2}
+  m_LightingSettings: {fileID: 4890085278179872738, guid: edbfa555f53fc00438eb7276ce1f4595, type: 2}
 --- !u!196 &4
 NavMeshSettings:
   serializedVersion: 2
@@ -897,19 +897,23 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2289032453173115939, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: strength
-      value: 0.1
+      value: 0.08
+      objectReference: {fileID: 0}
+    - target: {fileID: 2289032453173115939, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: centerOffset.y
+      value: -0.6
       objectReference: {fileID: 0}
     - target: {fileID: 3503852985712929184, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: m_Mass
-      value: 100
+      value: 30
       objectReference: {fileID: 0}
     - target: {fileID: 3604949055224105157, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: m_Layer
-      value: 4
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 3815383692066494255, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: buoyancy
-      value: 2.5
+      value: 8
       objectReference: {fileID: 0}
     - target: {fileID: 3815383692066494255, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: objectWidth
@@ -933,7 +937,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 3815383692066494255, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: verticalSettleDamping
-      value: 1.7
+      value: 4
       objectReference: {fileID: 0}
     - target: {fileID: 3910971927850112354, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: radius
@@ -941,7 +945,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 3910971927850112354, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: strength
-      value: 0.1
+      value: 0.08
+      objectReference: {fileID: 0}
+    - target: {fileID: 3910971927850112354, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: centerOffset.y
+      value: -0.6
       objectReference: {fileID: 0}
     - target: {fileID: 4128827499602973311, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: m_LocalPosition.y
@@ -949,15 +957,15 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 5857976772605731170, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: m_Layer
-      value: 4
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 6758772759551313938, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: m_Layer
-      value: 4
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 7188803851468958105, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: m_Layer
-      value: 4
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 7188803851468958105, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: m_IsActive
@@ -965,7 +973,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8106151295197513698, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: m_Layer
-      value: 4
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 8263202057762359871, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: m_LocalPosition.x
@@ -1013,12 +1021,16 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8719084040468371349, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: m_Layer
-      value: 4
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: emitter
       value: 
       objectReference: {fileID: 403365479}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: petalArcDegrees
+      value: 129
+      objectReference: {fileID: 0}
     - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: horizontalPlowWeight
       value: 0.25
@@ -1028,8 +1040,24 @@ PrefabInstance:
       value: 0.5
       objectReference: {fileID: 0}
     - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: petalElevationDegrees
+      value: -24
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: turnOutsideAmountBoost
+      value: 3
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: turnOutsideSpawnOffset
+      value: 0.2
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: continuousRatePerSecond
       value: 20
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: turnRateForFullResponse
+      value: 25
       objectReference: {fileID: 0}
     - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: continuousPlowMultiplier
@@ -1092,6 +1120,14 @@ PrefabInstance:
       value: 2
       objectReference: {fileID: 0}
     - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: probes.Array.data[0].localOffset.y
+      value: -0.31
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
+      propertyPath: probes.Array.data[0].localOffset.z
+      value: -5
+      objectReference: {fileID: 0}
+    - target: {fileID: 9083843230771379936, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: probes.Array.data[1].ignoreSurfaceBand
       value: 1
       objectReference: {fileID: 0}
@@ -1109,7 +1145,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 9087477482550035349, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
       propertyPath: enginePower
-      value: 20
+      value: 13
       objectReference: {fileID: 0}
     m_RemovedComponents:
     - {fileID: 281386409395102035, guid: d67ae1754fb5baf4183db2f7cb193979, type: 3}
@@ -16082,7 +16118,7 @@ MonoBehaviour:
   chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
-  jerlovWaterType: 5
+  jerlovWaterType: 0
   bedDepthSettings:
     useBedDepth: 0
     bedTerrain: {fileID: 0}
@@ -16186,13 +16222,13 @@ MonoBehaviour:
   sun: {fileID: 177695280}
   tiles: {fileID: 2800000, guid: d46c8a48ba2f1744ca221ec63d357790, type: 3}
   sky: {fileID: 8900000, guid: 85bd64faed533b54a88c144de0f680b6, type: 3}
-  foamPatternTexture: {fileID: 2800000, guid: 0df415d28a3d4b4449f218789bea2891, type: 3}
-  foamPatternGrid: {x: 4, y: 4}
-  foamPatternFps: 15
+  foamPatternTexture: {fileID: 2800000, guid: a5f2ef87d189d12951522a62b6df8920, type: 3}
+  foamPatternGrid: {x: 1, y: 1}
+  foamPatternFps: 0
   foamReliefStrength: 1
-  oceanWhitecapTexture: {fileID: 2800000, guid: 1ee279c16b027ad48a8eb248749ff66c, type: 3}
+  oceanWhitecapTexture: {fileID: 2800000, guid: a374a10bbe76021021500e6b2fc9d34f, type: 3}
   oceanWhitecapGrid: {x: 1, y: 1}
-  oceanWhitecapFps: 0
+  oceanWhitecapFps: 10
   rippleQuality: 3
   bodyType: 2
   volumeExtent: {x: 500, y: 100, z: 500}
@@ -16224,35 +16260,35 @@ MonoBehaviour:
   _legacyWaveNormalStrength: 1
   foamSettings:
     foam: 1
-    foamGenRate: 0.96
-    foamDecay: 0.87
-    foamDecayResidual: 0.9053
-    foamDecayRate: 1.24
-    wetnessMemory: 0
-    wetnessDryTime: 3
-    foamSpread: 0.053
-    foamGenThreshold: 0.116
-    foamMinWaveHeight: 0.2
-    foamAdvect: 2
-    foamFromSpeed: 18.7
-    foamFromCurvature: 62.1
-    foamDeposit: 0.787
-    foamBreakStrength: 0.265
-    foamBreakRange: 2.12
-    foamCrestBias: 0.069
+    foamGenRate: 0.6
+    foamDecay: 0.96
+    foamDecayResidual: 0.993
+    foamDecayRate: 1.25
+    wetnessMemory: 1
+    wetnessDryTime: 30
+    foamSpread: 0.2
+    foamGenThreshold: 0.3
+    foamMinWaveHeight: 0.09
+    foamAdvect: 3
+    foamFromSpeed: 6
+    foamFromCurvature: 30
+    foamDeposit: 0.45
+    foamBreakStrength: 0.6
+    foamBreakRange: 1.5
+    foamCrestBias: 0.028
     foamHeadroom: 1
-    foamWakeStrength: 0.47
-    foamWakeRadiusScale: 2.99
+    foamWakeStrength: 1
+    foamWakeRadiusScale: 1.5
     foamColor: {r: 1, g: 1, b: 1, a: 1}
-    foamPatternSize: 4
-    foamStrength: 1.06
-    foamFeather: 0.066
-    foamCoreCut: 0.746
+    foamPatternSize: 6
+    foamStrength: 1
+    foamFeather: 0.5
+    foamCoreCut: 0.1
     foamBorderWidth: 0
     foamContactDepth: 0.06
   objectInteractionSettings:
     objectInteraction: 1
-    obstacleStrength: 0.193
+    obstacleStrength: 0.05
     obstacleDeadband: 0.0006
     obstacleSmoothing: 0.796
     obstacleFlipY: 1
@@ -16267,30 +16303,30 @@ MonoBehaviour:
   ocean:
     openWater: 1
     largeWaveAmplitude: 1
-    largeWaveChoppiness: 0.1
-    significantWaveHeight: 1
-    peakWavelength: 300
-    peakSharpness: 1.5
+    largeWaveChoppiness: 1.2
+    significantWaveHeight: 15
+    peakWavelength: 400
+    peakSharpness: 2
     waveScale: 1
     seaDepth: 0
-    cascadeReach: 4
-    swellHeight: 1
-    swellWavelength: 140
-    oceanWindTurbulence: 0.25
+    cascadeReach: 8
+    swellHeight: 8
+    swellWavelength: 200
+    oceanWindTurbulence: 0.5
     unboundedOcean: 1
     edgeFeatherMeters: 10
     clipmapGridResolution: 96
     clipmapOuterRadius: 10000
     oceanDetailFalloff: 0.003
     horizonFadeDistance: 9000
-    horizonHazeColor: {r: 0.15688857, g: 0.24528301, b: 0.20912164, a: 0}
-    horizonHazeDensity: 0.5
-    largeGodRayColor: {r: 0.5264151, g: 0.94304496, b: 1, a: 1}
-    largeGodRayDensity: 1
+    horizonHazeColor: {r: 0.7, g: 0.8, b: 0.9, a: 0}
+    horizonHazeDensity: 0
+    largeGodRayColor: {r: 0, g: 0.75, b: 1, a: 1}
+    largeGodRayDensity: 0.15
     largeGodRayFromAir: 0
     largeGodRayLightScatter: 0
     largeGodRaySteps: 24
-    largeGodRayAnisotropy: 0.29
+    largeGodRayAnisotropy: 0.6
     largeGodRayExtinction: 0
     largeGodRayCausticStrength: 4
     largeGodRayCausticSmooth: 2
@@ -16299,23 +16335,23 @@ MonoBehaviour:
     largeCausticRippleScale: 3
     largeCausticRippleStrength: 1
     largeCausticProjectionSoften: 0
-    oceanFoamWindThreshold: 8
-    oceanFoamCoverage: 1.1
+    oceanFoamWindThreshold: 2
+    oceanFoamCoverage: 0.91
     oceanFoamStrength: 2
-    oceanFoamFadeRate: 2
+    oceanFoamFadeRate: 1.2
     oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
-    oceanFoamTileSize: 5
-    oceanFoamFeather: 0.612
-    oceanFoamStreakStretch: 1.75
-    oceanFoamTextureInfluence: 0.35
+    oceanFoamTileSize: 8
+    oceanFoamFeather: 0.7
+    oceanFoamStreakStretch: 1.63
+    oceanFoamTextureInfluence: 0.8
     oceanFoamCrestAnisotropy: 1
-    oceanFoamCrestGate: 0.851
-    oceanFoamFaceBias: 0.6
+    oceanFoamCrestGate: 0.8
+    oceanFoamFaceBias: 0.85
     oceanFoamDepthTint: 0.45
     oceanFoamCascadeMix: 1
-    oceanFoamDeposit: 0.79
-    oceanFoamDrift: 0.255
-    oceanFoamMaxBuildup: 1.35
+    oceanFoamDeposit: 0.9
+    oceanFoamDrift: 0.3
+    oceanFoamMaxBuildup: 1
   _legacyOpenWater: 0
   _legacyLargeWaveAmplitude: 1
   _legacyLargeWaveChoppiness: 0
@@ -16350,26 +16386,26 @@ MonoBehaviour:
   enableCulling: 1
   activationDistance: 200
   reflectionSettings:
-    useScreenSpaceReflection: 1
+    useScreenSpaceReflection: 0
     usePlanarReflection: 1
     reflectUrpProbe: 0
     realRefraction: 1
     planarExcludeLayers:
       serializedVersion: 2
       m_Bits: 16
-    planarClipDepth: 0
-    reflectionStrength: 0.413
-    envReflectionIntensity: 0.3
-    fresnelFloor: 0.266
-    fresnelPower: 1.94
-    sunRoughness: 0.108
-    roughnessFar: 0.28
-    roughnessFarDistance: 2989
-    roughnessFalloff: 3.61
-    reflectionAnisoStretch: 0.073
-    sunSheen: 0.053
-    sunSheenRoughness: 0.873
-    sunGrazeBoost: 0.062
+    planarClipDepth: 0.007
+    reflectionStrength: 0.1
+    envReflectionIntensity: 0.2
+    fresnelFloor: 0.1
+    fresnelPower: 4.46
+    sunRoughness: 0.356
+    roughnessFar: 0.35
+    roughnessFarDistance: 1000
+    roughnessFalloff: 1.19
+    reflectionAnisoStretch: 0.5
+    sunSheen: 0.271
+    sunSheenRoughness: 0.6
+    sunGrazeBoost: 0
     reflectionDistortion: 0.05
     ssrStrength: 1
     ssrStepSize: 0.03
@@ -16378,13 +16414,13 @@ MonoBehaviour:
     refractionDistortion: 0.05
     refractionStrength: 1
   detailNormalSettings:
-    texture: {fileID: 2800000, guid: bfdc4d9124f106c4f97bb95ef3618340, type: 3}
-    strength: 0.4
-    tileMeters: 20
-    farTileMeters: 72
-    farTileDistance: 200
+    texture: {fileID: 2800000, guid: 62664aadf524b76e2b375fdbd6c85003, type: 3}
+    strength: 0.2
+    tileMeters: 8
+    farTileMeters: 250
+    farTileDistance: 700
     scrollSpeed: 0.5
-    farScrollSpeed: 0.5
+    farScrollSpeed: 3
     hexTiling: 1
     windResponse: 1
     crestBoost: 0.5
@@ -16404,27 +16440,28 @@ MonoBehaviour:
   _legacyFoamBorderWidth: 0.08
   _legacyFoamContactDepth: 0.06
   rippleSettings:
-    waveSpeed: 1.5
-    damping: 0.997
-    rippleViscosity: 0.071
-    stepsPerFrame: 2
-    rippleStrength: 0.0241
-    rippleRadius: 0.026
-    rippleChoppiness: 0.066
-    wakeStartForceCap: 0.36
-    seedRipplesOnStart: 0
+    waveSpeed: 0.6
+    damping: 0.995
+    rippleViscosity: 0
+    stepsPerFrame: 1
+    rippleStrength: 0.025
+    rippleRadius: 0.05
+    rippleChoppiness: 0
+    wakeStartForceCap: 0.5
+    splashImpactRippleCap: 0.08
+    seedRipplesOnStart: 1
     conserveVolume: 1
     conserveMaxCorrection: 0.05
   underwaterSurfaceSettings:
     physicalFresnel: 1
     tirEdgeSoftness: 0.08
     fresnelFloor: 0
-    reflectionStrength: 0.273
-    mirrorWaterBlend: 0.754
-    mirrorShafts: 0
+    reflectionStrength: 0.15
+    mirrorWaterBlend: 0.8
+    mirrorShafts: 0.25
     foamSilhouetteDarken: 0.6
     foamSunGlow: 0.4
-    detailNormalStrength: 0
+    detailNormalStrength: 1.3
     meniscus: 1
     meniscusWidthPixels: 5
     meniscusStrength: 0.7
@@ -16442,11 +16479,11 @@ MonoBehaviour:
   _legacyObstacleFlipY: 1
   waterFogSettings:
     waterFog: 1
-    fogColor: {r: 0.0132, g: 0.2439, b: 0.2391, a: 1}
-    fogExtinction: {r: 0.8125, g: 0.0667, b: 0.1043, a: 1}
-    fogDensity: 0.6
-    waterOpacity: 0
-    lightScatter: 0
+    fogColor: {r: 0, g: 0.0323, b: 0.1223, a: 1}
+    fogExtinction: {r: 0.6189, g: 0.0582, b: 0.0331, a: 1}
+    fogDensity: 0.3
+    waterOpacity: 0.2
+    lightScatter: 0.5
   _legacyWaterFog: 0
   _legacyFogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
   _legacyFogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
@@ -16454,29 +16491,29 @@ MonoBehaviour:
   _legacyWaterOpacity: 0
   volumeScatterSettings:
     volumeScatter: 1
-    scatterColor: {r: 0.027960112, g: 0.0657317, b: 0.12452829, a: 1}
-    scatterIntensity: 5.03
-    scatterAnisotropy: 0.107
-    scatterAmbientTerm: 1.33
-    scatterSunTerm: 0.92
-    crestScatter: 1
-    sssIntensity: 3.54
+    scatterColor: {r: 0, g: 0.0323, b: 0.1223, a: 1}
+    scatterIntensity: 0.1
+    scatterAnisotropy: 0.5
+    scatterAmbientTerm: 1
+    scatterSunTerm: 1
+    crestScatter: 0
+    sssIntensity: 3
     sssSunFalloff: 2
     sssPinchMin: 0.1
     sssPinchMax: 0.6
     sssPinchFalloff: 1.5
-  refractShadows: 0
-  refractShadowSoftness: 0.5
+  refractShadows: 1
+  refractShadowSoftness: 0.05
   refractShadowLayers:
     serializedVersion: 2
     m_Bits: 4294967295
   depthAttenuation:
-    depthDarken: 0
+    depthDarken: 1
     depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
     depthDarkenStrength: 1
     causticDepthFade: 0.5
-    screenSpaceCaustics: 0
-    screenCausticIntensity: 1
+    screenSpaceCaustics: 1
+    screenCausticIntensity: 0
     godRayDepthFade: 0.5
     causticWindWaveStrength: 1
     linkDepthToFog: 0
@@ -16488,19 +16525,19 @@ MonoBehaviour:
   _legacyShorelineStrength: 0.8
   windWaveSettings:
     windWaves: 0
-    windSpeed: 3.5
+    windSpeed: 3
     windFromDegrees: 0
-    waveLengthMeters: 0.79464364
-    waveHeightMeters: 0.0006853647
-    waveGrouping: 0
-    waveCrestSharpness: 0
+    waveLengthMeters: 1.2
+    waveHeightMeters: 0.05
+    waveGrouping: 0.4
+    waveCrestSharpness: 0.6
     waveCount: 12
-    waveDirectionSpread: 1
+    waveDirectionSpread: 2
     waveNormalStrength: 1
     windResponse: 1
     waveAnimationSpeed: 1
-    legacyFetchMeters: 500
-    legacyAmplitudeScale: 2
+    legacyFetchMeters: 10
+    legacyAmplitudeScale: 4
   discSurface: 0
 --- !u!114 &1579798800
 MonoBehaviour:

@@ -61,6 +61,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterCausticProjection"
         #include "WaterShared.hlsl" // ProjectCausticUV, OccluderLitFromGreen, IOR_*
         #include "WaterCausticMap.hlsl" // THE frame-aware caustic map: uv / footprint / grad scale
         #include "WaterFog.hlsl"    // DepthFadeScalar + _CausticDepthFade (published global)
+        #include "WaterWaterline.hlsl" // exact displaced ocean surface for the submerged gate
+        #include "WaterExclusion.hlsl" // analytic dry-volume classification
+        #include "WaterExclusionMesh.hlsl" // rasterised depth spans for mesh dry volumes
 
         // Caustic map + green occluder-shadow channel (published globals; UseAllGlobalTextures binds them).
         TEXTURE2D(_CausticTex); SAMPLER(sampler_CausticTex);
@@ -104,6 +107,18 @@ Shader "AbstractOcclusion/WebGpuWater/WaterCausticProjection"
             return o;
         }
 
+        bool IsInsideMeshExclusion(float2 uv, float rawSceneDepth)
+        {
+            if (_ExclusionMeshCount < 0.5 || _ExclusionPrepassValid < 0.5) return false;
+
+            int2 pixel = int2(uv * _ScreenParams.xy);
+            float2 rawSpan = ExclusionMeshRawSpan(pixel);
+            return ExclusionMeshCoversDepth(LinearEyeDepth(rawSpan.x, _ZBufferParams),
+                                            LinearEyeDepth(rawSpan.y, _ZBufferParams),
+                                            LinearEyeDepth(rawSceneDepth, _ZBufferParams),
+                                            _ProjectionParams.z);
+        }
+
         // Shared reconstruction + gate + refracted caustic-RT sample, in UNIFORM control flow (the GRAD sample
         // must run before any branch - an implicit-derivative sample inside a per-fragment branch is undefined on
         // WebGPU/WGSL). Both passes call this so they project identically and stay registered.
@@ -130,12 +145,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterCausticProjection"
             bool belowSurface;
             if ((int)(_CausticFrameMode + 0.5) == CAUSTIC_FRAME_WINDOW)
             {
-                // The generator authored the pattern against the window's rest plane, so the depth fade
-                // measures from that same plane. A _WaterTex lookup here would be wrong twice over: wrong
-                // frame (the sim is indexed by WorldToSim on a windowed body, not pool xz) and wrong
-                // quantity (on an ocean the sim carries only a local ripple delta and returns 0 outside
-                // the window - the swell lives in the analytic field, not in the sim texture).
-                surfaceY = _SimCenter.y;
+                // A windowed ocean's caustic map is generated in the simulation frame, but its
+                // submerged classification must use the rendered displaced surface. The rest plane
+                // falsely marks a floating hull as underwater whenever it drops into a swell trough.
+                surfaceY = SurfaceHeightAtXZ(worldPos.xz);
                 belowSurface = worldPos.y < surfaceY;
             }
             else
@@ -152,7 +165,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterCausticProjection"
             // CAUSTIC_FRAME_NONE (a windowed non-ocean body whose RT is never written, let alone
             // cleared), so both passes contribute their identity there instead of projecting
             // uninitialised memory - the same two guards this block spelled out separately before.
-            underwaterMask = (!isSky && belowSurface) ? map.footprint : 0.0;
+            bool insideDryVolume = InsideExclusion(worldPos) || IsInsideMeshExclusion(uv, rawDepth);
+            underwaterMask = (!isSky && belowSurface && !insideDryVolume) ? map.footprint : 0.0;
 
             // Occluder lit factor, computed ONCE here so both passes shade the identical shadow:
             // four extra explicit-LOD taps = the shared distance-grown PCF penumbra (WaterShared);
