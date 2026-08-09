@@ -23,8 +23,9 @@ boundary to respect. Inspector tooltips remain the detailed per-field reference.
 | Look presets and foam profiles | Optional | Sharing a look across bodies | A driven field is overridden by its assigned preset/profile. |
 
 Create the baseline with the Water Wizard. Immutable implementation assets come from the
-package's `Runtime/Defaults` folder. The Wizard writes each independent project look under
-`Assets/WebGpuWater/Waters/<Water Name>/`.
+package's `Runtime/Defaults` folder. The Wizard writes each water's independent materials under
+`Assets/WebGpuWater/Waters/<Water Name>/` and keeps the shared editable foam profile under
+`Assets/WebGpuWater/Profiles/`.
 
 ## Waves and weather
 

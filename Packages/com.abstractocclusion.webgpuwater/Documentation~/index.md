@@ -15,7 +15,8 @@ Wizard**). A modern URP port and expansion of Evan Wallace's
 ## Where to start
 
 - **[Getting Started](GettingStarted.md)** — requirements, install, the Water Wizard,
-  core components, the scripting API, and troubleshooting. Read this first.
+  its per-water folder/shared-profile asset workflow, core components, the scripting API,
+  and troubleshooting. Read this first.
 - **[Authoring, Limitations, and Experimental Features](AuthoringLimitations.md)** — the
   practical guardrails: wind-driven sea state, GPU readback, wake/splash ownership, rendering
   boundaries, and what to validate before shipping.

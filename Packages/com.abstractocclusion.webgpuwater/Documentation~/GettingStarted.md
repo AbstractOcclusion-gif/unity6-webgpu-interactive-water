@@ -32,8 +32,29 @@ Support: abstractocclusion@outlook.com
 **Window > AbstractOcclusion > WebGpuWater > Water Wizard** is the single authoring window.
 It builds a complete water body in your scene. Immutable meshes, textures, sky, and the
 default quality policy come from the package's `Runtime/Defaults` folder. Each new water
-gets independent editable materials and a foam profile under
-`Assets/WebGpuWater/Waters/<Water Name>/`.
+gets independent editable materials under `Assets/WebGpuWater/Waters/<Water Name>/` and
+shares the editable project foam profile in `Assets/WebGpuWater/Profiles/`.
+
+### Wizard asset workflow
+
+1. Choose the water type, size, and optional features.
+2. Press **Create Water**.
+3. The Wizard creates a uniquely named project folder for that water:
+   `Assets/WebGpuWater/Waters/Water`, then `Water 1`, `Water 2`, and so on.
+4. That folder owns the water's editable materials. Changing those materials does not
+   change another Wizard-created water.
+5. The first water also creates
+   `Assets/WebGpuWater/Profiles/DefaultFoamProfile.asset`. Later waters reuse this
+   shared editable foam profile, so foam-profile changes intentionally affect every
+   water linked to it.
+6. Meshes, default textures, sky, and the default quality policy remain package-owned
+   under `Runtime/Defaults`; the Wizard references them instead of copying them.
+
+> **Folder notice:** every press of **Create Water** creates a new `Water`, `Water 1`,
+> `Water 2`, etc. folder, even when the scene already contains another water. Delete an
+> unwanted water's scene objects and its corresponding folder together. Do not edit assets
+> under `Packages/com.abstractocclusion.webgpuwater/Runtime/Defaults`; package updates may
+> replace them.
 
 Press Play: click/drag the surface for ripples, drop a Rigidbody with `WaterBuoyancy`
 into the pool and it floats, rocks, and rides the wind waves.

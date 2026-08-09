@@ -39,9 +39,12 @@ then open **Package Manager > AbstractOcclusion.WebGpuWater > Samples** and impo
 ## Quick start
 
 **Window > AbstractOcclusion > WebGpuWater > Water Wizard** builds a complete water
-body — sim volume, surface renderers, splash emitter, quality asset, and a tweakable
-material saved into your project. Configure size and features, press **Create Water
-Surface**, then **Play**. Drag on the surface for ripples; drop a Rigidbody with
+body — sim volume, surface renderers, splash emitter, and editable materials. Configure
+size and features, press **Create Water**, then **Play**. Each creation writes a new
+`Assets/WebGpuWater/Waters/Water`, `Water 1`, `Water 2`, etc. folder for that water's
+materials. All waters reuse the editable project foam profile at
+`Assets/WebGpuWater/Profiles/DefaultFoamProfile.asset`; immutable meshes, textures, sky,
+and quality defaults remain under the package's `Runtime/Defaults` folder. Drag on the surface for ripples; drop a Rigidbody with
 `WaterBuoyancy` in and it floats, rocks, and rides the wind waves.
 
 ## Quality tiers & mobile preview

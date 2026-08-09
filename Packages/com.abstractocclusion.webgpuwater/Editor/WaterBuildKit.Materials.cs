@@ -25,15 +25,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             return materialsFolder;
         }
 
-        internal static string ResolveOrCreateProfilesFolder(WaterVolume volume)
-        {
-            string materialsFolder = ResolveOrCreateMaterialsFolder(volume);
-            string waterFolder = Path.GetDirectoryName(materialsFolder).Replace('\\', '/');
-            string profilesFolder = ProfilesFolder(waterFolder);
-            EnsureFolder(profilesFolder);
-            return profilesFolder;
-        }
-
         // ---------------------------------------------------------------- materials
         // The above-water pass culls BACK faces; the underwater pass culls FRONT faces (inverted
         // from the shader's own defaults, which reads better here). The pool interior culls back

@@ -189,6 +189,12 @@ namespace AbstractOcclusion.WebGpuWater
                      "probe (whichever is active). Boost to make a dim baked probe / dark skybox read on " +
                      "the water; lower to calm a bright reflection. Does not affect the sun glint.")]
             [Range(0f, 4f)] public float envReflectionIntensity = 1f;
+            [Tooltip("Include the sun's reflected highlight on the water. Turn this off to keep sky, " +
+                     "probe, SSR, and planar reflections while removing the sun glint.")]
+            public bool reflectSunlight = true;
+            [Tooltip("Brightness of the reflected sun only. Lower values simulate sunlight softened " +
+                     "by cloud without changing the scene light or environment reflection.")]
+            [Range(0f, SunReflectionIntensityMax)] public float sunReflectionIntensity = 1f;
             [Tooltip("Minimum Fresnel reflectance regardless of view angle. 0 = physical (~2% looking " +
                      "straight down, full mirror at grazing). Raise toward the legacy uniformly-mirrored " +
                      "look (the old curve behaved like ~0.25).")]
@@ -237,6 +243,8 @@ namespace AbstractOcclusion.WebGpuWater
                      "looks straight through. Lower it to calm a busy pool floor. The two refraction " +
                      "knobs are mutually exclusive - Real Refraction picks which one is live.")]
             [Range(0f, 1f)] public float refractionStrength = 1f;
+
+            const float SunReflectionIntensityMax = 4f;
         }
 
         // Tier-capped effective reflection toggles + look, published per body every frame by
@@ -261,6 +269,8 @@ namespace AbstractOcclusion.WebGpuWater
         internal bool ReflectUrpProbe => reflectionSettings.reflectUrpProbe;
         internal float ReflectionStrength => reflectionSettings.reflectionStrength;
         internal float EnvReflectionIntensity => reflectionSettings.envReflectionIntensity;
+        internal float SunReflectionIntensity
+            => reflectionSettings.reflectSunlight ? reflectionSettings.sunReflectionIntensity : 0f;
         internal float FresnelFloor => reflectionSettings.fresnelFloor;
         internal float FresnelPower => reflectionSettings.fresnelPower;
         internal float SunRoughness => reflectionSettings.sunRoughness;

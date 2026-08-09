@@ -33,9 +33,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 return false;
             }
             string materialsFolder = MaterialsFolder(waterFolder);
-            string profilesFolder = ProfilesFolder(waterFolder);
             EnsureFolder(materialsFolder);
-            EnsureFolder(profilesFolder);
             if (!TryLoadShaders(out ShaderSet shaders)) return false;
 
             var grid = LoadRequiredDefault<Mesh>(GridMeshPath, "water grid");
@@ -60,8 +58,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 MatUnder = matUnder,
                 MatPool = matPool,
                 WaterFolder = waterFolder,
-                MaterialsFolder = materialsFolder,
-                ProfilesFolder = profilesFolder
+                MaterialsFolder = materialsFolder
             };
             return true;
         }
@@ -132,7 +129,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             // point BOTH components at it, so a new body is configured from one asset instead
             // of two components carrying duplicated knobs.
             if (withFoamParticles || withSplash)
-                AssignFoamProfileToBody(volume, LoadOrCreateFoamProfile(ctx.ProfilesFolder));
+                AssignFoamProfileToBody(volume, LoadOrCreateFoamProfile());
 
             EditorUtility.SetDirty(volume);
             return volume;
@@ -207,13 +204,13 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             EditorUtility.SetDirty(particles);
         }
 
-        // Clone the packaged baseline into the water's own profile folder.
-        // the single surface both components read. Its sections default to Drive=on, so it takes
-        // over the instant it is assigned.
-        internal static WaterFoamProfile LoadOrCreateFoamProfile(string profilesFolder)
+        // Clone the packaged baseline once into the project. Every Wizard-created water references
+        // this shared editable profile, so a project has one deliberate foam look instead of one
+        // silent copy per body.
+        internal static WaterFoamProfile LoadOrCreateFoamProfile()
         {
-            EnsureFolder(profilesFolder);
-            string path = profilesFolder + "/WaterFoamProfile.asset";
+            EnsureFolder(ProjectProfilesRoot);
+            string path = ProjectProfilesRoot + "/" + SharedFoamProfileFileName;
             var existing = AssetDatabase.LoadAssetAtPath<WaterFoamProfile>(path);
             if (existing != null) return existing;
 

@@ -97,6 +97,7 @@ float _SSRStrength, _SSRStepSize, _SSRMaxSteps, _SSRThickness;
 float _UsePlanar, _UseSSR, _RealRefraction;
 
 float _EnvReflectionIntensity; // brightness of the reflected sky / URP probe (not the sun glint)
+float _SunReflectionIntensity; // brightness of reflected sunlight; 0 disables every reflected sun path
 
 // ---- Underside (seen-from-below) look: its own fresnel/mirror family, published per body
 // by the WaterVolume "Underwater Surface" block, so the below-water view no longer rides the
@@ -289,7 +290,8 @@ float3 SamplePlanarReflection(float4 screenPos, float3 normal, float roughness)
 // into the above-water mirror would double the sun.
 float3 LegacySunGlint(float3 worldRay)
 {
-    return SUN_GLINT_TINT * _SunColor * pow(max(0.0, dot(_LightDir, worldRay)), SUN_GLINT_SHARPNESS);
+    return SUN_GLINT_TINT * _SunColor * _SunReflectionIntensity
+         * pow(max(0.0, dot(_LightDir, worldRay)), SUN_GLINT_SHARPNESS);
 }
 
 // Sample the SKY environment (reflection probe / procedural sky) for a WORLD-space
@@ -443,7 +445,7 @@ float3 SunSpecular(float3 normal, float3 viewDir, float roughness)
     lobe += _SunSheen * GgxLobeDistribution(noh, nol, nov,
                                             max(roughness, _SunSheenRoughness));
 
-    return min(lobe, SUN_SPEC_CLAMP) * _SunColor;
+    return min(lobe, SUN_SPEC_CLAMP) * _SunColor * _SunReflectionIntensity;
 }
 
 #endif // WATER_SURFACE_SPECULAR_INCLUDED

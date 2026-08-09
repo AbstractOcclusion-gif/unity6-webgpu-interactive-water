@@ -30,9 +30,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string ProjectAssetsPrefix = "Assets/";
         internal const string WatersRoot = Root + "/Waters";
         internal const string BoatAssetsRoot = Root + "/Boats";
+        internal const string ProjectProfilesRoot = Root + "/Profiles";
         internal const string MaterialsFolderName = "Materials";
-        internal const string ProfilesFolderName = "Profiles";
         internal const string DefaultWaterFolderName = "Water";
+        internal const string SharedFoamProfileFileName = "DefaultFoamProfile.asset";
 
         // Immutable package assets loaded by path (compute shaders). They live inside the package,
         // whose root is RESOLVED (WaterPackagePaths) rather than assumed: an Asset Store
@@ -159,7 +160,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         }
 
         internal static string MaterialsFolder(string waterFolder) => waterFolder + "/" + MaterialsFolderName;
-        internal static string ProfilesFolder(string waterFolder) => waterFolder + "/" + ProfilesFolderName;
 
         // Create an asset folder (and any missing parents) if it doesn't exist yet.
         internal static void EnsureFolder(string assetFolder)

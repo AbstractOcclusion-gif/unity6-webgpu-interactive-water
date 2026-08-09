@@ -126,6 +126,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 DrawFields(
                     "reflectionSettings.reflectionStrength",
                     "reflectionSettings.envReflectionIntensity",
+                    "reflectionSettings.reflectSunlight");
+                DrawFieldsIf(Prop("reflectionSettings.reflectSunlight").boolValue,
+                    "reflectionSettings.sunReflectionIntensity");
+                DrawFields(
                     "reflectionSettings.reflectionDistortion",
                     "reflectionSettings.sunRoughness",
                     "reflectionSettings.ssrStrength");

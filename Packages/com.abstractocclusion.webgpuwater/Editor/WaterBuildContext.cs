@@ -30,6 +30,5 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         public Material MatAbove, MatUnder, MatPool;
         public string WaterFolder;
         public string MaterialsFolder;
-        public string ProfilesFolder;
     }
 }

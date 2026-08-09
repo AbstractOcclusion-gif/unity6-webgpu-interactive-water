@@ -243,12 +243,13 @@ or via **Window ▸ Package Manager ▸ + ▸ Add package from disk…** pointed
 2. Open **AbstractOcclusion ▸ WebGpuWater ▸ Water Wizard**.
 3. Set the size and toggle what you want — analytic pool, god rays, foam particles, surface
    foam (and the conditional **edge foam**) — optionally drag scene objects into the list to
-   make them **Floatable** or **Interactable**, then press **Create Water Surface**.
+   make them **Floatable** or **Interactable**, then press **Create Water**.
 4. Press **Play**.
 
 The wizard references immutable meshes, textures, sky, and quality defaults shipped under the
-package's `Runtime/Defaults/` folder. It creates independent editable materials and a foam profile
-under `Assets/WebGpuWater/Waters/<Water Name>/`, then wires the camera and `WaterVolume`. One-off utilities — create prefab, add foam particles
+package's `Runtime/Defaults/` folder. It creates independent editable materials under
+`Assets/WebGpuWater/Waters/<Water Name>/`, uses the shared editable foam profile under
+`Assets/WebGpuWater/Profiles/`, then wires the camera and `WaterVolume`. One-off utilities — create prefab, add foam particles
 to a selection, assign foam textures, upgrade splash materials, add a secondary body — live in
 the same window under **Utilities**.
 

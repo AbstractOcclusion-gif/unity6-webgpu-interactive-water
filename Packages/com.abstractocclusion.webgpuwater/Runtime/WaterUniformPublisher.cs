@@ -198,6 +198,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_ProceduralPool = Shader.PropertyToID("_ProceduralPool");
         static readonly int ID_ReflectionStrength = Shader.PropertyToID("_ReflectionStrength");
         static readonly int ID_EnvReflectionIntensity = Shader.PropertyToID("_EnvReflectionIntensity");
+        static readonly int ID_SunReflectionIntensity = Shader.PropertyToID("_SunReflectionIntensity");
         static readonly int ID_FresnelFloor = Shader.PropertyToID("_FresnelFloor");
         static readonly int ID_FresnelPower = Shader.PropertyToID("_FresnelPower");
         static readonly int ID_SunRoughness = Shader.PropertyToID("_SunRoughness");
@@ -699,6 +700,7 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_ProceduralPool, _body.HasProceduralPool ? 1f : 0f);
             sink.SetFloat(ID_ReflectionStrength, _body.ReflectionStrength);
             sink.SetFloat(ID_EnvReflectionIntensity, _body.EnvReflectionIntensity);
+            sink.SetFloat(ID_SunReflectionIntensity, _body.SunReflectionIntensity);
             // Fresnel + shared-roughness ramp + reflection stretch (the WOW look pass), live per body.
             sink.SetFloat(ID_FresnelFloor, _body.FresnelFloor);
             sink.SetFloat(ID_FresnelPower, _body.FresnelPower);
