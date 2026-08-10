@@ -19,10 +19,13 @@ namespace AbstractOcclusion.WebGpuWater
     {
         [Tooltip("The AbstractOcclusion/WebGpuWater/WaterUnderwaterFog shader. Assign the shader asset of that name.")]
         [SerializeField] Shader underwaterFogShader;
+        [Tooltip("The Hidden/AbstractOcclusion/WebGpuWater/WaterHeightRT shader. Required in player builds because Shader.Find assets can be stripped.")]
+        [SerializeField] Shader heightRtShader;
 
         WaterUnderwaterFogPass _pass;
         WaterParticlesAfterFogPass _particlePass;
         Material _material;
+        Material _heightRtMaterial;
 
         public override void Create()
         {
@@ -35,7 +38,9 @@ namespace AbstractOcclusion.WebGpuWater
             _particlePass = new WaterParticlesAfterFogPass(); // sprite half is material-free
             if (underwaterFogShader == null) { _pass = null; return; } // unassigned: feature is inert
             _material = CoreUtils.CreateEngineMaterial(underwaterFogShader);
-            _pass = new WaterUnderwaterFogPass(_material);
+            if (heightRtShader != null)
+                _heightRtMaterial = CoreUtils.CreateEngineMaterial(heightRtShader);
+            _pass = new WaterUnderwaterFogPass(_material, _heightRtMaterial);
             // The user-transparent half needs the fog material for its depth-restore draw
             // (WaterRestoreOpaqueDepth - see the cross-side fix). Null (shader unassigned)
             // degrades to drawing without the restore: cross-side props stay hidden behind
@@ -95,7 +100,9 @@ namespace AbstractOcclusion.WebGpuWater
         void ReleaseResources()
         {
             CoreUtils.Destroy(_material);
+            CoreUtils.Destroy(_heightRtMaterial);
             _material = null;
+            _heightRtMaterial = null;
             _pass = null;
             _particlePass = null;
         }

@@ -128,46 +128,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                                         sampler_OceanSurfaceOwnership, saturate(uv), 0).rg;
         }
 
-        // F7: fraction of an ownership sample's VALID share below which it is read as an AIR
-        // claim (r is premultiplied by g, so the wet fraction is r/g; the compare is kept
-        // multiplied through to avoid the division).
-        #define OWNERSHIP_AIR_CORROBORATION_WET_MAX 0.5
-
-        float OceanRenderedCoverage(float2 uv, float analyticCoverage, float2 screenDirection)
-        {
-            // Three bilinear mask reads span two prepass texels (roughly six full-resolution
-            // pixels at the 0.5 scale). Accumulate premultiplied wet coverage and validity
-            // independently: invalid near-clip/exclusion samples hand exactly their missing share
-            // back to the analytic path instead of pulling the result toward air.
-            float2 prepassTexel = 1.0 / max(_ScaledScreenParams.xy * _OceanSurfacePrepassScale, 1.0);
-            float2 offset = screenDirection * prepassTexel;
-            float2 center = OceanOwnershipSample(uv);
-            float2 flankA = OceanOwnershipSample(uv + offset);
-            float2 flankB = OceanOwnershipSample(uv - offset);
-            float2 ownership = center * 0.5 + flankA * 0.25 + flankB * 0.25;
-            float coverage = saturate(ownership.r + analyticCoverage * (1.0 - ownership.g));
-            // F7 (2026-08-11, the dark line/specks + fog pops): an AIR claim may only pull
-            // coverage BELOW the analytic value when BOTH flanking samples corroborate it -
-            // the interior of a genuine from-air region (the straddle band), whose every
-            // pixel has from-air neighbours by construction. At the sheet's far raster
-            // silhouette the half-res ownership texels coin-toss the coincident twins per
-            // texel (the stair-step rows in the branch view), and an ISOLATED air run there
-            // dipped the mask to ~0.8-0.9 in the middle of painted water: both fog passes
-            // multiply by the mask, so the dip printed dark marks against the saturated fog
-            // (FogUnpainted cyan feather, 2026-08-11) and its frame-to-frame coin-toss read
-            // as fog popping. Uncorroborated air falls back to the analytic coverage -
-            // the over-cover doctrine (erring wet), and the SAME both-neighbours rule the
-            // PREPASS_AIR span suppression already ships (2026-08-10). A genuine from-air
-            // region keeps every pixel but its edge row, where the analytic feather is the
-            // right answer anyway - the same trade that corroboration made for the span.
-            bool flankAAir = flankA.g > 0.5
-                          && flankA.r < OWNERSHIP_AIR_CORROBORATION_WET_MAX * flankA.g;
-            bool flankBAir = flankB.g > 0.5
-                          && flankB.r < OWNERSHIP_AIR_CORROBORATION_WET_MAX * flankB.g;
-            if (!(flankAAir && flankBAir))
-                coverage = max(coverage, analyticCoverage);
-            return coverage;
-        }
+        #include "WaterOceanRenderedCoverage.hlsl"
 
         // False-colour views for THIS pass (WaterFogDebug.hlsl), inert unless _WaterDebugMode
         // selects one. Included here rather than with the headers at the top on purpose: it reads
@@ -228,6 +189,19 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             return 0.5 * (a + b);
         }
 
+        float3 RefineSurfaceCrossingRT(float3 a, float gapA, float3 b, float flatFallbackY)
+        {
+            [loop]
+            for (int r = 0; r < UNDERWATER_CROSS_REFINE_ITERS; r++)
+            {
+                float3 m = 0.5 * (a + b);
+                float gapM = SurfaceSignedGapRT(m, flatFallbackY);
+                if (gapA * gapM <= 0.0) { b = m; }
+                else { a = m; gapA = gapM; }
+            }
+            return 0.5 * (a + b);
+        }
+
         // In-water length of the camera->scene ray against the WAVY ocean surface (per-pixel displaced
         // height), plus the deepest submerged Y and the surface height above that deepest point (the
         // depth-darkening reference). The crossing follows crests/troughs, so the fog waterline is a real
@@ -254,7 +228,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // (metres-scale, smooth), never the crossing itself - SurfaceSignedGap below still
             // marches the exact displaced surface.
             float camSurf = _UnderwaterSurfaceY;
-            float sceneSurf = SurfaceHeightAtXZ(sceneWorld.xz);
+            float sceneSurf = HeightRTSurfaceY(sceneWorld.xz, camSurf);
             bool sceneUnder = sceneWorld.y <= sceneSurf;
             wetStart = cam; // start of the in-water span ALONG the ray (exclusion subtraction origin)
 
@@ -293,7 +267,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             float tBand = band / max(abs(ray.y), 1e-4);          // half-band in ray-parameter units
             float startDist = saturate(tFlat - tBand) * rayLen;  // skip the deep water below the band
             float3 prev = cam + dir * startDist;
-            float gapPrev = SurfaceSignedGap(prev);
+            float gapPrev = SurfaceSignedGapRT(prev, camSurf);
             // The FALLBACK line sits at the CAMERA-LOCAL live surface height (_UnderwaterSurfaceY,
             // the same level the whole Simple tier trusts), NOT the rest plane. The rest-plane
             // fallback re-created R2's collapse one tier deeper, INSIDE the marcher: an eye riding
@@ -321,14 +295,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 float d = startDist + s * UNDERWATER_CROSS_STEP_METRES;
                 if (d >= rayLen) break;                          // reached the scene end
                 float3 p = cam + dir * d;
-                float gap = SurfaceSignedGap(p);
+                float gap = SurfaceSignedGapRT(p, camSurf);
                 if (gapPrev * gap <= 0.0)
                 {
                     // Wavy crossing, faded toward the flat one over the march's last quarter: a hard
                     // switch at the step cap printed a seam where the fog waterline snapped from the
                     // waves to the rest plane at ~the march distance.
                     float seam = smoothstep(marchReach * UNDERWATER_SEAM_BLEND_START, marchReach, d);
-                    hit = lerp(RefineSurfaceCrossing(prev, gapPrev, p), hitFlat, seam);
+                    hit = lerp(RefineSurfaceCrossingRT(prev, gapPrev, p, camSurf), hitFlat, seam);
                     break;
                 }
                 prev = p; gapPrev = gap;
@@ -521,7 +495,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                     float carveExitDist;
                     if (ExclusionPrepassExitDistance(uv, cam, dir, carveRawSpan, carveExitDist)
                         && carveExitDist < hitDist
-                        && SurfaceSignedGap(cam + dir * carveExitDist) <= 0.0)
+                        && SurfaceSignedGapRT(cam + dir * carveExitDist, camSurf) <= 0.0)
                     {
                         OceanWavyPath(sceneWorld, cam, rayStartsWet, /* endpointWet */ false, pathLen, deepestY, surfaceRefY,
                                       wetStart);
@@ -639,7 +613,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // drew, where the skybox cannot masquerade as a waterline). Ordered AFTER the
             // prepass on purpose - see the authority note above.
             WaterFogDebugBranch(WATER_FOG_BRANCH_ANALYTIC);
-            float sceneSurf = SurfaceHeightAtXZ(sceneWorld.xz); // deferred from the top - see note there
+            float sceneSurf = HeightRTSurfaceY(sceneWorld.xz, camSurf); // deferred from the top - see note there
             bool sceneUnder = sceneWorld.y <= sceneSurf;
             if (rayStartsWet && sceneUnder)
             {
@@ -1146,7 +1120,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // pay several in their march, and WaterDepthClarity's shore fetch below sits at this
             // same reconverged point in the control flow.
             float2 downwellXZ = wetStart.xz + segDir.xz * downwellTMean;
-            float downwellRefY = SurfaceHeightAtXZ(downwellXZ);
+            float downwellRtWeight = HeightRTFeatherWeight(downwellXZ);
+            float downwellRefY = downwellRtWeight > 0.0
+                               ? lerp(SurfaceHeightAtXZ(downwellXZ),
+                                      SampleHeightRTWorldY(downwellXZ), downwellRtWeight)
+                               : SurfaceHeightAtXZ(downwellXZ);
 #else
             // Simple tier: the per-path reference is already the flat waterline - stripe-free by
             // construction, and this variant compiles no SurfaceHeightAtXZ to call.

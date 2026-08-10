@@ -41,6 +41,17 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_OceanSurfaceOwnership = Shader.PropertyToID("_OceanSurfaceOwnership");
         static readonly int ID_OceanSurfaceDepthValid = Shader.PropertyToID("_OceanSurfaceDepthValid");
         static readonly int ID_OceanSurfacePrepassScale = Shader.PropertyToID("_OceanSurfacePrepassScale");
+        static readonly int ID_WaterHeightRT = Shader.PropertyToID("_WaterHeightRT");
+        static readonly int ID_WaterHeightRTFrame = Shader.PropertyToID("_WaterHeightRTFrame");
+        internal const int HeightRtResolution = 256;
+        internal const float HeightRtWindowSize = 512f;
+        const float HeightRtHalfExtent = HeightRtWindowSize * 0.5f;
+        const float HeightRtTexelSize = HeightRtWindowSize / HeightRtResolution;
+        const float HeightRtChopApron = 16f;
+        const float HeightRtCameraAltitude = 1024f;
+        const float HeightRtDepthRange = 2048f;
+        const string HeightRtTextureName = "_WaterHeightRT";
+        const string HeightRtDepthName = "WaterHeightRT.Depth";
 
         // The eye-depth prepass renders at this fraction of camera resolution (both axes). The fog
         // only needs the SIGN of the sheet and its eye depth at wave scale - not per-pixel exact
@@ -54,15 +65,19 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_WaterlineSceneTex = Shader.PropertyToID("_WaterlineSceneTex");
 
         readonly Material _material;
+        readonly Material _heightRtMaterial;
         readonly ProfilingSampler _sampler = new ProfilingSampler("WaterUnderwaterFog");
         readonly ProfilingSampler _prepassSampler = new ProfilingSampler("WaterUnderwaterFog.SurfaceDepth");
+        readonly ProfilingSampler _heightRtSampler = new ProfilingSampler("WaterUnderwaterFog.HeightRT");
         // Reused each frame so the prepass allocates no garbage.
         readonly MaterialPropertyBlock _scratchBlock = new MaterialPropertyBlock();
         static readonly List<Renderer> s_SurfaceRenderers = new List<Renderer>();
+        static Mesh s_HeightRtGrid;
 
-        internal WaterUnderwaterFogPass(Material material)
+        internal WaterUnderwaterFogPass(Material material, Material heightRtMaterial)
         {
             _material = material;
+            _heightRtMaterial = heightRtMaterial;
             renderPassEvent = InjectionPoint;
         }
 
@@ -74,11 +89,24 @@ namespace AbstractOcclusion.WebGpuWater
             public MaterialPropertyBlock block;
         }
 
+        sealed class HeightRtPassData
+        {
+            public Material material;
+            public MaterialPropertyBlock block;
+            public Mesh mesh;
+            public Matrix4x4 model;
+            public Matrix4x4 view;
+            public Matrix4x4 projection;
+            public Matrix4x4 cameraView;
+            public Matrix4x4 cameraProjection;
+        }
+
         public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
         {
             if (_material == null) return;
 
             UniversalResourceData resources = frameData.Get<UniversalResourceData>();
+            UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
             TextureHandle cameraColor = resources.activeColorTexture;
             if (!cameraColor.IsValid()) return;
             // (The point-light scatter reads the package's OWN published light list - see
@@ -124,6 +152,16 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalFloat(ID_OceanSurfaceDepthValid, prepassRecorded ? 1f : 0f);
             // _OceanSurfacePrepassScale is published inside RecordSurfaceDepthPrepass, from the
             // scale actually applied to the RT - the only frames the shader reads it (validity 1).
+            bool heightRtRecorded = WaterVolume.UnderwaterFogActive
+                                    && fogSource != null
+                                    && fogSource.IsOceanClipmap
+                                    && !fogSource.UnderwaterFogSimple
+                                    && _heightRtMaterial != null
+                                    && s_SurfaceRenderers.Count > 0;
+            if (heightRtRecorded)
+                RecordHeightRt(renderGraph, cameraData, fogSource.VolumeCenter.y);
+            else
+                Shader.SetGlobalVector(ID_WaterHeightRTFrame, Vector4.zero);
 
             // Order matters: absorb (scene *= transmittance) then inscatter (scene += fog),
             // then the waterline meniscus ON TOP of the fogged scene (it darkens the final
@@ -140,6 +178,118 @@ namespace AbstractOcclusion.WebGpuWater
             // writes), which is also why a view only appears while the fog is armed.
             if (WaterVolume.WaterlineActive && !WaterDebugView.FogViewActive)
                 RecordWaterlinePass(renderGraph, resources, cameraColor);
+        }
+
+        void RecordHeightRt(RenderGraph renderGraph, UniversalCameraData cameraData, float restPlaneY)
+        {
+            Vector3 cameraPosition = cameraData.worldSpaceCameraPos;
+            float centerX = Mathf.Floor(cameraPosition.x / HeightRtTexelSize) * HeightRtTexelSize;
+            float centerZ = Mathf.Floor(cameraPosition.z / HeightRtTexelSize) * HeightRtTexelSize;
+            Vector3 center = new Vector3(centerX, restPlaneY, centerZ);
+
+            TextureDesc colorDesc = new TextureDesc(HeightRtResolution, HeightRtResolution)
+            {
+                name = HeightRtTextureName,
+                colorFormat = GraphicsFormat.R16_SFloat,
+                depthBufferBits = DepthBits.None,
+                msaaSamples = MSAASamples.None,
+                clearBuffer = true,
+                clearColor = Color.clear,
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp
+            };
+            TextureHandle color = renderGraph.CreateTexture(colorDesc);
+            TextureDesc depthDesc = new TextureDesc(HeightRtResolution, HeightRtResolution)
+            {
+                name = HeightRtDepthName,
+                colorFormat = GraphicsFormat.None,
+                depthBufferBits = DepthBits.Depth32,
+                msaaSamples = MSAASamples.None,
+                clearBuffer = true
+            };
+            TextureHandle depth = renderGraph.CreateTexture(depthDesc);
+
+            Vector3 eye = center + Vector3.up * HeightRtCameraAltitude;
+            Quaternion rotation = Quaternion.LookRotation(Vector3.down, Vector3.forward);
+            Matrix4x4 cameraToWorld = Matrix4x4.TRS(eye, rotation, Vector3.one);
+            Matrix4x4 view = Matrix4x4.Scale(new Vector3(1f, 1f, -1f)) * cameraToWorld.inverse;
+            Matrix4x4 projection = GL.GetGPUProjectionMatrix(
+                Matrix4x4.Ortho(-HeightRtHalfExtent, HeightRtHalfExtent,
+                                -HeightRtHalfExtent, HeightRtHalfExtent,
+                                0f, HeightRtDepthRange), true);
+
+            using var builder = renderGraph.AddRasterRenderPass<HeightRtPassData>(
+                _heightRtSampler.name, out HeightRtPassData data, _heightRtSampler);
+            data.material = _heightRtMaterial;
+            data.block = _scratchBlock;
+            data.mesh = GetHeightRtGrid();
+            data.model = Matrix4x4.Translate(center);
+            data.view = view;
+            data.projection = projection;
+            data.cameraView = cameraData.GetViewMatrix();
+            data.cameraProjection = cameraData.GetGPUProjectionMatrix();
+            builder.SetRenderAttachment(color, 0, AccessFlags.Write);
+            builder.SetRenderAttachmentDepth(depth, AccessFlags.Write);
+            builder.AllowPassCulling(false);
+            builder.SetGlobalTextureAfterPass(color, ID_WaterHeightRT);
+            Shader.SetGlobalVector(ID_WaterHeightRTFrame,
+                new Vector4(centerX, centerZ, HeightRtHalfExtent, 1f));
+            builder.SetRenderFunc((HeightRtPassData d, RasterGraphContext ctx) =>
+            {
+                Renderer source = s_SurfaceRenderers[0];
+                source.GetPropertyBlock(d.block);
+                ctx.cmd.SetViewProjectionMatrices(d.view, d.projection);
+                ctx.cmd.DrawMesh(d.mesh, d.model, d.material, 0, 0, d.block);
+                ctx.cmd.SetViewProjectionMatrices(d.cameraView, d.cameraProjection);
+            });
+        }
+
+        static Mesh GetHeightRtGrid()
+        {
+            if (s_HeightRtGrid != null) return s_HeightRtGrid;
+
+            int apronCells = Mathf.CeilToInt(HeightRtChopApron / HeightRtTexelSize);
+            int cellsPerAxis = HeightRtResolution + apronCells * 2;
+            int verticesPerAxis = cellsPerAxis + 1;
+            var vertices = new Vector3[verticesPerAxis * verticesPerAxis];
+            var indices = new int[cellsPerAxis * cellsPerAxis * 6];
+            float gridHalfExtent = HeightRtHalfExtent + HeightRtChopApron;
+            int vertexIndex = 0;
+            for (int z = 0; z < verticesPerAxis; z++)
+            {
+                for (int x = 0; x < verticesPerAxis; x++)
+                {
+                    vertices[vertexIndex++] = new Vector3(-gridHalfExtent + x * HeightRtTexelSize,
+                                                          0f,
+                                                          -gridHalfExtent + z * HeightRtTexelSize);
+                }
+            }
+            int index = 0;
+            for (int z = 0; z < cellsPerAxis; z++)
+            {
+                for (int x = 0; x < cellsPerAxis; x++)
+                {
+                    int lowerLeft = z * verticesPerAxis + x;
+                    int upperLeft = lowerLeft + verticesPerAxis;
+                    indices[index++] = lowerLeft;
+                    indices[index++] = upperLeft;
+                    indices[index++] = lowerLeft + 1;
+                    indices[index++] = lowerLeft + 1;
+                    indices[index++] = upperLeft;
+                    indices[index++] = upperLeft + 1;
+                }
+            }
+            s_HeightRtGrid = new Mesh
+            {
+                name = "WaterHeightRT.Grid",
+                indexFormat = IndexFormat.UInt32,
+                hideFlags = HideFlags.HideAndDontSave
+            };
+            s_HeightRtGrid.vertices = vertices;
+            s_HeightRtGrid.SetIndices(indices, MeshTopology.Triangles, 0, calculateBounds: false);
+            s_HeightRtGrid.bounds = new Bounds(Vector3.zero,
+                new Vector3(gridHalfExtent * 2f, HeightRtDepthRange, gridHalfExtent * 2f));
+            return s_HeightRtGrid;
         }
 
         // The waterline meniscus draws over the fogged scene AND (for the KWS-style lens tension)

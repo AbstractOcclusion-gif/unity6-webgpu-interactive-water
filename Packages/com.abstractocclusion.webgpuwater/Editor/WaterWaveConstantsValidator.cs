@@ -63,6 +63,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // Dotted filename. AssetDatabase.FindAssets tokenises its filter, so this pair is read
         // OUTSIDE the main gate below - a miss must skip this one group, never the whole validator.
         const string UnderwaterCSharpAssetName = "WaterVolume.Underwater";
+        const string FogPassCSharpAssetName = "WaterUnderwaterFogPass";
         // FoamParticles.shader DRAWS the particles WaterFoamParticles.compute simulates, so the GPU
         // struct is authored in the .compute, in the .shader, AND as a C# struct whose size becomes
         // every consumer's buffer stride. Nothing linked the three: a field added on one side only does
@@ -101,6 +102,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             ("SURFACE_BAND_AMPLITUDES",  "SurfaceBandAmplitudes"),
             ("SURFACE_BAND_PAD_METERS",  "SurfaceBandPadMeters"),
             ("SURFACE_BAND_CREST_REACH", "SurfaceBandCrestReach"),
+        };
+
+        static readonly (string Hlsl, string CSharp)[] HeightRtConstantPairs =
+        {
+            ("WATER_HEIGHT_RT_RESOLUTION", "HeightRtResolution"),
+            ("WATER_HEIGHT_RT_WINDOW_SIZE", "HeightRtWindowSize"),
         };
 
         static readonly (string Hlsl, string CSharp)[] LargeWavesConstantPairs =
@@ -425,7 +432,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             if (!TryReadPackageAsset(WaterlineHlslAssetName, HlslExtension,
                                      out string waterlineSource, out string readError)
                 || !TryReadPackageAsset(UnderwaterCSharpAssetName, CSharpExtension,
-                                        out string underwaterSource, out readError))
+                                        out string underwaterSource, out readError)
+                || !TryReadPackageAsset(FogPassCSharpAssetName, CSharpExtension,
+                                        out string fogPassSource, out readError))
             {
                 problems.Add($"surface band: pair not checked - {readError}");
                 return;
@@ -433,6 +442,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             CollectProblems(problems, WaterlineHlslAssetName, HlslExtension, waterlineSource,
                             UnderwaterCSharpAssetName, underwaterSource, SurfaceBandConstantPairs);
+            CollectProblems(problems, WaterlineHlslAssetName, HlslExtension, waterlineSource,
+                            FogPassCSharpAssetName, fogPassSource, HeightRtConstantPairs);
         }
 
         static void CollectProblems(List<string> problems, string hlslAssetName, string hlslExtension,

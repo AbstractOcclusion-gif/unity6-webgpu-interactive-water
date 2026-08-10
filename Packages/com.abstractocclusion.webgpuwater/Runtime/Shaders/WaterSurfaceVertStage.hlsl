@@ -123,56 +123,22 @@
             // WindWaveSampleXZ + _OceanWorldWaves moved to WaterWaves.hlsl (2026-08-10): the foam
             // glue and the waterline must pick the SAME wind-wave coordinate as this vertex path.
 
-            v2f vert(appdata v)
+            float3 DisplaceSurfaceVertex(float3 poolFlat, float3 worldFlat, float4 info,
+                                         out float3 poolDisplaced, out float2 largeWaveSourceXZ)
             {
-                v2f o;
-                // Three vertex sources feed the SAME ripple/wave path below:
-                //  - full plane   : the grid vertex IS pool xz;
-                //  - window patch : the SAME [-1,1] grid remapped into the window's pool sub-region,
-                //                   so it tessellates only the near field (dense);
-                //  - ocean clipmap: verts authored in WORLD metres (x,0,z) on a camera-following mesh,
-                //                   mapped BACK into pool space so the ripple/pool sampling is unchanged
-                //                   (ripples fade to flat past the sim window, leaving open-water swell).
-                float3 poolFlat;
-                float3 worldFlat;
-                if (_IsClipmap > 0.5)
-                {
-                    // Edge geomorph: in the outer band, slide the vertex onto the next-coarser lattice
-                    // (nearest EVEN cell) so this LOD level meets the coarser one crack-free. v.vertex.xz
-                    // are this level's integer cell indices; the transform scales them to world metres.
-                    float2 cell = v.vertex.xz;
-                    float cheb = max(abs(cell.x), abs(cell.y));
-                    float morph = saturate((cheb - _ClipmapMorphStart) * _ClipmapMorphScale);
-                    float2 morphedCell = lerp(cell, round(cell * 0.5) * 2.0, morph);
-                    float3 worldOnPlane = mul(unity_ObjectToWorld, float4(morphedCell.x, 0.0, morphedCell.y, 1.0)).xyz;
-                    worldFlat = float3(worldOnPlane.x, _VolumeCenter.y, worldOnPlane.z); // resting plane
-                    poolFlat = WorldToPool(worldFlat);
-                    poolFlat.y = 0.0;
-                }
-                else
-                {
-                    float2 gridPoolXZ = (_IsPatch > 0.5) ? (_PatchPoolCenter + v.vertex.xy * _PatchPoolHalf)
-                                                         : v.vertex.xy;
-                    poolFlat = float3(gridPoolXZ.x, _ChunkSurfacePoolY, gridPoolXZ.y); // grid -> pool (x, level, z); level 0 for non-chunks
-                    worldFlat = PoolToWorld(poolFlat);
-                }
-                // World position at the surface plane (height 0) picks the windowed UV; the
-                // xz mapping doesn't depend on ripple height, so this is exact.
                 float2 poolXZ = poolFlat.xz;
-                float fade;
-                float4 info = SampleRipple(poolFlat, worldFlat, fade);
                 float3 position = poolFlat;
                 position.y += info.r;                  // interactive ripple heightfield (windowed: faded)
                 position.y += WaveHeight(WindWaveSampleXZ(poolXZ, worldFlat.xz)); // small wind-wave detail; open water
                                                        // layers the big swell on top in world space below
-                o.position = position;                 // keep pool-space position for the tracer
+                poolDisplaced = position;              // keep pool-space position for the tracer
                 float3 worldPos = PoolToWorld(position);
                 // Open water: add the wave in WORLD space (metres), so large bodies get real 3D waves
                 // whose amplitude is NOT shrunk by the depth extent the way the pool-unit WaveHeight
                 // above is. Height lifts Y; choppiness displaces xz (Gerstner) for sharp crests. The
                 // SOURCE xz (before the xz displacement) is carried to the fragment so its normal reads
                 // the wave at the same point the vertex did. No-op for pool/small bodies (_LargeBody = 0).
-                o.largeWaveSourceXZ = worldPos.xz;
+                largeWaveSourceXZ = worldPos.xz;
                 // ONE shore + surf sample per vertex, shared by the wave height, the chop and the
                 // swash film block below (the old path re-sampled the shore and re-evaluated the
                 // surf fronts inside Height, again inside Displacement, and a third time for the
@@ -182,7 +148,7 @@
                 if (_LargeBody > 0.5)
                 {
                     float2 sourceXZ = worldPos.xz;
-                    o.largeWaveSourceXZ = sourceXZ;
+                    largeWaveSourceXZ = sourceXZ;
                     shoreVert = ShoreSample(sourceXZ);
                     surfVert = EvaluateSurfWaves(sourceXZ, shoreVert.depth, shoreVert.sdfDist,
                                                  shoreVert.toShore, shoreVert.slopeTan,
@@ -227,7 +193,7 @@
                     float beachRise = -shoreVert.depth; // metres the sand sits above the still level
                     if (shoreVert.influence > 0.0 && beachRise > 0.0)
                     {
-                        float2 swashVert = EvaluateSurfSwash(o.largeWaveSourceXZ, shoreVert.toShore,
+                        float2 swashVert = EvaluateSurfSwash(largeWaveSourceXZ, shoreVert.toShore,
                                                              shoreVert.slopeTan,
                                                              shoreVert.influence, _SurfBeatTime);
                         // FOAM-5: persistent swash deposits linger on the sand ABOVE the drying wet
@@ -242,8 +208,8 @@
                         {
                             float2 depUV = (_SimWindowed < 0.5)
                                 ? (position.xz * 0.5 + 0.5)
-                                : (WorldToSim(float3(o.largeWaveSourceXZ.x, worldPos.y,
-                                                     o.largeWaveSourceXZ.y)).xz * 0.5 + 0.5);
+                                : (WorldToSim(float3(largeWaveSourceXZ.x, worldPos.y,
+                                                     largeWaveSourceXZ.y)).xz * 0.5 + 0.5);
                             if (SampleFoamMaskWindowed(depUV) > FOAM_MASK_EPSILON)
                                 geomReach = beachRise; // hold the film onto the sand under the deposit
                         }
@@ -264,6 +230,48 @@
                         }
                     }
                 }
+                return worldPos;
+            }
+
+            v2f vert(appdata v)
+            {
+                v2f o;
+                // Three vertex sources feed the SAME ripple/wave path below:
+                //  - full plane   : the grid vertex IS pool xz;
+                //  - window patch : the SAME [-1,1] grid remapped into the window's pool sub-region,
+                //                   so it tessellates only the near field (dense);
+                //  - ocean clipmap: verts authored in WORLD metres (x,0,z) on a camera-following mesh,
+                //                   mapped BACK into pool space so the ripple/pool sampling is unchanged
+                //                   (ripples fade to flat past the sim window, leaving open-water swell).
+                float3 poolFlat;
+                float3 worldFlat;
+                if (_IsClipmap > 0.5)
+                {
+                    // Edge geomorph: in the outer band, slide the vertex onto the next-coarser lattice
+                    // (nearest EVEN cell) so this LOD level meets the coarser one crack-free. v.vertex.xz
+                    // are this level's integer cell indices; the transform scales them to world metres.
+                    float2 cell = v.vertex.xz;
+                    float cheb = max(abs(cell.x), abs(cell.y));
+                    float morph = saturate((cheb - _ClipmapMorphStart) * _ClipmapMorphScale);
+                    float2 morphedCell = lerp(cell, round(cell * 0.5) * 2.0, morph);
+                    float3 worldOnPlane = mul(unity_ObjectToWorld, float4(morphedCell.x, 0.0, morphedCell.y, 1.0)).xyz;
+                    worldFlat = float3(worldOnPlane.x, _VolumeCenter.y, worldOnPlane.z); // resting plane
+                    poolFlat = WorldToPool(worldFlat);
+                    poolFlat.y = 0.0;
+                }
+                else
+                {
+                    float2 gridPoolXZ = (_IsPatch > 0.5) ? (_PatchPoolCenter + v.vertex.xy * _PatchPoolHalf)
+                                                         : v.vertex.xy;
+                    poolFlat = float3(gridPoolXZ.x, _ChunkSurfacePoolY, gridPoolXZ.y); // grid -> pool (x, level, z); level 0 for non-chunks
+                    worldFlat = PoolToWorld(poolFlat);
+                }
+                // World position at the surface plane (height 0) picks the windowed UV; the
+                // xz mapping doesn't depend on ripple height, so this is exact.
+                float fade;
+                float4 info = SampleRipple(poolFlat, worldFlat, fade);
+                float3 worldPos = DisplaceSurfaceVertex(poolFlat, worldFlat, info, o.position,
+                                                        o.largeWaveSourceXZ);
                 o.worldPos = worldPos;
                 // Nudge the patch a fixed few centimetres toward the camera IN VIEW SPACE so it wins the
                 // depth test against the coplanar far plane at EVERY distance. The old bias was a constant

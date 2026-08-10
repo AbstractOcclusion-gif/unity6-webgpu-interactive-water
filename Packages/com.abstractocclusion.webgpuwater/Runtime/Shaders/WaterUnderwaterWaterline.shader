@@ -58,38 +58,7 @@ Shader "Hidden/AbstractOcclusion/WebGpuWater/WaterUnderwaterWaterline"
                                             sampler_OceanSurfaceOwnership, saturate(uv), 0).rg;
             }
 
-            // F7: fraction of an ownership sample's VALID share below which it is read as an
-            // AIR claim (r is premultiplied by g; the compare is kept multiplied through to
-            // avoid the division). MIRROR of the fog's constant - this function is a known
-            // duplicate of WaterUnderwaterFog.shader's copy, and 2026-08-11 proved the drift
-            // this duplication invites: F7 landed in the fog's copy first, and the meniscus
-            // kept drawing its darkening band on the uncorroborated coin-toss dips - the
-            // surviving dashed line, convicted by meniscus-off. Keep the two copies in
-            // lockstep until they are deduped into a shared header.
-            #define OWNERSHIP_AIR_CORROBORATION_WET_MAX 0.5
-
-            float OceanRenderedCoverage(float2 uv, float analyticCoverage, float2 screenDirection)
-            {
-                float2 prepassTexel = 1.0 / max(_ScaledScreenParams.xy * _OceanSurfacePrepassScale, 1.0);
-                float2 offset = screenDirection * prepassTexel;
-                float2 center = OceanOwnershipSample(uv);
-                float2 flankA = OceanOwnershipSample(uv + offset);
-                float2 flankB = OceanOwnershipSample(uv - offset);
-                float2 ownership = center * 0.5 + flankA * 0.25 + flankB * 0.25;
-                float coverage = saturate(ownership.r + analyticCoverage * (1.0 - ownership.g));
-                // F7 (2026-08-11): an AIR claim may only pull coverage below the analytic
-                // value when BOTH flanking samples corroborate it - the interior of a genuine
-                // from-air region. An isolated silhouette coin-toss run fails the test and
-                // falls back to the analytic coverage (over-cover doctrine: erring wet).
-                // Full rationale on the fog's copy of this function.
-                bool flankAAir = flankA.g > 0.5
-                              && flankA.r < OWNERSHIP_AIR_CORROBORATION_WET_MAX * flankA.g;
-                bool flankBAir = flankB.g > 0.5
-                              && flankB.r < OWNERSHIP_AIR_CORROBORATION_WET_MAX * flankB.g;
-                if (!(flankAAir && flankBAir))
-                    coverage = max(coverage, analyticCoverage);
-                return coverage;
-            }
+            #include "WaterOceanRenderedCoverage.hlsl"
 
             half4 FragWaterline(Varyings input) : SV_Target
             {

@@ -100,19 +100,49 @@ namespace AbstractOcclusion.WebGpuWater
         {
             Vector3 center = ClipmapLevelSnappedCenter(level.cellSize);
             Vector3 scale = new Vector3(level.cellSize, 1f, level.cellSize); // template verts are in cell units
-            PlaceClipmapRenderer(level.above, center, scale, level);
-            PlaceClipmapRenderer(level.under, center, scale, level);
+            PlaceClipmapRenderer(level.above, center, scale, level, isUnderTwin: false);
+            PlaceClipmapRenderer(level.under, center, scale, level, isUnderTwin: true);
+        }
+
+        // The above/under twins are the SAME lattice drawn twice with opposite culling, so
+        // wherever both rasterize a pixel their depths are EXACTLY equal and the winner is a
+        // per-pixel coin toss. Where the UNDER twin wins a tie seen from the air (or the above
+        // twin seen from below), the pixel shades the WRONG MEDIUM - the dark specks along
+        // crest silhouettes (2026-08-11). Resolve every tie DETERMINISTICALLY toward the twin
+        // matching the camera's medium, through the same _PatchDepthBias plumbing the patch
+        // already trusts (view-space metres; the eye-depth prepass stores PHYSICAL depth, so
+        // this can only ever order the raster, never corrupt the fog's data).
+        // LARGER THAN THE WHOLE LOD BIAS SPREAD (patch 0.02 m, level steps ~0.002 m) so a
+        // matched COARSE level still beats a mismatched FINE one where LODs overlap; among
+        // matched twins the per-level bias still ranks them, so the finest present keeps
+        // winning overall.
+        const float MediumMatchedTwinBiasMeters = 0.04f;
+
+        // STOOD DOWN while the waterline straddles the near plane: a deterministic winner is
+        // wrong for half of a straddling screen (the failed _Underwater-flip idea,
+        // 2026-08-11), so those few frames keep the coin toss - the meniscus band covers
+        // them. Shared by the clipmap twins here and the near-field patch twins
+        // (WaterVolume.SimWindowPatch.PositionPatch).
+        static float MediumMatchedTwinExtraBias(bool isUnderTwin)
+        {
+            if (WaterlineActive) return 0f;
+            return (CameraSubmerged == isUnderTwin) ? MediumMatchedTwinBiasMeters : 0f;
         }
 
         // The body uniforms are already in _clipmapBlock (ApplyClipmapBlock wrote them once this frame);
         // only the four per-level floats are re-stamped here. SetPropertyBlock copies, so the next level
         // overwriting them cannot reach a renderer that has already been handed the block. ApplyClipmapBlock
         // is the sole path in, so _clipmapBlock is non-null by construction.
-        void PlaceClipmapRenderer(MeshRenderer renderer, Vector3 center, Vector3 scale, ClipmapLevel level)
+        void PlaceClipmapRenderer(MeshRenderer renderer, Vector3 center, Vector3 scale, ClipmapLevel level,
+                                  bool isUnderTwin)
         {
             if (renderer == null) return;
             _clipmapBlock.SetFloat(ID_IsClipmap, 1f);
-            _clipmapBlock.SetFloat(ID_PatchDepthBias, level.depthBias);
+            // Per-level LOD ordering plus the camera-medium tie-breaker (see the constant's
+            // header above): the twin matching the eye's medium wins every coincident-depth
+            // pixel instead of coin-tossing it into the wrong-medium speck.
+            _clipmapBlock.SetFloat(ID_PatchDepthBias,
+                                   level.depthBias + MediumMatchedTwinExtraBias(isUnderTwin));
             _clipmapBlock.SetFloat(ID_ClipmapMorphStart, level.morphStart);
             _clipmapBlock.SetFloat(ID_ClipmapMorphScale, level.morphScale);
             renderer.SetPropertyBlock(_clipmapBlock);

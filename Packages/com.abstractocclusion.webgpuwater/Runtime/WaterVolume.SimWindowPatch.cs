@@ -85,22 +85,26 @@ namespace AbstractOcclusion.WebGpuWater
         // Refresh both near-field patches (the above one, and the under twin on ocean bodies).
         void ApplyPatchBlock()
         {
-            PositionPatch(_patchRenderer, ref _patchMpb);
-            PositionPatch(_patchUnderRenderer, ref _patchUnderMpb);
+            PositionPatch(_patchRenderer, ref _patchMpb, isUnderTwin: false);
+            PositionPatch(_patchUnderRenderer, ref _patchUnderMpb, isUnderTwin: true);
         }
 
         // Feed one patch renderer this body's per-body uniforms PLUS the window remap it needs, and park
         // it on the window centre so it culls with the window. The remap rides its own block so _IsPatch
         // never leaks onto the flat surface renderers. The transform is cosmetic (the shader places the
         // verts via PoolToWorld); it only sizes the culling bounds.
-        void PositionPatch(Renderer patch, ref MaterialPropertyBlock block)
+        void PositionPatch(Renderer patch, ref MaterialPropertyBlock block, bool isUnderTwin)
         {
             if (patch == null) return;
             if (block == null) block = new MaterialPropertyBlock();
             WriteBodyProps(block);
 
             block.SetFloat(ID_IsPatch, 1f);
-            block.SetFloat(ID_PatchDepthBias, PatchDepthBiasMeters);
+            // Patch bias plus the camera-medium tie-breaker shared with the clipmap twins
+            // (WaterVolume.OceanClipmap.MediumMatchedTwinExtraBias - full rationale there):
+            // the patch twin matching the eye's medium wins its coincident-depth pixels.
+            block.SetFloat(ID_PatchDepthBias,
+                           PatchDepthBiasMeters + MediumMatchedTwinExtraBias(isUnderTwin));
             block.SetVector(ID_PatchPoolCenter, PatchPoolCenter);
             block.SetVector(ID_PatchPoolHalf, PatchPoolHalf);
             patch.SetPropertyBlock(block);

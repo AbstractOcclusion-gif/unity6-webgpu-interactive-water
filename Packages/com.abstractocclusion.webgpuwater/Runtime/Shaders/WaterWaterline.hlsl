@@ -127,6 +127,41 @@ float SurfaceSignedGapChopInverted(float3 world)
     return world.y - SurfaceHeightAtXZChopInverted(world.xz);
 }
 
+// Camera-following top-down height authority for FAR classifications and march samples.
+// The lens-level mask deliberately remains analytic: a 2 m lattice cannot represent its
+// centimetre-range crossing, while the far field benefits from replacing repeated wave maths.
+#define WATER_HEIGHT_RT_RESOLUTION 256
+#define WATER_HEIGHT_RT_WINDOW_SIZE 512.0
+#define WATER_HEIGHT_RT_FEATHER_METERS 16.0
+sampler2D _WaterHeightRT;
+// xy = snapped world-XZ centre, z = half extent, w = validity. One atomically refreshed
+// frame prevents a stale texture and a fresh transform (or the reverse) from ever mixing.
+float4 _WaterHeightRTFrame;
+
+float HeightRTFeatherWeight(float2 worldXZ)
+{
+    float edgeDistance = _WaterHeightRTFrame.z
+                       - max(abs(worldXZ.x - _WaterHeightRTFrame.x),
+                             abs(worldXZ.y - _WaterHeightRTFrame.y));
+    return _WaterHeightRTFrame.w * saturate(edgeDistance / WATER_HEIGHT_RT_FEATHER_METERS);
+}
+
+float SampleHeightRTWorldY(float2 worldXZ)
+{
+    float2 uv = (worldXZ - _WaterHeightRTFrame.xy) / (_WaterHeightRTFrame.z * 2.0) + 0.5;
+    return _VolumeCenter.y + tex2Dlod(_WaterHeightRT, float4(uv, 0.0, 0.0)).r;
+}
+
+float HeightRTSurfaceY(float2 worldXZ, float flatFallbackY)
+{
+    return lerp(flatFallbackY, SampleHeightRTWorldY(worldXZ), HeightRTFeatherWeight(worldXZ));
+}
+
+float SurfaceSignedGapRT(float3 world, float flatFallbackY)
+{
+    return world.y - HeightRTSurfaceY(world.xz, flatFallbackY);
+}
+
 // ---- Displaced-surface height envelope ----------------------------------------------
 // Conservative half-band (metres) around the rest plane that brackets every height the displaced
 // surface can reach this frame: the swell reach (an amplitude multiple), the surf-front crest
