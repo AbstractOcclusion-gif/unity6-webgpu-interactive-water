@@ -214,13 +214,48 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 return FoamRippleHeightSafe(info.r) * fade * VolumeExtentSafe().y;
             }
 
+            // Short-wave height and matching normal tilt for the layers whose curvature can vary
+            // across one foam quad. The long FFT/surf field stays centre-evaluated: its wavelengths
+            // are large relative to a sprite, while repeating its shore/cascade work per vertex
+            // would turn a small glue correction into the draw's dominant cost.
+            float WindWaveWorldHeight(float2 worldXZ, float3 poolAtRest)
+            {
+                float2 sampleXZ = WindWaveSampleXZ(poolAtRest.xz, worldXZ);
+                float windHeightPool = WaveHeight(sampleXZ);
+                return
+                    PoolToWorld(float3(poolAtRest.x, poolAtRest.y + windHeightPool,
+                                       poolAtRest.z)).y
+                    - PoolToWorld(poolAtRest).y;
+            }
+
+            float OpenWaterShortWaveHeight(float2 worldXZ)
+            {
+                float2 rippleTiltUnused;
+                float rippleHeight = RippleGlueWorldHeight(worldXZ, rippleTiltUnused);
+                float3 poolAtRest = WorldToPool(float3(worldXZ.x, _VolumeCenter.y, worldXZ.y));
+                return rippleHeight + WindWaveWorldHeight(worldXZ, poolAtRest);
+            }
+
+            float OpenWaterShortWaveSurface(float2 worldXZ, out float2 shortWaveTilt)
+            {
+                float2 rippleTilt;
+                float rippleHeight = RippleGlueWorldHeight(worldXZ, rippleTilt);
+                float3 poolAtRest = WorldToPool(float3(worldXZ.x, _VolumeCenter.y, worldXZ.y));
+                float2 sampleXZ = WindWaveSampleXZ(poolAtRest.xz, worldXZ);
+                float2 windSlope = WaveSlope(sampleXZ);
+                shortWaveTilt = rippleTilt - windSlope * _PoolSlopeToWorld.xy;
+                return rippleHeight + WindWaveWorldHeight(worldXZ, poolAtRest);
+            }
+
             // The animated water surface at a probe point's xz, in world space. Two bodies, one
             // contract: open water rides the FULL large-body surface (LargeBodyWaveHeight already
             // carries the swell/FFT, the near-shore shoal attenuation and the surf fronts, so foam
             // sits ON shoaling and breaking waves); a pond rides the ripple sim plus the ambient
             // wind wave. probeWorld.y only ever reaches the volume rotation - pool space is
             // re-heighted from the sim - so callers pass the stored height offset through it.
-            void EvaluateWaterSurface(float3 probeWorld, out float3 surfaceWorld, out float3 surfaceNormal)
+            void EvaluateWaterSurface(float3 probeWorld, out float3 surfaceWorld,
+                                      out float3 surfaceNormal, out float shortWaveHeight,
+                                      out float2 shortWaveTilt)
             {
                 if (_LargeBody > 0.5)
                 {
@@ -233,8 +268,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                     SurfWaveSample surf = EvaluateSurfWaves(wxz, shore.depth, shore.sdfDist,
                                                             shore.toShore, shore.slopeTan,
                                                             shore.influence, _SurfBeatTime);
-                    float2 rippleTilt;
-                    float rippleHeight = RippleGlueWorldHeight(wxz, rippleTilt);
+                    shortWaveHeight = OpenWaterShortWaveSurface(wxz, shortWaveTilt);
                     // The WIND-WAVE layer was MISSING from this branch: the rendered surface adds
                     // it on open water too (WaterSurfaceVertStage vertex + the waterline's
                     // SurfaceHeightAtXZ), so foam quads rode ripple+swell alone and the wind chop
@@ -242,26 +276,26 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                     // small and smooth; exposed by the stochastic sets (2026-08-10). Composed
                     // exactly like the waterline: wind height in pool units, lifted through the
                     // full volume transform, taken as a delta off the rest plane.
-                    float3 poolAtRest = WorldToPool(float3(wxz.x, _VolumeCenter.y, wxz.y));
-                    float windWaveWorldY =
-                        PoolToWorld(float3(poolAtRest.x,
-                                           poolAtRest.y + WaveHeight(WindWaveSampleXZ(poolAtRest.xz, wxz)),
-                                           poolAtRest.z)).y
-                        - PoolToWorld(poolAtRest).y;
                     surfaceWorld = float3(wxz.x,
                                           _VolumeCenter.y + LargeBodyWaveHeightShore(wxz, shore, surf)
-                                                          + rippleHeight + windWaveWorldY,
+                                                          + shortWaveHeight,
                                           wxz.y);
-                    // Start with the interactive-ripple plane, then use the canonical large-body
-                    // composition. This includes FFT/analytic waves, shore attenuation and the
-                    // surf-front slope; omitting any of them lets the depth-writing water cross
-                    // the particle quad and makes landed foam look diagonal or cut in half.
-                    float3 rippleNormal = normalize(float3(rippleTilt.x, 1.0, rippleTilt.y));
+                    // Match the surface fragment's base plane: the sim stores normal.xz while
+                    // WaveSlope returns a height gradient, so the wind term is subtracted after
+                    // both are converted to world slope. Height already included this same wind
+                    // layer above; omitting its tilt lets steep chop edge-clip the in-plane quad.
+                    // Start with ripple + wind, then use the canonical large-body composition.
+                    // This includes FFT/analytic waves, shore attenuation and the surf-front
+                    // slope; omitting any term lets the depth-writing water cross the quad.
+                    float3 rippleNormal = normalize(float3(shortWaveTilt.x, 1.0,
+                                                           shortWaveTilt.y));
                     surfaceNormal = ApplyLargeBodyWaveNormalShore(
                         rippleNormal, wxz, SURFACE_NORMAL_STRENGTH, shore, surf);
                 }
                 else
                 {
+                    shortWaveHeight = 0.0;
+                    shortWaveTilt = float2(0.0, 0.0);
                     float3 poolPos = WorldToPool(probeWorld);
                     float2 fcoord = (_SimWindowed < 0.5) ? (poolPos.xz * 0.5 + 0.5)
                                                          : (WorldToSim(probeWorld).xz * 0.5 + 0.5);
@@ -400,7 +434,10 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 // ---- glue the particle to the animated surface ----
                 float3 surfaceWorld;
                 float3 surfaceNormal;
-                EvaluateWaterSurface(particle.worldPos, surfaceWorld, surfaceNormal);
+                float shortWaveHeight;
+                float2 shortWaveTilt;
+                EvaluateWaterSurface(particle.worldPos, surfaceWorld, surfaceNormal,
+                                     shortWaveHeight, shortWaveTilt);
 
                 // Spray rides ABOVE the surface (offset clamped up); bubbles ride BELOW it (the
                 // stored offset is negative and must pass through). EXCEPT from an above-water
@@ -431,8 +468,11 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                                         WaterlineCrossFraction(cameraPos, bubbleWorld, surfaceWorld.y));
                     float3 refinedSurface;
                     float3 refinedNormal;
+                    float refinedShortWaveHeight;
+                    float2 refinedShortWaveTilt;
                     EvaluateWaterSurface(float3(guess.x, particle.worldPos.y, guess.z),
-                                         refinedSurface, refinedNormal);
+                                         refinedSurface, refinedNormal, refinedShortWaveHeight,
+                                         refinedShortWaveTilt);
                     if (cameraPos.y > refinedSurface.y + WATERLINE_REFINE_CLEARANCE)
                     {
                         surfaceWorld = refinedSurface;   // the bit of surface the image sits on:
@@ -540,6 +580,17 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 float3 worldVertex = center
                                    + axisX * (corner.x * sizeWorld * stretch)
                                    + axisY * (corner.y * sizeWorld);
+                if (!isSpray && !isBubble && !isRippleCrest && _LargeBody > 0.5)
+                {
+                    // The centre tangent already predicts the linear part of ripple + wind tilt.
+                    // Add only the nonlinear corner residual; adding the full height delta would
+                    // count the slope twice and bend an otherwise planar wave into a false ridge.
+                    float2 cornerOffset = worldVertex.xz - surfaceWorld.xz;
+                    float predictedShortWaveDelta = -dot(shortWaveTilt, cornerOffset);
+                    float cornerShortWaveHeight = OpenWaterShortWaveHeight(worldVertex.xz);
+                    float actualShortWaveDelta = cornerShortWaveHeight - shortWaveHeight;
+                    worldVertex.y += actualShortWaveDelta - predictedShortWaveDelta;
+                }
 
                 // ---- life envelope ----
                 float envelope = FoamParticleEnvelope(particle.age, particle.life)
