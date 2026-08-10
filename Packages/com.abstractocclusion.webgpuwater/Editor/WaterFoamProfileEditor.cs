@@ -18,6 +18,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // Section field names on WaterFoamProfile (top-level serialized members).
         const string LookField = "look";
         const string AmbientField = "ambient";
+        const string MotionField = "motion";
         const string VeilField = "veil";
         const string SplashField = "splash";
         const string BubbleField = "bubbles";
@@ -36,6 +37,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             "- Ambient Airborne Droplets: the Spray Chance fraction of foam-mask spawns launched into the air.\n" +
             "- Splash & Pump Bursts: impact/pump droplets and crowns; these are not mist or crest flecks.\n" +
             "- Landed Foam: the surface patches left when airborne droplets land.\n" +
+            "- Motion: gravity, flow/wind drift and drag - how foam and spray ride the water.\n" +
             "- Density Veil: a connected screen-space foam wash, not another particle source.\n" +
             "- Bubbles: the underwater plume injected by splash and pump bursts.";
 
@@ -81,6 +83,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // Section expanded state (editor-session only). Open by default so every knob is discoverable.
         bool _lookExpanded = true;
         bool _ambientExpanded = true;
+        bool _motionExpanded = true;
         bool _veilExpanded = true;
         bool _splashExpanded = true;
         bool _bubbleExpanded = true;
@@ -97,6 +100,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             serializedObject.Update();
             SerializedProperty look = serializedObject.FindProperty(LookField);
             SerializedProperty ambient = serializedObject.FindProperty(AmbientField);
+            SerializedProperty motion = serializedObject.FindProperty(MotionField);
             SerializedProperty veil = serializedObject.FindProperty(VeilField);
             SerializedProperty splash = serializedObject.FindProperty(SplashField);
             SerializedProperty bubbles = serializedObject.FindProperty(BubbleField);
@@ -105,6 +109,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 look.FindPropertyRelative(DriveField), () => DrawSectionFields(look));
             _ambientExpanded = WaterEditorUI.SectionWithToggle("Ambient Source & Foam Ranges", _ambientExpanded,
                 ambient.FindPropertyRelative(DriveField), () => DrawAmbientSection(ambient));
+            _motionExpanded = WaterEditorUI.SectionWithToggle("Motion", _motionExpanded,
+                motion.FindPropertyRelative(DriveField), () => DrawSectionFields(motion));
             _veilExpanded = WaterEditorUI.SectionWithToggle("Density Veil", _veilExpanded,
                 veil.FindPropertyRelative(DriveField), () => DrawVeilSection(veil));
             _splashExpanded = WaterEditorUI.SectionWithToggle("Splash & Pump Bursts", _splashExpanded,

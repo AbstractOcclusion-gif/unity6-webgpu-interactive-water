@@ -72,6 +72,9 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
 
             // Lift surface-foam quads slightly off the water so they never z-fight it.
             #define SURFACE_LIFT         0.004
+            // Particle quads follow the physical surface plane rather than the authored shading
+            // strength. A value below one lets the water geometry cross and depth-cut the quad.
+            #define SURFACE_NORMAL_STRENGTH 1.0
 
             static const float KIND_SPRAY  = 1.0;
             static const float KIND_BUBBLE = 2.0; // MUST match WaterFoamParticles.compute
@@ -195,16 +198,20 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             // sat at plain swell height while the water under them rode the wake, so ZWrite cut the
             // foam out of the wake it belongs to. Sampled on the surface plane, like the vertex
             // stage - under a rotated volume a probe's own y would bleed into the window's xz.
-            float RippleGlueWorldHeight(float2 worldXZ)
+            float RippleGlueWorldHeight(float2 worldXZ, out float2 rippleTilt)
             {
                 float3 flatWorld = float3(worldXZ.x, _VolumeCenter.y, worldXZ.y);
                 bool   windowed  = _SimWindowed >= 0.5;
                 float2 uv   = windowed ? (WorldToSim(flatWorld).xz * 0.5 + 0.5)
                                        : (WorldToPool(flatWorld).xz * 0.5 + 0.5);
                 float  fade = windowed ? FoamRippleWindowFade(uv) : 1.0;
+                float4 info = SampleWaterBilinear(uv);
+                // Match WaterSurfaceFragStages: info.ba is stored in SIM slope units and must be
+                // converted before it can share a world-space plane with the large-body waves.
+                rippleTilt = info.ba * SIM_SLOPE_TO_POOL * _SimSlopeToWorld.xy * fade;
                 // fade == 0 outside the window: analytic-only water there, so no ripple. The sample
                 // still runs (single exit, see FoamRippleWindowFade) and is multiplied away.
-                return FoamRippleHeightSafe(SampleWaterBilinear(uv).r) * fade * VolumeExtentSafe().y;
+                return FoamRippleHeightSafe(info.r) * fade * VolumeExtentSafe().y;
             }
 
             // The animated water surface at a probe point's xz, in world space. Two bodies, one
@@ -226,14 +233,32 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                     SurfWaveSample surf = EvaluateSurfWaves(wxz, shore.depth, shore.sdfDist,
                                                             shore.toShore, shore.slopeTan,
                                                             shore.influence, _SurfBeatTime);
+                    float2 rippleTilt;
+                    float rippleHeight = RippleGlueWorldHeight(wxz, rippleTilt);
+                    // The WIND-WAVE layer was MISSING from this branch: the rendered surface adds
+                    // it on open water too (WaterSurfaceVertStage vertex + the waterline's
+                    // SurfaceHeightAtXZ), so foam quads rode ripple+swell alone and the wind chop
+                    // cut straight through them. Invisible while the old periodic envelope stayed
+                    // small and smooth; exposed by the stochastic sets (2026-08-10). Composed
+                    // exactly like the waterline: wind height in pool units, lifted through the
+                    // full volume transform, taken as a delta off the rest plane.
+                    float3 poolAtRest = WorldToPool(float3(wxz.x, _VolumeCenter.y, wxz.y));
+                    float windWaveWorldY =
+                        PoolToWorld(float3(poolAtRest.x,
+                                           poolAtRest.y + WaveHeight(WindWaveSampleXZ(poolAtRest.xz, wxz)),
+                                           poolAtRest.z)).y
+                        - PoolToWorld(poolAtRest).y;
                     surfaceWorld = float3(wxz.x,
                                           _VolumeCenter.y + LargeBodyWaveHeightShore(wxz, shore, surf)
-                                                          + RippleGlueWorldHeight(wxz),
+                                                          + rippleHeight + windWaveWorldY,
                                           wxz.y);
-                    // Edge guard matches the OceanFftNormalTilt wrapper this replaces; 0 tilt when
-                    // the FFT is off (flat lean).
-                    float2 tilt = OceanFftNormalTiltShore(wxz, shore) * LbwEdgeWeight(wxz);
-                    surfaceNormal = normalize(float3(tilt.x, 1.0, tilt.y));
+                    // Start with the interactive-ripple plane, then use the canonical large-body
+                    // composition. This includes FFT/analytic waves, shore attenuation and the
+                    // surf-front slope; omitting any of them lets the depth-writing water cross
+                    // the particle quad and makes landed foam look diagonal or cut in half.
+                    float3 rippleNormal = normalize(float3(rippleTilt.x, 1.0, rippleTilt.y));
+                    surfaceNormal = ApplyLargeBodyWaveNormalShore(
+                        rippleNormal, wxz, SURFACE_NORMAL_STRENGTH, shore, surf);
                 }
                 else
                 {
@@ -241,7 +266,9 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                     float2 fcoord = (_SimWindowed < 0.5) ? (poolPos.xz * 0.5 + 0.5)
                                                          : (WorldToSim(probeWorld).xz * 0.5 + 0.5);
                     float4 info = SampleWaterBilinear(fcoord);
-                    poolPos.y = info.r + WaveHeight(poolPos.xz);
+                    // Same coordinate rule as the surface: on a world-anchored body the raw pool
+                    // xz desyncs the wind-wave phase from the rendered surface.
+                    poolPos.y = info.r + WaveHeight(WindWaveSampleXZ(poolPos.xz, probeWorld.xz));
                     surfaceWorld = PoolToWorld(poolPos);
                     surfaceNormal = PoolNormalToWorld(
                         float3(info.b, sqrt(max(1e-4, 1.0 - dot(info.ba, info.ba))), info.a));

@@ -68,25 +68,41 @@ namespace AbstractOcclusion.WebGpuWater
         const float GoldenRatio = 0.6180339887f;  // low-discrepancy angular stratification
 
         // --- wave groups ("sets") ----------------------------------------------
-        // Real chop arrives in groups, not as a uniform buzz: an envelope of roughly seven waves
-        // rides over the carrier and travels at the GROUP velocity, which in deep water is half the
-        // phase velocity. Twelve sines with fixed phases do beat against each other, but quickly and
-        // regularly; an explicit envelope is both slower and controllable.
+        // Real chop arrives in groups, not as a uniform buzz, and REAL groups are STOCHASTIC: the
+        // envelope of a narrow-banded Gaussian sea is Rayleigh-distributed (Longuet-Higgins 1984,
+        // Phil. Trans. R. Soc. A 312), with runs of ~1.5-3 high waves and irregular lulls. The old
+        // base + sinA + sinB envelope was PERIODIC - sets arrived like a metronome, which is exactly
+        // what read as fake.
         //
-        // TWO crossing envelopes, not one: a single envelope makes the whole surface breathe in
-        // unison, which reads as pulsing rather than as sets. Two at different lengths and angles
-        // interfere into patches.
+        // The envelope is now the MAGNITUDE of the complex sum of FOUR carriers with RANDOM phases:
+        // |z| is Rayleigh-ish (aperiodic sets AND lulls), and the golden-ratio wavelength chain is
+        // pairwise irrational, so no common period exists for the pattern to re-align on (the lesson
+        // of the old 7/11 integer pair, kept). Every carrier still travels at the carrier wave's
+        // group velocity - crests are born at the back of a set and die at the front.
         //
-        // ⚠️ THE LENGTHS MUST BE IRRATIONALLY RELATED, and 7 and 11 were not - being integers, they
-        // share a common period at 77 wavelengths, so the envelope pattern REPEATS on that grid. The
-        // carrier's own motion normally hides it; slow the layer down and that static structure is
-        // exactly what surfaces, as lines. B is now A times the golden ratio, which has no common
-        // period with A at all, so there is nothing left to re-align.
-        // HLSL pair: none - the envelopes are precomputed here and uploaded as _WaveGroupA/B.
-        const float GroupLengthWavesA = 7f;
-        const float GroupLengthWavesB = 11.3262379f;   // 7 * golden ratio
-        const float GroupAngleARadians = 0.35f;   // ~20 deg off the wind, one either side
-        const float GroupAngleBRadians = -0.52f;  // ~30 deg the other way
+        // Lengths: the envelope correlation of a real wind sea is ~3-6 peak wavelengths along-wind,
+        // so the chain starts at 4.4; the phi^3 member adds the slow set-of-sets breathing. Angles:
+        // spreading the carriers off the wind gives sets finite CROSS-wind extent (patches, not
+        // full-width bars) - crosswise correlation at sea is shorter than along-wind.
+        // HLSL pair: none - the carriers are precomputed here and uploaded as _WaveGroupA/B/C/D
+        // + _WaveGroupPhases.
+        const float GroupGoldenGrowth = 1.6180339887f;
+        const float GroupLengthWavesA = 4.4f;
+        const float GroupLengthWavesB = GroupLengthWavesA * GroupGoldenGrowth;
+        const float GroupLengthWavesC = GroupLengthWavesB * GroupGoldenGrowth;
+        const float GroupLengthWavesD = GroupLengthWavesC * GroupGoldenGrowth;
+        const float GroupAngleARadians = 0.20f;
+        const float GroupAngleBRadians = -0.31f;
+        const float GroupAngleCRadians = 0.44f;
+        const float GroupAngleDRadians = -0.12f;
+        // Statistics of the four-phasor sum, feeding the height normalisation: E[|z|] = 1.79930
+        // (4-step Pearson random walk, MEASURED over 2e7 draws - not the Rayleigh sqrt(pi) ~ 1.7725,
+        // four phasors are not yet Gaussian) and E[|z|^2] = 4 exactly (= the carrier count).
+        const float GroupCarrierCount = 4f;
+        const float GroupMeanMagnitude = 1.79930f;
+        // Floor under the |z| division in the gradient/rate at exact four-way cancellation.
+        // KEEP: WAVE_GROUP_MAG_EPSILON (WaterWaves.hlsl) - validator-guarded pair.
+        const float GroupMagnitudeEpsilon = 0.0001f;
         // Deep-water group velocity is half the phase velocity: cg = 0.5 * sqrt(g / k_carrier).
         const float GroupVelocityFraction = 0.5f;
 
@@ -131,11 +147,17 @@ namespace AbstractOcclusion.WebGpuWater
         public Vector4[] PackedA => _packedA;
         public Vector4[] PackedB => _packedB;
 
-        /// <summary>Group envelope A: (dirX, dirZ, wavenumber, angular speed). HLSL pair: _WaveGroupA.</summary>
+        /// <summary>Envelope carrier A: (dirX, dirZ, wavenumber, angular speed). HLSL pair: _WaveGroupA.</summary>
         public Vector4 GroupA { get; private set; }
-        /// <summary>Group envelope B, crossing A. HLSL pair: _WaveGroupB.</summary>
+        /// <summary>Envelope carrier B. HLSL pair: _WaveGroupB.</summary>
         public Vector4 GroupB { get; private set; }
-        /// <summary>(envelope base, envelope amplitude, Stokes coefficient, Stokes DC offset). HLSL pair: _WaveShape.</summary>
+        /// <summary>Envelope carrier C. HLSL pair: _WaveGroupC.</summary>
+        public Vector4 GroupC { get; private set; }
+        /// <summary>Envelope carrier D. HLSL pair: _WaveGroupD.</summary>
+        public Vector4 GroupD { get; private set; }
+        /// <summary>Random phase per envelope carrier - the envelope's stochasticity. HLSL pair: _WaveGroupPhases.</summary>
+        public Vector4 GroupPhases { get; private set; }
+        /// <summary>(envelope constant share, envelope magnitude gain, Stokes coefficient, Stokes DC offset). HLSL pair: _WaveShape.</summary>
         /// <remarks>Defaults to a pass-through (envelope 1, no crest term) so a bank that has not been
         /// generated yet cannot flatten the surface through an all-zero envelope.</remarks>
         public Vector4 Shape { get; private set; } = new Vector4(1f, 0f, 0f, 0f);
@@ -223,6 +245,10 @@ namespace AbstractOcclusion.WebGpuWater
             }
 
             float poolVariance = NormalizeAmplitudes(sumAmpSquared, significantHeight, verticalExtent);
+            // Envelope carrier phases come from the same seeded stream as the component phases, so a
+            // given authored state always reproduces the same sets (the bank's determinism contract).
+            GroupPhases = new Vector4((float)(rng.NextDouble() * TwoPi), (float)(rng.NextDouble() * TwoPi),
+                                      (float)(rng.NextDouble() * TwoPi), (float)(rng.NextDouble() * TwoPi));
             BuildShaping(peakWavelength, windDir, grouping, crestSharpness, poolVariance, verticalExtent,
                          timeScale);
             Pack();
@@ -275,20 +301,25 @@ namespace AbstractOcclusion.WebGpuWater
             float groupSpeed = GroupVelocityFraction * Mathf.Sqrt(Gravity / carrierK) * timeScale;
             GroupA = BuildGroup(windDir, GroupAngleARadians, peakWavelength * GroupLengthWavesA, groupSpeed);
             GroupB = BuildGroup(windDir, GroupAngleBRadians, peakWavelength * GroupLengthWavesB, groupSpeed);
+            GroupC = BuildGroup(windDir, GroupAngleCRadians, peakWavelength * GroupLengthWavesC, groupSpeed);
+            GroupD = BuildGroup(windDir, GroupAngleDRadians, peakWavelength * GroupLengthWavesD, groupSpeed);
 
-            // env = base + amplitude * (sinA + sinB). Mean is 'base'; the two sines are independent
-            // with variance 1/2 each, so E[env^2] = base^2 * (1 + depth^2 / 4). Normalising by that
-            // keeps the authored height fixed as grouping rises - otherwise the sets slider would
-            // double as a height slider.
-            float envelopeNorm = 1f / Mathf.Sqrt(1f + depth * depth * 0.25f);
-            float envelopeAmplitude = envelopeNorm * depth * 0.5f;
+            // env = constant + gain * |z|. Blending (1-depth) of a constant with depth of |z|/E[|z|]
+            // keeps the envelope POSITIVE at every depth and makes depth 1 the PURE Rayleigh envelope
+            // of a narrow-banded sea. With u = |z|/E[|z|] (E[u] = 1, E[u^2] = count/E[|z|]^2):
+            // E[env^2] = 1 + depth^2 * (E[u^2] - 1). Dividing that back out keeps the authored height
+            // fixed as grouping rises - otherwise the sets slider would double as a height slider.
+            float meanSquareU = GroupCarrierCount / (GroupMeanMagnitude * GroupMeanMagnitude);
+            float envelopeNorm = 1f / Mathf.Sqrt(1f + depth * depth * (meanSquareU - 1f));
+            float envelopeConstant = envelopeNorm * (1f - depth);
+            float envelopeMagnitudeGain = envelopeNorm * depth / GroupMeanMagnitude;
 
             // Stokes coefficient in POOL height units. The physical term is (k/2) * h_world^2; with
             // h_world = h_pool * verticalExtent that becomes (k * verticalExtent / 2) * h_pool^2.
             float stokes = Mathf.Max(0f, crestSharpness) * StokesSecondOrderFactor * carrierK * verticalExtent;
             float stokesOffset = stokes * poolVariance;     // removes the DC the quadratic would add
             StokesNorm = 1f / Mathf.Sqrt(1f + StokesVarianceGrowth * stokes * stokes * poolVariance);
-            Shape = new Vector4(envelopeNorm, envelopeAmplitude, stokes, stokesOffset);
+            Shape = new Vector4(envelopeConstant, envelopeMagnitudeGain, stokes, stokesOffset);
         }
 
         static Vector4 BuildGroup(Vector2 windDir, float angleRadians, float envelopeWavelength, float groupSpeed)
@@ -315,14 +346,35 @@ namespace AbstractOcclusion.WebGpuWater
 
         float GroupEnvelope(Vector2 meters, float time, out float envelopeRate, out Vector2 envelopeGradient)
         {
-            float argA = (GroupA.x * meters.x + GroupA.y * meters.y) * GroupA.z - GroupA.w * time;
-            float argB = (GroupB.x * meters.x + GroupB.y * meters.y) * GroupB.z - GroupB.w * time;
-            float cosA = Mathf.Cos(argA), cosB = Mathf.Cos(argB);
-            float amplitude = Shape.y;
-            envelopeRate = amplitude * (-GroupA.w * cosA - GroupB.w * cosB);
-            envelopeGradient = amplitude * (new Vector2(GroupA.x, GroupA.y) * (GroupA.z * cosA)
-                                            + new Vector2(GroupB.x, GroupB.y) * (GroupB.z * cosB));
-            return Shape.x + amplitude * (Mathf.Sin(argA) + Mathf.Sin(argB));
+            float argA = (GroupA.x * meters.x + GroupA.y * meters.y) * GroupA.z - GroupA.w * time + GroupPhases.x;
+            float argB = (GroupB.x * meters.x + GroupB.y * meters.y) * GroupB.z - GroupB.w * time + GroupPhases.y;
+            float argC = (GroupC.x * meters.x + GroupC.y * meters.y) * GroupC.z - GroupC.w * time + GroupPhases.z;
+            float argD = (GroupD.x * meters.x + GroupD.y * meters.y) * GroupD.z - GroupD.w * time + GroupPhases.w;
+            float sinA = Mathf.Sin(argA), cosA = Mathf.Cos(argA);
+            float sinB = Mathf.Sin(argB), cosB = Mathf.Cos(argB);
+            float sinC = Mathf.Sin(argC), cosC = Mathf.Cos(argC);
+            float sinD = Mathf.Sin(argD), cosD = Mathf.Cos(argD);
+            float re = cosA + cosB + cosC + cosD;
+            float im = sinA + sinB + sinC + sinD;
+            float magnitude = Mathf.Sqrt(re * re + im * im);
+            float safeMagnitude = Mathf.Max(magnitude, GroupMagnitudeEpsilon);
+            float gain = Shape.y;
+            // d/dt: d(arg)/dt = -w, so d(re)/dt = +w*sin per carrier and d(im)/dt = -w*cos.
+            float reRate = GroupA.w * sinA + GroupB.w * sinB + GroupC.w * sinC + GroupD.w * sinD;
+            float imRate = -(GroupA.w * cosA + GroupB.w * cosB + GroupC.w * cosC + GroupD.w * cosD);
+            envelopeRate = gain * (re * reRate + im * imRate) / safeMagnitude;
+            // d/dm: d(re)/dm = -k*dir*sin per carrier, d(im)/dm = +k*dir*cos. Mirrors
+            // WaveGroupEnvelope in WaterWaves.hlsl EXACTLY - read the two side by side.
+            Vector2 dRe = -(new Vector2(GroupA.x, GroupA.y) * (GroupA.z * sinA)
+                            + new Vector2(GroupB.x, GroupB.y) * (GroupB.z * sinB)
+                            + new Vector2(GroupC.x, GroupC.y) * (GroupC.z * sinC)
+                            + new Vector2(GroupD.x, GroupD.y) * (GroupD.z * sinD));
+            Vector2 dIm = new Vector2(GroupA.x, GroupA.y) * (GroupA.z * cosA)
+                          + new Vector2(GroupB.x, GroupB.y) * (GroupB.z * cosB)
+                          + new Vector2(GroupC.x, GroupC.y) * (GroupC.z * cosC)
+                          + new Vector2(GroupD.x, GroupD.y) * (GroupD.z * cosD);
+            envelopeGradient = gain * (re * dRe + im * dIm) / safeMagnitude;
+            return Shape.x + gain * magnitude;
         }
 
         // h -> norm * (h + stokes * h^2 - stokesOffset). Derivative factor is norm * (1 + 2*stokes*h).

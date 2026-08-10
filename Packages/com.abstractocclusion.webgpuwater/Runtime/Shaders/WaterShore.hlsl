@@ -56,6 +56,14 @@ float2 ShoreFieldUV(float2 worldXZ)
 ShoreData ShoreSample(float2 worldXZ)
 {
     ShoreData s = ShoreDataInert();
+#ifdef WATER_STRIP_SHORE
+    // Compile-time strip (fog passes of shoreless bodies): the runtime gate below returns this
+    // same inert value every frame there - the #ifdef makes that PROVABLE to the optimizer, so
+    // the two field fetches and every downstream shoal/refraction/surf consumer fold away instead
+    // of bloating the variant (the ~600 KB fog fragments, 2026-08-10). Inert is fully initialized
+    // (ShoreDataInert), so no definite-assignment warnings appear.
+    return s;
+#endif
     if (_ShoreDepthValid < 0.5 || _ShoreBodyGate < 0.5) return s;
 
     float2 uv = ShoreFieldUV(worldXZ);

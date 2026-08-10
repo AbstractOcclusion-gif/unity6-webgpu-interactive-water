@@ -84,6 +84,29 @@ namespace AbstractOcclusion.WebGpuWater
             public Vector2 depositSizeRange = new Vector2(0.02f, 0.05f);
         }
 
+        // Motion was the ONE WaterFoamParticles block the profile could not reach (gravity /
+        // flow drift / wind drift / drag): a profile-driven body still needed a hand edit on
+        // every component to retune how foam rides the water. It carries its OWN 'drive',
+        // default OFF - unlike every other section - because existing profiles predate it:
+        // ambient.drive is already ticked in the field, and folding motion under it would
+        // stomp hand-tuned component values the moment those assets reapplied. Defaults
+        // MATCH the component's field defaults, so ticking it changes nothing until tuned.
+        [System.Serializable]
+        public sealed class MotionSection
+        {
+            [Tooltip("Drive the Motion block on WaterFoamParticles (gravity, flow drift, wind " +
+                     "drift, drag) from this profile. Off = the component keeps its own values.")]
+            public bool drive;
+            [Tooltip("Gravity on spray droplets (world units/sec^2).")]
+            [Range(0f, 20f)] public float gravity = 1f;
+            [Tooltip("Drift speed along the surface flow, per unit of surface slope (world units/sec).")]
+            [Range(0f, 2f)] public float flowDrift = 0.25f;
+            [Tooltip("Constant downwind drift of floating foam (world units/sec).")]
+            [Range(0f, 0.5f)] public float windDriftSpeed = 0.02f;
+            [Tooltip("How quickly foam velocity relaxes to the driven flow (1/sec).")]
+            [Range(0f, 10f)] public float drag = 2f;
+        }
+
         [System.Serializable]
         public sealed class VeilSection
         {
@@ -179,6 +202,8 @@ namespace AbstractOcclusion.WebGpuWater
         public SharedLook look = new SharedLook();
         [Tooltip("Ambient floating foam + ballistic spray (WaterFoamParticles).")]
         public AmbientSection ambient = new AmbientSection();
+        [Tooltip("Foam/spray motion on WaterFoamParticles: gravity, flow drift, wind drift, drag.")]
+        public MotionSection motion = new MotionSection();
         [Tooltip("Screen-space density veil (FoamDensityComposite material values).")]
         public VeilSection veil = new VeilSection();
         [Tooltip("Impact splashes: crown + droplet burst shaping (WaterSplashEmitter).")]
@@ -213,6 +238,13 @@ namespace AbstractOcclusion.WebGpuWater
                 foam.spraySizeRange = ambient.spraySizeRange;
                 foam.depositLifeRange = ambient.depositLifeRange;
                 foam.depositSizeRange = ambient.depositSizeRange;
+            }
+            if (motion.drive)
+            {
+                foam.gravity = motion.gravity;
+                foam.flowDrift = motion.flowDrift;
+                foam.windDriftSpeed = motion.windDriftSpeed;
+                foam.drag = motion.drag;
             }
             if (bubbles.drive)
             {

@@ -42,6 +42,12 @@ MonoBehaviour:
     spraySizeRange: {x: 0.02, y: 0.05}
     depositLifeRange: {x: 0.5, y: 1}
     depositSizeRange: {x: 0.02, y: 0.05}
+  motion:
+    drive: 0
+    gravity: 1
+    flowDrift: 0.25
+    windDriftSpeed: 0.02
+    drag: 2
   veil:
     drive: 0
     opacity: 0.5

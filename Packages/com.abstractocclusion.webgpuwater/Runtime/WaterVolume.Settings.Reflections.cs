@@ -13,7 +13,7 @@ namespace AbstractOcclusion.WebGpuWater
         public enum ReflectionMode { SkyOnly, SSR, Planar }
 
         // The reflection BASE (what SkyOnly shows and what SSR/Planar layer over): the built-in
-        // procedural sky cubemap, or the scene's URP reflection probe / skybox (unity_SpecCube0).
+        // cubemap, an explicitly assigned Unity reflection probe, or the scene skybox cubemap.
         public enum EnvironmentSource { ProceduralSky, UrpProbe }
 
         [Header("Reflections (Phase 3c)")]
@@ -154,9 +154,13 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("Planar reflection: a full extra scene render across this body's plane. Use for at " +
                      "most ONE 'hero' body. Mixable with SSR (planar layers under SSR).")]
             public bool usePlanarReflection = false;
-            [Tooltip("Reflect the scene's active URP reflection probe / skybox instead of the built-in " +
-                     "procedural sky. The reflection BASE that SSR and Planar layer over.")]
+            [Tooltip("Use a Unity reflection probe or the scene skybox instead of the water's Sky " +
+                     "cubemap. This is the reflection BASE that SSR and Planar layer over.")]
             public bool reflectUrpProbe = false;
+            [Tooltip("Optional explicit Unity Reflection Probe for this water body. Supports realtime, " +
+                     "baked and custom probes. When empty or not ready, the scene skybox cubemap is " +
+                     "used, then the water's Sky cubemap.")]
+            public ReflectionProbe reflectionProbe = null;
             [Tooltip("Real (screen-space) refraction: see the actual scene through the water instead of " +
                      "the analytic approximation. Needs the URP opaque texture; a tier may force it off.")]
             public bool realRefraction = false;
@@ -267,6 +271,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal float PlanarClipDepth => Mathf.Max(0f, reflectionSettings.planarClipDepth);
         internal bool EffectiveRealRefraction => _realRefractionAllowed && reflectionSettings.realRefraction;
         internal bool ReflectUrpProbe => reflectionSettings.reflectUrpProbe;
+        internal ReflectionProbe ReflectionProbe => reflectionSettings.reflectionProbe;
         internal float ReflectionStrength => reflectionSettings.reflectionStrength;
         internal float EnvReflectionIntensity => reflectionSettings.envReflectionIntensity;
         internal float SunReflectionIntensity

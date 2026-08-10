@@ -93,7 +93,7 @@ namespace AbstractOcclusion.WebGpuWater
                 return shored * edge;
             }
             LargeWaveField.EvaluateAtQuery(worldX, worldZ, _waveTime, LargeWaveAmplitudeEffective,
-                LargeWaveHeadingRad, SwellWavelength, SwellHeight, LargeWaveChoppiness, ctx,
+                LargeWaveHeadingRad, SwellHeadingRad, SwellWavelength, SwellHeight, LargeWaveChoppiness, ctx,
                 out Vector3 heightSlope, out float rate);
             verticalRate = rate * edge;
             return heightSlope * edge;
@@ -138,8 +138,8 @@ namespace AbstractOcclusion.WebGpuWater
                 else
                 {
                     d = LargeWaveField.HorizontalDisplacementAtSource(sx, sz, _waveTime,
-                        LargeWaveAmplitudeEffective, LargeWaveHeadingRad, SwellWavelength,
-                        SwellHeight, LargeWaveChoppiness, ctx);
+                        LargeWaveAmplitudeEffective, LargeWaveHeadingRad, SwellHeadingRad,
+                        SwellWavelength, SwellHeight, LargeWaveChoppiness, ctx);
                 }
                 d *= LargeWaveEdgeWeight(sx, sz);
                 sx -= (sx + d.x) - worldX;

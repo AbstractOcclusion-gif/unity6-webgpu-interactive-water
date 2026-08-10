@@ -142,7 +142,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     _showSwell = WaterEditorUI.SubSection("Swell", _showSwell, () =>
                         DrawFields(
                             WaterVolumePropertyPaths.SwellHeight,
-                            WaterVolumePropertyPaths.SwellWavelength));
+                            WaterVolumePropertyPaths.SwellWavelength,
+                            WaterVolumePropertyPaths.SwellHeadingOffset));
+                    // Shading-only spatial variation (gusts/slicks) - see _SeaStateParams in
+                    // WaterLargeWaves.hlsl for what each slider drives.
+                    _showSeaState = WaterEditorUI.SubSection("Sea State Variation", _showSeaState, () =>
+                        DrawFields(
+                            WaterVolumePropertyPaths.SeaStateGusts,
+                            WaterVolumePropertyPaths.SeaStateSlicks));
                     // Topology and water body, not feel: all decided once when the body is authored.
                     _showOceanSwellAdvanced = WaterEditorUI.SubSection("Advanced", _showOceanSwellAdvanced, () =>
                         DrawFields(

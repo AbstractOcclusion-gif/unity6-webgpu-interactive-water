@@ -48,14 +48,16 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         public void LargeWaveQuery_WithoutChoppinessMatchesItsSourceEvaluation()
         {
             ShoreWaveContext shore = ShoreWaveContext.Inactive;
+            // Swell heading = wind heading here: the decoupled-heading default (offset 0).
             Vector3 source = LargeWaveField.Evaluate(
-                WaveX, WaveZ, WaveTime, WaveAmplitudeScale, WindHeading, SwellWavelength, SwellHeight, shore);
+                WaveX, WaveZ, WaveTime, WaveAmplitudeScale, WindHeading, WindHeading, SwellWavelength,
+                SwellHeight, shore);
             Vector3 query = LargeWaveField.EvaluateAtQuery(
-                WaveX, WaveZ, WaveTime, WaveAmplitudeScale, WindHeading, SwellWavelength, SwellHeight,
-                NoChoppiness, shore);
+                WaveX, WaveZ, WaveTime, WaveAmplitudeScale, WindHeading, WindHeading, SwellWavelength,
+                SwellHeight, NoChoppiness, shore);
             Vector2 displacement = LargeWaveField.HorizontalDisplacementAtSource(
-                WaveX, WaveZ, WaveTime, WaveAmplitudeScale, WindHeading, SwellWavelength, SwellHeight,
-                NoChoppiness, shore);
+                WaveX, WaveZ, WaveTime, WaveAmplitudeScale, WindHeading, WindHeading, SwellWavelength,
+                SwellHeight, NoChoppiness, shore);
 
             Assert.That(query, Is.EqualTo(source));
             Assert.That(displacement, Is.EqualTo(Vector2.zero));
@@ -67,8 +69,8 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             ShoreWaveContext shore = ShoreWaveContext.Inactive;
 
             LargeWaveField.EvaluateAtQuery(
-                WaveX, WaveZ, WaveTime, WaveAmplitudeScale, WindHeading, SwellWavelength, SwellHeight,
-                WaveAmplitudeScale, shore, out Vector3 heightSlope, out float verticalVelocity);
+                WaveX, WaveZ, WaveTime, WaveAmplitudeScale, WindHeading, WindHeading, SwellWavelength,
+                SwellHeight, WaveAmplitudeScale, shore, out Vector3 heightSlope, out float verticalVelocity);
 
             Assert.That(float.IsNaN(heightSlope.x) || float.IsInfinity(heightSlope.x), Is.False);
             Assert.That(float.IsNaN(heightSlope.y) || float.IsInfinity(heightSlope.y), Is.False);

@@ -54,6 +54,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string SeaDepth = "ocean.seaDepth";
         internal const string SwellHeight = "ocean.swellHeight";
         internal const string SwellWavelength = "ocean.swellWavelength";
+        internal const string SeaStateGusts = "ocean.seaStateGusts";
+        internal const string SeaStateSlicks = "ocean.seaStateSlicks";
+        internal const string SwellHeadingOffset = "ocean.swellHeadingOffsetDegrees";
         internal const string OceanWindTurbulence = "ocean.oceanWindTurbulence";
         internal const string HorizonHazeDensity = "ocean.horizonHazeDensity";
 

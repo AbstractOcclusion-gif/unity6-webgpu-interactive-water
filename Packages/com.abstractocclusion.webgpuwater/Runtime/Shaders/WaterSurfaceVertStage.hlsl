@@ -33,9 +33,6 @@
             // _ClipmapMorphScale = 1 / band width (cells). Inert on the outermost level (start >= M/2).
             float  _ClipmapMorphStart;
             float  _ClipmapMorphScale;
-            // 1 = sample the small wind-wave layer in WORLD metres (oceans), so its scale is independent
-            // of the volume extent; 0 = pool space (bounded bodies, unchanged). Inert at the default.
-            float  _OceanWorldWaves;
             // Distance (metres) at which the ocean surface has fully dissolved into the horizon sky, so
             // the far edge has no hard line. 0 = off (bounded bodies, and until the artist opts in). A
             // light stopgap - the real horizon softening is the (future) large-body fog pass.
@@ -123,16 +120,8 @@
                 UNITY_FOG_COORDS(4)
             };
 
-            // Coordinate fed to the wind-wave layer (WaveHeight/WaveSlope). Bounded bodies sample in
-            // pool xz, so the wave scale rides the volume extent (worldXZ / extent). Oceans sample in
-            // WORLD metres instead, so tweaking the volume box no longer slides/rescales the wind-wave
-            // pattern - its scale is set solely by Pool Half Extent Meters (_WaveMetersPerUnit). At a
-            // matched extent the two are identical, so this only decouples; it doesn't change the look.
-            float2 WindWaveSampleXZ(float2 poolXZ, float2 worldXZ)
-            {
-                if (_OceanWorldWaves > 0.5) return worldXZ / max(_WaveMetersPerUnit, 1e-3);
-                return poolXZ;
-            }
+            // WindWaveSampleXZ + _OceanWorldWaves moved to WaterWaves.hlsl (2026-08-10): the foam
+            // glue and the waterline must pick the SAME wind-wave coordinate as this vertex path.
 
             v2f vert(appdata v)
             {

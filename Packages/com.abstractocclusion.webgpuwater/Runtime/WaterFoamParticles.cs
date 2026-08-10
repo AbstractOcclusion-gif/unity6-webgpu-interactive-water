@@ -591,6 +591,11 @@ namespace AbstractOcclusion.WebGpuWater
             // SimStateTexture.
             _afterFogArmed = false;
             _densityPending = false;
+            // Apply before every runtime gate. The profile is the authored source of truth even
+            // while particles are disabled, the volume is idle, or GPU resources are unavailable.
+            // Applying below those returns made profile-driven Motion appear broken until the
+            // first active foam/burst frame happened to run.
+            if (profile != null) profile.ApplyTo(this);
             if (!useParticles) return; // master gate: no simulation, no dispatch, no draw
             if (volume == null || !volume.isActiveAndEnabled) return;
             // Defensive: OnEnable can bail before allocating (compute/material assigned later in
@@ -606,10 +611,6 @@ namespace AbstractOcclusion.WebGpuWater
             // harmless then - the foam mask is black, so it early-outs per texel).
             bool ambientFoamActive = volume.Foam || volume.OceanFftActive;
             if (!ambientFoamActive && Time.time >= _burstSimActiveUntil) return;
-
-            // Master profile: re-applied every frame (a handful of field copies), so retuning
-            // the asset is live in play mode and no editor plumbing is needed.
-            if (profile != null) profile.ApplyTo(this);
 
             // The density splat + spawn-quality projections follow the body's target camera when
             // one is assigned, else the main camera. In views without one (or with the sim paused) the density field

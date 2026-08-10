@@ -105,7 +105,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         // The beach-derived ocean look. Runs AFTER ApplyLookDefaults, so the generic values it
         // overrides (fog density, detail strength, refract-shadows off) are overridden on purpose.
-        void ApplyOceanLookDefaults(WaterVolume body)
+        void ApplyOceanLookDefaults(WaterVolume body, bool withGodRays)
         {
             // Internal fields (InternalsVisibleTo), same direct path as ApplyLookDefaults.
             body.refractShadows = true;
@@ -119,7 +119,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             WriteOceanDetailNormals(serialized);
             WriteOceanUndersideSurface(serialized);
             WriteOceanSimFoam(serialized);
-            if (_godRays)
+            if (withGodRays)
                 WriteOceanGodRays(serialized);
             serialized.ApplyModifiedProperties(); // rides the Create Water undo group
         }

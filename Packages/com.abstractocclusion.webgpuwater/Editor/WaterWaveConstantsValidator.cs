@@ -275,6 +275,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         static readonly (string Hlsl, string CSharp)[] WaveBankConstantPairs =
         {
             ("WATER_MAX_WAVES", "MaxWaves"),
+            // The stochastic group envelope divides by max(|z|, epsilon) on BOTH sides; a drift
+            // desyncs buoyancy from the rendered sets exactly at envelope nulls (silent).
+            ("WAVE_GROUP_MAG_EPSILON", "GroupMagnitudeEpsilon"),
         };
 
         // The FFT cascade count is shared by three shader consumers via WaterShared.hlsl and driven

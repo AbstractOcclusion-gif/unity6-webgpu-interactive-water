@@ -38,7 +38,6 @@ float3 SafeFacetNormal(float3 positionWS, bool valid, float3 fallback)
     return (valid && dot(n, n) > DEGENERATE_DIR_EPSILON) ? normalize(n) : fallback;
 }
 
-float _OceanWorldWaves; // 1 = sample wind waves in WORLD metres (ocean); 0 = pool xz (pond)
 
 // Significant height (metres) of the whole open-water field, wind sea and swell in quadrature -
 // the CPU's WaterVolume.OffshoreSignificantHeight, published verbatim. This is the ONLY metre
@@ -47,7 +46,6 @@ float _OceanWorldWaves; // 1 = sample wind waves in WORLD metres (ocean); 0 = po
 // SurfaceHeightBand below wants: the analytic term takes over and nothing changes.
 float _OffshoreSignificantHeight;
 
-#define WAVE_METERS_MIN 1e-3 // matches WindWaveSampleXZ's guard in WaterSurface.shader
 
 // Displaced world-space surface height at a WORLD xz: the single source of truth for the wavy
 // waterline. Rest plane (via the volume transform, so extent.y + rotation are exact, matching
@@ -59,9 +57,8 @@ float SurfaceHeightAtXZ(float2 worldXZ)
     float3 poolAtRest = WorldToPool(float3(worldXZ.x, _VolumeCenter.y, worldXZ.y));
     float2 poolXZ = poolAtRest.xz;
 
-    // Oceans sample the wind waves in WORLD metres (extent-independent) to match WindWaveSampleXZ.
-    float2 windSampleXZ = (_OceanWorldWaves > 0.5) ? (worldXZ / max(_WaveMetersPerUnit, WAVE_METERS_MIN))
-                                                   : poolXZ;
+    // ONE shared coordinate rule with the surface + foam glue (WindWaveSampleXZ, WaterWaves.hlsl).
+    float2 windSampleXZ = WindWaveSampleXZ(poolXZ, worldXZ);
     // Wind-wave height is authored in pool units; lift it to world through the full transform,
     // exactly as the vertex path does (PoolToWorld of the displaced pool point).
     float surfaceY = PoolToWorld(float3(poolXZ.x, WaveHeight(windSampleXZ), poolXZ.y)).y;
@@ -94,15 +91,19 @@ float SurfaceHeightAtXZChopInverted(float2 worldXZ)
 {
     float3 poolAtRest = WorldToPool(float3(worldXZ.x, _VolumeCenter.y, worldXZ.y));
     float2 poolXZ = poolAtRest.xz;
-    float2 windSampleXZ = (_OceanWorldWaves > 0.5)
-                        ? (worldXZ / max(_WaveMetersPerUnit, WAVE_METERS_MIN))
-                        : poolXZ;
+    float2 windSampleXZ = WindWaveSampleXZ(poolXZ, worldXZ);
     float surfaceY = PoolToWorld(float3(poolXZ.x, WaveHeight(windSampleXZ), poolXZ.y)).y;
     if (_LargeBody > 0.5)
     {
         float2 srcXZ = worldXZ;
         float height = 0.0;
-        [unroll]
+        // [loop], NOT [unroll]: each iteration inlines the ENTIRE analytic field (16 Gerstner
+        // components + the surf cosh chain + shore + the FFT cascade branch), and this function is
+        // itself inlined at every fog / god-ray / meniscus call site. Unrolled, the optimizer chewed
+        // 3x that code at ~28 call sites - the measured ~500 s WaterUnderwaterFog compile
+        // (2026-08-10). The loop-form costs two jumps per classification point at runtime; every
+        // texture read inside is explicit-LOD (tex2Dlod / SampleLevel), so the loop is legal.
+        [loop]
         for (int i = 0; i < 3; i++)
         {
             ShoreData shore = ShoreSample(srcXZ);

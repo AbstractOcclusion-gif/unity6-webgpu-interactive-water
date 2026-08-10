@@ -59,17 +59,19 @@ namespace AbstractOcclusion.WebGpuWater
             internal readonly float Choppiness;       // horizontal Gerstner displacement scale
             internal readonly float SwellWavelength;
             internal readonly float SwellHeight;      // metres of Hs for the swell ring
+            internal readonly float SwellHeadingRad;  // absolute swell travel heading (wind + authored offset)
             internal readonly float CascadeReach;     // multiplier on how far each cascade stays drawn
             internal SeaParams(float windSpeed, float windHeadingRad, float windTurbulence,
                                float significantHeight, float peakWavelength, float peakSharpness,
                                float seaDepth, float choppiness, float swellWavelength, float swellHeight,
-                               float cascadeReach)
+                               float swellHeadingRad, float cascadeReach)
             {
                 CascadeReach = cascadeReach;
                 WindSpeed = windSpeed; WindHeadingRad = windHeadingRad; WindTurbulence = windTurbulence;
                 SignificantHeight = significantHeight; PeakWavelength = peakWavelength;
                 PeakSharpness = peakSharpness; SeaDepth = seaDepth; Choppiness = choppiness;
                 SwellWavelength = swellWavelength; SwellHeight = swellHeight;
+                SwellHeadingRad = swellHeadingRad;
             }
 
             /// <summary>True when the SHAPE is unchanged - the only inputs the cascade layout and the
@@ -94,6 +96,7 @@ namespace AbstractOcclusion.WebGpuWater
                 && PeakWavelength == other.PeakWavelength && PeakSharpness == other.PeakSharpness
                 && SeaDepth == other.SeaDepth && Choppiness == other.Choppiness
                 && SwellWavelength == other.SwellWavelength && SwellHeight == other.SwellHeight
+                && SwellHeadingRad == other.SwellHeadingRad
                 && CascadeReach == other.CascadeReach;
             public override bool Equals(object obj) => obj is SeaParams other && Equals(other);
             public override int GetHashCode() => System.HashCode.Combine(
@@ -158,6 +161,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_BandMax = Shader.PropertyToID("OceanBandMax");
         static readonly int ID_VisibleAreas = Shader.PropertyToID("OceanVisibleAreas");
         static readonly int ID_WindDir = Shader.PropertyToID("OceanWindDir");
+        static readonly int ID_SwellDir = Shader.PropertyToID("OceanSwellDir");
         static readonly int ID_WindSpeed = Shader.PropertyToID("OceanWindSpeed");
         static readonly int ID_WindTurbulence = Shader.PropertyToID("OceanWindTurbulence");
         static readonly int ID_PeakAngularFreq = Shader.PropertyToID("OceanPeakAngularFreq");
@@ -825,6 +829,8 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetVector(ID_VisibleAreas, _visibleAreas);
             Vector2 windDir = WindDirection(sea.WindHeadingRad);
             _cs.SetVector(ID_WindDir, new Vector4(windDir.x, windDir.y, 0f, 0f));
+            Vector2 swellDir = WindDirection(sea.SwellHeadingRad);
+            _cs.SetVector(ID_SwellDir, new Vector4(swellDir.x, swellDir.y, 0f, 0f));
             _cs.SetFloat(ID_WindSpeed, Mathf.Max(0f, sea.WindSpeed));
             _cs.SetFloat(ID_WindTurbulence, Mathf.Clamp01(sea.WindTurbulence));
             _cs.SetFloat(ID_PeakAngularFreq, WaterOceanSpectrum.PeakAngularFrequency(sea.PeakWavelength));

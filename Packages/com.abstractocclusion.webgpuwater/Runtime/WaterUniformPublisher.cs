@@ -6,6 +6,7 @@
 // values are derived once and the two paths can never drift.
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace AbstractOcclusion.WebGpuWater
 {
@@ -26,6 +27,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SunShadowStrength = Shader.PropertyToID("_SunShadowStrength");
         static readonly int ID_Tiles = Shader.PropertyToID("_Tiles");
         static readonly int ID_Sky = Shader.PropertyToID("_Sky");
+        const float DefaultReflectionSourceIntensity = 1f;
+        const float MinimumReflectionSourceIntensity = 0f;
         static readonly int ID_Light = WaterShaderProps.LightDir;
         static readonly int ID_SunColor = Shader.PropertyToID("_SunColor");
         static readonly int ID_FogColor = Shader.PropertyToID("_WaterFogColor");
@@ -119,6 +122,9 @@ namespace AbstractOcclusion.WebGpuWater
         // are plain uploads - see WaterWaves.hlsl for what each lane means.
         static readonly int ID_WaveGroupA = Shader.PropertyToID("_WaveGroupA");
         static readonly int ID_WaveGroupB = Shader.PropertyToID("_WaveGroupB");
+        static readonly int ID_WaveGroupC = Shader.PropertyToID("_WaveGroupC");
+        static readonly int ID_WaveGroupD = Shader.PropertyToID("_WaveGroupD");
+        static readonly int ID_WaveGroupPhases = Shader.PropertyToID("_WaveGroupPhases");
         static readonly int ID_WaveShape = Shader.PropertyToID("_WaveShape");
         static readonly int ID_WaveStokesNorm = Shader.PropertyToID("_WaveStokesNorm");
         static readonly int ID_VolumeCenter = WaterShaderProps.VolumeCenter;
@@ -156,6 +162,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_OceanWorldWaves = Shader.PropertyToID("_OceanWorldWaves");
         static readonly int ID_SwellWavelength = Shader.PropertyToID("_LargeSwellWavelength");
         static readonly int ID_SwellHeight = Shader.PropertyToID("_LargeSwellHeight");
+        static readonly int ID_SeaStateParams = Shader.PropertyToID("_SeaStateParams");
+        static readonly int ID_SwellHeading = Shader.PropertyToID("_LargeSwellHeading");
         static readonly int ID_HorizonFade = Shader.PropertyToID("_HorizonFadeDistance");
         static readonly int ID_HorizonHazeColor = Shader.PropertyToID("_HorizonHazeColor");
         static readonly int ID_HorizonHazeDensity = Shader.PropertyToID("_HorizonHazeDensity");
@@ -180,6 +188,11 @@ namespace AbstractOcclusion.WebGpuWater
         // variant is COMPILED without the wavy-crossing machinery instead of merely branching past
         // it at runtime.
         const string KW_UnderwaterFogSimple = "WATER_FOG_SIMPLE";
+        // Strips the shore/surf machinery out of the fullscreen fog for bodies that never consume
+        // the shore substrate. The gate is the SAME fact ShoreSample honours at runtime
+        // (_ShoreBodyGate = useBedDepth), so the stripped variant is output-identical by
+        // construction - it only stops COMPILING the shore share of the fog Full variants.
+        const string KW_UnderwaterFogStripShore = "WATER_STRIP_SHORE";
         // Compiles the underside sea-foam silhouette (ocean whitecaps + surf whitewash) into
         // WaterSurface's fragment program. Same reasoning as the keyword above and NOT a uniform for
         // the same reason: the guarded code is two whitecap pattern taps, and register allocation is
@@ -325,15 +338,24 @@ namespace AbstractOcclusion.WebGpuWater
             }
         }
 
-        // Reflection base cube for Reflect URP Probe: the scene skybox's cubemap if it exposes one, else
-        // the body's Sky slot. NOTE: Camera.RenderToCubemap is NOT used - it forces URP to rebuild its
-        // pipeline (Blitter double-init exception). A "Skybox/Cubemap" material exposes _Tex; other skybox
-        // types (panoramic HDRI, 6-sided, procedural) have no directly-samplable cubemap, so assign a
-        // cubemap to the water's Sky slot for those.
-        Cubemap ResolveReflectionCube()
+        // Reflection base for Reflect URP Probe: an explicit probe texture first, then the scene
+        // skybox cubemap, then the body's Sky slot. Passing ReflectionProbe.texture ourselves avoids
+        // unity_SpecCube0, which URP Forward+ does not reliably bind for these procedural renderers.
+        // Realtime probes expose a cube RenderTexture while baked/custom probes expose a Cubemap, so
+        // the return type must remain Texture even though the shader samples it as a cube.
+        Texture ResolveReflectionTexture(out float sourceIntensity)
         {
+            sourceIntensity = DefaultReflectionSourceIntensity;
             if (_body.ReflectUrpProbe)
             {
+                ReflectionProbe probe = _body.ReflectionProbe;
+                Texture probeTexture = probe != null ? probe.texture : null;
+                if (probeTexture != null && probeTexture.dimension == TextureDimension.Cube)
+                {
+                    sourceIntensity = Mathf.Max(MinimumReflectionSourceIntensity, probe.intensity);
+                    return probeTexture;
+                }
+
                 Cubemap scene = SceneSkyboxCubemap();
                 if (scene != null) return scene;
             }
@@ -402,6 +424,9 @@ namespace AbstractOcclusion.WebGpuWater
             material.SetVector(ID_SimSlopeToWorld, _body.SimSlopeToWorld);
             material.SetVector(ID_WaveGroupA, _body.WaveBank.GroupA);
             material.SetVector(ID_WaveGroupB, _body.WaveBank.GroupB);
+            material.SetVector(ID_WaveGroupC, _body.WaveBank.GroupC);
+            material.SetVector(ID_WaveGroupD, _body.WaveBank.GroupD);
+            material.SetVector(ID_WaveGroupPhases, _body.WaveBank.GroupPhases);
             material.SetVector(ID_WaveShape, _body.WaveBank.Shape);
             material.SetFloat(ID_WaveStokesNorm, _body.WaveBank.StokesNorm);
         }
@@ -432,6 +457,11 @@ namespace AbstractOcclusion.WebGpuWater
             // Simple-tier pixel on a fullscreen pass, twice a frame. The keyword removes it.
             if (fogSimple > 0.5f) Shader.EnableKeyword(KW_UnderwaterFogSimple);
             else Shader.DisableKeyword(KW_UnderwaterFogSimple);
+            // Shore strip rides the same publish: useBedDepth is the per-body opt-in that
+            // _ShoreBodyGate feeds, so a body that never reads the shore compiles the fog without
+            // the surf/shore chain. A body WITH bed depth keeps today's variants untouched.
+            if (_body.useBedDepth) Shader.DisableKeyword(KW_UnderwaterFogStripShore);
+            else Shader.EnableKeyword(KW_UnderwaterFogStripShore);
             // Scene-light fog scattering: armed only when this body wants it AND the tier is
             // not Simple (the budget path stays sun-only). Same keyword-beside-float split as the
             // Simple pair above, so the CPU gate and the compiled variant cannot disagree. The
@@ -626,6 +656,8 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_OceanWorldWaves, _body.IsOceanClipmap ? 1f : 0f);
             sink.SetFloat(ID_SwellWavelength, _body.SwellWavelength);
             sink.SetFloat(ID_SwellHeight, _body.SwellHeight);
+            sink.SetFloat(ID_SwellHeading, _body.SwellHeadingRad);
+            sink.SetVector(ID_SeaStateParams, _body.SeaStateParams);
             sink.SetFloat(ID_HorizonFade, _body.HorizonFadeDistance);
             sink.SetColor(ID_HorizonHazeColor, _body.HorizonHazeColor);
             sink.SetFloat(ID_HorizonHazeDensity, _body.HorizonHazeDensity);
@@ -647,6 +679,9 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_WaveNormal, _body.waveNormalStrength);
             sink.SetVector(ID_WaveGroupA, _body.WaveBank.GroupA);
             sink.SetVector(ID_WaveGroupB, _body.WaveBank.GroupB);
+            sink.SetVector(ID_WaveGroupC, _body.WaveBank.GroupC);
+            sink.SetVector(ID_WaveGroupD, _body.WaveBank.GroupD);
+            sink.SetVector(ID_WaveGroupPhases, _body.WaveBank.GroupPhases);
             sink.SetVector(ID_WaveShape, _body.WaveBank.Shape);
             sink.SetFloat(ID_WaveStokesNorm, _body.WaveBank.StokesNorm);
 
@@ -696,10 +731,12 @@ namespace AbstractOcclusion.WebGpuWater
             if (planarTex != null) sink.SetTexture(ID_PlanarTex, planarTex);
             sink.SetFloat(ID_UseSSR, _body.EffectiveUseSSR ? 1f : 0f);
             sink.SetFloat(ID_UseUrpProbe, _body.ReflectUrpProbe ? 1f : 0f);
+            Texture reflectionTexture = ResolveReflectionTexture(out float reflectionSourceIntensity);
             sink.SetFloat(ID_RealRefraction, _body.EffectiveRealRefraction ? 1f : 0f);
             sink.SetFloat(ID_ProceduralPool, _body.HasProceduralPool ? 1f : 0f);
             sink.SetFloat(ID_ReflectionStrength, _body.ReflectionStrength);
-            sink.SetFloat(ID_EnvReflectionIntensity, _body.EnvReflectionIntensity);
+            sink.SetFloat(ID_EnvReflectionIntensity,
+                          _body.EnvReflectionIntensity * reflectionSourceIntensity);
             sink.SetFloat(ID_SunReflectionIntensity, _body.SunReflectionIntensity);
             // Fresnel + shared-roughness ramp + reflection stretch (the WOW look pass), live per body.
             sink.SetFloat(ID_FresnelFloor, _body.FresnelFloor);
@@ -744,11 +781,9 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_FoamUndersideGlow, _body.FoamUndersideGlow);
             sink.SetFloat(ID_UnderDetailNormalStrength, _body.UnderwaterDetailNormalStrength);
 
-            // Reflection base cubemap, PER BODY (via the property block) so multiple bodies with
-            // different Sky slots / reflection modes never stomp a shared global. Procedural sky = the
-            // body's Sky slot; Reflect URP Probe = the scene skybox cube (SceneSkyboxCubemap).
-            Cubemap reflectionCube = ResolveReflectionCube();
-            if (reflectionCube != null) sink.SetTexture(ID_Sky, reflectionCube);
+            // Reflection base cube, PER BODY (via the property block) so multiple bodies with
+            // different probes / Sky slots never stomp a shared global.
+            if (reflectionTexture != null) sink.SetTexture(ID_Sky, reflectionTexture);
             sink.SetFloat(ID_ReflectionDistortion, _body.ReflectionDistortion);
             sink.SetFloat(ID_SSRStrength, _body.SSRStrength);
             sink.SetFloat(ID_SSRStepSize, _body.SSRStepSize);

@@ -50,6 +50,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // just warned about) so users can't type into values the profile overwrites next frame.
         bool _ambientDriven;
         bool _lookDriven;
+        bool _motionDriven;
         bool _bubbleDriven;
 
         bool _wiringExpanded = true;
@@ -124,6 +125,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var profile = _profile.objectReferenceValue as WaterFoamProfile;
             _ambientDriven = profile != null && profile.ambient.drive;
             _lookDriven = profile != null && profile.look.drive;
+            _motionDriven = profile != null && profile.motion.drive;
             _bubbleDriven = profile != null && profile.bubbles.drive;
 
             DrawStatusAndRepair();
@@ -305,21 +307,28 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         void DrawMotion()
         {
-            EditorGUILayout.HelpBox("Physics shared across the pool. Gravity pulls every airborne " +
-                "droplet (mist, splash, pump, lip, cascade); drift and damping steer floating foam " +
-                "and the sideways motion of bubbles. Not profile-driven.", MessageType.None);
+            EditorGUILayout.HelpBox(_motionDriven
+                    ? "Motion is overridden by the assigned Foam Profile. Tune its Motion section, " +
+                      "or turn that section's Drive toggle off to use these local values."
+                    : "Physics shared across the pool. Gravity pulls every airborne droplet " +
+                      "(mist, splash, pump, lip, cascade); drift and damping steer floating foam " +
+                      "and the sideways motion of bubbles.",
+                _motionDriven ? MessageType.Info : MessageType.None);
 
-            EditorGUILayout.PropertyField(_gravity, new GUIContent("Gravity",
-                "Downward acceleration on every airborne droplet, whatever threw it. Floating foam " +
-                "sits on the surface and bubbles use their own buoyancy, so neither falls."));
-            EditorGUILayout.PropertyField(_flowDrift, new GUIContent("Flow Drift",
-                "Speed floating foam (and bubbles, sideways) are carried along the surface flow, " +
-                "per unit of surface slope."));
-            EditorGUILayout.PropertyField(_windDriftSpeed, new GUIContent("Wind Drift",
-                "Constant downwind drift of floating foam, in world units per second."));
-            EditorGUILayout.PropertyField(_drag, new GUIContent("Drift Damping",
-                "How quickly a particle's velocity relaxes to the driven flow (floating foam and " +
-                "bubble sideways motion)."));
+            using (new EditorGUI.DisabledScope(_motionDriven))
+            {
+                EditorGUILayout.PropertyField(_gravity, new GUIContent("Gravity",
+                    "Downward acceleration on every airborne droplet, whatever threw it. Floating foam " +
+                    "sits on the surface and bubbles use their own buoyancy, so neither falls."));
+                EditorGUILayout.PropertyField(_flowDrift, new GUIContent("Flow Drift",
+                    "Speed floating foam (and bubbles, sideways) are carried along the surface flow, " +
+                    "per unit of surface slope."));
+                EditorGUILayout.PropertyField(_windDriftSpeed, new GUIContent("Wind Drift",
+                    "Constant downwind drift of floating foam, in world units per second."));
+                EditorGUILayout.PropertyField(_drag, new GUIContent("Drift Damping",
+                    "How quickly a particle's velocity relaxes to the driven flow (floating foam and " +
+                    "bubble sideways motion)."));
+            }
         }
 
         // ---- 2. everything airborne (KIND_SPRAY), whatever threw it -------------------------------

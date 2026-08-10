@@ -520,7 +520,7 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         static BandAccum EvaluateBands(float x, float z, float time, float amplitudeScale,
-            float windHeadingRadians, float swellWavelength, float swellHeight,
+            float windHeadingRadians, float swellHeadingRadians, float swellWavelength, float swellHeight,
             in ShoreWaveContext ctx)
         {
             ShoreSampleCpu shore = SampleShore(ctx, x, z);
@@ -539,7 +539,7 @@ namespace AbstractOcclusion.WebGpuWater
                 amplitudeScale * bandScale, windHeadingRadians, ctx, shore, warpExtra);
             AccumulateBand(ref a, x, z, time, SwellCount, swellWavelength, SwellWavelengthFalloff,
                 SwellBaseAmplitude, SwellAmplitudeFalloff, SwellDirectionSpread, SwellPhaseSeed,
-                swellHeight * bandScale, windHeadingRadians, ctx, shore, warpExtra);
+                swellHeight * bandScale, swellHeadingRadians, ctx, shore, warpExtra);
 
             // Surf fronts ride on top (mirrors EvaluateLargeBodyWaveShore). Their vertical velocity
             // is a finite difference - physics-only, no shader counterpart to stay lockstep with.
@@ -581,10 +581,10 @@ namespace AbstractOcclusion.WebGpuWater
         /// WaveTime. Height drives buoyancy depth; the slope drives wave-carried drift.
         /// </summary>
         internal static Vector3 Evaluate(float worldX, float worldZ, float time, float amplitudeScale,
-            float windHeadingRadians, float swellWavelength, float swellHeight, in ShoreWaveContext ctx)
+            float windHeadingRadians, float swellHeadingRadians, float swellWavelength, float swellHeight, in ShoreWaveContext ctx)
         {
             BandAccum a = EvaluateBands(worldX, worldZ, time, amplitudeScale, windHeadingRadians,
-                                        swellWavelength, swellHeight, ctx);
+                                        swellHeadingRadians, swellWavelength, swellHeight, ctx);
             return new Vector3(a.Height, a.SlopeX, a.SlopeZ);
         }
 
@@ -598,17 +598,17 @@ namespace AbstractOcclusion.WebGpuWater
         /// Same fixed-point use as InvertToSource; exposed rather than duplicated so the analytic
         /// and FFT inversion loops can share one caller-side implementation with edge weighting.</summary>
         internal static Vector2 HorizontalDisplacementAtSource(float sourceX, float sourceZ, float time,
-            float amplitudeScale, float windHeadingRadians, float swellWavelength, float swellHeight,
+            float amplitudeScale, float windHeadingRadians, float swellHeadingRadians, float swellWavelength, float swellHeight,
             float choppiness, in ShoreWaveContext ctx)
             => Displacement(sourceX, sourceZ, time, amplitudeScale, windHeadingRadians,
-                            swellWavelength, swellHeight, choppiness, ctx);
+                            swellHeadingRadians, swellWavelength, swellHeight, choppiness, ctx);
 
         static Vector2 Displacement(float sourceX, float sourceZ, float time, float amplitudeScale,
-            float windHeadingRadians, float swellWavelength, float swellHeight, float choppiness,
+            float windHeadingRadians, float swellHeadingRadians, float swellWavelength, float swellHeight, float choppiness,
             in ShoreWaveContext ctx)
         {
             BandAccum a = EvaluateBands(sourceX, sourceZ, time, amplitudeScale, windHeadingRadians,
-                                        swellWavelength, swellHeight, ctx);
+                                        swellHeadingRadians, swellWavelength, swellHeight, ctx);
             return new Vector2(a.DisplacementX * choppiness, a.DisplacementZ * choppiness);
         }
 
@@ -618,7 +618,7 @@ namespace AbstractOcclusion.WebGpuWater
         /// With choppiness 0 the displacement is zero, so this returns the query point on the first pass.
         /// </summary>
         static Vector2 InvertToSource(float queryX, float queryZ, float time, float amplitudeScale,
-            float windHeadingRadians, float swellWavelength, float swellHeight, float choppiness,
+            float windHeadingRadians, float swellHeadingRadians, float swellWavelength, float swellHeight, float choppiness,
             in ShoreWaveContext ctx)
         {
             float sourceX = queryX;
@@ -626,7 +626,7 @@ namespace AbstractOcclusion.WebGpuWater
             for (int i = 0; i < InversionIterations; i++)
             {
                 Vector2 displacement = Displacement(sourceX, sourceZ, time, amplitudeScale,
-                    windHeadingRadians, swellWavelength, swellHeight, choppiness, ctx);
+                    windHeadingRadians, swellHeadingRadians, swellWavelength, swellHeight, choppiness, ctx);
                 sourceX -= (sourceX + displacement.x) - queryX;
                 sourceZ -= (sourceZ + displacement.y) - queryZ;
             }
@@ -639,13 +639,13 @@ namespace AbstractOcclusion.WebGpuWater
         /// surface value directly above a fixed world position. Matches the rendered (displaced) crest.
         /// </summary>
         internal static Vector3 EvaluateAtQuery(float worldX, float worldZ, float time, float amplitudeScale,
-            float windHeadingRadians, float swellWavelength, float swellHeight, float choppiness,
+            float windHeadingRadians, float swellHeadingRadians, float swellWavelength, float swellHeight, float choppiness,
             in ShoreWaveContext ctx)
         {
             Vector2 source = InvertToSource(worldX, worldZ, time, amplitudeScale, windHeadingRadians,
-                                            swellWavelength, swellHeight, choppiness, ctx);
+                                            swellHeadingRadians, swellWavelength, swellHeight, choppiness, ctx);
             return Evaluate(source.x, source.y, time, amplitudeScale, windHeadingRadians,
-                            swellWavelength, swellHeight, ctx);
+                            swellHeadingRadians, swellWavelength, swellHeight, ctx);
         }
 
         /// <summary>
@@ -664,13 +664,13 @@ namespace AbstractOcclusion.WebGpuWater
         /// borrowing this mirror's, so the velocity-only entry point it used has been removed.
         /// </remarks>
         internal static void EvaluateAtQuery(float worldX, float worldZ, float time, float amplitudeScale,
-            float windHeadingRadians, float swellWavelength, float swellHeight, float choppiness,
+            float windHeadingRadians, float swellHeadingRadians, float swellWavelength, float swellHeight, float choppiness,
             in ShoreWaveContext ctx, out Vector3 heightSlope, out float verticalVelocity)
         {
             Vector2 source = InvertToSource(worldX, worldZ, time, amplitudeScale, windHeadingRadians,
-                                            swellWavelength, swellHeight, choppiness, ctx);
+                                            swellHeadingRadians, swellWavelength, swellHeight, choppiness, ctx);
             BandAccum a = EvaluateBands(source.x, source.y, time, amplitudeScale, windHeadingRadians,
-                                        swellWavelength, swellHeight, ctx);
+                                        swellHeadingRadians, swellWavelength, swellHeight, ctx);
             heightSlope = new Vector3(a.Height, a.SlopeX, a.SlopeZ);
             verticalVelocity = a.HeightVelocity;
         }

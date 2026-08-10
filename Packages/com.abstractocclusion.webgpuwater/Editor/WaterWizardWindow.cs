@@ -245,6 +245,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         void DrawSharedOptions()
         {
             WaterEditorUI.SubHeading("Options (applied to any type)");
+            bool oceanSelected = _kind == WaterKind.OpenWaterOcean;
 
             _rippleQuality = (WaterVolume.RippleQuality)EditorGUILayout.EnumPopup(
                 new GUIContent("Ripple quality", "Sim grid density + matched surface mesh for interactive " +
@@ -283,14 +284,22 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     _edgeFoam);
                 EditorGUI.indentLevel--;
             }
+            if (oceanSelected)
+                EditorGUILayout.HelpBox(
+                    "Foam is optional for Ocean. Enable it here to create the GPU particle system now, or " +
+                    "add it later by selecting the WaterVolume and using Utilities > Add Foam Particles To Selected.",
+                    MessageType.Info);
 
             _splash = EditorGUILayout.Toggle(
                 new GUIContent("Splash", "Give buoyant props a splash trigger when they punch the surface."), _splash);
-            _godRays = EditorGUILayout.Toggle(
-                new GUIContent("God rays", "Underwater caustic-masked light shafts."), _godRays);
-            _addFloorCollider = EditorGUILayout.Toggle(
-                new GUIContent("Floor collider", "Thin collider under the water so sinking props have something to rest on."),
-                _addFloorCollider);
+            using (new EditorGUI.DisabledScope(oceanSelected))
+            {
+                _godRays = EditorGUILayout.Toggle(
+                    new GUIContent("God rays", "Underwater caustic-masked light shafts."), _godRays);
+                _addFloorCollider = EditorGUILayout.Toggle(
+                    new GUIContent("Floor collider", "Thin collider under the water so sinking props have something to rest on."),
+                    _addFloorCollider);
+            }
         }
 
         void DrawTerrainBedOptions()
@@ -355,6 +364,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             }
 
             bool withPool = _kind == WaterKind.LegacyAnalyticPool;
+            bool oceanSelected = _kind == WaterKind.OpenWaterOcean;
+            bool withFoamParticles = _foam;
+            bool withGodRays = !oceanSelected && _godRays;
+            bool withFloorCollider = !oceanSelected && _addFloorCollider;
 
             // One undo step for the entire build (root, body, rig, floor, object wiring).
             Undo.SetCurrentGroupName("Create Water");
@@ -372,25 +385,25 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             // withSplash rigs the emitter under the body and sets its provideSplashEmitter gate, so an
             // unticked Splash simply never creates one (no build-then-destroy of a loose object).
             var body = CreateWaterBody(ctx, root.transform, WaterBodyName, Vector3.zero, _extent,
-                                       primary: true, withPool: withPool, withGodRays: _godRays,
-                                       withFoamParticles: _foam, withSplash: _splash);
+                                       primary: true, withPool: withPool, withGodRays: withGodRays,
+                                       withFoamParticles: withFoamParticles, withSplash: _splash);
 
             body.rippleQuality = _rippleQuality;
             ApplyBaseType(body);
             ApplyTerrainBed(body);
             ApplyCustomPoolTexture(body, withPool);
             ApplyReflection(body);
-            ApplyFoam(body);
+            ApplyFoam(body, withFoamParticles);
             bool openWater = ApplyOpenWater(body);
             ApplyLookDefaults(body);
             if (_kind == WaterKind.OpenWaterOcean)
-                ApplyOceanLookDefaults(body);
+                ApplyOceanLookDefaults(body, withGodRays);
 
             ApplyCameraMode(body);
 
             EditorUtility.SetDirty(body);
 
-            if (_addFloorCollider)
+            if (withFloorCollider)
                 CreateFloorForExtent(root.transform, _extent);
 
             WireObjects();
@@ -528,10 +541,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             serialized.ApplyModifiedProperties(); // rides the Create Water undo group
         }
 
-        void ApplyFoam(WaterVolume body)
+        void ApplyFoam(WaterVolume body, bool foamEnabled)
         {
-            body.Foam = _foam;
-            body.foamBorderWidth = (_foam && _edgeFoam) ? EdgeFoamBorderWidth : 0f;
+            body.Foam = foamEnabled;
+            body.foamBorderWidth = (foamEnabled && _edgeFoam) ? EdgeFoamBorderWidth : 0f;
         }
 
         void CreateFloorForExtent(Transform parent, Vector3 extent)

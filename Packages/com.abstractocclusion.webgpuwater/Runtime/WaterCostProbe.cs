@@ -36,7 +36,7 @@ namespace AbstractOcclusion.WebGpuWater
         const int FontSize = 18;
         const int MarginPixels = 12;
         const int PanelWidth = 470;
-        const int PanelHeight = 168; // 6 readout lines at FontSize, with slack - GUI.Label CLIPS to its rect
+        const int PanelHeight = 142; // 5 readout lines at FontSize, with slack - GUI.Label CLIPS to its rect
 
         [Tooltip("Cycle the underwater fog mode: Off -> Simple -> Full.")]
         [SerializeField] KeyCode fogKey = KeyCode.F;
@@ -44,31 +44,13 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] KeyCode godRayKey = KeyCode.G;
         [Tooltip("Show or hide the readout.")]
         [SerializeField] KeyCode visibilityKey = KeyCode.H;
-        [Tooltip("Null the fog SHADER while keeping the fog PASS - the structural A/B.")]
-        [SerializeField] KeyCode nullFogKey = KeyCode.N;
-
-        // Makes both fog fragments return their blend identity while the pass, its two fullscreen
-        // draws and every RenderGraph dependency stay byte-identical. With the fog mode key that
-        // gives three readings instead of two, and they separate the two candidate fixes:
-        //   Off    - the pass is not recorded at all
-        //   Null   - the pass runs, the shader does nothing   <- pass/attachment/bandwidth cost
-        //   Simple - the pass runs, the shader does its work  <- shader + occupancy cost
-        // If Null lands near Off, the cost is the shader and the keyword split is the fix. If Null
-        // lands near Simple, the cost is the pass itself and no amount of shader work will help.
-        const string NullFogKeyword = "WATER_FOG_NULL";
-
         float _smoothedMs;
         float _worstMs;
         float _worstWindowEndsAt;
         float _readoutRefreshesAt;
         string _readout = "";
         bool _visible = true;
-        bool _nullFog;
         GUIStyle _style;
-
-        // A global keyword outlives this component, so a probe that is disabled mid-experiment must
-        // not leave the fog silently nulled for the rest of the session.
-        void OnDisable() => Shader.DisableKeyword(NullFogKeyword);
 
         void Update()
         {
@@ -97,12 +79,6 @@ namespace AbstractOcclusion.WebGpuWater
         void ReadInput()
         {
             if (Pressed(visibilityKey)) _visible = !_visible;
-            if (Pressed(nullFogKey))
-            {
-                _nullFog = !_nullFog;
-                if (_nullFog) Shader.EnableKeyword(NullFogKeyword);
-                else Shader.DisableKeyword(NullFogKeyword);
-            }
 
             WaterVolume primary = WaterVolume.Primary;
             if (primary == null) return;
@@ -155,7 +131,6 @@ namespace AbstractOcclusion.WebGpuWater
                 $"{_smoothedMs:0.0} ms  ({fps:0} fps)   worst {_worstMs:0.0} ms\n" +
                 $"[{fogKey}] underwater fog : {fog}\n" +
                 $"[{godRayKey}] ocean god rays : {godRays}\n" +
-                $"[{nullFogKey}] fog shader nulled : {(_nullFog ? "YES (pass still runs)" : "no")}\n" +
                 $"fog pass armed {WaterVolume.UnderwaterFogActive}   submerged {WaterVolume.CameraSubmerged}\n" +
                 $"[{visibilityKey}] hide";
         }

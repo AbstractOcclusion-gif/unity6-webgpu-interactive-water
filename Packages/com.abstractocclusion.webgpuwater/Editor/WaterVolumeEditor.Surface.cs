@@ -96,6 +96,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     WaterVolumePropertyPaths.ScreenSpaceReflection,
                     WaterVolumePropertyPaths.PlanarReflection,
                     "reflectionSettings.reflectUrpProbe");
+                DrawFieldsIf(Prop("reflectionSettings.reflectUrpProbe").boolValue,
+                    "reflectionSettings.reflectionProbe");
                 // Greyed unless planar is on: the culling mask and the crop depth both belong to the
                 // planar mirror and do nothing to SSR or the environment base.
                 DrawFieldsIf(Prop(WaterVolumePropertyPaths.PlanarReflection).boolValue,
@@ -379,9 +381,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             "refracts the real scene instead.";
         const string SkyHelp =
             "Reflection BASE only - SSR and Planar Reflection layer on top of it. With Reflect URP " +
-            "Probe on, the scene skybox's own cubemap is used instead, but ONLY when that skybox is a " +
-            "Skybox/Cubemap material; panoramic HDRI, 6-sided and procedural skyboxes expose no " +
-            "samplable cube, so for those this slot is the FALLBACK that actually gets reflected.";
+            "Probe on, an explicitly assigned Reflection Probe is used first. If it is empty or not " +
+            "ready, a Skybox/Cubemap scene sky is used; panoramic, 6-sided and procedural skyboxes " +
+            "cannot provide a cube directly, so this slot remains the final fallback.";
         const string FoamFamiliesHelp =
             "Three independent foam engines, grouped so they can be compared - not merged. Each has " +
             "its own switch and its own source: the sim's turbulence, the ocean's FFT crests, and " +

@@ -186,6 +186,10 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
         float slopeSine = length(normal.xz);
         float steepness = saturate(slopeSine / DETAIL_CREST_REFERENCE_SLOPE);
         detailNormalStrength *= 1.0 + _DetailNormalCrestBoost * steepness;
+        // Sea-state layer (gusts/slicks): the micro-ripple film is exactly what a real gust thickens
+        // and a slick wipes - scale the detail strength by the same local factor the FFT tilt uses,
+        // so near-field micro-ripple and far-field cascade roughness tell one story.
+        detailNormalStrength *= SeaStateMssScale(i.largeWaveSourceXZ);
         float2 detailTilt = DetailNormalTilt(i.largeWaveSourceXZ, viewDistWorld);
         normal = normalize(normal + float3(detailTilt.x, 0.0, detailTilt.y)
                                     * detailNormalStrength);

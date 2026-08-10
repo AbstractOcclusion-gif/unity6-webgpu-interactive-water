@@ -90,6 +90,19 @@ namespace AbstractOcclusion.WebGpuWater
                      "it that falls inside the cascade bands is rendered, so keep it below about twice " +
                      "the Peak Wavelength.")]
             [Min(1f)] public float swellWavelength = DefaultSwellWavelength;
+            [Tooltip("Gust patches (\"cat's paws\"): local wind variation that roughens drifting patches " +
+                     "of the surface and leaves glassy lulls between them. Shading only (roughness, " +
+                     "whitecaps, micro-ripple) - wave heights and buoyancy are untouched. 0 = uniform sea.")]
+            [Range(0f, 1f)] public float seaStateGusts = 0f;
+            [Tooltip("Slicks / windrows: long glassy streaks aligned with the wind where the finest " +
+                     "ripples are damped (surfactant films), while longer waves roll through untouched. " +
+                     "Shading only - heights and buoyancy are untouched. 0 = none.")]
+            [Range(0f, 1f)] public float seaStateSlicks = 0f;
+            [Tooltip("Swell travel direction OFFSET from the wind, in degrees. Real swell radiates from " +
+                     "a distant storm, not the local wind - most of the open ocean carries swell crossing " +
+                     "the wind sea at an angle, which is what breaks the single-direction look. 0 = " +
+                     "aligned with the wind (the historical behaviour, bit-identical).")]
+            [Range(-180f, 180f)] public float swellHeadingOffsetDegrees = 0f;
             [Tooltip("How much of the FFT ocean's energy travels ACROSS and AGAINST the wind instead of " +
                      "with it. 0 = a perfectly ordered sea marching downwind; 1 = fully isotropic, no net " +
                      "travel direction at all. Wave HEIGHT does not change with this - only the direction " +
@@ -279,6 +292,9 @@ namespace AbstractOcclusion.WebGpuWater
         internal float largeWaveChoppiness => ocean.largeWaveChoppiness;
         internal float swellHeight => ocean.swellHeight;
         internal float swellWavelength => ocean.swellWavelength;
+        internal float seaStateGusts => ocean.seaStateGusts;
+        internal float seaStateSlicks => ocean.seaStateSlicks;
+        internal float swellHeadingOffsetDegrees => ocean.swellHeadingOffsetDegrees;
         internal float oceanWindTurbulence => ocean.oceanWindTurbulence;
         internal bool unboundedOcean => ocean.unboundedOcean;
         internal float edgeFeatherMeters => ocean.edgeFeatherMeters;
@@ -439,6 +455,13 @@ namespace AbstractOcclusion.WebGpuWater
         internal float LargeWaveEdgeFeatherEffective => (openWater && !unboundedOcean) ? edgeFeatherMeters : 0f;
         internal float SwellHeight => swellHeight;
         internal float SwellWavelength => swellWavelength;
+        /// <summary>Packed gust/slick shading layer. HLSL pair: _SeaStateParams (WaterLargeWaves.hlsl).</summary>
+        internal Vector4 SeaStateParams => new Vector4(seaStateGusts, seaStateSlicks,
+                                                       SeaStateGustSpeedMps, SeaStateGustCellMeters);
+        /// <summary>Absolute swell heading (radians): the wind heading plus the authored offset.
+        /// Equals LargeWaveHeadingRad when the offset is 0, so undecoupled scenes are bit-identical.
+        /// Consumers: _LargeSwellHeading (analytic band), OceanSwellDir (FFT spectrum), CPU mirror.</summary>
+        internal float SwellHeadingRad => LargeWaveHeadingRad + swellHeadingOffsetDegrees * Mathf.Deg2Rad;
         internal float OceanWindTurbulence => oceanWindTurbulence;
         internal float OceanFoamWindThreshold => oceanFoamWindThreshold;
         internal float OceanFoamCoverage => oceanFoamCoverage;
@@ -458,6 +481,12 @@ namespace AbstractOcclusion.WebGpuWater
         internal float OceanFoamDrift => oceanFoamDrift;
         internal float OceanFoamMaxBuildup => oceanFoamMaxBuildup;
         const float DefaultSwellWavelength = 140f;
+        // Sea-state shading layer (gusts/slicks). The cell size sets both the gust patch scale and
+        // the crosswind windrow spacing; the advection speed is a typical near-surface wind - gust
+        // cells ride the wind (Dorman & Mollo-Christensen 1973), slicks drift slower (shader-side
+        // fraction). Not exposed: patch scale/speed are physical character, not per-scene art.
+        const float SeaStateGustCellMeters = 45f;
+        const float SeaStateGustSpeedMps = 6f;
         // Sea-state defaults + guard rails. A 1.5 m / 60 m sea is a moderate open ocean (steepness ~1/40,
         // a plausible mid-fetch swell) and gamma 3.3 is JONSWAP's own nominal peak enhancement.
         const float DefaultSignificantWaveHeight = 1.5f;

@@ -49,6 +49,10 @@ float4 OceanBandMin;         // per-cascade shortest kept wavelength (metres) - 
 float4 OceanBandMax;         // per-cascade longest kept wavelength (metres)
 float4 OceanVisibleAreas;    // per-cascade view distance (m) at which its detail fully fades out
 float2 OceanWindDir;
+float2 OceanSwellDir;        // unit swell travel direction; = OceanWindDir until the authored heading
+                             // offset decouples the swell from the local wind (C#: SeaParams.SwellHeadingRad).
+                             // The CPU gain integral is heading-invariant (WaterOceanSpectrum uses a fixed
+                             // reference direction), so turning the swell never re-pays the normalisation.
 float  OceanWindSpeed;
 float  OceanWindTurbulence;  // 0 = fully one-sided wind sea, 1 = isotropic (KWS WindTurbulence)
 // --- JONSWAP/TMA sea state (increment S1). The spectrum is authored as a SHAPE (peak wavelength,
@@ -275,7 +279,7 @@ float OceanSwellShape(float2 k, float kMag)
     float kSwell = OCEAN_TWO_PI / max(OceanSwellWavelength, 1e-3);
     float width = kSwell * OCEAN_SWELL_WIDTH;
     float radial = exp(-((kMag - kSwell) * (kMag - kSwell)) / (2.0 * width * width));
-    float directional = pow(saturate(dot(k / kMag, OceanWindDir)), OCEAN_SWELL_DIR_POWER);
+    float directional = pow(saturate(dot(k / kMag, OceanSwellDir)), OCEAN_SWELL_DIR_POWER);
     return radial * directional;
 }
 

@@ -102,7 +102,7 @@ namespace AbstractOcclusion.WebGpuWater
                                                      SignificantWaveHeight, PeakWavelengthEffective,
                                                      PeakSharpness, SeaDepth, LargeWaveChoppiness,
                                                      SwellWavelength, SwellHeight,
-                                                     OceanCascadeReach);
+                                                     SwellHeadingRad, OceanCascadeReach);
                 _oceanFft?.Dispatch(_waveTime, sea, LargeWaveAmplitudeEffective, camXZ, foam);
             }
             if (_simulate && Time.frameCount % _causticInterval == 0)

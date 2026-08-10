@@ -603,6 +603,12 @@ SurfWaveSample EvaluateSurfWaves(float2 worldXZ, float depth, float sdfDist, flo
                                  float tanBeta, float influence, float time)
 {
     SurfWaveSample o = SurfWaveSampleInert();
+#ifdef WATER_STRIP_SHORE
+    // Compile-time strip - see ShoreSample (WaterShore.hlsl). With the shore stripped, influence
+    // is provably 0 here anyway; this makes the whole surf cosh chain dead code so it folds out
+    // of the shoreless fog variants instead of being compiled into every one of them.
+    return o;
+#endif
     if (_SurfActive < 0.5 || influence <= SURF_MIN_INFLUENCE) return o;
 
     float exposure = SurfExposure(toShore); // the lace below reuses it beyond the mask

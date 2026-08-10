@@ -46,6 +46,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         bool _showWindWavesAdvanced = false;
         bool _showOceanSwell = false;
         bool _showSwell = false;
+        bool _showSeaState = false;
         bool _showOceanSwellAdvanced = false;
         bool _showSurf = false;
         bool _showSurfAdvanced = false;
@@ -128,6 +129,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             Sync(ref _showWindWavesAdvanced, nameof(_showWindWavesAdvanced), load);
             Sync(ref _showOceanSwell, nameof(_showOceanSwell), load);
             Sync(ref _showSwell, nameof(_showSwell), load);
+            Sync(ref _showSeaState, nameof(_showSeaState), load);
             Sync(ref _showOceanSwellAdvanced, nameof(_showOceanSwellAdvanced), load);
             Sync(ref _showSurf, nameof(_showSurf), load);
             Sync(ref _showSurfAdvanced, nameof(_showSurfAdvanced), load);

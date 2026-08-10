@@ -35,6 +35,9 @@ float _LargeWaveDetailSlope; // band-limit: the shortest wavelength the mesh can
                              // metres per metre of camera distance. 0 = no band-limit (full spectrum).
 float _LargeSwellWavelength;  // metres, longest LONG-PERIOD swell component (rolling horizon swell)
 float _LargeSwellHeight;      // metres, amplitude of the longest swell component; 0 = no long swell
+float _LargeSwellHeading;     // swell travel heading (radians, ABSOLUTE). Published as the wind heading
+                              // + the authored offset: real swell comes from a distant storm, not the
+                              // local wind. Offset 0 -> equals _LargeWaveWindHeading, bit-identical.
 float _LargeWaveEdgeFeather;  // metres of edge feather on a BOUNDED body: the wave field fades to the
                               // rest level over this band inside the footprint border, so the surface
                               // never ends mid-wave as a standing wall of water. 0 = off (pools publish
@@ -101,6 +104,95 @@ float LbwHash(float n)
     return frac(sin(n * LBW_HASH_SINE_FREQ) * LBW_HASH_SINE_SCALE);
 }
 
+// ================== SEA STATE: gusts + slicks (fragment-shading layer) ============================
+// What the eye reads at distance is the mean-square slope of SUB-METRE waves (Cox & Munk 1954:
+// mss ~ 0.003 + 5.12e-3 * wind), and a real sea modulates it SPATIALLY: wind gusts ("cat's paws")
+// roughen drifting patches, while surfactant slicks/windrows damp only the shortest waves into
+// glassy streaks aligned with the wind - the long swell rolls through them untouched. This layer is
+// SHADING-ONLY by design: it scales the FFT normal tilt / crest pinch / whitecap coverage and the
+// micro-detail normals, NEVER the displacement, so heights stay a pure function of (x,z) and the CPU
+// buoyancy mirror needs no counterpart.
+//   _SeaStateParams.x  gust strength 0..1 (both x and y 0 -> the layer costs one uniform test)
+//   _SeaStateParams.y  slick strength 0..1
+//   _SeaStateParams.z  gust advection speed (m/s - gust cells ride the wind)
+//   _SeaStateParams.w  gust cell size (metres; also the crosswind windrow spacing)
+// C# pair: WaterVolume.SeaStateParams (WaterVolume.Settings.Ocean.cs).
+float4 _SeaStateParams;
+
+// Streaks are ALONG-WIND features: both fields sample noise in a wind-aligned frame, gusts mildly
+// elongated, slicks extremely so (Langmuir windrows run >100:1 length to spacing).
+#define SEA_STATE_GUST_ELONGATION      3.0
+#define SEA_STATE_SLICK_ELONGATION     12.0
+// Slicks drift slower than the gust cells riding the wind above them.
+#define SEA_STATE_SLICK_SPEED_FRACTION 0.35
+// Noise band carved into slick streaks (smoothstep window edges) - higher = sparser streaks.
+#define SEA_STATE_SLICK_THRESHOLD_LO   0.55
+#define SEA_STATE_SLICK_THRESHOLD_HI   0.75
+// Slicks cut mss by 2-3x in the Cox & Munk slick measurements; this floors the slick multiplier.
+#define SEA_STATE_SLICK_FLOOR          0.3
+// Gust swing: +/- this fraction of the local roughness at full strength (bright/dark patches).
+#define SEA_STATE_GUST_SPAN            0.65
+// Second gust octave: finer cells at lower weight (single-octave value noise reads as blobs).
+#define SEA_STATE_GUST_OCTAVE_SCALE    0.37
+#define SEA_STATE_GUST_OCTAVE_WEIGHT   0.35
+// 2D lattice hash constants (the classic pair; LBW_HASH_* is the 1D stream the wave bands use).
+#define SEA_STATE_HASH_DOT_X           12.9898
+#define SEA_STATE_HASH_DOT_Y           78.233
+#define SEA_STATE_HASH_SCALE           43758.5453
+
+float SeaStateHash2(float2 cell)
+{
+    return frac(sin(dot(cell, float2(SEA_STATE_HASH_DOT_X, SEA_STATE_HASH_DOT_Y))) * SEA_STATE_HASH_SCALE);
+}
+
+// Bilinear value noise in [0,1] with a smoothstep fade. Derivative-free on purpose: this layer only
+// SCALES normals that already exist, it never builds one, so C1 continuity is not required.
+float SeaStateValueNoise(float2 p)
+{
+    float2 cell = floor(p);
+    float2 f = p - cell;
+    float2 u = f * f * (3.0 - 2.0 * f);
+    float h00 = SeaStateHash2(cell);
+    float h10 = SeaStateHash2(cell + float2(1.0, 0.0));
+    float h01 = SeaStateHash2(cell + float2(0.0, 1.0));
+    float h11 = SeaStateHash2(cell + float2(1.0, 1.0));
+    return lerp(lerp(h00, h10, u.x), lerp(h01, h11, u.x), u.y);
+}
+
+// Local roughness multiplier at a world xz: 1 = the authored sea state, < 1 toward glassy (slicks),
+// > 1 in gust patches. Applied multiplicatively to slope-DERIVED shading only.
+float SeaStateMssScale(float2 worldXZ)
+{
+    // Uniform-coherent early-out: bodies that never author the layer pay one comparison per call.
+    if (_SeaStateParams.x <= 0.0 && _SeaStateParams.y <= 0.0) return 1.0;
+
+    float2 windDir = float2(cos(_LargeWaveWindHeading), sin(_LargeWaveWindHeading));
+    // Wind-aligned frame: x along the wind (advected + elongated), y across it.
+    float2 windFrame = float2(dot(worldXZ, windDir), dot(worldXZ, float2(-windDir.y, windDir.x)));
+    float cellSize = max(_SeaStateParams.w, 1.0);
+
+    float scale = 1.0;
+    if (_SeaStateParams.x > 0.0)
+    {
+        float2 gustP = float2((windFrame.x - _SeaStateParams.z * _WaveTime) / SEA_STATE_GUST_ELONGATION,
+                              windFrame.y) / cellSize;
+        float gust = SeaStateValueNoise(gustP);
+        gust = lerp(gust, SeaStateValueNoise(gustP / SEA_STATE_GUST_OCTAVE_SCALE),
+                    SEA_STATE_GUST_OCTAVE_WEIGHT);
+        // Signed swing about the authored state: lulls go glassy, gust patches roughen.
+        scale *= 1.0 + _SeaStateParams.x * SEA_STATE_GUST_SPAN * (gust * 2.0 - 1.0);
+    }
+    if (_SeaStateParams.y > 0.0)
+    {
+        float2 slickP = float2((windFrame.x - _SeaStateParams.z * SEA_STATE_SLICK_SPEED_FRACTION * _WaveTime)
+                               / SEA_STATE_SLICK_ELONGATION, windFrame.y) / cellSize;
+        float streak = smoothstep(SEA_STATE_SLICK_THRESHOLD_LO, SEA_STATE_SLICK_THRESHOLD_HI,
+                                  SeaStateValueNoise(slickP));
+        scale *= 1.0 - _SeaStateParams.y * (1.0 - SEA_STATE_SLICK_FLOOR) * streak;
+    }
+    return scale;
+}
+
 // Everything the surface needs from the wave field at one WORLD-space xz, from a SINGLE pass over
 // the components so height, horizontal displacement and their derivatives always agree.
 //   height    : metres (drives the vertex Y)
@@ -119,11 +211,12 @@ struct LargeBodyWaveField
 // Sum one band of directional Gerstner components (height = A*sin, horizontal = A*dir*cos) into the
 // accumulating field. 'amplitudeScale' multiplies the whole band (the wind swell size for the chop
 // band, the swell-height knob for the long band). 'phaseSeed' picks an independent hash stream so the
-// bands never align into ridges. Directions scatter within 'dirSpread' of the wind heading.
+// bands never align into ridges. Directions scatter within 'dirSpread' of 'bandHeading' - the chop
+// band follows the wind, the swell band its own decoupled heading.
 void LbwAccumulateBand(float2 worldXZ, int count, float baseWavelength, float wavelengthFalloff,
                        float baseAmplitude, float amplitudeFalloff, float dirSpread, float phaseSeed,
-                       float amplitudeScale, float minWavelength, ShoreData shore, float warpExtra,
-                       inout LargeBodyWaveField f)
+                       float bandHeading, float amplitudeScale, float minWavelength, ShoreData shore,
+                       float warpExtra, inout LargeBodyWaveField f)
 {
     float wavelength = baseWavelength;
     float amplitude = baseAmplitude;
@@ -133,7 +226,7 @@ void LbwAccumulateBand(float2 worldXZ, int count, float baseWavelength, float wa
     {
         float fn = (float)n;
         float headingJitter = (LbwHash(fn + phaseSeed) * 2.0 - 1.0) * dirSpread;
-        float heading = _LargeWaveWindHeading + headingJitter;
+        float heading = bandHeading + headingJitter;
         float2 dir = float2(cos(heading), sin(heading));
         float phaseOffset = LbwHash(fn + phaseSeed + LBW_PHASE_HASH_STREAM_OFFSET) * LBW_TWO_PI;
 
@@ -210,10 +303,12 @@ LargeBodyWaveField EvaluateLargeBodyWaveShore(float2 worldXZ, float minWavelengt
 
     LbwAccumulateBand(worldXZ, LBW_WAVE_COUNT, LBW_BASE_WAVELENGTH, LBW_WAVELENGTH_FALLOFF,
                       LBW_BASE_AMPLITUDE, LBW_AMPLITUDE_FALLOFF, LBW_DIR_SPREAD, LBW_CHOP_PHASE_SEED,
-                      _LargeWaveAmplitude * bandScale, minWavelength, shore, warpExtra, f);
+                      _LargeWaveWindHeading, _LargeWaveAmplitude * bandScale, minWavelength, shore,
+                      warpExtra, f);
     LbwAccumulateBand(worldXZ, LBW_SWELL_COUNT, _LargeSwellWavelength, LBW_SWELL_WAVELENGTH_FALLOFF,
                       1.0, LBW_SWELL_AMPLITUDE_FALLOFF, LBW_SWELL_DIR_SPREAD, LBW_SWELL_PHASE_SEED,
-                      _LargeSwellHeight * bandScale, minWavelength, shore, warpExtra, f);
+                      _LargeSwellHeading, _LargeSwellHeight * bandScale, minWavelength, shore,
+                      warpExtra, f);
 
     // Surf breaker fronts ride on top (they replaced the ambient share above). No horizontal
     // displacement of their own: the lean is baked into the profile shape.
@@ -328,6 +423,13 @@ OceanFftCascadeSum OceanFftNormalSumShore(float2 worldXZ, ShoreData shore)
         sum.pinch += (shoal * fade) * tap.y;
         sum.foam  += (shoal * fade) * tap.w;
     }
+    // Gust/slick modulation rides the SAME sum for tilt, pinch and foam (the shared-weight rule
+    // above: roughness, crest glow and whitecaps must tell one story or foam sits on glassy water).
+    // Foam responds quadratically - real whitecap coverage is strongly super-linear in local wind.
+    float seaState = SeaStateMssScale(worldXZ);
+    sum.tilt  *= seaState;
+    sum.pinch *= seaState;
+    sum.foam  *= seaState * seaState;
     return sum;
 }
 

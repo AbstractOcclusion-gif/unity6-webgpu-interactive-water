@@ -35,10 +35,8 @@
 
 #include "WaterDebugMode.hlsl" // _WaterDebugMode + the shared ordinals
 
-// "The eye is IN WATER" (PublishUnderwater). The fog pass has no other use for it - its own
-// classification is per-pixel - so it is declared here, where the gate view needs it, rather than
-// added to the pass's uniform block where it would read as a dependency the fog maths has.
-float _CameraUnderwater;
+// _CameraUnderwater ("the eye is IN WATER", published by PublishUnderwater) belongs to the
+// owning shader's uniform block: normal fog coverage now uses it as well as this debug view.
 
 // ---- Which span path priced this pixel (view WATER_DEBUG_FOG_PATH_BRANCH) ------------------
 // One id per RETURN in the ocean/pond span functions. Set at the return rather than inferred
@@ -115,6 +113,20 @@ float3 WaterFogDebugBranchColor()
 // AIR path from the eye to the sheet, which a submerged room does not give it.
 float3 WaterFogDebugUnpainted(float armWeight, float wetSpanLen, float pathLen)
 {
+    // NaN witness (2026-08-11). This view showed its carve BLUE in a scene whose exclusion
+    // counts are 0 - and with dryLen 0, pathLen == wetSpanLen algebraically, so that blue is
+    // unreachable with REAL numbers. It IS reachable through a NaN: every comparison against
+    // NaN is false (skipping the grey no-water exit) and max(NaN - 0, 0) returns 0 on GPU
+    // minmax, landing exactly on the carve return. Paint the non-finite itself, most
+    // specific first:
+    //   YELLOW = the prepass sheet sample is non-finite -> the corruption arrived IN the RT
+    //            (surface displacement / wave field) - hunt upstream of the fog;
+    //   GREEN  = the span/mask numbers this pass computed are non-finite -> fog-side math.
+    if (isnan(g_WaterFogDebugSheetSigned) || isinf(g_WaterFogDebugSheetSigned))
+        return float3(1.0, 1.0, 0.0);
+    if (isnan(wetSpanLen) || isinf(wetSpanLen) || isnan(pathLen) || isinf(pathLen)
+        || isnan(armWeight) || isinf(armWeight))
+        return float3(0.0, 1.0, 0.0);
     if (g_WaterFogDebugBranch == WATER_FOG_BRANCH_PREPASS_AIR)
     {
         // SPLIT BY THE WATERLINE MASK, because "orange over open water is CORRECT" made this

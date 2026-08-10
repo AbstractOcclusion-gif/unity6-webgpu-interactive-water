@@ -301,9 +301,9 @@ float3 LegacySunGlint(float3 worldRay)
 // implicit derivatives are undefined - the caller hoists ddx/ddy of the ray beforehand.
 float3 SampleSkyEnvironmentGrad(float3 worldRay, float3 rayDdx, float3 rayDdy)
 {
-    // Reflection base is ALWAYS a plain cubemap in _Sky: the assigned Sky slot for procedural
-    // sky, or the scene's skybox cubemap when Reflect URP Probe is on (WaterUniformPublisher
-    // picks which). Sampling a cubemap works in EVERY render path - unlike unity_SpecCube0,
+    // Reflection base is ALWAYS a cube texture in _Sky: the assigned Sky slot, an explicit
+    // ReflectionProbe.texture, or the scene's skybox cubemap (WaterUniformPublisher picks which).
+    // Sampling a bound cube works in EVERY render path - unlike unity_SpecCube0,
     // which URP Forward+ (used on WebGPU) does not bind per-object, so the old probe path read
     // the default/skybox and the plane showed no reflection.
     float3 color = texCUBEgrad(_Sky, worldRay, rayDdx, rayDdy).rgb;

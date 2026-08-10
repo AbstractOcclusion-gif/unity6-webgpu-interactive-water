@@ -31,12 +31,38 @@ float  _WaveCount;          // active components (float so it binds via Material
 float  _WaveTime;           // shared animation time (published with the bank)
 float  _WaveMetersPerUnit;  // pool unit -> metres (waves are defined in metres)
 
-// Group envelopes: two crossing modulations that make the chop arrive in SETS instead of a uniform
-// buzz. Each is (dirX, dirZ, wavenumber, angular speed); their speed is the CARRIER's group velocity,
-// so crests are born at the back of a set and die at the front. C# pair: WaterWaveBank.GroupA/GroupB.
+// Guard for the world-metres division below and for every consumer that mirrors it.
+#define WAVE_METERS_MIN 1e-3
+
+// 1 = this body samples the wind-wave layer in WORLD metres (oceans / unbounded open water: the
+// pattern must not slide or rescale with the volume box); 0 = pool xz (bounded bodies).
+float _OceanWorldWaves;
+
+// Coordinate fed to the wind-wave layer (WaveHeight/WaveSlope). ONE definition for every consumer -
+// the surface vertex/fragment stages, the waterline field and the foam-particle surface glue. A
+// consumer that picks its own coordinate silently desyncs its wind waves from the rendered surface
+// (the 2026-08-10 foam-quad crossing bug on open water). Previously triplicated across
+// WaterSurfaceVertStage and WaterWaterline; moved here so it can never drift again.
+float2 WindWaveSampleXZ(float2 poolXZ, float2 worldXZ)
+{
+    if (_OceanWorldWaves > 0.5) return worldXZ / max(_WaveMetersPerUnit, WAVE_METERS_MIN);
+    return poolXZ;
+}
+
+// Envelope carriers: the group envelope is the MAGNITUDE of the complex sum of these four waves.
+// Random phases (below) make that magnitude Rayleigh-ish - the stochastic envelope of a real
+// narrow-banded sea (Longuet-Higgins 1984) - so chop arrives in APERIODIC sets and lulls instead of
+// the metronome the old base+sinA+sinB envelope produced. Each is (dirX, dirZ, wavenumber, angular
+// speed); their speed is the CARRIER's group velocity, so crests are still born at the back of a set
+// and die at the front. C# pair: WaterWaveBank.GroupA/B/C/D.
 float4 _WaveGroupA;
 float4 _WaveGroupB;
-// (envelope base, envelope amplitude, Stokes coefficient, Stokes DC offset). C# pair: WaterWaveBank.Shape.
+float4 _WaveGroupC;
+float4 _WaveGroupD;
+// Random phase per envelope carrier (seeded on the CPU alongside the component phases, so a given
+// authored state always reproduces the same sets). C# pair: WaterWaveBank.GroupPhases.
+float4 _WaveGroupPhases;
+// (envelope constant share, envelope magnitude gain, Stokes coefficient, Stokes DC offset). C# pair: WaterWaveBank.Shape.
 float4 _WaveShape;
 // Keeps the authored significant height honest as the crest term sharpens. C# pair: WaterWaveBank.StokesNorm.
 float  _WaveStokesNorm;
@@ -47,26 +73,47 @@ float WavePhase(int i, float2 m)
     return dot(_WaveA[i].xy, m) * _WaveA[i].z - _WaveA[i].w * _WaveTime + _WaveB[i].y;
 }
 
+// Guards the |z| division in the envelope gradient at exact four-way phasor cancellation, where the
+// gradient direction is meaningless anyway. KEEP: WaterWaveBank.GroupMagnitudeEpsilon - the CPU
+// mirror divides by the same floor (validator-guarded pair).
+#define WAVE_GROUP_MAG_EPSILON 0.0001
+
 // Group envelope at metre-space position m, plus its own gradient (per metre) for the slope path.
-// Mean is _WaveShape.x, so a grouping of 0 collapses the amplitude to zero and this is a constant.
+// env = _WaveShape.x + _WaveShape.y * |z|, z = sum of the four carrier phasors. A grouping of 0
+// zeroes _WaveShape.y and this is the constant _WaveShape.x, exactly as before.
 float WaveGroupEnvelope(float2 m, out float2 envelopeGradient)
 {
-    // Grouping off -> the envelope is the constant _WaveShape.x and its gradient is zero, so the four
+    // Grouping off -> the envelope is the constant _WaveShape.x and its gradient is zero, so the
     // transcendentals below are pure waste. The test is on a UNIFORM, so the branch is coherent across
     // the whole draw rather than per pixel. This is not a rare path: every scene migrated from the old
-    // rig starts at grouping 0, and those were paying for two sines and two cosines per water fragment
-    // to multiply by a constant.
+    // rig starts at grouping 0, and those were paying for four sincos pairs per water fragment to
+    // multiply by a constant.
     if (_WaveShape.y == 0.0)
     {
         envelopeGradient = 0.0;
         return _WaveShape.x;
     }
-    float argA = dot(_WaveGroupA.xy, m) * _WaveGroupA.z - _WaveGroupA.w * _WaveTime;
-    float argB = dot(_WaveGroupB.xy, m) * _WaveGroupB.z - _WaveGroupB.w * _WaveTime;
-    float amplitude = _WaveShape.y;
-    envelopeGradient = amplitude * (_WaveGroupA.xy * (_WaveGroupA.z * cos(argA))
-                                    + _WaveGroupB.xy * (_WaveGroupB.z * cos(argB)));
-    return _WaveShape.x + amplitude * (sin(argA) + sin(argB));
+    float argA = dot(_WaveGroupA.xy, m) * _WaveGroupA.z - _WaveGroupA.w * _WaveTime + _WaveGroupPhases.x;
+    float argB = dot(_WaveGroupB.xy, m) * _WaveGroupB.z - _WaveGroupB.w * _WaveTime + _WaveGroupPhases.y;
+    float argC = dot(_WaveGroupC.xy, m) * _WaveGroupC.z - _WaveGroupC.w * _WaveTime + _WaveGroupPhases.z;
+    float argD = dot(_WaveGroupD.xy, m) * _WaveGroupD.z - _WaveGroupD.w * _WaveTime + _WaveGroupPhases.w;
+    float sinA, cosA, sinB, cosB, sinC, cosC, sinD, cosD;
+    sincos(argA, sinA, cosA);
+    sincos(argB, sinB, cosB);
+    sincos(argC, sinC, cosC);
+    sincos(argD, sinD, cosD);
+    float re = cosA + cosB + cosC + cosD;
+    float im = sinA + sinB + sinC + sinD;
+    float magnitude = sqrt(re * re + im * im);
+    // d|z|/dm = (re * d(re)/dm + im * d(im)/dm) / |z|, with d(re)/dm = -k*dir*sin per carrier and
+    // d(im)/dm = +k*dir*cos. Mirrored EXACTLY by WaterWaveBank.GroupEnvelope - buoyancy reads the
+    // same sets the surface renders.
+    float2 dRe = -(_WaveGroupA.xy * (_WaveGroupA.z * sinA) + _WaveGroupB.xy * (_WaveGroupB.z * sinB)
+                   + _WaveGroupC.xy * (_WaveGroupC.z * sinC) + _WaveGroupD.xy * (_WaveGroupD.z * sinD));
+    float2 dIm = _WaveGroupA.xy * (_WaveGroupA.z * cosA) + _WaveGroupB.xy * (_WaveGroupB.z * cosB)
+                 + _WaveGroupC.xy * (_WaveGroupC.z * cosC) + _WaveGroupD.xy * (_WaveGroupD.z * cosD);
+    envelopeGradient = _WaveShape.y * (re * dRe + im * dIm) / max(magnitude, WAVE_GROUP_MAG_EPSILON);
+    return _WaveShape.x + _WaveShape.y * magnitude;
 }
 
 // Second-order Stokes crest shaping: h -> norm * (h + a*h^2 - a*variance). Sharpens crests and
