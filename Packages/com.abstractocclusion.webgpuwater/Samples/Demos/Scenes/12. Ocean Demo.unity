@@ -5576,8 +5576,8 @@ MonoBehaviour:
     m_Bits: 1
   m_VolumeTrigger: {fileID: 0}
   m_VolumeFrameworkUpdateModeOption: 2
-  m_RenderPostProcessing: 0
-  m_Antialiasing: 0
+  m_RenderPostProcessing: 1
+  m_Antialiasing: 1
   m_AntialiasingQuality: 2
   m_StopNaN: 0
   m_Dithering: 0
@@ -6097,7 +6097,7 @@ MonoBehaviour:
     reflectionStrength: 0.378
     envReflectionIntensity: 0.52
     reflectSunlight: 1
-    sunReflectionIntensity: 1
+    sunReflectionIntensity: 0.1
     fresnelFloor: 0.05
     fresnelPower: 3.23
     sunRoughness: 0.045

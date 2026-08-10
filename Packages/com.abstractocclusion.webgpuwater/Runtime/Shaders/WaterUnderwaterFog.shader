@@ -206,14 +206,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // height), plus the deepest submerged Y and the surface height above that deepest point (the
         // depth-darkening reference). The crossing follows crests/troughs, so the fog waterline is a real
         // meniscus: no fog over a trough, fog under a crest.
-        // endpointWet: the CALLER knows sceneWorld is ON the water (the third-exception's
-        // rendered-sheet endpoint). Then "no crossing found within reach" must mean THE WHOLE
-        // SEGMENT IS WET - not "exit at the fallback line": fabricating a near exit for a ray
-        // that in truth hugs the surface all the way to the sheet collapsed the span to a few
-        // metres and printed dark dots along the distant sheet edge (branch view cyan,
-        // 2026-08-10). A found crossing (the barely-submerged-lens local exit) behaves exactly
-        // as before - only the no-crossing default and the seam-blend target change.
-        void OceanWavyPath(float3 sceneWorld, float3 cam, bool rayStartsWet, bool endpointWet,
+        void OceanWavyPath(float3 sceneWorld, float3 cam, bool rayStartsWet,
                            out float pathLen, out float deepestY, out float surfaceRefY,
                            out float3 wetStart)
         {
@@ -280,11 +273,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // was written for is unchanged. tFlat above still centres the BAND search - the band
             // is defined around the rest plane, only the fallback line moves.
             float tFallback = (camSurf - cam.y) / dySafe;
-            // A wet endpoint owns the no-crossing case outright - see the endpointWet note at
-            // the function head. Also the seam-blend target, so a crossing found near the reach
-            // edge blends toward the sheet instead of snapping toward the fallback line.
-            float3 hitFlat = endpointWet ? sceneWorld
-                                         : cam + ray * saturate(tFallback); // fallback waterline
+            float3 hitFlat = cam + ray * saturate(tFallback); // fallback waterline
             float3 hit = hitFlat;
             // Where the march's reach ends: crossings found near it fade toward the flat fallback
             // (below), so the wavy->flat handover at the cap is a blend, not a visible seam line.
@@ -463,7 +452,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                         carveBeyond += ExclusionMeshRayLength(uv, sheetHit, dir, beyondLen);
                     if (carveBeyond > 0.0)
                     {
-                        OceanWavyPath(sceneWorld, cam, rayStartsWet, /* endpointWet */ false, pathLen, deepestY, surfaceRefY,
+                        OceanWavyPath(sceneWorld, cam, rayStartsWet, pathLen, deepestY, surfaceRefY,
                                       wetStart);
                         // After the call, which stamps its own id on entry - this is a carve pixel.
                         WaterFogDebugBranch(WATER_FOG_BRANCH_CARVE_MARCH);
@@ -497,63 +486,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                         && carveExitDist < hitDist
                         && SurfaceSignedGapRT(cam + dir * carveExitDist, camSurf) <= 0.0)
                     {
-                        OceanWavyPath(sceneWorld, cam, rayStartsWet, /* endpointWet */ false, pathLen, deepestY, surfaceRefY,
+                        OceanWavyPath(sceneWorld, cam, rayStartsWet, pathLen, deepestY, surfaceRefY,
                                       wetStart);
                         // After the call, which stamps its own id on entry - this is a carve pixel.
                         WaterFogDebugBranch(WATER_FOG_BRANCH_CARVE_MARCH);
-                        return;
-                    }
-
-                    // THE THIRD EXCEPTION (2026-08-09), from the raging-sea repro, seen live in
-                    // fog view 8 as a whole RED band at partial submersion: the RAY STARTS IN
-                    // WATER. rayStartsWet is the shared WaterlineCoverage contour saying the near
-                    // plane is submerged, yet the nearest RASTERISED sheet shows its AIR side -
-                    // which happens whenever the ray's own exit crossing sits closer than the
-                    // sheet rasterises (a barely-submerged lens between crests: the local exit is
-                    // inside the near-clip strip) or the sheet at the exit is edge-on/sub-pixel
-                    // (the far crest silhouettes - the 'small holes at distance'). The from-air
-                    // premise covers only the column BEHIND the sheet; the column between the EYE
-                    // and its own exit belongs to nobody, and zeroing it dropped the fog for the
-                    // whole band in one frame - the transition pop.
-                    //
-                    // Price [eye -> exit] with the SAME validated crossing search the two carve
-                    // exceptions above use, but END THE RAY AT THE RENDERED SHEET, not the opaque
-                    // scene: past the sheet is its own reflection/refraction imagery (the
-                    // PREPASS_WET rule below states the identical bound), and handing the marcher
-                    // the skybox endpoint would resurrect the authority-inversion bug this file's
-                    // header fixed (analytic both-under fogging the whole ray to the far plane).
-                    // The march starts at the camera and self-blends to the flat line past its
-                    // reach, so the span shrinks CONTINUOUSLY to zero as the lens breaks the
-                    // surface - a hard pop becomes a feather by construction. Cost is confined to
-                    // mask-wet from-air pixels: the partial-submersion band and the silhouette
-                    // dashes, both already the marching set's size class.
-                    if (rayStartsWet)
-                    {
-                        float3 sheetEnd = cam + dir * hitDist;
-                        // NO MARCH BEYOND THE MARCH'S OWN REACH (2026-08-10). Out there the ray
-                        // is by construction GRAZING - a steep ray meets the surface within a few
-                        // metres - and a grazing ray WEAVES around the VERTICAL gap field even
-                        // when the DRAWN surface never dips below it, so the march keeps finding
-                        // spurious nearby crossings and adjacent pixels price wildly different
-                        // spans (the far-silhouette speckle, which got WORSE once the no-crossing
-                        // default went full-span: found-vs-not now disagreed by the whole ray).
-                        // A wet start that meets the rendered sheet past the reach has no real
-                        // local exit to find: the whole segment is wet - price it directly, and
-                        // stamp PREPASS_WET because that is exactly the pricing it gets.
-                        if (hitDist > UNDERWATER_CROSS_STEP_METRES * UNDERWATER_CROSS_MAX_STEPS)
-                        {
-                            WaterFogDebugBranch(WATER_FOG_BRANCH_PREPASS_WET);
-                            pathLen = hitDist;
-                            deepestY = min(cam.y, sheetEnd.y);
-                            surfaceRefY = camSurf;
-                            wetStart = cam;
-                            return;
-                        }
-                        // Within reach the validated marcher owns it: a real local exit (the
-                        // barely-submerged lens) can only live here, and endpointWet already
-                        // makes its no-crossing default the sheet itself.
-                        OceanWavyPath(sheetEnd, cam, rayStartsWet, /* endpointWet */ true,
-                                      pathLen, deepestY, surfaceRefY, wetStart);
                         return;
                     }
 
@@ -581,25 +517,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 // sheet's own reflection/refraction imagery - the fog cannot see it and must
                 // not price it.
                 WaterFogDebugBranch(WATER_FOG_BRANCH_PREPASS_WET);
-                // MEDIAN eye depth over the under-sheet neighbourhood (F5). At the far junction
-                // the half-res prepass quantizes the silhouette, and this pixel's texel can carry
-                // a CLOSER crest's depth - a wet span far too short, a white unfogged speck in
-                // dense fog (branch view blue at the white holes, 2026-08-10). The two vertical
-                // neighbours are ALREADY loaded (from-air corroboration), so the correction costs
-                // zero fetches. MEDIAN, not max: a max would let a legitimately-near span under
-                // the waterline inherit a through-junction 100 m reading from one neighbour and
-                // print the inverse artifact (a dense speck); the median only moves when the
-                // CENTRE is the odd one out. With a single under-sheet neighbour the deeper of
-                // the two wins - erring wet is the KWS over-cover doctrine (a thick edge reads
-                // as water, a gap reads as a hole). Clamped to the scene end like every span.
-                float eyeUp   = (surfaceSignedUp   < 0.0) ? -surfaceSignedUp   : -1.0;
-                float eyeDown = (surfaceSignedDown < 0.0) ? -surfaceSignedDown : -1.0;
-                float underEye = surfaceEye;
-                if (eyeUp >= 0.0 && eyeDown >= 0.0)
-                    underEye = max(min(underEye, eyeUp), min(max(underEye, eyeUp), eyeDown));
-                else if (eyeUp >= 0.0)   underEye = max(underEye, eyeUp);
-                else if (eyeDown >= 0.0) underEye = max(underEye, eyeDown);
-                float wetDist = min(underEye / max(dot(dir, camForward), 1e-4) - cameraToStart,
+                float wetDist = min(surfaceEye / max(dot(dir, camForward), 1e-4) - cameraToStart,
                                     rayLen);
                 hit = cam + dir * wetDist;
                 pathLen = wetDist;
@@ -658,7 +576,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 float tFlat = saturate((_VolumeCenter.y - cam.y) / dySafe);
                 bool overCarve = _ExclusionCount > 0.5
                               && (_CameraDryVolume > 0.5 || InsideExclusion(cam + ray * tFlat));
-                OceanWavyPath(sceneWorld, cam, rayStartsWet, /* endpointWet */ false, pathLen, deepestY, surfaceRefY,
+                OceanWavyPath(sceneWorld, cam, rayStartsWet, pathLen, deepestY, surfaceRefY,
                               wetStart);
                 // AFTER the call, which stamps WAVY_MARCH on entry.
                 if (overCarve) WaterFogDebugBranch(WATER_FOG_BRANCH_CARVE_MARCH);
@@ -746,7 +664,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                     OceanPrepassPath(uv, sceneWorld, cam, rayStartsWet, pathLen, deepestY,
                                      surfaceRefY, wetStart);
                 else
-                    OceanWavyPath(sceneWorld, cam, rayStartsWet, /* endpointWet */ false, pathLen, deepestY, surfaceRefY,
+                    OceanWavyPath(sceneWorld, cam, rayStartsWet, pathLen, deepestY, surfaceRefY,
                                   wetStart);
 #endif
                 return;

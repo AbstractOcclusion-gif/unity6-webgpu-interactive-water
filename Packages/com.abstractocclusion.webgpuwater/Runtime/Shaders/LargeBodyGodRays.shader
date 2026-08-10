@@ -77,6 +77,9 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             // with the flat Simple fog waterline and pay zero extra fetches; Full derives them
             // from the live GPU field (see the surface-sync contract in the file header).
             #pragma multi_compile_fragment _ WATER_FOG_SIMPLE
+            // Match the fog's compile fork: bodies without a shore field do not carry the shore
+            // SDF and surf-front machinery through this already-large translation unit.
+            #pragma multi_compile_fragment _ WATER_STRIP_SHORE
             // A2: scene-lamp in-scatter inside the march, on the fog's own published-light
             // keyword (armed by PublishUnderwater from the SAME knobs the strength floats
             // carry; never together with WATER_FOG_SIMPLE - the budget tier stays sun-only,
@@ -260,9 +263,8 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             // 'firstGuessY' seeds the fixed point - callers pass camSurfY, the current-frame height
             // at the camera's xz, never the stale CPU scalar (see the surface-sync contract).
             //
-            // COST: SurfaceHeightAtXZ is ~6 texture fetches on an ocean body, so ~24 per pixel here.
-            // Paid at half res, only on rays that actually cross (the callers gate on ray
-            // direction and, for the pane case, on a scene that has an exclusion volume at all).
+            // The height RT makes each iteration one filtered texture read. Outside its window the
+            // camera-local surface remains the flat asymptote, matching the fog march.
             //
             // GRAZING RAYS converge slowest: with rayDir.y near 0 a small height change slides the
             // crossing far horizontally, onto a different part of the wave field. The clamp keeps
@@ -277,7 +279,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 for (int i = 0; i < GODRAY_SURFACE_CROSS_ITERS; i++)
                 {
                     float t = clamp((planeY - camWorld.y) / rayDir.y, 0.0, maxDist);
-                    planeY = SurfaceHeightAtXZ((camWorld + rayDir * t).xz);
+                    planeY = HeightRTSurfaceY((camWorld + rayDir * t).xz, firstGuessY);
                 }
                 return clamp((planeY - camWorld.y) / rayDir.y, 0.0, maxDist);
             }
@@ -301,13 +303,13 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             // temporal accumulation absorb. (~30 cm quantisation was a visible defect for the
             // PANE EDGE - a hard geometric silhouette, see the fixed point's header - but a march
             // END is integrated over jittered steps and history, where it is invisible.)
-            // COST: (1 + iters) x SurfaceHeightAtXZ = ~36 fetches, up-rays only, half res,
-            // Full tiers only (the Simple fork keeps the closed-form flat exit).
+            // Full tiers pay one height-RT read per test; Simple keeps the closed-form flat exit.
             #define GODRAY_EXIT_BISECT_ITERS 5
 
             float SubmergedExitDistance(float3 camWorld, float3 rayDir, float maxDist)
             {
-                if (SurfaceSignedGap(camWorld + rayDir * maxDist) <= 0.0)
+                float flatFallbackY = HeightRTSurfaceY(camWorld.xz, _VolumeCenter.y);
+                if (SurfaceSignedGapRT(camWorld + rayDir * maxDist, flatFallbackY) <= 0.0)
                     return maxDist; // still underwater at reach: no exit to stop at
                 float tLo = 0.0;    // submerged eye: underwater by definition
                 float tHi = maxDist;
@@ -315,7 +317,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 for (int i = 0; i < GODRAY_EXIT_BISECT_ITERS; i++)
                 {
                     float tMid = 0.5 * (tLo + tHi);
-                    if (SurfaceSignedGap(camWorld + rayDir * tMid) <= 0.0) tLo = tMid;
+                    if (SurfaceSignedGapRT(camWorld + rayDir * tMid, flatFallbackY) <= 0.0) tLo = tMid;
                     else tHi = tMid;
                 }
                 return 0.5 * (tLo + tHi);
@@ -368,7 +370,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 if (_WorldSpaceCameraPos.y > _VolumeCenter.y + SurfaceHeightBand()
                     && _LargeGodRayFromAir <= 0.0)
                     return half4(0.0, 0.0, 0.0, 1.0);
-                float camSurfY = SurfaceHeightAtXZ(_WorldSpaceCameraPos.xz);
+                float camSurfY = HeightRTSurfaceY(_WorldSpaceCameraPos.xz, _VolumeCenter.y);
 #endif
 
                 // Submerged: fade in over the first centimetres of submersion rather than
@@ -492,7 +494,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                     // is not a water entry, and that ray falls through to the waterline rule.
                     if (_CameraDryVolume > 0.5 && rayLeavesCarve
                         && carveExit < tExit
-                        && SurfaceSignedGap(camWorld + rayDir * carveExit) <= 0.0)
+                        && SurfaceSignedGapRT(camWorld + rayDir * carveExit, camSurfY) <= 0.0)
                     {
                         tEnter = carveExit;
                         enteredThroughCarve = true;
@@ -596,7 +598,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 //    already applied to the dry-carve eye's water entry above. A ray that leaves the
                 //    carve into AIR met no water inside it, so there is no pane weight to floor.
                 bool carveExitInWater = rayLeavesCarve
-                                      && SurfaceSignedGap(camWorld + rayDir * carveExit) <= 0.0;
+                                      && SurfaceSignedGapRT(camWorld + rayDir * carveExit, camSurfY) <= 0.0;
                 float paneFloor = (eyeInWater && carveExitInWater) ? _LargeGodRayFromAir : 0.0;
                 float regime = max(lerp(paneFloor, 1.0, submergeFade), paneWeight);
                 if (regime <= 0.0) return half4(0.0, 0.0, 0.0, 1.0);
@@ -1015,6 +1017,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             // Simple against the flat scalar its fog waterline uses - each tier's mask is the
             // same curve as its fog's, by construction.
             #pragma multi_compile_fragment _ WATER_FOG_SIMPLE
+            #pragma multi_compile_fragment _ WATER_STRIP_SHORE
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             // SurfaceSignedGap + WaterlineCoverage: the fog's per-pixel waterline curve,
