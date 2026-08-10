@@ -77,6 +77,7 @@ namespace AbstractOcclusion.WebGpuWater
             EnsureWaveBank();
             BedBaker.EnsureBaked();           // picks up useBedDepth being toggled on at runtime
             ShoreDepth.EnsureBaked(); // Layer A: keep the seabed field available for this body's property block
+            SeaStateFetch.EnsureBaked(); // detects direction changes and rebakes the bounded exposure field
             // Bounded bodies render the pool caustic; the windowed OCEAN renders the large-body caustic
             // in the sim-window's world frame (other windowed bodies still skip - see RenderCausticsForThisBody).
             // The tier can amortise the pass over N frames (the caustic RT simply holds).
@@ -103,7 +104,8 @@ namespace AbstractOcclusion.WebGpuWater
                                                      PeakSharpness, SeaDepth, LargeWaveChoppiness,
                                                      SwellWavelength, SwellHeight,
                                                      SwellHeadingRad, OceanCascadeReach);
-                _oceanFft?.Dispatch(_waveTime, sea, LargeWaveAmplitudeEffective, camXZ, foam);
+                _oceanFft?.Dispatch(_waveTime, sea, LargeWaveAmplitudeEffective, camXZ, foam,
+                                    SeaStateFetch);
             }
             if (_simulate && Time.frameCount % _causticInterval == 0)
                 RenderCausticsForThisBody();

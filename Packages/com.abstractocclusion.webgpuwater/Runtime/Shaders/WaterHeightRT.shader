@@ -65,6 +65,8 @@ Shader "Hidden/AbstractOcclusion/WebGpuWater/WaterHeightRT"
                 float surfaceWorldY : TEXCOORD0;
             };
 
+            float4x4 _WaterHeightRTViewProjection;
+
             // Grid vertices arrive as a flat lattice in WORLD metres around the origin; the
             // object matrix (WaterUnderwaterFogPass owns that frame) translates the lattice
             // onto the texel-snapped height window. The rest-plane mapping mirrors the
@@ -86,7 +88,10 @@ Shader "Hidden/AbstractOcclusion/WebGpuWater/WaterHeightRT"
                 float3 worldPos = DisplaceSurfaceVertex(poolFlat, worldFlat, (float4)0.0,
                                                         poolDisplaced, largeWaveSourceXZ);
                 HeightVaryings o;
-                o.pos = mul(UNITY_MATRIX_VP, float4(worldPos, 1.0));
+                // Use a pass-owned matrix instead of replacing the command buffer's camera
+                // matrices. The fog, foam overlay and splash redraw execute immediately after
+                // this offscreen raster and must inherit URP's untouched camera state.
+                o.pos = mul(_WaterHeightRTViewProjection, float4(worldPos, 1.0));
                 o.surfaceWorldY = worldPos.y;
                 return o;
             }
@@ -102,4 +107,3 @@ Shader "Hidden/AbstractOcclusion/WebGpuWater/WaterHeightRT"
         }
     }
 }
-

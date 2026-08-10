@@ -87,6 +87,7 @@ namespace AbstractOcclusion.WebGpuWater
         // the eager registry.
         WaterBedBaker _bedBaker;
         WaterShoreDepthField _shoreDepth;
+        WaterSeaStateFetchField _seaStateFetch;
         WaterUniformPublisher _publisher;
         WaterInputRouter _inputRouter;
 
@@ -97,6 +98,11 @@ namespace AbstractOcclusion.WebGpuWater
         // body, and the publisher serves WriteBodyProps callers defensively.
         WaterBedBaker BedBaker => _bedBaker ??= new WaterBedBaker(this);
         internal WaterShoreDepthField ShoreDepth => _shoreDepth ??= new WaterShoreDepthField(this);
+        internal WaterSeaStateFetchField SeaStateFetch
+            => _seaStateFetch ??= new WaterSeaStateFetchField(this);
+        internal bool SeaStateFetchBaked => _seaStateFetch != null && _seaStateFetch.IsBaked;
+        internal Vector2 SeaStateFetchHalfSize
+            => new Vector2(VolumeExtentSafe.x, VolumeExtentSafe.z);
         WaterUniformPublisher Publisher => _publisher ??= new WaterUniformPublisher(this);
         WaterInputRouter InputRouter => _inputRouter ??= new WaterInputRouter(this);
 
@@ -233,6 +239,7 @@ namespace AbstractOcclusion.WebGpuWater
 
             BedBaker.EnsureBaked(); // lazy terrain -> pool-space bed bake, only when useBedDepth is on
             ShoreDepth.EnsureBaked(); // Layer A: world-frame seabed field, published per body below
+            SeaStateFetch.EnsureBaked(); // bounded wind exposure; inert unless explicitly enabled
 
             Publisher.PublishSharedGlobals();
             EnsureWaveBank();
@@ -287,6 +294,7 @@ namespace AbstractOcclusion.WebGpuWater
                                    // resources the inline disposal did, and clears the sampler/window refs.
             _bedBaker?.Dispose();  // also re-arms the lazy bake gate for the next enable
             _shoreDepth?.Dispose(); // Layer A field; re-arms its own lazy bake gate too
+            _seaStateFetch?.Dispose(); // CPU/GPU wind-fetch field
             DestroySimWindowPatch(); // before restoring the surface material it borrows
             DestroyOceanClipmap();   // ditto - it borrows the same surface material
             DestroyChunkShell();     // per-body fog shell; shared material/mesh outlive it by design

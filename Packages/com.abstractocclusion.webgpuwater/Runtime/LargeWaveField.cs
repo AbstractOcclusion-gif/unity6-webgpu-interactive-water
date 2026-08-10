@@ -20,6 +20,7 @@ namespace AbstractOcclusion.WebGpuWater
     internal struct ShoreWaveContext
     {
         public WaterShoreDepthField Field; // null = no shore (open water everywhere)
+        public WaterSeaStateFetchField FetchField; // canonical CPU fetch bake; null = weight one
         public float ShoalDepth;           // _ShoreShoalDepth (attenuation band; follows the sea state)
         public float GreenBandDepth;       // _ShoreGreenBandDepth (authored band; Green's-law amplification)
         public float Refraction;           // _ShoreRefraction
@@ -504,7 +505,11 @@ namespace AbstractOcclusion.WebGpuWater
                             + phaseOffset + wavenumber * warpExtra * feel;
                 float sinP = Mathf.Sin(phase);
                 float cosP = Mathf.Cos(phase);
-                float amp = amplitudeScale * amplitude * ShoalWeight(ctx, shore.Depth, wavelength);
+                float fetchWeight = ctx.FetchField != null
+                    ? ctx.FetchField.Weight(x, z, wavelength)
+                    : 1f;
+                float amp = amplitudeScale * amplitude * ShoalWeight(ctx, shore.Depth, wavelength)
+                          * fetchWeight;
 
                 a.Height += amp * sinP;
                 a.HeightVelocity += amp * -angularSpeed * cosP; // d/dt sin(phase) = -angularSpeed*cos(phase)

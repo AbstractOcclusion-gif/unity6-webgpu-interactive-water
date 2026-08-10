@@ -11,6 +11,10 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         const float SecondRefraction = 0.8f;
         const float FirstSurfPeriod = 3f;
         const float SecondSurfPeriod = 7f;
+        const float ShortFetchNormalized = 0.01f;
+        const float LongFetchNormalized = 0.5f;
+        const float RippleWavelengthMeters = 1f;
+        const float LongWaveWavelengthMeters = 20f;
         const BindingFlags InstancePrivate = BindingFlags.Instance | BindingFlags.NonPublic;
         const string BedDepthSettingsFieldName = "bedDepthSettings";
         static readonly int ShoreRefractionProperty = Shader.PropertyToID("_ShoreRefraction");
@@ -47,6 +51,30 @@ namespace AbstractOcclusion.WebGpuWater.Tests
                 Object.DestroyImmediate(firstObject);
                 Object.DestroyImmediate(secondObject);
             }
+        }
+
+        [Test]
+        public void SeaStateFetchWeight_IsAttenuationOnlyAndGrowsWithFetch()
+        {
+            float shortFetch = WaterSeaStateFetchField.PhysicalWeight(
+                ShortFetchNormalized, LongWaveWavelengthMeters);
+            float longFetch = WaterSeaStateFetchField.PhysicalWeight(
+                LongFetchNormalized, LongWaveWavelengthMeters);
+
+            Assert.That(shortFetch, Is.InRange(0f, 1f));
+            Assert.That(longFetch, Is.InRange(0f, 1f));
+            Assert.That(longFetch, Is.GreaterThan(shortFetch));
+        }
+
+        [Test]
+        public void SeaStateFetchWeight_PreservesRipplesMoreThanLongWaves()
+        {
+            float ripple = WaterSeaStateFetchField.PhysicalWeight(
+                ShortFetchNormalized, RippleWavelengthMeters);
+            float longWave = WaterSeaStateFetchField.PhysicalWeight(
+                ShortFetchNormalized, LongWaveWavelengthMeters);
+
+            Assert.That(ripple, Is.GreaterThan(longWave));
         }
 
         static GameObject CreateInactiveVolume(string objectName, out WaterVolume volume)

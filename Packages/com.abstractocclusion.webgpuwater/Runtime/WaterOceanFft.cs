@@ -503,7 +503,8 @@ namespace AbstractOcclusion.WebGpuWater
         // Per-frame: (re)build H0 on a wind change, evolve, inverse-FFT to a spatial displacement cascade,
         // preview, and publish the displacement array as a global for the surface shader (from increment 2).
         internal void Dispatch(float waveTime, in SeaParams sea, float amplitude,
-                               Vector2 cameraXZ, in FoamParams foam)
+                               Vector2 cameraXZ, in FoamParams foam,
+                               WaterSeaStateFetchField fetchField)
         {
             if (!_ready) return;
 
@@ -581,6 +582,7 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetFloat(ID_FieldAmplitude, amplitude);
             _cs.SetTexture(_kBake, ID_Displacement, _displacement);
             _cs.SetTexture(_kBake, ID_HeightField, _heightField);
+            fetchField?.BindTo(_cs, _kBake);
             int bakeGroups = Mathf.CeilToInt(HeightFieldRes / (float)ThreadGroupSize);
             _cs.Dispatch(_kBake, bakeGroups, bakeGroups, 1);
 

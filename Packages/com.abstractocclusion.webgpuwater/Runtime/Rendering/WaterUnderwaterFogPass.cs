@@ -43,6 +43,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_OceanSurfacePrepassScale = Shader.PropertyToID("_OceanSurfacePrepassScale");
         static readonly int ID_WaterHeightRT = Shader.PropertyToID("_WaterHeightRT");
         static readonly int ID_WaterHeightRTFrame = Shader.PropertyToID("_WaterHeightRTFrame");
+        static readonly int ID_WaterHeightRTViewProjection =
+            Shader.PropertyToID("_WaterHeightRTViewProjection");
         internal const int HeightRtResolution = 256;
         internal const float HeightRtWindowSize = 512f;
         const float HeightRtHalfExtent = HeightRtWindowSize * 0.5f;
@@ -95,10 +97,7 @@ namespace AbstractOcclusion.WebGpuWater
             public MaterialPropertyBlock block;
             public Mesh mesh;
             public Matrix4x4 model;
-            public Matrix4x4 view;
-            public Matrix4x4 projection;
-            public Matrix4x4 cameraView;
-            public Matrix4x4 cameraProjection;
+            public Matrix4x4 viewProjection;
         }
 
         public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
@@ -224,10 +223,7 @@ namespace AbstractOcclusion.WebGpuWater
             data.block = _scratchBlock;
             data.mesh = GetHeightRtGrid();
             data.model = Matrix4x4.Translate(center);
-            data.view = view;
-            data.projection = projection;
-            data.cameraView = cameraData.GetViewMatrix();
-            data.cameraProjection = cameraData.GetGPUProjectionMatrix();
+            data.viewProjection = projection * view;
             builder.SetRenderAttachment(color, 0, AccessFlags.Write);
             builder.SetRenderAttachmentDepth(depth, AccessFlags.Write);
             builder.AllowPassCulling(false);
@@ -238,9 +234,8 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 Renderer source = s_SurfaceRenderers[0];
                 source.GetPropertyBlock(d.block);
-                ctx.cmd.SetViewProjectionMatrices(d.view, d.projection);
+                d.block.SetMatrix(ID_WaterHeightRTViewProjection, d.viewProjection);
                 ctx.cmd.DrawMesh(d.mesh, d.model, d.material, 0, 0, d.block);
-                ctx.cmd.SetViewProjectionMatrices(d.cameraView, d.cameraProjection);
             });
         }
 

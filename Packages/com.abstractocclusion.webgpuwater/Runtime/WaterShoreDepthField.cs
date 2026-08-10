@@ -101,6 +101,7 @@ namespace AbstractOcclusion.WebGpuWater
         bool _depthBaked;
         bool _sdfBaked;
         bool _bakeAttempted;         // lazy gate: bake once per enable, only when useBedDepth is on
+        int _bakeVersion;
 
         // CPU copies kept for the buoyancy mirror (LargeWaveField samples the SAME field as the
         // shaders, bilinearly, with no readback). Null until baked.
@@ -125,6 +126,8 @@ namespace AbstractOcclusion.WebGpuWater
         internal Texture SdfTexture => _sdfTex;
         internal Vector2 FieldCenter => _center;
         internal Vector2 FieldHalfSize => _halfSize;
+        internal int FieldResolution => _res;
+        internal int BakeVersion => _bakeVersion;
         internal float FieldWaterLevel => _waterLevel;
 
         // Lazily bake once when opted in. Publishing happens through WaterUniformPublisher's per-body
@@ -184,6 +187,7 @@ namespace AbstractOcclusion.WebGpuWater
             _cpuDepth = depth;
 
             BuildSdf(depth, res);
+            _bakeVersion++;
         }
 
         // CPU jump-flood signed distance + direction to shore, derived from the baked column depths.
@@ -418,6 +422,17 @@ namespace AbstractOcclusion.WebGpuWater
                 if (len > 1e-4f) { dirX /= len; dirZ /= len; }
                 else { dirX = 0f; dirZ = 0f; }
             }
+            return true;
+        }
+
+        internal bool TrySampleDepth(float worldX, float worldZ, out float depth)
+        {
+            depth = float.MaxValue;
+            if (!_depthBaked || _cpuDepth == null) return false;
+            float u = (worldX - _center.x) / (2f * _halfSize.x) + 0.5f;
+            float v = (worldZ - _center.y) / (2f * _halfSize.y) + 0.5f;
+            if (u < 0f || u > 1f || v < 0f || v > 1f) return false;
+            depth = BilinearCpu(_cpuDepth, u, v);
             return true;
         }
 

@@ -27,6 +27,7 @@ namespace AbstractOcclusion.WebGpuWater
                 if (!useBedDepth || !shore.DepthBaked) return ShoreWaveContext.Inactive;
                 ShoreWaveContext ctx = default;
                 ctx.Field = shore;
+                ctx.FetchField = SeaStateFetch;
                 ctx.ShoalDepth = ShoreShoalDepthEffective;
                 ctx.GreenBandDepth = shoreShoalDepth;
                 ctx.Refraction = shoreRefraction;

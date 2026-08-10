@@ -800,6 +800,7 @@ namespace AbstractOcclusion.WebGpuWater
             // sample whichever one last wrote the old graphics globals.
             sink.SetFloat(ID_ShoreBodyGate, _body.useBedDepth ? 1f : 0f);
             _body.ShoreDepth.WriteUniforms(sink);
+            _body.SeaStateFetch.WriteUniforms(sink);
             sink.SetColor(ID_DeepWaterColor, _body.deepWaterColor);
             sink.SetFloat(ID_ShorelineScale, 1f / Mathf.Max(WaterVolume.MinBedFadeDepth, _body.bedFadeDepth));
             sink.SetFloat(ID_ShorelineStrength, _body.bedTintStrength);

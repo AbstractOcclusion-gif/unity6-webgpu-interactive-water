@@ -14,6 +14,7 @@
 #define WEBGPUWATER_LARGE_WAVES_INCLUDED
 
 #include "WaterShared.hlsl" // OCEAN_FFT_* cascade layout (shared with the computes)
+#include "WaterSeaStateFetch.hlsl"
 // Footprint frame for the bounded-body edge feather (LbwEdgeWeight). Include-guarded, so consumers
 // that already pulled WaterVolume.hlsl themselves (all of them today) see it exactly once.
 #include "WaterVolume.hlsl"
@@ -263,7 +264,8 @@ void LbwAccumulateBand(float2 worldXZ, int count, float baseWavelength, float wa
                          : smoothstep(minWavelength * LBW_BANDLIMIT_LOW, minWavelength * LBW_BANDLIMIT_HIGH, wavelength);
         // Shoaling: attenuate this component by depth/wavelength so short waves die first and all
         // waves fall to zero as the water column runs out (no punching below the seabed near shore).
-        float a = amplitudeScale * amplitude * bandWeight * ShoalWeight(shore.depth, wavelength);
+        float a = amplitudeScale * amplitude * bandWeight * ShoalWeight(shore.depth, wavelength)
+                * SeaStateFetchWeight(worldXZ, wavelength);
 
         f.height    += a * sinP;
         f.slope     += a * k * dirR * cosP;             // d/dxz of A*sin(phase)
@@ -368,7 +370,9 @@ float3 OceanFftDisplacementShore(float2 worldXZ, ShoreData shore)
         float slice = min((float)c, _OceanFftCascadeCount - 1.0);   // never index past the array depth
         float2 uv = worldXZ / max(_OceanFftDomainSizes[c], 1e-3);
         float fade = OceanCascadeDistanceFade(camDist, _OceanFftVisibleAreas[c]);
-        sum += (active * fade * OceanCascadeShoalWeight(c, shore))
+        float fetch = SeaStateFetchWeight(worldXZ,
+            max(_OceanFftDomainSizes[c], 1e-3) * OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION);
+        sum += (active * fade * OceanCascadeShoalWeight(c, shore) * fetch)
              * _OceanFftDisplacement.SampleLevel(sampler_OceanFftDisplacement, float3(uv, slice), 0).xyz;
     }
     return sum;
@@ -417,7 +421,9 @@ OceanFftCascadeSum OceanFftNormalSumShore(float2 worldXZ, ShoreData shore)
         float2 uv = worldXZ / domain;
         float fade = OceanCascadeDistanceFade(camDist, _OceanFftVisibleAreas[c]);
         float lod = log2(1.0 + camDist / domain); // farther -> coarser mip (distance anti-aliasing)
-        float shoal = active * OceanCascadeShoalWeight(c, shore);
+        float fetch = SeaStateFetchWeight(worldXZ,
+            domain * OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION);
+        float shoal = active * OceanCascadeShoalWeight(c, shore) * fetch;
         float4 tap = _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod);
         sum.tilt  += (shoal * max(fade, OceanFftFarSlopeFloor[c])) * tap.xz;
         sum.pinch += (shoal * fade) * tap.y;

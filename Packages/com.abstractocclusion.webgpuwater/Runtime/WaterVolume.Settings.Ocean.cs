@@ -50,10 +50,11 @@ namespace AbstractOcclusion.WebGpuWater
                      "state there; lower wind then scales it down. Used only when Wind Drives Ambient Sea " +
                      "State is enabled.")]
             [Min(AmbientWindReferenceSpeedMin)] public float ambientWindReferenceSpeed = DefaultAmbientWindReferenceSpeed;
-            [Tooltip("SIGNIFICANT WAVE HEIGHT (metres): the average height of the biggest third of the " +
-                     "waves, which is what 'a 2 m sea' means. This is the honest amount of water the " +
-                     "spectrum carries - independent of wavelength, so raising it makes the SAME waves " +
-                     "steeper rather than bigger-and-longer.")]
+            [Tooltip("SIGNIFICANT WAVE HEIGHT (metres): average CREST-TO-TROUGH height of the highest " +
+                     "third of waves, not crest elevation above the mean surface. A 15 m setting " +
+                     "typically places prominent crests about 7.5 m above mean water, with individual " +
+                     "waves varying as the spectrum interferes. Independent of wavelength, so raising " +
+                     "it makes the same waves steeper rather than longer.")]
             [Min(0f)] public float significantWaveHeight = DefaultSignificantWaveHeight;
             [Tooltip("PEAK WAVELENGTH (metres): the crest-to-crest distance of the dominant wave. This is " +
                      "the sea's SCALE - and, with Significant Height, its steepness. A short peak with a " +
@@ -98,6 +99,12 @@ namespace AbstractOcclusion.WebGpuWater
                      "ripples are damped (surfactant films), while longer waves roll through untouched. " +
                      "Shading only - heights and buoyancy are untouched. 0 = none.")]
             [Range(0f, 1f)] public float seaStateSlicks = 0f;
+            [Tooltip("Bounded open water: bake the upwind distance to land and attenuate wave height " +
+                     "where fetch is short. Disabled by default; unbounded oceans remain inert.")]
+            public bool seaStateFetchEnabled = false;
+            [Tooltip("How strongly the physical wind-fetch attenuation affects displacement. 0 keeps " +
+                     "the existing wave field; 1 applies the full baked response.")]
+            [Range(0f, 1f)] public float seaStateFetchStrength = 1f;
             [Tooltip("Swell travel direction OFFSET from the wind, in degrees. Real swell radiates from " +
                      "a distant storm, not the local wind - most of the open ocean carries swell crossing " +
                      "the wind sea at an angle, which is what breaks the single-direction look. 0 = " +
@@ -294,6 +301,8 @@ namespace AbstractOcclusion.WebGpuWater
         internal float swellWavelength => ocean.swellWavelength;
         internal float seaStateGusts => ocean.seaStateGusts;
         internal float seaStateSlicks => ocean.seaStateSlicks;
+        internal bool seaStateFetchEnabled => ocean.seaStateFetchEnabled;
+        internal float seaStateFetchStrength => ocean.seaStateFetchStrength;
         internal float swellHeadingOffsetDegrees => ocean.swellHeadingOffsetDegrees;
         internal float oceanWindTurbulence => ocean.oceanWindTurbulence;
         internal bool unboundedOcean => ocean.unboundedOcean;

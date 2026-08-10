@@ -54,6 +54,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const string OceanFftComputeAssetName = "OceanFft";
         const string OceanFftAssetName = "WaterOceanFft";
         const string OceanSpectrumAssetName = "WaterOceanSpectrum";
+        const string SeaStateFetchHlslAssetName = "WaterSeaStateFetch";
+        const string SeaStateFetchCSharpAssetName = "WaterSeaStateFetchField";
         // The scene-lights family (2026-07-31): WATER_SCENE_LIGHT_MAX sizes the HLSL uniform
         // arrays, MaxSceneLights sizes the C# staging arrays and the publisher's cap. Drift =
         // a SetVectorArray over-run or lamps silently dropped. Was a KEEP-IN-SYNC comment.
@@ -132,6 +134,16 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             ("LBW_HASH_SINE_FREQ",           "HashSineFrequency"),
             ("LBW_HASH_SINE_SCALE",          "HashSineScale"),
             ("LBW_PHASE_HASH_STREAM_OFFSET", "PhaseHashStreamOffset"),
+        };
+
+        static readonly (string Hlsl, string CSharp)[] SeaStateFetchConstantPairs =
+        {
+            ("SEA_STATE_FETCH_RESOLUTION", "Resolution"),
+            ("SEA_STATE_FETCH_FULL_METERS", "FullyDevelopedFetchMeters"),
+            ("SEA_STATE_FETCH_FULL_WAVELENGTH", "FullyDevelopedWavelengthMeters"),
+            ("SEA_STATE_FETCH_PEAK_EXPONENT", "PeakWavelengthFetchExponent"),
+            ("SEA_STATE_FETCH_HEIGHT_EXPONENT", "SignificantHeightFetchExponent"),
+            ("SEA_STATE_FETCH_EPSILON", "MinimumHalfExtentMeters"),
         };
 
         // Height-affecting SURF_* #defines in WaterSurfWaves.hlsl mirrored as consts in
@@ -383,6 +395,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 !TryReadPackageAsset(OceanFftComputeAssetName, ComputeExtension, out string oceanFftComputeSource, out readError) ||
                 !TryReadPackageAsset(OceanFftAssetName, CSharpExtension, out string oceanFftSource, out readError) ||
                 !TryReadPackageAsset(OceanSpectrumAssetName, CSharpExtension, out string oceanSpectrumSource, out readError) ||
+                !TryReadPackageAsset(SeaStateFetchHlslAssetName, HlslExtension, out string seaStateFetchHlslSource, out readError) ||
+                !TryReadPackageAsset(SeaStateFetchCSharpAssetName, CSharpExtension, out string seaStateFetchCSharpSource, out readError) ||
                 !TryReadPackageAsset(FogHlslAssetName, HlslExtension, out string fogHlslSource, out readError) ||
                 !TryReadPackageAsset(UniformPublisherAssetName, CSharpExtension, out string uniformPublisherSource, out readError))
             {
@@ -411,6 +425,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                             OceanFftAssetName, oceanFftSource, OceanFftSizeConstantPairs);
             CollectProblems(problems, OceanFftComputeAssetName, ComputeExtension, oceanFftComputeSource,
                             OceanSpectrumAssetName, oceanSpectrumSource, OceanSpectrumConstantPairs);
+            CollectProblems(problems, SeaStateFetchHlslAssetName, HlslExtension, seaStateFetchHlslSource,
+                            SeaStateFetchCSharpAssetName, seaStateFetchCSharpSource,
+                            SeaStateFetchConstantPairs);
             CollectProblems(problems, FoamParticlesAssetName, ComputeExtension, foamComputeSource,
                             FoamParticlesAssetName, foamParticlesSource, FoamThreadGroupConstantPairs);
             CollectProblems(problems, FogHlslAssetName, HlslExtension, fogHlslSource,

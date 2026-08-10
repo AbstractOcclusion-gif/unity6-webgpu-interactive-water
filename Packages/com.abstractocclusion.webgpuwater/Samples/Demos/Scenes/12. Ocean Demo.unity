@@ -246,144 +246,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 773898433}
   m_LocalEulerAnglesHint: {x: 41.59, y: -139.52, z: 0}
---- !u!1 &230721764
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 230721768}
-  - component: {fileID: 230721767}
-  - component: {fileID: 230721766}
-  - component: {fileID: 230721765}
-  - component: {fileID: 230721769}
-  - component: {fileID: 230721770}
-  m_Layer: 0
-  m_Name: Cube transparent
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 0
---- !u!65 &230721765
-BoxCollider:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 230721764}
-  m_Material: {fileID: 0}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_LayerOverridePriority: 0
-  m_IsTrigger: 0
-  m_ProvidesContacts: 0
-  m_Enabled: 1
-  serializedVersion: 3
-  m_Size: {x: 1, y: 1, z: 1}
-  m_Center: {x: 0, y: 0, z: 0}
---- !u!23 &230721766
-MeshRenderer:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 230721764}
-  m_Enabled: 1
-  m_CastShadows: 1
-  m_ReceiveShadows: 1
-  m_DynamicOccludee: 1
-  m_StaticShadowCaster: 0
-  m_MotionVectors: 1
-  m_LightProbeUsage: 1
-  m_ReflectionProbeUsage: 1
-  m_RayTracingMode: 2
-  m_RayTraceProcedural: 0
-  m_RayTracingAccelStructBuildFlagsOverride: 0
-  m_RayTracingAccelStructBuildFlags: 1
-  m_SmallMeshCulling: 1
-  m_ForceMeshLod: -1
-  m_MeshLodSelectionBias: 0
-  m_RenderingLayerMask: 1
-  m_RendererPriority: 0
-  m_Materials:
-  - {fileID: 2100000, guid: a15612aca3bd720418c54355ee896cc0, type: 2}
-  m_StaticBatchInfo:
-    firstSubMesh: 0
-    subMeshCount: 0
-  m_StaticBatchRoot: {fileID: 0}
-  m_ProbeAnchor: {fileID: 0}
-  m_LightProbeVolumeOverride: {fileID: 0}
-  m_ScaleInLightmap: 1
-  m_ReceiveGI: 1
-  m_PreserveUVs: 0
-  m_IgnoreNormalsForChartDetection: 0
-  m_ImportantGI: 0
-  m_StitchLightmapSeams: 1
-  m_SelectedEditorRenderState: 3
-  m_MinimumChartSize: 4
-  m_AutoUVMaxDistance: 0.5
-  m_AutoUVMaxAngle: 89
-  m_LightmapParameters: {fileID: 0}
-  m_GlobalIlluminationMeshLod: 0
-  m_SortingLayerID: 0
-  m_SortingLayer: 0
-  m_SortingOrder: 0
-  m_MaskInteraction: 0
-  m_AdditionalVertexStreams: {fileID: 0}
---- !u!33 &230721767
-MeshFilter:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 230721764}
-  m_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
---- !u!4 &230721768
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 230721764}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 8.1, y: -0.54, z: -15.13}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &230721769
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 230721764}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: a8922b00576b29b4eb483c75656fa879, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterFogTransparent
---- !u!114 &230721770
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 230721764}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 26fbf81571b2cba4483f971ae5c25f86, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterMembership
 --- !u!1 &234566205
 GameObject:
   m_ObjectHideFlags: 0
@@ -5803,7 +5665,7 @@ Transform:
   m_GameObject: {fileID: 961739749}
   serializedVersion: 2
   m_LocalRotation: {x: 0.007616442, y: 0.84236825, z: -0.011909499, w: 0.538717}
-  m_LocalPosition: {x: 0.71, y: -1.06, z: -12.21}
+  m_LocalPosition: {x: 0.71, y: 4.76, z: -12.21}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -6136,8 +5998,8 @@ MonoBehaviour:
     largeWaveChoppiness: 1.09
     windDrivesAmbientSeaState: 0
     ambientWindReferenceSpeed: 3
-    significantWaveHeight: 5
-    peakWavelength: 120
+    significantWaveHeight: 15
+    peakWavelength: 300
     peakSharpness: 3.3
     waveScale: 1
     seaDepth: 0
@@ -6146,13 +6008,15 @@ MonoBehaviour:
     swellWavelength: 140
     seaStateGusts: 0.307
     seaStateSlicks: 0.503
+    seaStateFetchEnabled: 0
+    seaStateFetchStrength: 1
     swellHeadingOffsetDegrees: 50
     oceanWindTurbulence: 0.25
     unboundedOcean: 1
     edgeFeatherMeters: 10
     clipmapGridResolution: 96
     clipmapOuterRadius: 10000
-    oceanDetailFalloff: 0.003
+    oceanDetailFalloff: 0.03
     horizonFadeDistance: 9000
     horizonHazeColor: {r: 0.15688857, g: 0.24528301, b: 0.20912164, a: 0}
     horizonHazeDensity: 0.13
@@ -6293,7 +6157,7 @@ MonoBehaviour:
     conserveMaxCorrection: 0.05
   underwaterSurfaceSettings:
     physicalFresnel: 1
-    tirEdgeSoftness: 0.08
+    tirEdgeSoftness: 0
     fresnelFloor: 0
     reflectionStrength: 0.233
     mirrorWaterBlend: 0.5
@@ -6302,9 +6166,9 @@ MonoBehaviour:
     foamSunGlow: 0.4
     detailNormalStrength: 0
     meniscus: 1
-    meniscusWidthPixels: 5
+    meniscusWidthPixels: 1
     meniscusStrength: 0.7
-    meniscusWarp: 0.35
+    meniscusWarp: 0
   _legacyReflectionMode: 1
   _legacyEnvironmentSource: 0
   timeScale: 0.75
@@ -16572,13 +16436,74 @@ ParticleSystem:
         m_PostInfinity: 2
         m_RotationOrder: 4
     vectorLabel1_3: W
+--- !u!1 &2095013942
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 2095013944}
+  - component: {fileID: 2095013943}
+  m_Layer: 0
+  m_Name: GameObject (1)
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &2095013943
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2095013942}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 129599e4d0d1483093ca0b9d1b736e93, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterWaveGauge
+  volume: {fileID: 1579798799}
+  resolveContainingVolume: 1
+  minimumWaveProminence: 0.05
+  reversalThreshold: 0.01
+  rollingWindowSeconds: 60
+  observedWaveCapacity: 128
+  metresBelowMean: 10
+  metresAboveMean: 15
+  staffWidth: 0.06
+  markerWidth: 0.045
+  labelScale: 0.08
+  lineMaterial: {fileID: 2100000, guid: 5ee402a2bc9e04f47bfb43697c13b2f5, type: 2}
+  staffColor: {r: 1, g: 1, b: 1, a: 1}
+  surfaceColor: {r: 1, g: 1, b: 1, a: 1}
+  crestColor: {r: 1, g: 0.22, b: 0.12, a: 1}
+  troughColor: {r: 0.1, g: 0.75, b: 1, a: 1}
+  showReadout: 1
+  labelCamera: {fileID: 961739752}
+--- !u!4 &2095013944
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2095013942}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 21.34825, y: 0, z: -16.49}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
   m_Roots:
   - {fileID: 961739753}
   - {fileID: 773898433}
-  - {fileID: 230721768}
   - {fileID: 1318482036}
   - {fileID: 639025607}
   - {fileID: 1664993627}
@@ -16586,3 +16511,4 @@ SceneRoots:
   - {fileID: 2063096811}
   - {fileID: 1990000011}
   - {fileID: 901591112}
+  - {fileID: 2095013944}

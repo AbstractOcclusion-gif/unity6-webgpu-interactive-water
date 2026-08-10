@@ -14,6 +14,7 @@
 // FFT_SIZE so the groupshared buffers are compile-time sized; the C# side asserts resolution == FFT_SIZE.
 // WebGPU-safe: FFT_SIZE=128 -> 128 threads/group (<256) and 6 KB groupshared (<16 KB); half-float targets.
 #include "WaterShared.hlsl"     // OCEAN_FFT_MAX_CASCADES (shared cascade layout)
+#include "WaterSeaStateFetch.hlsl"
 #include "WaterFoamCommon.hlsl" // FoamDecayBlend: split decay shared with WaterSim.compute
 
 #pragma kernel SpectrumInit
@@ -619,7 +620,9 @@ void BakeHeightField(uint3 id : SV_DispatchThreadID)
     for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
     {
         if (c >= (int)OceanFftCascades) break;
+        float wavelength = OceanDomainSizes[c] * OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION;
         disp += OceanCascadeDistanceFade(camDist, OceanVisibleAreas[c])
+              * SeaStateFetchWeight(worldXZ, wavelength)
               * OceanCascadeDisplacementBilinear(worldXZ, (uint)c);
     }
     // Amplitude scales ALL channels, mirroring the render path (WaterLargeWaves.hlsl:

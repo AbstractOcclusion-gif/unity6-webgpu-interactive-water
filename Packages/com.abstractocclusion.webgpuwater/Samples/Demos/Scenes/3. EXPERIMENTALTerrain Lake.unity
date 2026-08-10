@@ -11526,6 +11526,9 @@ MonoBehaviour:
     cascadeReach: 3
     swellHeight: 0
     swellWavelength: 140
+    seaStateGusts: 0
+    seaStateSlicks: 0
+    swellHeadingOffsetDegrees: 0
     oceanWindTurbulence: 0.25
     unboundedOcean: 0
     edgeFeatherMeters: 10
@@ -11603,6 +11606,7 @@ MonoBehaviour:
     useScreenSpaceReflection: 0
     usePlanarReflection: 1
     reflectUrpProbe: 0
+    reflectionProbe: {fileID: 0}
     realRefraction: 1
     planarExcludeLayers:
       serializedVersion: 2
@@ -11698,7 +11702,7 @@ MonoBehaviour:
     waterFog: 1
     fogColor: {r: 0.030352416, g: 0.081567064, b: 0.10943389, a: 1}
     fogExtinction: {r: 0.030266989, g: 0.031215513, b: 0.04905659, a: 1}
-    fogDensity: 0
+    fogDensity: 0.64
     waterOpacity: 0
     lightScatter: 0
   _legacyWaterFog: 0
@@ -11707,9 +11711,9 @@ MonoBehaviour:
   _legacyFogDensity: 2
   _legacyWaterOpacity: 0
   volumeScatterSettings:
-    volumeScatter: 0
+    volumeScatter: 1
     scatterColor: {r: 0.05, g: 0.22, b: 0.32, a: 1}
-    scatterIntensity: 2.05
+    scatterIntensity: 0.6
     scatterAnisotropy: 0.5
     scatterAmbientTerm: 1
     scatterSunTerm: 1
@@ -11744,10 +11748,10 @@ MonoBehaviour:
     windWaves: 1
     windSpeed: 3
     windFromDegrees: 0
-    waveLengthMeters: 0.3
+    waveLengthMeters: 0.8
     waveHeightMeters: 0.03
-    waveGrouping: 0
-    waveCrestSharpness: 0
+    waveGrouping: 0.549
+    waveCrestSharpness: 0.227
     waveCount: 12
     waveDirectionSpread: 1
     waveNormalStrength: 0.3

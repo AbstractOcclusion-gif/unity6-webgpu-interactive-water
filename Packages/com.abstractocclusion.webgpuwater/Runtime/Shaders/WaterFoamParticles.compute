@@ -32,6 +32,9 @@
 #pragma multi_compile _ OCEAN_FFT_GLUE
 
 #include "WaterShared.hlsl"     // OCEAN_FFT_* cascade layout (shared with generation/sampling)
+#ifdef OCEAN_FFT_GLUE
+#include "WaterSeaStateFetch.hlsl" // only the ocean height-glue variant owns this resource
+#endif
 #include "WaterExclusion.hlsl"  // dry-interior volumes: particles inside are killed (uniforms set per dispatch)
 #include "WaterVolume.hlsl"     // pool/window <-> world frame (same uniforms as the render side)
 #include "WaterFoamCommon.hlsl" // FoamParticleEnvelope: shared with the quad render
@@ -627,7 +630,9 @@ float SurfaceWorldY(float3 worldPos, float2 simNorm)
         float cascadeShoal = lerp(1.0, ShoalWeight(shoreDepth,
                                                    domain * OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION),
                                   shoreInfluence);
-        height += active * cascadeShoal
+        float fetch = SeaStateFetchWeight(worldPos.xz,
+            domain * OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION);
+        height += active * cascadeShoal * fetch
                 * _OceanFftSpatial.SampleLevel(sampler_OceanFftSpatial, float3(uv, slice), 0).y;
     }
     // The wake/interactive ripple rides ON TOP of the swell on oceans too (the surface mesh adds

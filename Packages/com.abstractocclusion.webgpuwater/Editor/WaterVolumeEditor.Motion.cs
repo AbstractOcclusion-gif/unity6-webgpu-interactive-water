@@ -150,6 +150,20 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                         DrawFields(
                             WaterVolumePropertyPaths.SeaStateGusts,
                             WaterVolumePropertyPaths.SeaStateSlicks));
+                    _showWindFetch = WaterEditorUI.SubSection("Wind Fetch", _showWindFetch, () =>
+                    {
+                        DrawFields(
+                            WaterVolumePropertyPaths.SeaStateFetchEnabled,
+                            WaterVolumePropertyPaths.SeaStateFetchStrength);
+                        if (target is WaterVolume fetchVolume)
+                        {
+                            string state = !fetchVolume.seaStateFetchEnabled ? "Disabled"
+                                         : fetchVolume.unboundedOcean ? "Inert on unbounded ocean"
+                                         : fetchVolume.SeaStateFetchBaked ? "Baked"
+                                         : "Waiting for shore field";
+                            EditorGUILayout.LabelField("Bake state", state, EditorStyles.miniLabel);
+                        }
+                    });
                     // Topology and water body, not feel: all decided once when the body is authored.
                     _showOceanSwellAdvanced = WaterEditorUI.SubSection("Advanced", _showOceanSwellAdvanced, () =>
                         DrawFields(
@@ -202,13 +216,15 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             float significant = Mathf.Sqrt(windSea * windSea + swell * swell);
             if (significant <= 0f) return;
 
+            float prominentCrestElevation = significant * SignificantHeightToCrestElevation;
             float largest = significant * Mathf.Sqrt(Mathf.Log(ObservedWaveCount) / 2f);
             float peakPeriod = Mathf.Sqrt(peakWavelength / LargeWaveField.SurfDeepwaterLengthCoef);
             EditorGUILayout.LabelField(" ",
-                $"Sea: {significant:0.#} m typical, biggest ~{largest:0.#} m "
-                + $"(crest to trough) - {DescribeSeaState(significant)}",
+                $"Visible crest ~{prominentCrestElevation:0.#} m above mean; Hs {significant:0.#} m "
+                + $"crest-to-trough (highest-third average) - {DescribeSeaState(significant)}",
                 EditorStyles.miniLabel);
-            EditorGUILayout.LabelField(" ", $"Peak period {peakPeriod:0.#} s",
+            EditorGUILayout.LabelField(" ",
+                $"Rare wave ~{largest:0.#} m crest-to-trough; peak period {peakPeriod:0.#} s",
                                        EditorStyles.miniLabel);
         }
 
@@ -228,6 +244,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // Waves in the run the "biggest" figure is quoted over - roughly a storm's duration, which is
         // the window the textbook 1.86x Hs figure assumes.
         const float ObservedWaveCount = 1000f;
+        const float SignificantHeightToCrestElevation = 0.5f;
 
         // `largeWaveAmplitude` is a retired whole-field multiplier (see
         // MigrateOceanAmplitudeIntoMetresV12). Unbounded oceans are folded back to 1 on load, so this

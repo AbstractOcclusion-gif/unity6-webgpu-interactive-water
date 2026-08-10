@@ -641,7 +641,6 @@ namespace AbstractOcclusion.WebGpuWater
             // is no shore layer - or the backend errors "_ShoreDepthTexSim not set" on a body that has
             // foam but no coast (e.g. the open ocean with the surf layer off).
             shoreFoam.BindTo(cs, _kUpdate);
-
             cs.SetFloat(ID_Size, volume.SimResolution);
             // Same band the surface fades its ripple over, so a particle and the water under it
             // agree on the height through the window border instead of by up to a full amplitude.
@@ -798,6 +797,7 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 cs.SetTexture(_kUpdate, ID_OceanFftSpatial, volume.OceanFftSpatialTexture);
                 cs.SetFloat(ID_OceanFftAmplitude, volume.LargeWaveAmplitudeEffective);
+                volume.SeaStateFetch.BindTo(cs, _kUpdate);
             }
             cs.Dispatch(_kUpdate, _capacityPow2 / UpdateThreadGroupSize, 1, 1);
 
@@ -865,6 +865,7 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 cs.SetTexture(_kRasterizeDensity, ID_OceanFftSpatial, volume.OceanFftSpatialTexture);
                 cs.SetFloat(ID_OceanFftAmplitude, volume.LargeWaveAmplitudeEffective);
+                volume.SeaStateFetch.BindTo(cs, _kRasterizeDensity);
             }
             cs.Dispatch(_kRasterizeDensity, _capacityPow2 / UpdateThreadGroupSize, 1, 1);
         }
