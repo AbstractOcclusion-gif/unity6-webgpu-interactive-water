@@ -454,7 +454,11 @@ void ExclusionConstrainInterval(float c0, float c1, inout float tMin, inout floa
         if (c0 > 0.0) tMax = tMin - 1.0; // constant and violated -> empty interval
         return;
     }
-    float tCross = -c0 / c1;
+    // The guard above makes c1 non-zero on this path, but some shader compilers do not carry that
+    // proof through control flow. Clamp without changing any live value or its sign.
+    float safeSlope = c1 > 0.0 ? max(c1, EXCLUSION_PRISM_SLOPE_EPSILON)
+                               : min(c1, -EXCLUSION_PRISM_SLOPE_EPSILON);
+    float tCross = -c0 / safeSlope;
     if (c1 > 0.0) tMax = min(tMax, tCross);
     else          tMin = max(tMin, tCross);
 }

@@ -535,6 +535,9 @@ float LargeBodyWaveHeight(float2 worldXZ)
 void LargeBodyWaveHeightDispShore(float2 worldXZ, ShoreData shore, SurfWaveSample surf,
                                   out float height, out float2 disp)
 {
+    height = 0.0;
+    disp = float2(0.0, 0.0);
+
     // Edge guard on height AND chop: unfeathered horizontal displacement would push border
     // vertices past the footprint even after the height flattens.
     float edge = LbwEdgeWeight(worldXZ);

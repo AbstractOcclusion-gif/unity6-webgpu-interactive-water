@@ -253,8 +253,6 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_DensityCamPos = Shader.PropertyToID("_DensityCamPos");
         static readonly int ID_DensityCamForward = Shader.PropertyToID("_DensityCamForward");
         static readonly int ID_SizeHeroPower = Shader.PropertyToID("_SizeHeroPower");
-        static readonly int ID_DensityStampTex = Shader.PropertyToID("_DensityStampTex");
-        static readonly int ID_DensityStampGrid = Shader.PropertyToID("_DensityStampGrid");
         static readonly int ID_BurstRequests = Shader.PropertyToID("BurstRequests");
         static readonly int ID_BurstRequestCount = Shader.PropertyToID("_BurstRequestCount");
         static readonly int ID_FoamTime = Shader.PropertyToID("_FoamTime");
@@ -629,6 +627,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             ComputeShader cs = particleCompute;
             volume.WriteSimFrameUniforms(cs);
+            volume.WriteWaveUniforms(cs);
             // Surf breaker fronts: plunging-lip spray source in Spawn + shoal/front height in the
             // density glue (RasterizeDensity). Same binder as the ripple-sim foam injection, so
             // the particles' front evaluation can never drift from the injected whitewash their
@@ -846,15 +845,14 @@ namespace AbstractOcclusion.WebGpuWater
             // backends, mirroring the Spawn kernel's pattern). The shore binder re-runs here
             // because the kernel executes outside DispatchSimulation's bind scope.
             volume.BuildShoreFoamState().BindTo(cs, _kRasterizeDensity);
+            // The shared compute asset may have been used by another body since LateUpdate.
+            // Rebind this body's wind-wave bank immediately before its deferred surface query.
+            volume.WriteWaveUniforms(cs);
             cs.SetBuffer(_kRasterizeDensity, ID_Particles, _particles);
             cs.SetBuffer(_kRasterizeDensity, ID_DensityBuffer, _density);
             cs.SetBuffer(_kRasterizeDensity, ID_DensityDepth, _densityDepth);
             cs.SetBuffer(_kRasterizeDensity, ID_DensityBufferTier1, _densityTier1);
             cs.SetBuffer(_kRasterizeDensity, ID_DensityBufferTier2, _densityTier2);
-            cs.SetTexture(_kRasterizeDensity, ID_DensityStampTex, ResolveDensityStampTexture());
-            Vector2Int densityStampGrid = ResolveDensityStampGrid();
-            cs.SetVector(ID_DensityStampGrid,
-                         new Vector4(densityStampGrid.x, densityStampGrid.y, 0f, 0f));
             // The 2D sim is read on BOTH paths now: the ocean glue adds the interactive ripple
             // (the wake) on top of the swell, exactly as the surface mesh does, so leaving Sim
             // unbound on oceans would be the unbound-resource error this bind pattern exists to
@@ -1157,23 +1155,5 @@ namespace AbstractOcclusion.WebGpuWater
             if (profile != null) profile.WriteVeil(_densityMpb);
         }
 
-        Texture ResolveDensityStampTexture()
-        {
-            if (profile != null && profile.look.drive && profile.look.particleAtlas != null)
-                return profile.look.particleAtlas;
-
-            Texture texture = particleMaterial != null
-                ? particleMaterial.GetTexture(WaterShaderProps.ParticleTex)
-                : null;
-            return texture != null ? texture : Texture2D.whiteTexture;
-        }
-
-        Vector2Int ResolveDensityStampGrid()
-        {
-            Vector2Int grid = profile != null && profile.look.drive
-                ? profile.look.flipbookGrid
-                : flipbookGrid;
-            return new Vector2Int(Mathf.Max(1, grid.x), Mathf.Max(1, grid.y));
-        }
     }
 }

@@ -332,6 +332,14 @@ namespace AbstractOcclusion.WebGpuWater
             Publisher.WriteSimFrameUniforms(cs);
         }
 
+        /// <summary>Push this body's wind-wave bank onto a compute shader. Compute state is
+        /// explicitly body-bound because global shader state is not reliable for compute.</summary>
+        internal void WriteWaveUniforms(ComputeShader cs)
+        {
+            if (cs == null) throw new System.ArgumentNullException(nameof(cs));
+            Publisher.ApplyWaveUniforms(cs);
+        }
+
         /// <summary>World-space area covered by one sim texel (m^2), for density-normalised
         /// GPU spawning. Uses the window frame when windowed, else the whole volume.</summary>
         public float SimTexelWorldArea

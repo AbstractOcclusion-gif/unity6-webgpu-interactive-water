@@ -37,6 +37,7 @@
 #endif
 #include "WaterExclusion.hlsl"  // dry-interior volumes: particles inside are killed (uniforms set per dispatch)
 #include "WaterVolume.hlsl"     // pool/window <-> world frame (same uniforms as the render side)
+#include "WaterWaves.hlsl"      // per-body wind-wave height (uniforms explicitly bound from C#)
 #include "WaterFoamCommon.hlsl" // FoamParticleEnvelope: shared with the quad render
 #include "WaterSurfWaves.hlsl"  // surf breaker fronts: plunging-lip spray source (uniforms set by
                                 // WaterSimulation.ShoreFoamState.BindTo - compute sees no globals)
@@ -222,8 +223,6 @@ uint2    _DensitySize;       // density buffer dimensions (a fraction of the cam
 float4x4 _DensityViewProj;   // camera GPU view-projection (same matrix family the render uses)
 float    _DensityProj11;     // projection [1][1]: vertical focal term for projected-size estimates
 float    _DensityWeightScale;// fixed-point units per 1.0 of foam weight
-Texture2D<float4> _DensityStampTex;
-float2 _DensityStampGrid;
 
 // Spawn quality (KWS trio)
 float2 _SpawnCameraXZ;       // camera ground position for the stochastic distance LOD
@@ -245,18 +244,46 @@ static const uint DEPTH_CLEAR = 0xFFFFFFFFu;
 // Splat footprint clamp (density texels). Small pool sizes keep the per-particle loop bounded;
 // the composite's dilation closes any remaining pinholes between splats.
 static const int SPLAT_RADIUS_MAX = 3;
+// Surface foam needs connective support beyond each particle's physical core. At the half-size
+// density resolution, two texels add a four-screen-pixel feather: enough for neighbouring
+// floating/landed deposits to merge without turning their authored size into a larger solid dot.
+static const int SURFACE_VEIL_FEATHER_TEXELS = 2;
 // LOD tier selection (crest flecks): projected DIAMETER thresholds in tier-0 texels, each
 // wobbled +-JITTER_FRACTION per particle so same-distance flecks spread across neighbouring
 // tiers and the dots read in three sizes (KWS: particleScreenSize + rand * lod * 0.35 <= lod).
 static const float DENSITY_TIER0_MAX_DIAMETER_TEXELS = 1.5;
 static const float DENSITY_TIER1_MAX_DIAMETER_TEXELS = 3.0;
 static const float DENSITY_TIER_JITTER_FRACTION = 0.35;
+// A point-only deposit leaves the clumping simulation visible as isolated square flecks. A
+// compact tent footprint lets neighbouring flecks accumulate into the density veil while the
+// selected tier remains authoritative for their apparent size.
+static const int DENSITY_FLECK_FOOTPRINT_RADIUS = 1;
+static const float DENSITY_FLECK_FOOTPRINT_AXIS_FALLOFF = 0.5;
 
 // Integer halving per tier - the composite derives its sizes with the SAME formula, so the
 // index math of the pair can never disagree.
 uint2 DensityTierSize(uint tier)
 {
     return max(uint2(1u, 1u), uint2(_DensitySize.x >> tier, _DensitySize.y >> tier));
+}
+
+void AddFleckDensity(uint tier, uint index, uint weight)
+{
+    if (tier == 0u) InterlockedAdd(DensityBuffer[index], weight);
+    else if (tier == 1u) InterlockedAdd(DensityBufferTier1[index], weight);
+    else InterlockedAdd(DensityBufferTier2[index], weight);
+}
+
+void WriteFleckDepth(uint2 tierPixel, uint tier, uint depthMm)
+{
+    uint side = 1u << tier;
+    uint2 baseOrigin = tierPixel * side;
+    for (uint y = 0u; y < side; y++)
+        for (uint x = 0u; x < side; x++)
+        {
+            uint2 basePixel = min(baseOrigin + uint2(x, y), _DensitySize - uint2(1u, 1u));
+            InterlockedMin(DensityDepth[basePixel.y * _DensitySize.x + basePixel.x], depthMm);
+        }
 }
 // Screen tile grid for the spray budget (KWS buckets splash into 64px tiles; a fixed 16x16
 // grid is resolution-independent and keeps the counter buffer tiny).
@@ -607,6 +634,18 @@ float RippleGlueWorldHeight(float2 simNorm)
     return FoamRippleHeightSafe(SampleSim(simNorm).r) * fade * VolumeExtentSafe().y;
 }
 
+// Match FoamParticles.shader exactly: evaluate the wind-wave layer in its authoritative
+// pool/world coordinate, then transform the pool-space height delta into world Y.
+float WindWaveGlueWorldHeight(float2 worldXZ)
+{
+    if (_WaveCount < 0.5) return 0.0;
+
+    float3 poolAtRest = WorldToPool(float3(worldXZ.x, _VolumeCenter.y, worldXZ.y));
+    float windHeightPool = WaveHeight(WindWaveSampleXZ(poolAtRest.xz, worldXZ));
+    return PoolToWorld(float3(poolAtRest.x, poolAtRest.y + windHeightPool, poolAtRest.z)).y
+         - PoolToWorld(poolAtRest).y;
+}
+
 float SurfaceWorldY(float3 worldPos, float2 simNorm)
 {
     float surfaceY;
@@ -647,7 +686,7 @@ float SurfaceWorldY(float3 worldPos, float2 simNorm)
     // The surf fronts ride on top (they are analytic surface geometry, not sim state).
     surfaceY = _VolumeCenter.y + RippleGlueWorldHeight(simNorm) + surfGlue.height;
 #endif
-    return surfaceY;
+    return surfaceY + WindWaveGlueWorldHeight(worldPos.xz);
 }
 
 // ---------------------------------------------------------------- kernels
@@ -1375,10 +1414,9 @@ void RasterizeDensity(uint3 id : SV_DispatchThreadID)
 
     if (particle.kind == KIND_RIPPLE_CREST)
     {
-        // KWS LOD-tier POINT splat: one InterlockedAdd into ONE texel of the tier whose
-        // resolution matches the fleck's projected size - the buffer's texel footprint IS the
-        // dot size, so flecks read in three sizes with no disc pre-blur. The jitter spreads
-        // same-distance flecks across neighbouring tiers.
+        // Select the KWS-style LOD tier from projected size, then write a compact tent into that
+        // tier. The tier still owns the apparent scale; the footprint gives the clumping field
+        // enough screen-space support for neighbouring flecks to form a continuous veil.
         float diameterPx = radiusPx * 2.0;
         float tierJitter = 1.0 + (particle.seed - 0.5) * 2.0 * DENSITY_TIER_JITTER_FRACTION;
         uint tier;
@@ -1387,57 +1425,51 @@ void RasterizeDensity(uint3 id : SV_DispatchThreadID)
         else tier = 2u;
 
         uint2 tierSize = DensityTierSize(tier);
-        uint2 tierPixel = min((uint2)(uv * (float2)tierSize), tierSize - uint2(1u, 1u));
-        uint tierIndex = tierPixel.y * tierSize.x + tierPixel.x;
-        if (tier == 0u)      InterlockedAdd(DensityBuffer[tierIndex], fixedWeight);
-        else if (tier == 1u) InterlockedAdd(DensityBufferTier1[tierIndex], fixedWeight);
-        else                 InterlockedAdd(DensityBufferTier2[tierIndex], fixedWeight);
-
-        // Depth floods the tier texel's whole base-resolution footprint (<= 4x4 mins), so the
-        // composite's occlusion/SV_Depth never reads an empty depth under a big dot and
-        // alpha-kills its rim (the scene-depth soft fade treats DEPTH_CLEAR as "behind").
-        uint side = 1u << tier;
-        uint2 baseOrigin = tierPixel * side;
-        for (uint by = 0u; by < side; by++)
-            for (uint bx = 0u; bx < side; bx++)
+        int2 tierCentre = min((int2)(uv * (float2)tierSize), (int2)tierSize - 1);
+        for (int y = -DENSITY_FLECK_FOOTPRINT_RADIUS; y <= DENSITY_FLECK_FOOTPRINT_RADIUS; y++)
+            for (int x = -DENSITY_FLECK_FOOTPRINT_RADIUS; x <= DENSITY_FLECK_FOOTPRINT_RADIUS; x++)
             {
-                uint2 bp = min(baseOrigin + uint2(bx, by), _DensitySize - uint2(1u, 1u));
-                InterlockedMin(DensityDepth[bp.y * _DensitySize.x + bp.x], depthMm);
+                int2 tierPixelSigned = tierCentre + int2(x, y);
+                if (any(tierPixelSigned < 0) || any(tierPixelSigned >= (int2)tierSize)) continue;
+
+                float axisWeightX = x == 0 ? 1.0 : DENSITY_FLECK_FOOTPRINT_AXIS_FALLOFF;
+                float axisWeightY = y == 0 ? 1.0 : DENSITY_FLECK_FOOTPRINT_AXIS_FALLOFF;
+                uint footprintWeight = (uint)(fixedWeight * axisWeightX * axisWeightY);
+                if (footprintWeight == 0u) continue;
+
+                uint2 tierPixel = (uint2)tierPixelSigned;
+                uint tierIndex = tierPixel.y * tierSize.x + tierPixel.x;
+                AddFleckDensity(tier, tierIndex, footprintWeight);
+                // Every expanded density texel receives matching base-resolution depth, so the
+                // composite cannot erase the new veil edge as an unoccluded empty sample.
+                WriteFleckDepth(tierPixel, tier, depthMm);
             }
         return;
     }
 
-    // Preserve the actual foam silhouette while accumulating: the old filled-disc stamp
-    // discarded atlas alpha, so density foam could only ever read as round blobs. The stamp
-    // is screen-aligned like the billboard it replaces and selects a stable atlas cell from
-    // the particle seed, matching the quad path's per-particle variation.
-    int radius = clamp((int)radiusPx, 1, SPLAT_RADIUS_MAX);
-    int stampDiameter = radius * 2 + 1;
-    uint stampWidth, stampHeight;
-    _DensityStampTex.GetDimensions(stampWidth, stampHeight);
-    int columns = max((int)_DensityStampGrid.x, 1);
-    int rows = max((int)_DensityStampGrid.y, 1);
-    int cellCount = columns * rows;
-    int cell = min((int)(particle.seed * cellCount), cellCount - 1);
-    int2 cellOrigin = int2(cell % columns, cell / columns);
+    // Floating and deposited foam form the connected tier-0 veil. The physical core carries full
+    // density; a soft outer support lets nearby particles accumulate before the composite curve,
+    // forming a film between them instead of displaying one semi-opaque circle per particle.
+    int coreRadius = clamp((int)radiusPx, 1, SPLAT_RADIUS_MAX);
+    int supportRadius = coreRadius + SURFACE_VEIL_FEATHER_TEXELS;
 
     int2 centre = (int2)(uv * (float2)_DensitySize);
-    for (int dy = -radius; dy <= radius; dy++)
-        for (int dx = -radius; dx <= radius; dx++)
+    for (int dy = -supportRadius; dy <= supportRadius; dy++)
+        for (int dx = -supportRadius; dx <= supportRadius; dx++)
         {
+            float distanceFromCentre = length(float2(dx, dy));
+            if (distanceFromCentre > supportRadius) continue;
             int2 p = centre + int2(dx, dy);
             if (any(p < 0) || p.x >= (int)_DensitySize.x || p.y >= (int)_DensitySize.y) continue;
 
-            float2 localUv = (float2(dx, dy) + radius + 0.5) / stampDiameter;
-            float2 atlasUv = (float2(cellOrigin) + localUv) / float2(columns, rows);
-            uint2 stampPixel = min((uint2)(atlasUv * float2(stampWidth, stampHeight)),
-                                   uint2(stampWidth - 1u, stampHeight - 1u));
-            float stampAlpha = _DensityStampTex.Load(int3(stampPixel, 0)).a;
-            uint stampWeight = (uint)(fixedWeight * saturate(stampAlpha));
-            if (stampWeight == 0u) continue;
+            float supportWeight = 1.0 - smoothstep((float)coreRadius,
+                                                   (float)supportRadius,
+                                                   distanceFromCentre);
+            uint weightedDensity = (uint)(fixedWeight * supportWeight);
+            if (weightedDensity == 0u) continue;
 
             uint index = (uint)p.y * _DensitySize.x + (uint)p.x;
-            InterlockedAdd(DensityBuffer[index], stampWeight);
+            InterlockedAdd(DensityBuffer[index], weightedDensity);
             InterlockedMin(DensityDepth[index], depthMm);
         }
 }

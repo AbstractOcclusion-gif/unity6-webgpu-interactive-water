@@ -431,6 +431,26 @@ namespace AbstractOcclusion.WebGpuWater
             material.SetFloat(ID_WaveStokesNorm, _body.WaveBank.StokesNorm);
         }
 
+        // Compute shaders do not reliably inherit Shader.SetGlobal state on every backend. Keep the
+        // wind-wave layer body-owned here so every compute consumer uses the render path's exact bank.
+        internal void ApplyWaveUniforms(ComputeShader computeShader)
+        {
+            if (computeShader == null) throw new System.ArgumentNullException(nameof(computeShader));
+            computeShader.SetFloat(ID_WaveTime, _body.WaveTime);
+            computeShader.SetVectorArray(ID_WaveA, _body.WaveBank.PackedA);
+            computeShader.SetVectorArray(ID_WaveB, _body.WaveBank.PackedB);
+            computeShader.SetFloat(ID_WaveCount, _body.WindWaves ? _body.WaveBank.Count : 0f);
+            computeShader.SetFloat(ID_WaveMeters, _body.WaveMetersPerUnit);
+            computeShader.SetVector(ID_WaveGroupA, _body.WaveBank.GroupA);
+            computeShader.SetVector(ID_WaveGroupB, _body.WaveBank.GroupB);
+            computeShader.SetVector(ID_WaveGroupC, _body.WaveBank.GroupC);
+            computeShader.SetVector(ID_WaveGroupD, _body.WaveBank.GroupD);
+            computeShader.SetVector(ID_WaveGroupPhases, _body.WaveBank.GroupPhases);
+            computeShader.SetVector(ID_WaveShape, _body.WaveBank.Shape);
+            computeShader.SetFloat(ID_WaveStokesNorm, _body.WaveBank.StokesNorm);
+            computeShader.SetFloat(ID_OceanWorldWaves, _body.IsOceanClipmap ? 1f : 0f);
+        }
+
         /// <summary>Camera-submerged flag + flat surface Y for the underwater fog pass. Global only
         /// (it is camera state, not a per-object uniform), so it lives outside WriteBodyUniforms.
         /// fogSimple 1 = the tier's Simple mode: the fog shader takes the closed-form flat-waterline
