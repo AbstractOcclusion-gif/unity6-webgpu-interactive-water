@@ -15,6 +15,9 @@
 
 #include "WaterShared.hlsl" // OCEAN_FFT_* cascade layout (shared with the computes)
 #include "WaterSeaStateFetch.hlsl"
+#if !defined(WATER_DISABLE_OCEAN_APERIODIC)
+#include "WaterOceanAperiodic.hlsl"
+#endif
 // Footprint frame for the bounded-body edge feather (LbwEdgeWeight). Include-guarded, so consumers
 // that already pulled WaterVolume.hlsl themselves (all of them today) see it exactly once.
 #include "WaterVolume.hlsl"
@@ -333,6 +336,11 @@ float  _OceanFftActive;        // 1 when the FFT pass drives this body; 0 -> ana
 float4 _OceanFoamColor;        // whitecap tint (rgb) + master opacity (a); default opaque white
 float  _OceanFoamTileSize;     // metres per foam-pattern tile on the ocean surface
 float  _OceanFoamFeather;      // black-point dissolve softness (0..1) for the foam texture
+#if !defined(WATER_DISABLE_OCEAN_APERIODIC)
+Texture2D<float4> _OceanDirectionMap;
+float4 _OceanAperiodicParams;    // x = enabled, y = tile scale, z = direction strength
+float4 _OceanDirectionMapFrame; // xy = world centre, z = inverse world size
+#endif
 
 // OCEAN_FFT_MAX_CASCADES / OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION live in WaterShared.hlsl
 // (included above), shared with OceanFft.compute and WaterFoamParticles.compute.
@@ -344,6 +352,80 @@ float OceanCascadeShoalWeight(int c, ShoreData shore)
     float wavelength = max(_OceanFftDomainSizes[c], 1e-3) * OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION;
     return lerp(1.0, ShoalWeight(shore.depth, wavelength), shore.influence);
 }
+
+#if !defined(WATER_DISABLE_OCEAN_APERIODIC)
+float2 OceanAperiodicDirectionMapBilinear(float2 uv)
+{
+    uint width, height;
+    _OceanDirectionMap.GetDimensions(width, height);
+    float2 texel = saturate(uv) * float2(max((int)width - 1, 0), max((int)height - 1, 0));
+    int2 p0 = (int2)floor(texel);
+    int2 p1 = min(p0 + 1, int2((int)width - 1, (int)height - 1));
+    float2 fraction = frac(texel);
+    float2 row0 = lerp(_OceanDirectionMap.Load(int3(p0, 0)).rg,
+                       _OceanDirectionMap.Load(int3(p1.x, p0.y, 0)).rg, fraction.x);
+    float2 row1 = lerp(_OceanDirectionMap.Load(int3(p0.x, p1.y, 0)).rg,
+                       _OceanDirectionMap.Load(int3(p1, 0)).rg, fraction.x);
+    return lerp(row0, row1, fraction.y);
+}
+
+float OceanAperiodicTileAngle(float2 tileWorldCenter)
+{
+    float2 mapUv = (tileWorldCenter - _OceanDirectionMapFrame.xy) * _OceanDirectionMapFrame.z + 0.5;
+    if (any(mapUv < 0.0) || any(mapUv > 1.0)) return 0.0;
+    float2 encodedDirection = OceanAperiodicDirectionMapBilinear(mapUv);
+    return OceanAperiodicDirectionAngle(encodedDirection, _OceanAperiodicParams.z);
+}
+
+float2 OceanAperiodicSampleUv(float2 worldXZ, float domain, int2 vertex, out float angle)
+{
+    float2 tileCenterUv = OceanAperiodicVertexUv(vertex, _OceanAperiodicParams.y);
+    float2 tileWorldCenter = tileCenterUv * domain;
+    angle = OceanAperiodicTileAngle(tileWorldCenter);
+    float2 localWorld = OceanAperiodicRotate(worldXZ - tileWorldCenter, -angle);
+    return localWorld / domain + tileCenterUv + OceanAperiodicHash(vertex);
+}
+
+float3 OceanAperiodicDisplacement(float2 worldXZ, float domain, float slice)
+{
+    float2 exemplarUv = worldXZ / domain;
+    OceanAperiodicTriangle tileTriangle = OceanAperiodicTriangleAt(exemplarUv, _OceanAperiodicParams.y);
+    float3 weights = OceanAperiodicVarianceWeights(tileTriangle.weights);
+    float angle0, angle1, angle2;
+    float3 tap0 = _OceanFftDisplacement.SampleLevel(sampler_OceanFftDisplacement,
+        float3(OceanAperiodicSampleUv(worldXZ, domain, tileTriangle.vertex0, angle0), slice), 0).xyz;
+    float3 tap1 = _OceanFftDisplacement.SampleLevel(sampler_OceanFftDisplacement,
+        float3(OceanAperiodicSampleUv(worldXZ, domain, tileTriangle.vertex1, angle1), slice), 0).xyz;
+    float3 tap2 = _OceanFftDisplacement.SampleLevel(sampler_OceanFftDisplacement,
+        float3(OceanAperiodicSampleUv(worldXZ, domain, tileTriangle.vertex2, angle2), slice), 0).xyz;
+    tap0.xz = OceanAperiodicRotate(tap0.xz, angle0);
+    tap1.xz = OceanAperiodicRotate(tap1.xz, angle1);
+    tap2.xz = OceanAperiodicRotate(tap2.xz, angle2);
+    return tap0 * weights.x + tap1 * weights.y + tap2 * weights.z;
+}
+
+float4 OceanAperiodicNormal(float2 worldXZ, float domain, float slice, float lod)
+{
+    float2 exemplarUv = worldXZ / domain;
+    OceanAperiodicTriangle tileTriangle = OceanAperiodicTriangleAt(exemplarUv, _OceanAperiodicParams.y);
+    float3 varianceWeights = OceanAperiodicVarianceWeights(tileTriangle.weights);
+    float angle0, angle1, angle2;
+    float4 tap0 = _OceanFftNormal.SampleLevel(sampler_OceanFftNormal,
+        float3(OceanAperiodicSampleUv(worldXZ, domain, tileTriangle.vertex0, angle0), slice), lod);
+    float4 tap1 = _OceanFftNormal.SampleLevel(sampler_OceanFftNormal,
+        float3(OceanAperiodicSampleUv(worldXZ, domain, tileTriangle.vertex1, angle1), slice), lod);
+    float4 tap2 = _OceanFftNormal.SampleLevel(sampler_OceanFftNormal,
+        float3(OceanAperiodicSampleUv(worldXZ, domain, tileTriangle.vertex2, angle2), slice), lod);
+    tap0.xz = OceanAperiodicRotate(tap0.xz, angle0);
+    tap1.xz = OceanAperiodicRotate(tap1.xz, angle1);
+    tap2.xz = OceanAperiodicRotate(tap2.xz, angle2);
+    float2 tilt = tap0.xz * varianceWeights.x + tap1.xz * varianceWeights.y + tap2.xz * varianceWeights.z;
+    float2 coverage = float2(tap0.y, tap0.w) * tileTriangle.weights.x
+                    + float2(tap1.y, tap1.w) * tileTriangle.weights.y
+                    + float2(tap2.y, tap2.w) * tileTriangle.weights.z;
+    return float4(tilt.x, coverage.x, tilt.y, coverage.y);
+}
+#endif
 
 // Sum the (x, height, z) displacement across the active cascades at a world xz, each cascade
 // attenuated by the shore depth (pass an inert ShoreData - influence 0 - for open water) and by the
@@ -368,12 +450,20 @@ float3 OceanFftDisplacementShore(float2 worldXZ, ShoreData shore)
     {
         float active = (c < (int)_OceanFftCascadeCount) ? 1.0 : 0.0;
         float slice = min((float)c, _OceanFftCascadeCount - 1.0);   // never index past the array depth
-        float2 uv = worldXZ / max(_OceanFftDomainSizes[c], 1e-3);
+        float domain = max(_OceanFftDomainSizes[c], 1e-3);
+        float2 uv = worldXZ / domain;
         float fade = OceanCascadeDistanceFade(camDist, _OceanFftVisibleAreas[c]);
         float fetch = SeaStateFetchWeight(worldXZ,
             max(_OceanFftDomainSizes[c], 1e-3) * OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION);
-        sum += (active * fade * OceanCascadeShoalWeight(c, shore) * fetch)
-             * _OceanFftDisplacement.SampleLevel(sampler_OceanFftDisplacement, float3(uv, slice), 0).xyz;
+#if defined(WATER_DISABLE_OCEAN_APERIODIC)
+        float3 tap = _OceanFftDisplacement.SampleLevel(
+            sampler_OceanFftDisplacement, float3(uv, slice), 0).xyz;
+#else
+        float3 tap = _OceanAperiodicParams.x > 0.5
+            ? OceanAperiodicDisplacement(worldXZ, domain, slice)
+            : _OceanFftDisplacement.SampleLevel(sampler_OceanFftDisplacement, float3(uv, slice), 0).xyz;
+#endif
+        sum += (active * fade * OceanCascadeShoalWeight(c, shore) * fetch) * tap;
     }
     return sum;
 }
@@ -424,7 +514,13 @@ OceanFftCascadeSum OceanFftNormalSumShore(float2 worldXZ, ShoreData shore)
         float fetch = SeaStateFetchWeight(worldXZ,
             domain * OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION);
         float shoal = active * OceanCascadeShoalWeight(c, shore) * fetch;
+#if defined(WATER_DISABLE_OCEAN_APERIODIC)
         float4 tap = _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod);
+#else
+        float4 tap = _OceanAperiodicParams.x > 0.5
+            ? OceanAperiodicNormal(worldXZ, domain, slice, lod)
+            : _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod);
+#endif
         sum.tilt  += (shoal * max(fade, OceanFftFarSlopeFloor[c])) * tap.xz;
         sum.pinch += (shoal * fade) * tap.y;
         sum.foam  += (shoal * fade) * tap.w;

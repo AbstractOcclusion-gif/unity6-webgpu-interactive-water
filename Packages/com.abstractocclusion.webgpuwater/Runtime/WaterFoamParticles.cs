@@ -245,6 +245,9 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SprayTileCap = Shader.PropertyToID("_SprayTileCap");
         static readonly int ID_OceanFftSpatial = Shader.PropertyToID("_OceanFftSpatial");
         static readonly int ID_OceanFftAmplitude = Shader.PropertyToID("_OceanFftAmplitude");
+        static readonly int ID_OceanDirectionMap = WaterShaderProps.OceanDirectionMap;
+        static readonly int ID_OceanAperiodicParams = WaterShaderProps.OceanAperiodicParams;
+        static readonly int ID_OceanDirectionMapFrame = WaterShaderProps.OceanDirectionMapFrame;
         static readonly int ID_FoamDensityShader = Shader.PropertyToID("_FoamDensity");
         static readonly int ID_FoamDensityDepthShader = Shader.PropertyToID("_FoamDensityDepth");
         static readonly int ID_FoamDensityTier1Shader = Shader.PropertyToID("_FoamDensityTier1");
@@ -796,6 +799,7 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 cs.SetTexture(_kUpdate, ID_OceanFftSpatial, volume.OceanFftSpatialTexture);
                 cs.SetFloat(ID_OceanFftAmplitude, volume.LargeWaveAmplitudeEffective);
+                BindOceanAperiodic(cs, _kUpdate);
                 volume.SeaStateFetch.BindTo(cs, _kUpdate);
             }
             cs.Dispatch(_kUpdate, _capacityPow2 / UpdateThreadGroupSize, 1, 1);
@@ -863,9 +867,24 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 cs.SetTexture(_kRasterizeDensity, ID_OceanFftSpatial, volume.OceanFftSpatialTexture);
                 cs.SetFloat(ID_OceanFftAmplitude, volume.LargeWaveAmplitudeEffective);
+                BindOceanAperiodic(cs, _kRasterizeDensity);
                 volume.SeaStateFetch.BindTo(cs, _kRasterizeDensity);
             }
             cs.Dispatch(_kRasterizeDensity, _capacityPow2 / UpdateThreadGroupSize, 1, 1);
+        }
+
+        void BindOceanAperiodic(ComputeShader compute, int kernel)
+        {
+            Vector3 center = volume.VolumeCenter;
+            float mapSize = Mathf.Max(1f, volume.oceanDirectionMapSize);
+            bool active = volume.oceanAperiodicEnabled;
+            compute.SetTexture(kernel, ID_OceanDirectionMap,
+                volume.oceanDirectionMap ? volume.oceanDirectionMap : Texture2D.grayTexture);
+            compute.SetVector(ID_OceanAperiodicParams,
+                new Vector4(active ? 1f : 0f, Mathf.Clamp(volume.oceanAperiodicTileScale, 0.5f, 2f),
+                            Mathf.Clamp01(volume.oceanDirectionMapStrength), 0f));
+            compute.SetVector(ID_OceanDirectionMapFrame,
+                new Vector4(center.x, center.z, 1f / mapSize, 0f));
         }
 
         /// <summary>Queue a splash burst of ballistic spray droplets at a surface point (world).

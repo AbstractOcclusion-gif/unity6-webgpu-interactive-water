@@ -104,8 +104,13 @@ namespace AbstractOcclusion.WebGpuWater
                                                      PeakSharpness, SeaDepth, LargeWaveChoppiness,
                                                      SwellWavelength, SwellHeight,
                                                      SwellHeadingRad, OceanCascadeReach);
+                Vector3 volumeCenter = VolumeCenter;
+                var aperiodic = new WaterOceanFft.AperiodicParams(
+                    oceanAperiodicEnabled, oceanDirectionMap,
+                    new Vector2(volumeCenter.x, volumeCenter.z), oceanDirectionMapSize,
+                    oceanDirectionMapStrength, oceanAperiodicTileScale);
                 _oceanFft?.Dispatch(_waveTime, sea, LargeWaveAmplitudeEffective, camXZ, foam,
-                                    SeaStateFetch);
+                                    SeaStateFetch, aperiodic);
             }
             if (_simulate && Time.frameCount % _causticInterval == 0)
                 RenderCausticsForThisBody();

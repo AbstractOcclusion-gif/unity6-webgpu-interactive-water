@@ -127,6 +127,15 @@ namespace AbstractOcclusion.WebGpuWater
         internal static readonly int OceanFftDomainSizes = Shader.PropertyToID(OceanFftDomainSizesName);
         internal static readonly int OceanFftNormal = Shader.PropertyToID(OceanFftNormalName);
 
+        // ---- P4 aperiodic ocean: surface publisher + FFT bake + foam-particle glue ----
+        internal const string OceanDirectionMapName = "_OceanDirectionMap";
+        internal const string OceanAperiodicParamsName = "_OceanAperiodicParams";
+        internal const string OceanDirectionMapFrameName = "_OceanDirectionMapFrame";
+
+        internal static readonly int OceanDirectionMap = Shader.PropertyToID(OceanDirectionMapName);
+        internal static readonly int OceanAperiodicParams = Shader.PropertyToID(OceanAperiodicParamsName);
+        internal static readonly int OceanDirectionMapFrame = Shader.PropertyToID(OceanDirectionMapFrameName);
+
         // ---- WaterSimulation.cs <-> WaterUniformPublisher.cs ----
         internal const string BedTexName = "_BedTex";
         internal const string UseBedDepthName = "_UseBedDepth";

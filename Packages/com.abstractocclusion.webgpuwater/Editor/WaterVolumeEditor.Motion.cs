@@ -150,6 +150,18 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                         DrawFields(
                             WaterVolumePropertyPaths.SeaStateGusts,
                             WaterVolumePropertyPaths.SeaStateSlicks));
+                    _showOceanAperiodic = WaterEditorUI.SubSection("Aperiodic Direction Field",
+                        _showOceanAperiodic, () =>
+                        {
+                            DrawFields(
+                                WaterVolumePropertyPaths.OceanAperiodicEnabled,
+                                WaterVolumePropertyPaths.OceanDirectionMap,
+                                WaterVolumePropertyPaths.OceanDirectionMapSize,
+                                WaterVolumePropertyPaths.OceanDirectionMapStrength,
+                                WaterVolumePropertyPaths.OceanAperiodicTileScale);
+                            if (ShouldWarnAboutAperiodicGodRays())
+                                EditorGUILayout.HelpBox(AperiodicGodRaysWarning, MessageType.Warning);
+                        });
                     _showWindFetch = WaterEditorUI.SubSection("Wind Fetch", _showWindFetch, () =>
                     {
                         DrawFields(
@@ -340,6 +352,19 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             contentEnabled: UsesBedDepth);
         }
 
+        bool ShouldWarnAboutAperiodicGodRays()
+        {
+            if (!IsOcean) return false;
+            SerializedProperty enabled = Prop(WaterVolumePropertyPaths.OceanAperiodicEnabled);
+            SerializedProperty godRayDensity = Prop(WaterVolumePropertyPaths.LargeGodRayDensity);
+            return enabled != null && enabled.boolValue &&
+                   godRayDensity != null && godRayDensity.floatValue > Mathf.Epsilon;
+        }
+
+        const string AperiodicGodRaysWarning =
+            "God rays and large-body caustics use the original FFT direction. The runtime direction " +
+            "map affects the visible surface, foam and buoyancy, but not their caustic projection; " +
+            "including the three-tile synthesis there exceeds supported shader-compiler limits.";
         const string SeaStateHelp =
             "Significant Height is HOW MUCH water the sea carries; Peak Wavelength is HOW FAR APART the " +
             "waves are. Together they set steepness, so a short peak with a tall height is a small " +

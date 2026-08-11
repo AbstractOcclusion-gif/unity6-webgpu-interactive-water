@@ -23,10 +23,10 @@ MonoBehaviour:
   ambient:
     drive: 1
     spawnThreshold: 1
-    spawnRate: 200
+    spawnRate: 111
     maxSpawnPerFrame: 1405
-    sprayChance: 0
-    sprayLaunchSpeed: 0
+    sprayChance: 0.25
+    sprayLaunchSpeed: 5
     rippleCrestFlecksEnabled: 0
     rippleCrestFleckAmount: 0.3
     rippleCrestFleckMaxPerFrame: 256
@@ -49,13 +49,13 @@ MonoBehaviour:
     windDriftSpeed: 0.02
     drag: 2
   veil:
-    drive: 1
+    drive: 0
     opacity: 0.56
     densityLowGain: 0.85
     densityHighGain: 0.54
-    breakupTexture: {fileID: 2800000, guid: a0d8d8c48722f664ab3e026c74f6bae8, type: 3}
-    breakupTiling: 0.5
-    breakupStrength: 1
+    breakupTexture: {fileID: 2800000, guid: 0530e8e25b6db354ba0a47f16662d485, type: 3}
+    breakupTiling: 9.4
+    breakupStrength: 0.56
   splash:
     drive: 1
     maxParticlesPerBurst: 18

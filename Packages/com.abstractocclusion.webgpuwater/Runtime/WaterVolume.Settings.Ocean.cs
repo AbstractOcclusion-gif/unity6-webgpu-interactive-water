@@ -105,6 +105,20 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("How strongly the physical wind-fetch attenuation affects displacement. 0 keeps " +
                      "the existing wave field; 1 applies the full baked response.")]
             [Range(0f, 1f)] public float seaStateFetchStrength = 1f;
+            [Tooltip("Break the FFT tile repetition with covariance-preserving three-way hexagonal " +
+                     "tiling and blending. Disabled by default: the historical direct cascade sample " +
+                     "remains bit-identical.")]
+            public bool oceanAperiodicEnabled = false;
+            [Tooltip("Runtime-editable RG direction map. RG encodes a signed XY direction from [0,1] " +
+                     "to [-1,1]. A missing map keeps the original wave heading.")]
+            public Texture2D oceanDirectionMap;
+            [Tooltip("World width and height covered by the direction map, centred on this water body.")]
+            [Min(1f)] public float oceanDirectionMapSize = 1024f;
+            [Tooltip("How strongly the direction map rotates each hexagonal wave tile.")]
+            [Range(0f, 1f)] public float oceanDirectionMapStrength = 1f;
+            [Tooltip("Hex tile size relative to one FFT exemplar. Larger values retain broader wave " +
+                     "structures; smaller values increase variation.")]
+            [Range(0.5f, 2f)] public float oceanAperiodicTileScale = 1f;
             [Tooltip("Swell travel direction OFFSET from the wind, in degrees. Real swell radiates from " +
                      "a distant storm, not the local wind - most of the open ocean carries swell crossing " +
                      "the wind sea at an angle, which is what breaks the single-direction look. 0 = " +
@@ -303,6 +317,11 @@ namespace AbstractOcclusion.WebGpuWater
         internal float seaStateSlicks => ocean.seaStateSlicks;
         internal bool seaStateFetchEnabled => ocean.seaStateFetchEnabled;
         internal float seaStateFetchStrength => ocean.seaStateFetchStrength;
+        internal bool oceanAperiodicEnabled => ocean.oceanAperiodicEnabled;
+        internal Texture2D oceanDirectionMap => ocean.oceanDirectionMap;
+        internal float oceanDirectionMapSize => ocean.oceanDirectionMapSize;
+        internal float oceanDirectionMapStrength => ocean.oceanDirectionMapStrength;
+        internal float oceanAperiodicTileScale => ocean.oceanAperiodicTileScale;
         internal float swellHeadingOffsetDegrees => ocean.swellHeadingOffsetDegrees;
         internal float oceanWindTurbulence => ocean.oceanWindTurbulence;
         internal bool unboundedOcean => ocean.unboundedOcean;

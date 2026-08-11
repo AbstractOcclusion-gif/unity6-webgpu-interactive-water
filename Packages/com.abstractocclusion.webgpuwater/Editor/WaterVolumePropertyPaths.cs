@@ -58,6 +58,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string SeaStateSlicks = "ocean.seaStateSlicks";
         internal const string SeaStateFetchEnabled = "ocean.seaStateFetchEnabled";
         internal const string SeaStateFetchStrength = "ocean.seaStateFetchStrength";
+        internal const string OceanAperiodicEnabled = "ocean.oceanAperiodicEnabled";
+        internal const string OceanDirectionMap = "ocean.oceanDirectionMap";
+        internal const string OceanDirectionMapSize = "ocean.oceanDirectionMapSize";
+        internal const string OceanDirectionMapStrength = "ocean.oceanDirectionMapStrength";
+        internal const string OceanAperiodicTileScale = "ocean.oceanAperiodicTileScale";
         internal const string SwellHeadingOffset = "ocean.swellHeadingOffsetDegrees";
         internal const string OceanWindTurbulence = "ocean.oceanWindTurbulence";
         internal const string HorizonHazeDensity = "ocean.horizonHazeDensity";

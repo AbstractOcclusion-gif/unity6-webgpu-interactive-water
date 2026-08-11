@@ -164,6 +164,9 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SwellHeight = Shader.PropertyToID("_LargeSwellHeight");
         static readonly int ID_SeaStateParams = Shader.PropertyToID("_SeaStateParams");
         static readonly int ID_SwellHeading = Shader.PropertyToID("_LargeSwellHeading");
+        static readonly int ID_OceanDirectionMap = WaterShaderProps.OceanDirectionMap;
+        static readonly int ID_OceanAperiodicParams = WaterShaderProps.OceanAperiodicParams;
+        static readonly int ID_OceanDirectionMapFrame = WaterShaderProps.OceanDirectionMapFrame;
         static readonly int ID_HorizonFade = Shader.PropertyToID("_HorizonFadeDistance");
         static readonly int ID_HorizonHazeColor = Shader.PropertyToID("_HorizonHazeColor");
         static readonly int ID_HorizonHazeDensity = Shader.PropertyToID("_HorizonHazeDensity");
@@ -821,6 +824,7 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetFloat(ID_ShoreBodyGate, _body.useBedDepth ? 1f : 0f);
             _body.ShoreDepth.WriteUniforms(sink);
             _body.SeaStateFetch.WriteUniforms(sink);
+            WriteOceanAperiodicUniforms(sink);
             sink.SetColor(ID_DeepWaterColor, _body.deepWaterColor);
             sink.SetFloat(ID_ShorelineScale, 1f / Mathf.Max(WaterVolume.MinBedFadeDepth, _body.bedFadeDepth));
             sink.SetFloat(ID_ShorelineStrength, _body.bedTintStrength);
@@ -868,6 +872,22 @@ namespace AbstractOcclusion.WebGpuWater
             // Relief is shared by the foam pattern and the whitecap: push it when EITHER is body-owned.
             if (_body.foamPatternTexture != null || _body.oceanWhitecapTexture != null)
                 sink.SetFloat(ID_FoamNormalStrength, _body.foamReliefStrength);
+        }
+
+        void WriteOceanAperiodicUniforms(IUniformSink sink)
+        {
+            bool active = _body.OceanFftActive && _body.oceanAperiodicEnabled;
+            float mapSize = Mathf.Max(1f, _body.oceanDirectionMapSize);
+            Vector3 center = _body.VolumeCenter;
+            sink.SetTexture(ID_OceanDirectionMap,
+                _body.oceanDirectionMap != null ? _body.oceanDirectionMap : Texture2D.grayTexture);
+            sink.SetVector(ID_OceanAperiodicParams, new Vector4(
+                active ? 1f : 0f,
+                Mathf.Max(0.5f, _body.oceanAperiodicTileScale),
+                Mathf.Clamp01(_body.oceanDirectionMapStrength),
+                0f));
+            sink.SetVector(ID_OceanDirectionMapFrame,
+                new Vector4(center.x, center.z, 1f / mapSize, 0f));
         }
 
         // A write target for the per-body uniforms: either a MaterialPropertyBlock or the

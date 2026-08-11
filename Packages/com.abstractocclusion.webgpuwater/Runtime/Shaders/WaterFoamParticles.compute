@@ -34,6 +34,7 @@
 #include "WaterShared.hlsl"     // OCEAN_FFT_* cascade layout (shared with generation/sampling)
 #ifdef OCEAN_FFT_GLUE
 #include "WaterSeaStateFetch.hlsl" // only the ocean height-glue variant owns this resource
+#include "WaterOceanAperiodic.hlsl"
 #endif
 #include "WaterExclusion.hlsl"  // dry-interior volumes: particles inside are killed (uniforms set per dispatch)
 #include "WaterVolume.hlsl"     // pool/window <-> world frame (same uniforms as the render side)
@@ -445,6 +446,9 @@ static const float FOAM_CLUMP_SPEED   = 0.04;  // world units/sec of attraction
 Texture2DArray<float4> _OceanFftSpatial;
 SamplerState sampler_OceanFftSpatial;
 float _OceanFftAmplitude;
+Texture2D<float4> _OceanDirectionMap;
+float4 _OceanAperiodicParams;
+float4 _OceanDirectionMapFrame;
 #endif
 
 #ifdef OCEAN_FFT_GLUE
@@ -453,6 +457,53 @@ float _OceanFftAmplitude;
 float4 _OceanFftDomainSizes;   // metres per cascade
 float  _OceanFftCascadeCount;  // active cascades (<= 4)
 // OCEAN_FFT_MAX_CASCADES comes from WaterShared.hlsl (via the include block above).
+#endif
+
+#ifdef OCEAN_FFT_GLUE
+float2 OceanParticleDirectionMapBilinear(float2 uv)
+{
+    uint width, height;
+    _OceanDirectionMap.GetDimensions(width, height);
+    float2 texel = saturate(uv) * float2(max((int)width - 1, 0), max((int)height - 1, 0));
+    int2 p0 = (int2)floor(texel);
+    int2 p1 = min(p0 + 1, int2((int)width - 1, (int)height - 1));
+    float2 fraction = frac(texel);
+    float2 row0 = lerp(_OceanDirectionMap.Load(int3(p0, 0)).rg,
+                       _OceanDirectionMap.Load(int3(p1.x, p0.y, 0)).rg, fraction.x);
+    float2 row1 = lerp(_OceanDirectionMap.Load(int3(p0.x, p1.y, 0)).rg,
+                       _OceanDirectionMap.Load(int3(p1, 0)).rg, fraction.x);
+    return lerp(row0, row1, fraction.y);
+}
+
+float OceanParticleTileAngle(float2 tileWorldCenter)
+{
+    float2 mapUv = (tileWorldCenter - _OceanDirectionMapFrame.xy) * _OceanDirectionMapFrame.z + 0.5;
+    if (any(mapUv < 0.0) || any(mapUv > 1.0)) return 0.0;
+    float2 encodedDirection = OceanParticleDirectionMapBilinear(mapUv);
+    return OceanAperiodicDirectionAngle(encodedDirection, _OceanAperiodicParams.z);
+}
+
+float OceanParticleTileHeight(float2 worldXZ, float domain, float slice, int2 vertex)
+{
+    float2 tileCenterUv = OceanAperiodicVertexUv(vertex, _OceanAperiodicParams.y);
+    float2 tileWorldCenter = tileCenterUv * domain;
+    float angle = OceanParticleTileAngle(tileWorldCenter);
+    float2 localWorld = OceanAperiodicRotate(worldXZ - tileWorldCenter, -angle);
+    float2 uv = localWorld / domain + tileCenterUv + OceanAperiodicHash(vertex);
+    return _OceanFftSpatial.SampleLevel(sampler_OceanFftSpatial, float3(uv, slice), 0).y;
+}
+
+float OceanParticleCascadeHeight(float2 worldXZ, float domain, float slice)
+{
+    if (_OceanAperiodicParams.x <= 0.5)
+        return _OceanFftSpatial.SampleLevel(sampler_OceanFftSpatial, float3(worldXZ / domain, slice), 0).y;
+
+    OceanAperiodicTriangle tileTriangle = OceanAperiodicTriangleAt(worldXZ / domain, _OceanAperiodicParams.y);
+    float3 weights = OceanAperiodicVarianceWeights(tileTriangle.weights);
+    return OceanParticleTileHeight(worldXZ, domain, slice, tileTriangle.vertex0) * weights.x
+         + OceanParticleTileHeight(worldXZ, domain, slice, tileTriangle.vertex1) * weights.y
+         + OceanParticleTileHeight(worldXZ, domain, slice, tileTriangle.vertex2) * weights.z;
+}
 #endif
 
 // ---------------------------------------------------------------- helpers
@@ -665,14 +716,13 @@ float SurfaceWorldY(float3 worldPos, float2 simNorm)
         float active = (c < (int)_OceanFftCascadeCount) ? 1.0 : 0.0;
         float slice = min((float)c, _OceanFftCascadeCount - 1.0);
         float domain = max(_OceanFftDomainSizes[c], 1e-3);
-        float2 uv = worldPos.xz / domain;
         float cascadeShoal = lerp(1.0, ShoalWeight(shoreDepth,
                                                    domain * OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION),
                                   shoreInfluence);
         float fetch = SeaStateFetchWeight(worldPos.xz,
             domain * OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION);
         height += active * cascadeShoal * fetch
-                * _OceanFftSpatial.SampleLevel(sampler_OceanFftSpatial, float3(uv, slice), 0).y;
+                * OceanParticleCascadeHeight(worldPos.xz, domain, slice);
     }
     // The wake/interactive ripple rides ON TOP of the swell on oceans too (the surface mesh adds
     // both), so the density glue must - otherwise the veil sits at swell height inside a wake that

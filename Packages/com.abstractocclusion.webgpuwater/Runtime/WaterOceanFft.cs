@@ -16,6 +16,27 @@ namespace AbstractOcclusion.WebGpuWater
     /// <summary>GPU compute pass owning the ocean FFT cascade textures. Ocean-gated, default-off elsewhere.</summary>
     internal sealed class WaterOceanFft : System.IDisposable
     {
+        internal readonly struct AperiodicParams
+        {
+            internal readonly bool Enabled;
+            internal readonly Texture2D DirectionMap;
+            internal readonly Vector2 MapCenter;
+            internal readonly float MapSize;
+            internal readonly float DirectionStrength;
+            internal readonly float TileScale;
+
+            internal AperiodicParams(bool enabled, Texture2D directionMap, Vector2 mapCenter,
+                                     float mapSize, float directionStrength, float tileScale)
+            {
+                Enabled = enabled;
+                DirectionMap = directionMap;
+                MapCenter = mapCenter;
+                MapSize = Mathf.Max(1f, mapSize);
+                DirectionStrength = Mathf.Clamp01(directionStrength);
+                TileScale = Mathf.Clamp(tileScale, 0.5f, 2f);
+            }
+        }
+
         /// <summary>Per-body whitecap-foam accumulation knobs, authored on the ocean WaterVolume.</summary>
         internal readonly struct FoamParams
         {
@@ -200,6 +221,9 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_FoamMax = Shader.PropertyToID("OceanFoamMax");
         static readonly int ID_FoamSlowFade = Shader.PropertyToID("OceanFoamSlowFadeFraction");
         static readonly int ID_FoamDrift = Shader.PropertyToID("OceanFoamDriftFraction");
+        static readonly int ID_OceanDirectionMap = WaterShaderProps.OceanDirectionMap;
+        static readonly int ID_OceanAperiodicParams = WaterShaderProps.OceanAperiodicParams;
+        static readonly int ID_OceanDirectionMapFrame = WaterShaderProps.OceanDirectionMapFrame;
 
         readonly ComputeShader _cs;
         readonly int _kInit, _kUpdate, _kFftH, _kFftV, _kNormal, _kBake, _kPreview;
@@ -504,7 +528,7 @@ namespace AbstractOcclusion.WebGpuWater
         // preview, and publish the displacement array as a global for the surface shader (from increment 2).
         internal void Dispatch(float waveTime, in SeaParams sea, float amplitude,
                                Vector2 cameraXZ, in FoamParams foam,
-                               WaterSeaStateFetchField fetchField)
+                               WaterSeaStateFetchField fetchField, in AperiodicParams aperiodic)
         {
             if (!_ready) return;
 
@@ -582,6 +606,12 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.SetFloat(ID_FieldAmplitude, amplitude);
             _cs.SetTexture(_kBake, ID_Displacement, _displacement);
             _cs.SetTexture(_kBake, ID_HeightField, _heightField);
+            _cs.SetTexture(_kBake, ID_OceanDirectionMap,
+                aperiodic.DirectionMap ? aperiodic.DirectionMap : Texture2D.grayTexture);
+            _cs.SetVector(ID_OceanAperiodicParams,
+                new Vector4(aperiodic.Enabled ? 1f : 0f, aperiodic.TileScale, aperiodic.DirectionStrength, 0f));
+            _cs.SetVector(ID_OceanDirectionMapFrame,
+                new Vector4(aperiodic.MapCenter.x, aperiodic.MapCenter.y, 1f / aperiodic.MapSize, 0f));
             fetchField?.BindTo(_cs, _kBake);
             int bakeGroups = Mathf.CeilToInt(HeightFieldRes / (float)ThreadGroupSize);
             _cs.Dispatch(_kBake, bakeGroups, bakeGroups, 1);

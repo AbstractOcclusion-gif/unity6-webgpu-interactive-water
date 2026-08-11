@@ -32,6 +32,10 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyCaustics"
             #include "WaterCommon.hlsl"     // SampleWaterBilinear, _LightDir, _WaterTexel; WaterShared: IOR_*, SafeRefractedLightY
             #include "WaterVolume.hlsl"     // _SimCenter / _SimExtent (window frame) + LARGE_CAUSTIC_REFERENCE_DEPTH
             #include "WaterWaves.hlsl"      // _WaveTime (shared clock) for the analytic wave field
+            // The caustic vertex pass evaluates height and normals repeatedly. Expanding the three-tile
+            // synthesis here exceeds D3D11's shader-compiler budget; the caustic projection may safely
+            // use the underlying periodic exemplar while the visible surface owns P4's aperiodic shape.
+            #define WATER_DISABLE_OCEAN_APERIODIC 1
             #include "WaterLargeWaves.hlsl" // ApplyLargeBodyWaveNormal, LargeBodyWaveHeight - the open-water swell
 
             float _WaveNormalStrength; // global; the same wave-normal strength the surface uses

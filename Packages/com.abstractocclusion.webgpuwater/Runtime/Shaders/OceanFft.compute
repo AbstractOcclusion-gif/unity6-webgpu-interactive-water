@@ -16,6 +16,7 @@
 #include "WaterShared.hlsl"     // OCEAN_FFT_MAX_CASCADES (shared cascade layout)
 #include "WaterSeaStateFetch.hlsl"
 #include "WaterFoamCommon.hlsl" // FoamDecayBlend: split decay shared with WaterSim.compute
+#include "WaterOceanAperiodic.hlsl"
 
 #pragma kernel SpectrumInit
 #pragma kernel SpectrumUpdate
@@ -42,6 +43,9 @@ RWTexture2DArray<float4> OceanDisplacement;// spatial cascade (x, height, z, foa
 RWTexture2DArray<float4> OceanNormal;
 RWTexture2DArray<float4> OceanPreview;     // remapped displacement for the debug view (editor/dev only)
 Texture2D<float4>        OceanButterfly;   // (twiddle.x, twiddle.y, indexA, indexB) per (stage, element)
+Texture2D<float4> _OceanDirectionMap;
+float4 _OceanAperiodicParams;    // x = enabled, y = tile scale, z = direction strength
+float4 _OceanDirectionMapFrame; // xy = world centre, z = inverse world size
 
 uint   OceanFftResolution;
 uint   OceanFftCascades;
@@ -603,6 +607,54 @@ float3 OceanCascadeDisplacementBilinear(float2 worldXZ, uint c)
     return lerp(lerp(h00, h10, fx), lerp(h01, h11, fx), fy);
 }
 
+float2 OceanDirectionMapBilinear(float2 uv)
+{
+    uint width, height;
+    _OceanDirectionMap.GetDimensions(width, height);
+    float2 texel = saturate(uv) * float2(max((int)width - 1, 0), max((int)height - 1, 0));
+    int2 p0 = (int2)floor(texel);
+    int2 p1 = min(p0 + 1, int2((int)width - 1, (int)height - 1));
+    float2 fraction = frac(texel);
+    float2 row0 = lerp(_OceanDirectionMap.Load(int3(p0, 0)).rg,
+                       _OceanDirectionMap.Load(int3(p1.x, p0.y, 0)).rg, fraction.x);
+    float2 row1 = lerp(_OceanDirectionMap.Load(int3(p0.x, p1.y, 0)).rg,
+                       _OceanDirectionMap.Load(int3(p1, 0)).rg, fraction.x);
+    return lerp(row0, row1, fraction.y);
+}
+
+float OceanBakeTileAngle(float2 tileWorldCenter)
+{
+    float2 mapUv = (tileWorldCenter - _OceanDirectionMapFrame.xy) * _OceanDirectionMapFrame.z + 0.5;
+    if (any(mapUv < 0.0) || any(mapUv > 1.0)) return 0.0;
+    return OceanAperiodicDirectionAngle(OceanDirectionMapBilinear(mapUv), _OceanAperiodicParams.z);
+}
+
+float3 OceanBakeTileDisplacement(float2 worldXZ, uint cascade, int2 vertex)
+{
+    float domain = max(OceanDomainSizes[cascade], 1e-3);
+    float2 tileCenterUv = OceanAperiodicVertexUv(vertex, _OceanAperiodicParams.y);
+    float2 tileWorldCenter = tileCenterUv * domain;
+    float angle = OceanBakeTileAngle(tileWorldCenter);
+    float2 localWorld = OceanAperiodicRotate(worldXZ - tileWorldCenter, -angle);
+    float2 sampleWorld = (localWorld / domain + tileCenterUv + OceanAperiodicHash(vertex)) * domain;
+    float3 displacement = OceanCascadeDisplacementBilinear(sampleWorld, cascade);
+    displacement.xz = OceanAperiodicRotate(displacement.xz, angle);
+    return displacement;
+}
+
+float3 OceanBakeDisplacement(float2 worldXZ, uint cascade)
+{
+    if (_OceanAperiodicParams.x <= 0.5)
+        return OceanCascadeDisplacementBilinear(worldXZ, cascade);
+
+    float domain = max(OceanDomainSizes[cascade], 1e-3);
+    OceanAperiodicTriangle tileTriangle = OceanAperiodicTriangleAt(worldXZ / domain, _OceanAperiodicParams.y);
+    float3 weights = OceanAperiodicVarianceWeights(tileTriangle.weights);
+    return OceanBakeTileDisplacement(worldXZ, cascade, tileTriangle.vertex0) * weights.x
+         + OceanBakeTileDisplacement(worldXZ, cascade, tileTriangle.vertex1) * weights.y
+         + OceanBakeTileDisplacement(worldXZ, cascade, tileTriangle.vertex2) * weights.z;
+}
+
 // Bake the summed cascade height over a camera-centred world region into a single-channel field, so the
 // CPU can async-read it and float objects on the exact rendered swell (height is a function of world XZ).
 [numthreads(OCEAN_FFT_TG, OCEAN_FFT_TG, 1)]
@@ -623,7 +675,7 @@ void BakeHeightField(uint3 id : SV_DispatchThreadID)
         float wavelength = OceanDomainSizes[c] * OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION;
         disp += OceanCascadeDistanceFade(camDist, OceanVisibleAreas[c])
               * SeaStateFetchWeight(worldXZ, wavelength)
-              * OceanCascadeDisplacementBilinear(worldXZ, (uint)c);
+              * OceanBakeDisplacement(worldXZ, (uint)c);
     }
     // Amplitude scales ALL channels, mirroring the render path (WaterLargeWaves.hlsl:
     // height = fft.y * _LargeWaveAmplitude ..., disp = fft.xz * (_LargeWaveAmplitude ...)).
