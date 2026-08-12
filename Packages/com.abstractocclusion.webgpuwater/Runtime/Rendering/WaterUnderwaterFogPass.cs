@@ -51,6 +51,10 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_WaterHeightRTFrame = Shader.PropertyToID("_WaterHeightRTFrame");
         static readonly int ID_WaterHeightRTViewProjection =
             Shader.PropertyToID("_WaterHeightRTViewProjection");
+        static readonly int ID_WaterHeightRTIncludeRipple =
+            Shader.PropertyToID("_WaterHeightRTIncludeRipple");
+        static readonly int ID_WaterLensHeightRT = Shader.PropertyToID("_WaterLensHeightRT");
+        static readonly int ID_WaterLensHeightRTFrame = Shader.PropertyToID("_WaterLensHeightRTFrame");
         internal const int HeightRtResolution = 256;
         internal const float HeightRtWindowSize = 512f;
         const float HeightRtHalfExtent = HeightRtWindowSize * 0.5f;
@@ -60,6 +64,22 @@ namespace AbstractOcclusion.WebGpuWater
         const float HeightRtDepthRange = 2048f;
         const string HeightRtTextureName = "_WaterHeightRT";
         const string HeightRtDepthName = "WaterHeightRT.Depth";
+        // Crest's useful distinction is two scales: the wide field answers ray marching, while a
+        // dense lens field answers the centimetre waterline. Four metres covers a normal camera's
+        // near-plane footprint; points outside it retain the analytic fallback. The coarser vertex
+        // lattice is safe because the raster target interpolates the displaced mesh between samples,
+        // while the fixed chop apron admits source vertices displaced horizontally into the window.
+        const int LensHeightRtResolution = 256;
+        const float LensHeightRtWindowSize = 4f;
+        const float LensHeightRtHalfExtent = LensHeightRtWindowSize * 0.5f;
+        const float LensHeightRtTexelSize = LensHeightRtWindowSize / LensHeightRtResolution;
+        const float LensHeightRtGridCellSize = 0.125f;
+        const string LensHeightRtTextureName = "_WaterLensHeightRT";
+        const string LensHeightRtDepthName = "WaterLensHeightRT.Depth";
+        const string HeightRtGridName = "WaterHeightRT.Grid";
+        const string LensHeightRtGridName = "WaterLensHeightRT.Grid";
+        const string LensHeightRtPassName = "WaterUnderwaterFog.LensHeightRT";
+        const GraphicsFormat LensHeightRtFormat = GraphicsFormat.R16G16_SFloat;
 
         // The eye-depth prepass renders at this fraction of camera resolution (both axes). The fog
         // only needs the SIGN of the sheet and its eye depth at wave scale - not per-pixel exact
@@ -78,13 +98,16 @@ namespace AbstractOcclusion.WebGpuWater
         readonly ProfilingSampler _sampler = new ProfilingSampler("WaterUnderwaterFog");
         readonly ProfilingSampler _prepassSampler = new ProfilingSampler("WaterUnderwaterFog.SurfaceDepth");
         readonly ProfilingSampler _heightRtSampler = new ProfilingSampler("WaterUnderwaterFog.HeightRT");
+        readonly ProfilingSampler _lensHeightRtSampler = new ProfilingSampler(LensHeightRtPassName);
         readonly ProfilingSampler _classifySampler = new ProfilingSampler("WaterUnderwaterFog.Classify");
         readonly int _classifyShaderPass;
         readonly bool _classifyRtSupported;
+        readonly bool _lensHeightRtSupported;
         // Reused each frame so the prepass allocates no garbage.
         readonly MaterialPropertyBlock _scratchBlock = new MaterialPropertyBlock();
         static readonly List<Renderer> s_SurfaceRenderers = new List<Renderer>();
         static Mesh s_HeightRtGrid;
+        static Mesh s_LensHeightRtGrid;
 
         internal WaterUnderwaterFogPass(Material material, Material heightRtMaterial)
         {
@@ -95,6 +118,10 @@ namespace AbstractOcclusion.WebGpuWater
                 : InvalidShaderPass;
             _classifyRtSupported = SystemInfo.IsFormatSupported(ClassifyRtFormat,
                                                                 GraphicsFormatUsage.Render);
+            _lensHeightRtSupported = SystemInfo.IsFormatSupported(LensHeightRtFormat,
+                                                                   GraphicsFormatUsage.Render)
+                                  && SystemInfo.IsFormatSupported(LensHeightRtFormat,
+                                                                  GraphicsFormatUsage.Sample);
             renderPassEvent = InjectionPoint;
         }
 
@@ -123,6 +150,7 @@ namespace AbstractOcclusion.WebGpuWater
             public Mesh mesh;
             public Matrix4x4 model;
             public Matrix4x4 viewProjection;
+            public bool includeRipple;
         }
 
         public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
@@ -198,6 +226,15 @@ namespace AbstractOcclusion.WebGpuWater
                                    && !WaterDebugView.FogViewActive
                                    && _classifyShaderPass != InvalidShaderPass
                                    && _classifyRtSupported;
+            bool lensHeightRtRecorded = classifyRtRecorded
+                                     && fogSource.IsOceanClipmap
+                                     && _heightRtMaterial != null
+                                     && _lensHeightRtSupported
+                                     && s_SurfaceRenderers.Count > 0;
+            if (lensHeightRtRecorded)
+                RecordLensHeightRt(renderGraph, cameraData, fogSource.VolumeCenter.y);
+            else
+                Shader.SetGlobalVector(ID_WaterLensHeightRTFrame, Vector4.zero);
             TextureHandle classifyRt = classifyRtRecorded
                 ? RecordClassifyPass(renderGraph, cameraColor)
                 : default;
@@ -274,22 +311,14 @@ namespace AbstractOcclusion.WebGpuWater
             };
             TextureHandle depth = renderGraph.CreateTexture(depthDesc);
 
-            Vector3 eye = center + Vector3.up * HeightRtCameraAltitude;
-            Quaternion rotation = Quaternion.LookRotation(Vector3.down, Vector3.forward);
-            Matrix4x4 cameraToWorld = Matrix4x4.TRS(eye, rotation, Vector3.one);
-            Matrix4x4 view = Matrix4x4.Scale(new Vector3(1f, 1f, -1f)) * cameraToWorld.inverse;
-            Matrix4x4 projection = GL.GetGPUProjectionMatrix(
-                Matrix4x4.Ortho(-HeightRtHalfExtent, HeightRtHalfExtent,
-                                -HeightRtHalfExtent, HeightRtHalfExtent,
-                                0f, HeightRtDepthRange), true);
-
             using var builder = renderGraph.AddRasterRenderPass<HeightRtPassData>(
                 _heightRtSampler.name, out HeightRtPassData data, _heightRtSampler);
             data.material = _heightRtMaterial;
             data.block = _scratchBlock;
             data.mesh = GetHeightRtGrid();
             data.model = Matrix4x4.Translate(center);
-            data.viewProjection = projection * view;
+            data.viewProjection = CreateHeightRtViewProjection(center, HeightRtHalfExtent);
+            data.includeRipple = false;
             builder.SetRenderAttachment(color, 0, AccessFlags.Write);
             builder.SetRenderAttachmentDepth(depth, AccessFlags.Write);
             builder.AllowPassCulling(false);
@@ -301,28 +330,112 @@ namespace AbstractOcclusion.WebGpuWater
                 Renderer source = s_SurfaceRenderers[0];
                 source.GetPropertyBlock(d.block);
                 d.block.SetMatrix(ID_WaterHeightRTViewProjection, d.viewProjection);
+                d.block.SetFloat(ID_WaterHeightRTIncludeRipple, d.includeRipple ? 1f : 0f);
                 ctx.cmd.DrawMesh(d.mesh, d.model, d.material, 0, 0, d.block);
             });
         }
 
+        void RecordLensHeightRt(RenderGraph renderGraph, UniversalCameraData cameraData,
+                                float restPlaneY)
+        {
+            Vector3 cameraPosition = cameraData.worldSpaceCameraPos;
+            float centerX = Mathf.Floor(cameraPosition.x / LensHeightRtTexelSize)
+                          * LensHeightRtTexelSize;
+            float centerZ = Mathf.Floor(cameraPosition.z / LensHeightRtTexelSize)
+                          * LensHeightRtTexelSize;
+            Vector3 center = new Vector3(centerX, restPlaneY, centerZ);
+
+            TextureDesc colorDesc = new TextureDesc(LensHeightRtResolution, LensHeightRtResolution)
+            {
+                name = LensHeightRtTextureName,
+                colorFormat = LensHeightRtFormat,
+                depthBufferBits = DepthBits.None,
+                msaaSamples = MSAASamples.None,
+                clearBuffer = true,
+                clearColor = Color.clear,
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp
+            };
+            TextureHandle color = renderGraph.CreateTexture(colorDesc);
+            TextureDesc depthDesc = new TextureDesc(LensHeightRtResolution, LensHeightRtResolution)
+            {
+                name = LensHeightRtDepthName,
+                colorFormat = GraphicsFormat.None,
+                depthBufferBits = DepthBits.Depth32,
+                msaaSamples = MSAASamples.None,
+                clearBuffer = true
+            };
+            TextureHandle depth = renderGraph.CreateTexture(depthDesc);
+
+            Matrix4x4 viewProjection = CreateHeightRtViewProjection(center, LensHeightRtHalfExtent);
+            using var builder = renderGraph.AddRasterRenderPass<HeightRtPassData>(
+                _lensHeightRtSampler.name, out HeightRtPassData data, _lensHeightRtSampler);
+            data.material = _heightRtMaterial;
+            data.block = _scratchBlock;
+            data.mesh = GetLensHeightRtGrid();
+            data.model = Matrix4x4.Translate(center);
+            data.viewProjection = viewProjection;
+            data.includeRipple = true;
+            builder.SetRenderAttachment(color, 0, AccessFlags.Write);
+            builder.SetRenderAttachmentDepth(depth, AccessFlags.Write);
+            builder.AllowPassCulling(false);
+            builder.SetGlobalTextureAfterPass(color, ID_WaterLensHeightRT);
+            Shader.SetGlobalVector(ID_WaterLensHeightRTFrame,
+                new Vector4(centerX, centerZ, LensHeightRtHalfExtent, 1f));
+            builder.SetRenderFunc((HeightRtPassData d, RasterGraphContext ctx) =>
+            {
+                Renderer source = s_SurfaceRenderers[0];
+                source.GetPropertyBlock(d.block);
+                d.block.SetMatrix(ID_WaterHeightRTViewProjection, d.viewProjection);
+                d.block.SetFloat(ID_WaterHeightRTIncludeRipple, d.includeRipple ? 1f : 0f);
+                ctx.cmd.DrawMesh(d.mesh, d.model, d.material, 0, 0, d.block);
+            });
+        }
+
+        static Matrix4x4 CreateHeightRtViewProjection(Vector3 center, float halfExtent)
+        {
+            Vector3 eye = center + Vector3.up * HeightRtCameraAltitude;
+            Quaternion rotation = Quaternion.LookRotation(Vector3.down, Vector3.forward);
+            Matrix4x4 cameraToWorld = Matrix4x4.TRS(eye, rotation, Vector3.one);
+            Matrix4x4 view = Matrix4x4.Scale(new Vector3(1f, 1f, -1f)) * cameraToWorld.inverse;
+            Matrix4x4 projection = GL.GetGPUProjectionMatrix(
+                Matrix4x4.Ortho(-halfExtent, halfExtent, -halfExtent, halfExtent,
+                                0f, HeightRtDepthRange), true);
+            return projection * view;
+        }
+
         static Mesh GetHeightRtGrid()
         {
-            if (s_HeightRtGrid != null) return s_HeightRtGrid;
+            return GetOrCreateHeightRtGrid(ref s_HeightRtGrid, HeightRtGridName,
+                                           HeightRtWindowSize, HeightRtTexelSize);
+        }
 
-            int apronCells = Mathf.CeilToInt(HeightRtChopApron / HeightRtTexelSize);
-            int cellsPerAxis = HeightRtResolution + apronCells * 2;
+        static Mesh GetLensHeightRtGrid()
+        {
+            return GetOrCreateHeightRtGrid(ref s_LensHeightRtGrid, LensHeightRtGridName,
+                                           LensHeightRtWindowSize, LensHeightRtGridCellSize);
+        }
+
+        static Mesh GetOrCreateHeightRtGrid(ref Mesh grid, string name, float windowSize,
+                                            float gridCellSize)
+        {
+            if (grid != null) return grid;
+
+            int apronCells = Mathf.CeilToInt(HeightRtChopApron / gridCellSize);
+            int windowCells = Mathf.CeilToInt(windowSize / gridCellSize);
+            int cellsPerAxis = windowCells + apronCells * 2;
             int verticesPerAxis = cellsPerAxis + 1;
             var vertices = new Vector3[verticesPerAxis * verticesPerAxis];
             var indices = new int[cellsPerAxis * cellsPerAxis * 6];
-            float gridHalfExtent = HeightRtHalfExtent + HeightRtChopApron;
+            float gridHalfExtent = windowSize * 0.5f + HeightRtChopApron;
             int vertexIndex = 0;
             for (int z = 0; z < verticesPerAxis; z++)
             {
                 for (int x = 0; x < verticesPerAxis; x++)
                 {
-                    vertices[vertexIndex++] = new Vector3(-gridHalfExtent + x * HeightRtTexelSize,
+                    vertices[vertexIndex++] = new Vector3(-gridHalfExtent + x * gridCellSize,
                                                           0f,
-                                                          -gridHalfExtent + z * HeightRtTexelSize);
+                                                          -gridHalfExtent + z * gridCellSize);
                 }
             }
             int index = 0;
@@ -340,17 +453,17 @@ namespace AbstractOcclusion.WebGpuWater
                     indices[index++] = upperLeft + 1;
                 }
             }
-            s_HeightRtGrid = new Mesh
+            grid = new Mesh
             {
-                name = "WaterHeightRT.Grid",
+                name = name,
                 indexFormat = IndexFormat.UInt32,
                 hideFlags = HideFlags.HideAndDontSave
             };
-            s_HeightRtGrid.vertices = vertices;
-            s_HeightRtGrid.SetIndices(indices, MeshTopology.Triangles, 0, calculateBounds: false);
-            s_HeightRtGrid.bounds = new Bounds(Vector3.zero,
+            grid.vertices = vertices;
+            grid.SetIndices(indices, MeshTopology.Triangles, 0, calculateBounds: false);
+            grid.bounds = new Bounds(Vector3.zero,
                 new Vector3(gridHalfExtent * 2f, HeightRtDepthRange, gridHalfExtent * 2f));
-            return s_HeightRtGrid;
+            return grid;
         }
 
         // The waterline meniscus draws over the fogged scene AND (for the KWS-style lens tension)

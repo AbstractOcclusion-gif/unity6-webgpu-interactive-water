@@ -17,6 +17,7 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         const string SceneLightCountName = "_WaterSceneLightCount";
         const string SceneLightSpotDirectionName = "_WaterSceneLightSpotDir";
         const string UnderwaterPointLightsKeyword = "WATER_FOG_POINT_LIGHTS";
+        const string GodRayPointLightsKeyword = "WATER_GODRAY_POINT_LIGHTS";
         const float SpotlightOuterAngle = 60f;
         const float SpotlightInnerAngle = 30f;
         const int SplashAtlasColumns = 4;
@@ -49,6 +50,10 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         static readonly int SceneLightSpotDirectionProperty = Shader.PropertyToID(SceneLightSpotDirectionName);
         static readonly FieldInfo WaterFogSettingsField = typeof(WaterVolume).GetField(
             "waterFogSettings", BindingFlags.Instance | BindingFlags.NonPublic);
+        static readonly FieldInfo OceanSettingsField = typeof(WaterVolume).GetField(
+            "ocean", BindingFlags.Instance | BindingFlags.NonPublic);
+        static readonly FieldInfo WindowedField = typeof(WaterVolume).GetField(
+            "_windowed", BindingFlags.Instance | BindingFlags.NonPublic);
         static readonly Vector3 VolumePosition = new Vector3(10f, 2f, -4f);
         static readonly Vector3 SecondaryVolumePosition = new Vector3(-10f, 2f, 4f);
         static readonly Vector3 VolumeExtent = new Vector3(4f, 2f, 6f);
@@ -389,12 +394,13 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         }
 
         [Test]
-        public void PointLightScatter_ArmsInFullModeAndClearsInSimpleMode()
+        public void PointLightScatter_ArmsOnlyRequestedVariantsAndClearsWithoutEligibleLights()
         {
             GameObject volumeHost = CreateInactiveVolume(out WaterVolume volume);
             GameObject lightHost = new GameObject("Water Scatter Test Light");
             float previousLightCount = Shader.GetGlobalFloat(SceneLightCountProperty);
-            bool pointLightsWereEnabled = Shader.IsKeywordEnabled(UnderwaterPointLightsKeyword);
+            bool fogPointLightsWereEnabled = Shader.IsKeywordEnabled(UnderwaterPointLightsKeyword);
+            bool godRayPointLightsWereEnabled = Shader.IsKeywordEnabled(GodRayPointLightsKeyword);
             try
             {
                 Light light = lightHost.AddComponent<Light>();
@@ -408,17 +414,49 @@ namespace AbstractOcclusion.WebGpuWater.Tests
 
                 Assert.That(Shader.GetGlobalFloat(SceneLightCountProperty), Is.GreaterThan(0f));
                 Assert.That(Shader.IsKeywordEnabled(UnderwaterPointLightsKeyword), Is.True);
+                Assert.That(Shader.IsKeywordEnabled(GodRayPointLightsKeyword), Is.False);
+
+                light.type = LightType.Directional;
+                publisher.PublishUnderwater(0f, 0f, 0f, 0f, 0f, 0f);
+
+                Assert.That(Shader.GetGlobalFloat(SceneLightCountProperty), Is.Zero);
+                Assert.That(Shader.IsKeywordEnabled(UnderwaterPointLightsKeyword), Is.False);
+                Assert.That(Shader.IsKeywordEnabled(GodRayPointLightsKeyword), Is.False);
+
+                light.type = LightType.Point;
+                WaterFogSettings(volume).lightScatter = 0f;
+                WaterVolume.OceanSettings oceanSettings = OceanSettings(volume);
+                oceanSettings.openWater = true;
+                oceanSettings.unboundedOcean = true;
+                oceanSettings.largeGodRayDensity = 1f;
+                oceanSettings.largeGodRayLightScatter = 1f;
+                Assert.That(WindowedField, Is.Not.Null);
+                WindowedField.SetValue(volume, true);
+                publisher.PublishUnderwater(0f, 0f, 0f, 0f, 0f, 0f);
+
+                Assert.That(Shader.GetGlobalFloat(SceneLightCountProperty), Is.GreaterThan(0f));
+                Assert.That(Shader.IsKeywordEnabled(UnderwaterPointLightsKeyword), Is.False);
+                Assert.That(Shader.IsKeywordEnabled(GodRayPointLightsKeyword), Is.True);
+
+                WaterFogSettings(volume).lightScatter = 1f;
+                publisher.PublishUnderwater(0f, 0f, 0f, 0f, 0f, 0f);
+
+                Assert.That(Shader.IsKeywordEnabled(UnderwaterPointLightsKeyword), Is.True);
+                Assert.That(Shader.IsKeywordEnabled(GodRayPointLightsKeyword), Is.True);
 
                 publisher.PublishUnderwater(0f, 0f, 0f, 1f, 0f, 0f);
 
                 Assert.That(Shader.GetGlobalFloat(SceneLightCountProperty), Is.Zero);
                 Assert.That(Shader.IsKeywordEnabled(UnderwaterPointLightsKeyword), Is.False);
+                Assert.That(Shader.IsKeywordEnabled(GodRayPointLightsKeyword), Is.False);
             }
             finally
             {
                 Shader.SetGlobalFloat(SceneLightCountProperty, previousLightCount);
-                if (pointLightsWereEnabled) Shader.EnableKeyword(UnderwaterPointLightsKeyword);
+                if (fogPointLightsWereEnabled) Shader.EnableKeyword(UnderwaterPointLightsKeyword);
                 else Shader.DisableKeyword(UnderwaterPointLightsKeyword);
+                if (godRayPointLightsWereEnabled) Shader.EnableKeyword(GodRayPointLightsKeyword);
+                else Shader.DisableKeyword(GodRayPointLightsKeyword);
                 Object.DestroyImmediate(lightHost);
                 Object.DestroyImmediate(volumeHost);
             }
@@ -468,6 +506,12 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         {
             Assert.That(WaterFogSettingsField, Is.Not.Null);
             return (WaterVolume.WaterFogSettings)WaterFogSettingsField.GetValue(volume);
+        }
+
+        static WaterVolume.OceanSettings OceanSettings(WaterVolume volume)
+        {
+            Assert.That(OceanSettingsField, Is.Not.Null);
+            return (WaterVolume.OceanSettings)OceanSettingsField.GetValue(volume);
         }
 
         static void AssertVector3(Vector3 actual, Vector3 expected)

@@ -24,6 +24,9 @@ namespace AbstractOcclusion.WebGpuWater
         const int MaxSamplesPerAxis = 3;
         const float FallbackHalfExtent = 0.15f; // used when there is no collider to size from
         const float MinSphereRadius = 0.01f;
+        const float MinimumFloatingBuoyancy = 1f;
+        const float MinSurfaceGlueIntensity = 0f;
+        const float MaxSurfaceGlueIntensity = 4f;
 
         [Tooltip("Float strength. Net buoyancy cancels gravity when " +
                  "buoyancy * submergedFraction = 1, so ~2.5 floats with the top out.")]
@@ -48,6 +51,12 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("Extra damping on vertical velocity only, to quiet the residual bob " +
                  "(which otherwise feeds displacement jitter). Doesn't slow drift/tilt.")]
         [Range(0f, 4f)] [SerializeField] internal float verticalSettleDamping = 1.0f;
+
+        [Tooltip("Extra heave restoring force that keeps a floater visually attached to fast waves. " +
+                 "It pulls down when the probe grid rises above its equilibrium draft and pushes up " +
+                 "when it falls below it. 0 = off and preserves the original physics.")]
+        [Range(MinSurfaceGlueIntensity, MaxSurfaceGlueIntensity)]
+        [SerializeField] internal float surfaceGlueIntensity;
 
         // ---- opt-in extensions (defaults preserve the original single-point behaviour) ----
 
@@ -219,7 +228,9 @@ namespace AbstractOcclusion.WebGpuWater
             }
 
             if (submergedSum <= 0f) return;
-            ApplyBodyDamping(up, submergedSum * invCount);
+            float averageFraction = submergedSum * invCount;
+            ApplySurfaceGlue(up, gravity, averageFraction);
+            ApplyBodyDamping(up, averageFraction);
         }
 
         void BuildWorldPoints()
@@ -269,6 +280,33 @@ namespace AbstractOcclusion.WebGpuWater
             _rb.AddTorque(-_rb.angularVelocity * (waterAngularDamping * averageFraction), ForceMode.Acceleration);
             float verticalSpeed = Vector3.Dot(_rb.linearVelocity, up);
             _rb.AddForce(up * (-verticalSpeed * verticalSettleDamping * averageFraction), ForceMode.Acceleration);
+        }
+
+        // A body-level spring in the SAME currency as Archimedes lift: mean submerged fraction.
+        // The ordinary force balances gravity at fraction = 1 / buoyancy, so measuring error from
+        // that exact value makes this cheat change response speed without moving the resting draft.
+        // Applying it at the body rather than at every probe also leaves the existing roll/pitch torque
+        // entirely under the physical per-point forces. FixedUpdate calls this only after at least one
+        // probe touches water, so an airborne object is never attracted to a distant surface.
+        void ApplySurfaceGlue(Vector3 up, float gravity, float averageFraction)
+        {
+            float acceleration = SurfaceGlueAcceleration(gravity, buoyancy, averageFraction,
+                                                         surfaceGlueIntensity);
+            if (acceleration == 0f) return;
+            _rb.AddForce(up * acceleration, ForceMode.Acceleration);
+        }
+
+        internal static float SurfaceGlueAcceleration(float gravity, float floatStrength,
+                                                      float averageFraction, float intensity)
+        {
+            if (gravity <= 0f || floatStrength <= MinimumFloatingBuoyancy || intensity <= 0f)
+                return 0f;
+
+            float safeIntensity = Mathf.Clamp(intensity, MinSurfaceGlueIntensity,
+                                              MaxSurfaceGlueIntensity);
+            float equilibriumFraction = 1f / floatStrength;
+            float fractionError = Mathf.Clamp01(averageFraction) - equilibriumFraction;
+            return gravity * floatStrength * safeIntensity * fractionError;
         }
 
         // Submerged fraction of a sphere whose centre is 'depth' below the surface

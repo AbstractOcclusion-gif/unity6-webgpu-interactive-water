@@ -1,8 +1,9 @@
 // WebGpuWater - F3 top-down displaced-height raster: the ONE sampled waterline authority.
 // Ortho top-down draw of a dedicated flat grid displaced by the SAME vertex core as the
 // visible surface (DisplaceSurfaceVertex, WaterSurfaceVertStage.hlsl - reuse-never-rewrite
-// applied to the authority itself), into a small camera-following R16Float RT holding
-// "surface world Y minus the rest plane" per texel (see WaterWaterline.hlsl's sampling API).
+// applied to the authority itself). The far R16 target holds "surface world Y minus the rest
+// plane" for fog marching; a second near-lens RG16 target stores the same height plus coverage
+// for centimetre-scale waterline classification.
 // Chop is handled BY RASTERIZATION: the horizontal Gerstner/FFT displacement lands where it
 // lands, which IS the chop-inverted answer - with zero math drift from the render, the
 // property no analytic inversion could guarantee (docs/PLAN_F3_height_rt_2026-08-10.md).
@@ -66,6 +67,7 @@ Shader "Hidden/AbstractOcclusion/WebGpuWater/WaterHeightRT"
             };
 
             float4x4 _WaterHeightRTViewProjection;
+            float _WaterHeightRTIncludeRipple;
 
             // Grid vertices arrive as a flat lattice in WORLD metres around the origin; the
             // object matrix (WaterUnderwaterFogPass owns that frame) translates the lattice
@@ -81,11 +83,17 @@ Shader "Hidden/AbstractOcclusion/WebGpuWater/WaterHeightRT"
                 float3 worldFlat = float3(worldOnPlane.x, _VolumeCenter.y, worldOnPlane.z);
                 float3 poolFlat = WorldToPool(worldFlat);
                 poolFlat.y = 0.0;
-                // Ripple field passed as 0: at the RT's wave-scale texels the centimetre
-                // interactive ripples are sub-texel by construction (see the core's header).
+                // The 512 m march authority deliberately omits centimetre ripples. The separate
+                // four-metre lens authority opts in because those ripples can visibly cross the
+                // near plane; this is a uniform pass setting, so it does not diverge per vertex.
+                float rippleFade = 0.0;
+                float4 ripple = (float4)0.0;
+                [branch]
+                if (_WaterHeightRTIncludeRipple > 0.5)
+                    ripple = SampleRipple(poolFlat, worldFlat, rippleFade);
                 float3 poolDisplaced;
                 float2 largeWaveSourceXZ;
-                float3 worldPos = DisplaceSurfaceVertex(poolFlat, worldFlat, (float4)0.0,
+                float3 worldPos = DisplaceSurfaceVertex(poolFlat, worldFlat, ripple,
                                                         poolDisplaced, largeWaveSourceXZ);
                 HeightVaryings o;
                 // Use a pass-owned matrix instead of replacing the command buffer's camera
@@ -101,7 +109,10 @@ Shader "Hidden/AbstractOcclusion/WebGpuWater/WaterHeightRT"
                 // Height RELATIVE TO THE REST PLANE (the R16Float precision doctrine: ~1 cm
                 // at 10 m amplitude). SampleHeightRTWorldY adds _VolumeCenter.y back - the
                 // SAME global on both sides, so the round trip cannot drift.
-                return float4(i.surfaceWorldY - _VolumeCenter.y, 0.0, 0.0, 1.0);
+                // G is coverage for camera-local consumers. The far height RT is R16 and simply
+                // drops it; the lens RT is RG16 and uses it to distinguish a rendered zero-height
+                // surface from an untouched texel before falling back to the analytic authority.
+                return float4(i.surfaceWorldY - _VolumeCenter.y, 1.0, 0.0, 1.0);
             }
             ENDCG
         }

@@ -80,14 +80,12 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             // Match the fog's compile fork: bodies without a shore field do not carry the shore
             // SDF and surf-front machinery through this already-large translation unit.
             #pragma multi_compile_fragment _ WATER_STRIP_SHORE
-            // A2: scene-lamp in-scatter inside the march, on the fog's own published-light
-            // keyword (armed by PublishUnderwater from the SAME knobs the strength floats
-            // carry; never together with WATER_FOG_SIMPLE - the budget tier stays sun-only,
-            // and the lamp code below also self-fences on !SIMPLE so that dead combination
-            // compiles to nothing). Keyword + #ifdef, not a uniform branch: the per-sample
-            // lamp loop would otherwise size every pixel's register allocation whether or not
-            // a lamp exists - the exact fps-cliff mechanism the Simple fork documents.
-            #pragma multi_compile_fragment _ WATER_FOG_POINT_LIGHTS
+            // A2: scene-lamp in-scatter inside the march. This deliberately has its OWN keyword,
+            // separate from analytic fog scatter: the per-sample lamp loop would otherwise size
+            // every march pixel's register allocation when only the cheap fog glow was requested.
+            // PublishUnderwater arms it only when the god-ray knob is non-zero, Full fog is active,
+            // and the published list contains an eligible point/spot light.
+            #pragma multi_compile_fragment _ WATER_GODRAY_POINT_LIGHTS
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
@@ -141,7 +139,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             float  _LargeGodRayFromAir;
             // A2: strength of the scene-lamp halos inside the march ([0,1], per body, gated
             // CPU-side to an active god-ray ocean). 0 = the shipped sun-only shafts; the lamp
-            // term is additionally compiled out entirely unless WATER_FOG_POINT_LIGHTS is armed.
+            // term is additionally compiled out unless WATER_GODRAY_POINT_LIGHTS is armed.
             float  _LargeGodRayLightScatter;
 
             // Temporal reprojection (the KWS calm): the pass renders into a persistent history RT and
@@ -656,7 +654,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 float3 viewFogStep = (_WaterFogEnabled > 0.5)
                     ? exp(-_WaterExtinction.rgb * (_WaterFogDensity * dt)) : float3(1.0, 1.0, 1.0);
 
-#if defined(WATER_FOG_POINT_LIGHTS) && !defined(WATER_FOG_SIMPLE)
+#if defined(WATER_GODRAY_POINT_LIGHTS) && !defined(WATER_FOG_SIMPLE)
                 // A2 scene lamps - compact the published list to the lights whose RANGE SPHERE the
                 // marched span [tEnter, tExit] actually enters: one closest-approach test per
                 // light, so an out-of-reach lamp costs a dot product, never steps x evaluations.
@@ -763,7 +761,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                     bool sampleWet = !InsideExclusion(p) && !inPrepassCarve;
                     if (sampleWet)
                         accum += shadow * depthFade * viewFog * (1.0 + caustic * _LargeGodRayCausticStrength);
-#if defined(WATER_FOG_POINT_LIGHTS) && !defined(WATER_FOG_SIMPLE)
+#if defined(WATER_GODRAY_POINT_LIGHTS) && !defined(WATER_FOG_SIMPLE)
                     // A2 lamps, integrated over this STEP SEGMENT with the closed-form integral's
                     // own atan kernel - NOT point-sampled at the jittered position. A lamp's
                     // 1/d^2 core is far narrower than a march step (metres of dt vs centimetres
@@ -824,7 +822,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 accum /= max(viewFogWeightSum, 1e-4);
 
                 float3 col = _LargeGodRayColor.rgb * _SunColor * (accum * _LargeGodRayDensity * phase);
-#if defined(WATER_FOG_POINT_LIGHTS) && !defined(WATER_FOG_SIMPLE)
+#if defined(WATER_GODRAY_POINT_LIGHTS) && !defined(WATER_FOG_SIMPLE)
                 // A2 lamps join here - BEFORE the regime scale and the temporal blend, so the
                 // halo is waterline-masked like the sun shafts, calmed by the same history, and
                 // reaches _LargeGodRayLastFrame for the underside mirror shafts for free.

@@ -18,6 +18,12 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         const float SwellWavelength = 30f;
         const float SwellHeight = 1f;
         const float NoChoppiness = 0f;
+        const float Gravity = 9.81f;
+        const float FloatStrength = 2.5f;
+        const float GlueIntensity = 1f;
+        const float EquilibriumFraction = 1f / FloatStrength;
+        const float AboveEquilibriumFraction = 0.2f;
+        const float BelowEquilibriumFraction = 0.6f;
 
         static readonly Color BottomLeft = new Color(0f, 0f, 0f, 1f);
         static readonly Color BottomRight = new Color(1f, 0f, 0f, 1f);
@@ -42,6 +48,30 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             Assert.That(WaterBuoyancy.SphereSubmergedFraction(FullSubmersionDepth, SphereRadius), Is.EqualTo(1f));
             Assert.That(WaterBuoyancy.SphereSubmergedFraction(DryDepth, SphereRadius), Is.Zero);
             Assert.That(WaterBuoyancy.SphereSubmergedFraction(0f, SphereRadius), Is.EqualTo(HalfUv));
+        }
+
+        [Test]
+        public void SurfaceGlue_IsInertWhenDisabledOrAtEquilibrium()
+        {
+            float disabled = WaterBuoyancy.SurfaceGlueAcceleration(
+                Gravity, FloatStrength, AboveEquilibriumFraction, 0f);
+            float balanced = WaterBuoyancy.SurfaceGlueAcceleration(
+                Gravity, FloatStrength, EquilibriumFraction, GlueIntensity);
+
+            Assert.That(disabled, Is.Zero);
+            Assert.That(balanced, Is.EqualTo(0f).Within(float.Epsilon));
+        }
+
+        [Test]
+        public void SurfaceGlue_PullsDownAboveDraftAndPushesUpBelowDraft()
+        {
+            float aboveDraft = WaterBuoyancy.SurfaceGlueAcceleration(
+                Gravity, FloatStrength, AboveEquilibriumFraction, GlueIntensity);
+            float belowDraft = WaterBuoyancy.SurfaceGlueAcceleration(
+                Gravity, FloatStrength, BelowEquilibriumFraction, GlueIntensity);
+
+            Assert.That(aboveDraft, Is.LessThan(0f));
+            Assert.That(belowDraft, Is.GreaterThan(0f));
         }
 
         [Test]

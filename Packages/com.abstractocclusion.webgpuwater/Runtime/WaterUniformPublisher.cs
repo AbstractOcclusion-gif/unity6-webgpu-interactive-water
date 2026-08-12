@@ -37,6 +37,9 @@ namespace AbstractOcclusion.WebGpuWater
         // Compile-time variant for the scene-light scatter loops (the fps-cliff rule: an 8-light
         // loop behind a uniform branch would still size every Simple/legacy pixel's registers).
         const string KW_UnderwaterFogPointLights = "WATER_FOG_POINT_LIGHTS";
+        // The ocean march keeps a separate variant: fog scatter must never make its large
+        // per-light arrays and nested light-step loop resident when god-ray scatter is off.
+        const string KW_GodRayPointLights = "WATER_GODRAY_POINT_LIGHTS";
 
         // ---- The package's OWN scene-light list (WaterSceneLightsInscatter, WaterFog.hlsl) ----
         // Published rather than read from URP's additional-light arrays, for four verified
@@ -489,20 +492,24 @@ namespace AbstractOcclusion.WebGpuWater
             // the surf/shore chain. A body WITH bed depth keeps today's variants untouched.
             if (_body.useBedDepth) Shader.DisableKeyword(KW_UnderwaterFogStripShore);
             else Shader.EnableKeyword(KW_UnderwaterFogStripShore);
-            // Scene-light fog scattering: armed only when this body wants it AND the tier is
-            // not Simple (the budget path stays sun-only). Same keyword-beside-float split as the
-            // Simple pair above, so the CPU gate and the compiled variant cannot disagree. The
-            // light list itself is published in the same breath - list, keyword and knob move
-            // together or not at all. TWO knobs can want the list since A2: the fog's Light
-            // Scatter and the god-ray march's Light Scatter (LargeGodRayLightScatter, already
-            // gated to an active god-ray ocean) - either arms the shared keyword, so a lamp can
-            // glow in the shafts even while the analytic fog glow is authored to 0.
-            bool fogPointLights = (_body.UnderwaterLightScatter > 0f
-                                   || _body.LargeGodRayLightScatter > 0f)
-                                  && fogSimple < 0.5f;
+            // Fog and ocean-march scattering share one published light list, but NOT one shader
+            // variant. The march carries five fixed-size per-light arrays across its step loop;
+            // letting the cheaper analytic fog knob arm that variant caused an occupancy cliff
+            // even when the god-ray knob was 0. Gather first, then arm either variant only when
+            // at least one eligible point/spot light exists. A directional-only scene therefore
+            // keeps both heavy variants compiled out while still detecting a newly added lamp on
+            // the cache's normal refresh cadence.
+            bool fullFog = fogSimple < 0.5f;
+            bool fogPointLightsRequested = _body.UnderwaterLightScatter > 0f && fullFog;
+            bool godRayPointLightsRequested = _body.LargeGodRayLightScatter > 0f && fullFog;
+            int sceneLightCount = PublishSceneLights(fogPointLightsRequested
+                                                     || godRayPointLightsRequested);
+            bool fogPointLights = fogPointLightsRequested && sceneLightCount > 0;
+            bool godRayPointLights = godRayPointLightsRequested && sceneLightCount > 0;
             if (fogPointLights) Shader.EnableKeyword(KW_UnderwaterFogPointLights);
             else Shader.DisableKeyword(KW_UnderwaterFogPointLights);
-            PublishSceneLights(fogPointLights);
+            if (godRayPointLights) Shader.EnableKeyword(KW_GodRayPointLights);
+            else Shader.DisableKeyword(KW_GodRayPointLights);
             Shader.SetGlobalFloat(ID_UnderwaterFogArmed, fogArmed);
             // See KW_UndersideFoam: the underside sheet is only ever looked at from below, so above
             // the surface the whitecap/whitewash taps are compiled out of the surface pass entirely.
@@ -527,12 +534,12 @@ namespace AbstractOcclusion.WebGpuWater
         // has Light Scatter authored above 0 - disarmed frames publish count 0 so a stale list
         // can never glow. The scene lookup is refreshed at a low cadence; the cached lights are
         // still evaluated every frame, so dynamic lights remain fully live.
-        void PublishSceneLights(bool armed)
+        int PublishSceneLights(bool requested)
         {
-            if (!armed)
+            if (!requested)
             {
                 Shader.SetGlobalFloat(ID_SceneLightCount, 0f);
-                return;
+                return 0;
             }
             Camera eye = _body.targetCamera;
             Vector3 eyePos = eye != null ? eye.transform.position : _body.VolumeCenter;
@@ -584,6 +591,7 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalVectorArray(ID_SceneLightColorCone, s_SceneLightColorCone);
             Shader.SetGlobalVectorArray(ID_SceneLightSpotDir, s_SceneLightSpotDir);
             Shader.SetGlobalFloat(ID_SceneLightCount, count);
+            return count;
         }
 
         static void RefreshSceneLightCache()

@@ -77,6 +77,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // filtering opposite signs together at the waterline.
         TEXTURE2D(_WaterFogClassifyRT);
 #endif
+        // Camera-local displaced height used only while producing the shared classification RT.
+        // Unlike the 512 m / 2 m-texel march authority, this covers four metres at centimetre
+        // texels and includes interactive ripples. G is raster coverage; an uncovered texel falls
+        // back automatically to the established analytic chop inversion.
+        TEXTURE2D(_WaterLensHeightRT); SAMPLER(sampler_WaterLensHeightRT);
+        float4 _WaterLensHeightRTFrame; // xy centre, z half extent, w valid this frame
         float _OceanSurfaceDepthValid; // 1 = the prepass ran this frame (set by the fog pass)
         // Prepass resolution as a fraction of camera resolution (WaterUnderwaterFogPass publishes
         // it beside the validity flag). The RT is read with pixel LOADs, so every load coordinate
@@ -849,6 +855,22 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         #define POND_TOP_FACE_EPSILON 1e-3
 
 #if !defined(WATER_FOG_SIMPLE) && !defined(WATER_FOG_CLASSIFY_RT)
+        #define WATER_LENS_HEIGHT_VALID_MIN 0.999
+        #define WATER_LENS_HEIGHT_EXTENT_MIN 1e-4
+
+        bool TryLensHeightClassification(float3 classifyPoint, out float classifyGap)
+        {
+            float2 uv = (classifyPoint.xz - _WaterLensHeightRTFrame.xy)
+                      / (max(_WaterLensHeightRTFrame.z, WATER_LENS_HEIGHT_EXTENT_MIN) * 2.0)
+                      + 0.5;
+            bool inside = all(uv >= 0.0) && all(uv <= 1.0);
+            float2 heightCoverage = SAMPLE_TEXTURE2D_LOD(
+                _WaterLensHeightRT, sampler_WaterLensHeightRT, saturate(uv), 0).rg;
+            bool covered = inside && heightCoverage.y >= WATER_LENS_HEIGHT_VALID_MIN;
+            classifyGap = classifyPoint.y - (_VolumeCenter.y + heightCoverage.x);
+            return covered;
+        }
+
         void EvaluateWaterlineClassificationGaps(float3 classifyPoint, out float classifyGap,
                                                  out float gapSmooth)
         {
@@ -862,6 +884,22 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 gapSmooth = farGap;
                 return;
             }
+
+            // Crest-style near-lens authority: rasterise the real displaced surface once on a
+            // dense local grid, then replace the three-evaluation chop inversion with one sample.
+            // The smooth gap deliberately remains ONE analytic vertical evaluation for ddx/ddy:
+            // the shipped invariant is position from the inverted surface, feather width from the
+            // C1 vertical field. Only classifyGap may select per pixel; gapSmooth follows uniform
+            // control flow across every quad. Dry-carve rays classify their pushed exit point and
+            // therefore retain the exact analytic pair.
+            if (_WaterLensHeightRTFrame.w > 0.5 && _CameraDryVolume < 0.5)
+            {
+                gapSmooth = SurfaceSignedGap(classifyPoint);
+                if (!TryLensHeightClassification(classifyPoint, classifyGap))
+                    classifyGap = SurfaceSignedGapChopInverted(classifyPoint);
+                return;
+            }
+
             classifyGap = SurfaceSignedGapChopInvertedPair(classifyPoint, gapSmooth);
         }
 #endif

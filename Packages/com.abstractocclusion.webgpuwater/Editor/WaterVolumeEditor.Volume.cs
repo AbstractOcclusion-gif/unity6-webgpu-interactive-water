@@ -169,7 +169,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                         "ocean.largeGodRayFromAir",
                         // A2: lamp halos in the march. Sits by From Air - both are opt-in
                         // extensions of the same shafts; the fog's own Light Scatter row stays
-                        // in the Water Fog block (two layers, two homes, one keyword).
+                        // in the Water Fog block (two layers, two homes, independent keywords).
                         "ocean.largeGodRayLightScatter",
                         "ocean.largeGodRaySteps",
                         "ocean.largeGodRayAnisotropy",

@@ -378,7 +378,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!114 &232428234
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -432,15 +432,16 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5ba7f08200b36e84d8c995dae6ad429c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterBuoyancy
-  buoyancy: 2.6
+  buoyancy: 2.8
   waterLinearDamping: 2
   waterAngularDamping: 1
   samplesPerAxis: 3
-  floatRadiusScale: 1.5
+  floatRadiusScale: 3
   waveDriftStrength: 1
-  verticalSettleDamping: 1
-  objectWidth: 2.5000002
-  maxBuoyancyForce: 0
+  verticalSettleDamping: 2
+  surfaceGlueIntensity: 1
+  objectWidth: 5
+  maxBuoyancyForce: 30
   surfaceRelativeDrag: 1
   dragCoefficients: {x: 1, y: 1, z: 1}
   ignoreInteractiveRipples: 1
@@ -508,6 +509,8 @@ Transform:
   m_Children:
   - {fileID: 1876797597}
   - {fileID: 2097037568}
+  - {fileID: 271691310}
+  - {fileID: 961739753}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &234566205
@@ -600,6 +603,37 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 234566205}
   m_Mesh: {fileID: 4300000, guid: 9c96c412df7a2564fb77e5eed80cb811, type: 2}
+--- !u!1 &271691309
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 271691310}
+  m_Layer: 0
+  m_Name: GameObject (1)
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &271691310
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 271691309}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 1, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 232428239}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &345654754
 GameObject:
   m_ObjectHideFlags: 0
@@ -654,10 +688,10 @@ MonoBehaviour:
   edgeColor: {r: 0, g: 0, b: 0, a: 1}
   edgeIntensity: 0.55
   edgeSpread: 0.12
-  castsSunShadow: 1
+  castsSunShadow: 0
   affectParticles: 1
-  particleFadeBand: 0.06
-  particleDissolveSpeed: 1
+  particleFadeBand: 0.174
+  particleDissolveSpeed: 4
 --- !u!1 &403365477
 GameObject:
   m_ObjectHideFlags: 0
@@ -5833,7 +5867,7 @@ PrefabInstance:
     - target: {fileID: 3504671443819199127, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
       value: 
-      objectReference: {fileID: 2100000, guid: dcfbc996eb3d7b54b87f8137fb6ec3a6, type: 2}
+      objectReference: {fileID: 2100000, guid: 65a19f49925854843948a92566374f03, type: 2}
     - target: {fileID: 5908852736677951941, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
       propertyPath: m_Name
       value: Hull
@@ -5844,7 +5878,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
       propertyPath: m_LocalPosition.y
-      value: 0.1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
       propertyPath: m_LocalPosition.z
@@ -5884,7 +5918,13 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 6434420031437202303, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
       insertIndex: -1
       addedObject: {fileID: 345654755}
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 1187254814633490146, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 2103652770}
+    - targetCorrespondingSourceObject: {fileID: 1187254814633490146, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 2103652769}
   m_SourcePrefab: {fileID: 100100000, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
 --- !u!1 &911126246
 GameObject:
@@ -15662,9 +15702,9 @@ Camera:
     y: 0
     width: 1
     height: 1
-  near clip plane: 0.01
+  near clip plane: 0.1
   far clip plane: 16852.113
-  field of view: 45
+  field of view: 40
   orthographic: 0
   orthographic size: 5
   m_Depth: -1
@@ -15690,13 +15730,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 961739749}
   serializedVersion: 2
-  m_LocalRotation: {x: -0.030490737, y: 0.85208786, z: 0.049951836, w: 0.52011675}
-  m_LocalPosition: {x: 0, y: 10.87, z: -10}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalRotation: {x: -0.067300044, y: 0.023506671, z: -0.0015860372, w: -0.9974546}
+  m_LocalPosition: {x: 0.25, y: 0.22, z: 0}
+  m_LocalScale: {x: 0.25, y: 0.25, z: 0.25}
   m_ConstrainProportionsScale: 0
   m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: -6.71, y: 117.2, z: 0}
+  m_Father: {fileID: 232428239}
+  m_LocalEulerAnglesHint: {x: 7.72, y: 357.3, z: 0}
 --- !u!114 &961739756
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -15722,14 +15762,14 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 961739749}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 0c2f11fcb19c4fd478b030ada99be5fb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.SimpleFollowCamera
-  target: {fileID: 0}
-  localOffset: {x: 0, y: 10, z: -20}
-  lookHeight: 1
+  target: {fileID: 271691310}
+  localOffset: {x: 0, y: 1, z: -2}
+  lookHeight: 0
   followSharpness: 4
 --- !u!1 &1000572585
 GameObject:
@@ -15833,6 +15873,8 @@ MonoBehaviour:
   chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
+  chunkBoundaryMode: 1
+  chunkBoundaryWidth: 1
   jerlovWaterType: 0
   bedDepthSettings:
     useBedDepth: 0
@@ -16029,6 +16071,16 @@ MonoBehaviour:
     cascadeReach: 8
     swellHeight: 8
     swellWavelength: 200
+    seaStateGusts: 0
+    seaStateSlicks: 0
+    seaStateFetchEnabled: 0
+    seaStateFetchStrength: 1
+    oceanAperiodicEnabled: 0
+    oceanDirectionMap: {fileID: 0}
+    oceanDirectionMapSize: 1024
+    oceanDirectionMapStrength: 1
+    oceanAperiodicTileScale: 1
+    swellHeadingOffsetDegrees: 0
     oceanWindTurbulence: 0.5
     unboundedOcean: 1
     edgeFeatherMeters: 10
@@ -16112,6 +16164,10 @@ MonoBehaviour:
       serializedVersion: 2
       m_Bits: 16
     planarClipDepth: 0.007
+    planarResolutionScale: 0.5
+    planarUpdateInterval: 1
+    planarRenderShadows: 1
+    planarFarClipDistance: 0
     reflectionStrength: 0.1
     envReflectionIntensity: 0.2
     reflectSunlight: 1
@@ -16516,11 +16572,39 @@ MonoBehaviour:
   verticalForceCap: 0
   maxStepDistance: 5
   wakeFadeSpeed: 15
+--- !u!1 &2103652765 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 1187254814633490146, guid: 9450debfe8da6d143b7e398aef17306d, type: 3}
+  m_PrefabInstance: {fileID: 833592551}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &2103652769
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2103652765}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 26fbf81571b2cba4483f971ae5c25f86, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterMembership
+--- !u!114 &2103652770
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2103652765}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a8922b00576b29b4eb483c75656fa879, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterFogTransparent
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
   m_Roots:
-  - {fileID: 961739753}
   - {fileID: 773898433}
   - {fileID: 230721768}
   - {fileID: 639025607}

@@ -639,8 +639,8 @@ namespace AbstractOcclusion.WebGpuWater
         /// submerged view. Ocean-only, like every other shaft term.</summary>
         internal float LargeGodRayFromAir => IsOceanClipmap ? ocean.largeGodRayFromAir : 0f;
         /// <summary>Scene-light in-scatter inside the shaft march (the A2 lamp halos). Gated
-        /// like the mirror shafts: only an active god-ray ocean can spend it, so the shared
-        /// WATER_FOG_POINT_LIGHTS keyword this knob helps arm (WaterUniformPublisher) never
+        /// like the mirror shafts: only an active god-ray ocean can spend it, so the dedicated
+        /// WATER_GODRAY_POINT_LIGHTS keyword this knob helps arm (WaterUniformPublisher) never
         /// turns on for a body whose march cannot run. LargeGodRayDensity already folds the
         /// tier's god-ray ceiling in, so a tier that suppresses shafts zeroes this too.</summary>
         internal float LargeGodRayLightScatter
