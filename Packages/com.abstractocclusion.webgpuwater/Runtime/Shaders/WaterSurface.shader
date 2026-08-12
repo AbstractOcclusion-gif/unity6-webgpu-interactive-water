@@ -183,6 +183,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // rasterized rim undershot the analytic sphere the shell resolves. The shell renders
             // after the disc and its wall pixels replace the overhang, so the overlap never shows.
             #define CHUNK_SPHERE_CLIP_MARGIN 0.02
+            #define CHUNK_BOX_CLIP_MARGIN 0.001
 
             // Chunk MESH footprint: clip the disc to the mesh's cross-section at the water line using the
             // depth prepass (WaterChunkDepthFeature). Read by texel .Load - no sampler. This is a UnityCG
@@ -233,6 +234,16 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                     float3 chunkPool = WorldToPool(i.worldPos);
                     // Keep fragments up to the margin PAST the unit sphere (covered-seam overdraw).
                     clip(1.0 + CHUNK_SPHERE_CLIP_MARGIN - dot(chunkPool, chunkPool));
+                }
+
+                // A box chunk's nominal grid ends at the box, but horizontal wave displacement can
+                // move interior triangles beyond it. The boundary stabilizer pins the rim vertices;
+                // this final fragment gate removes any residual overhang from those triangles.
+                if (_ChunkBoxClip > 0.5)
+                {
+                    float3 chunkPool = WorldToPool(i.worldPos);
+                    clip(1.0 + CHUNK_BOX_CLIP_MARGIN
+                       - max(abs(chunkPool.x), abs(chunkPool.z)));
                 }
 
                 // Chunk MESH footprint: carve the flat disc down to the mesh's cross-section at the water

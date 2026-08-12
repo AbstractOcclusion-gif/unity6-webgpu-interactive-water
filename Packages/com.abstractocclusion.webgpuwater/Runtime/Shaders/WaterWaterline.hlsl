@@ -8,14 +8,25 @@
 //
 // COST - this is NOT free, despite what this header used to claim ("both wave layers are analytic
 // (no texture samples), so fragment-stage use costs ALU only"). The wind-wave layer is analytic ALU,
-// but LargeBodyWaveHeight chains into ShoreSample (2 x tex2Dlod, WaterShore.hlsl) and
-// OceanFftDisplacementShore (4 x SampleLevel, WaterLargeWaves.hlsl): roughly SIX texture fetches per
-// call on an ocean body. Anything calling this in a LOOP pays that per iteration -
-// WaterUnderwaterFog's 40-step crossing march plus its 5-step refine is ~290 fetches per fullscreen
-// pixel, and it is the single largest mobile/WebGPU cost in the package. Budget accordingly before
-// adding another marched consumer; the shore term varies slowly along a view ray and can be hoisted
-// out of a march (WaterLargeWaves.hlsl's LargeBodyWaveHeightDispShore documents that trick for the
-// vertex path).
+// but LargeBodyWaveHeight chains into ShoreSample (2 x tex2Dlod, WaterShore.hlsl - zero under
+// WATER_STRIP_SHORE) and OceanFftDisplacementShore (WaterLargeWaves.hlsl). Price ONE field
+// evaluation before budgeting anything (audit 2026-08-11, corrected from the "roughly six fetches"
+// this header claimed for years):
+//
+//   analytic / periodic FFT ocean : 1 SampleLevel per cascade      ->  4 source reads
+//   APERIODIC ocean (P4 tiling on): 3 taps + 3 direction-map reads  -> 24 source reads
+//
+// and note where the multipliers are. SurfaceHeightAtXZChopInvertedVertical runs the field THREE
+// times (a fixed point), so a single classification point costs 3 evaluations - which is why it
+// now hands back the vertical read its first iteration already computed instead of letting callers
+// buy a fourth. The fog composites pay a classification per pixel, twice per frame, and the
+// meniscus pass a third time.
+//
+// The crossing MARCH is no longer part of that budget and the old figure here (~290 fetches per
+// fullscreen pixel, "the single largest mobile/WebGPU cost in the package") is obsolete: since the
+// F3 height-RT work every march and refine sample is SurfaceSignedGapRT - one tex2Dlod of a 256^2
+// R16F - so the 16-step march plus its 8-step refine is 26 cheap taps, on the minority of pixels
+// with no prepass sample. Optimise the CLASSIFICATION, not the march.
 #ifndef WEBGPUWATER_WATERLINE_INCLUDED
 #define WEBGPUWATER_WATERLINE_INCLUDED
 
@@ -45,6 +56,19 @@ float3 SafeFacetNormal(float3 positionWS, bool valid, float3 fallback)
 // height. Unset (0) on anything the publisher has not run for, which is exactly the fallback
 // SurfaceHeightBand below wants: the analytic term takes over and nothing changes.
 float _OffshoreSignificantHeight;
+float _ChunkBoundaryEnabled;
+float _ChunkBoundaryWidth;
+float _ChunkEdgeWaveHeight;
+
+float ChunkBoundaryHeightWeight(float2 poolXZ)
+{
+    if (_ChunkBoundaryEnabled < 0.5) return 1.0;
+    float3 extent = VolumeExtentSafe();
+    float edgeDistance = min((1.0 - abs(poolXZ.x)) * extent.x,
+                             (1.0 - abs(poolXZ.y)) * extent.z);
+    float interior = smoothstep(0.0, max(_ChunkBoundaryWidth, 1e-4), edgeDistance);
+    return lerp(_ChunkEdgeWaveHeight, 1.0, interior);
+}
 
 
 // Displaced world-space surface height at a WORLD xz: the single source of truth for the wavy
@@ -65,7 +89,7 @@ float SurfaceHeightAtXZ(float2 worldXZ)
 
     // Open-water swell/FFT is authored in WORLD metres and layered on top (no-op for pools).
     if (_LargeBody > 0.5) surfaceY += LargeBodyWaveHeight(worldXZ);
-    return surfaceY;
+    return _VolumeCenter.y + (surfaceY - _VolumeCenter.y) * ChunkBoundaryHeightWeight(poolXZ);
 }
 
 // Signed height of a world point above its local displaced surface (>0 in air, <=0 underwater).
@@ -87,12 +111,25 @@ float SurfaceSignedGap(float3 world)
 // carve exit), which share nearly one xz across the whole screen - cache-hot by construction.
 // Ponds and bounded bodies skip the loop entirely (_LargeBody = 0); the wind-wave layer
 // stays a vertical read (its ripples carry no horizontal displacement worth inverting).
-float SurfaceHeightAtXZChopInverted(float2 worldXZ)
+// verticalOut receives the STRAIGHT-DOWN height at worldXZ - byte-identical to what
+// SurfaceHeightAtXZ(worldXZ) returns, for FREE. The fixed point's first iteration runs at
+// srcXZ = worldXZ (see the assignment below), so it already evaluates the vertical field; every
+// caller that wants both answers used to pay a second full evaluation for the one it discarded.
+// That was 1 of the 4 field evaluations a classification costs, and on an aperiodic FFT ocean one
+// evaluation is 4 cascades x 15 source reads - see the fog audit, 2026-08-11.
+// The recentring below is applied to verticalOut and NOT to the inverted return value, because
+// that is the existing split: SurfaceHeightAtXZ:81 recentres, this function never has.
+float SurfaceHeightAtXZChopInvertedVertical(float2 worldXZ, out float verticalOut)
 {
     float3 poolAtRest = WorldToPool(float3(worldXZ.x, _VolumeCenter.y, worldXZ.y));
     float2 poolXZ = poolAtRest.xz;
     float2 windSampleXZ = WindWaveSampleXZ(poolXZ, worldXZ);
     float surfaceY = PoolToWorld(float3(poolXZ.x, WaveHeight(windSampleXZ), poolXZ.y)).y;
+    // The wind-wave layer is shared by both answers; keep it before the large-body add mutates it.
+    float windWaveY = surfaceY;
+    // Pond default: with no large-body layer the vertical read IS the wind-wave surface, which is
+    // also what SurfaceHeightAtXZ returns there.
+    float verticalHeight = 0.0;
     if (_LargeBody > 0.5)
     {
         float2 srcXZ = worldXZ;
@@ -112,11 +149,26 @@ float SurfaceHeightAtXZChopInverted(float2 worldXZ)
                                                     shore.influence, _SurfBeatTime);
             float2 disp;
             LargeBodyWaveHeightDispShore(srcXZ, shore, surf, height, disp);
+            // A select, not a branch: iteration 0 ran at srcXZ == worldXZ, so ITS height is the
+            // vertical read. Capturing it costs one move; recomputing it costs a field evaluation.
+            verticalHeight = (i == 0) ? height : verticalHeight;
             srcXZ = worldXZ - disp;
         }
         surfaceY += height;
     }
+    // Recentred exactly as SurfaceHeightAtXZ:81 does, so a caller can substitute this for a second
+    // call to it on any body kind, chunk boundaries included.
+    verticalOut = _VolumeCenter.y
+                + ((windWaveY + verticalHeight) - _VolumeCenter.y) * ChunkBoundaryHeightWeight(poolXZ);
     return surfaceY;
+}
+
+// Chop-inverted height only - the shape every existing call site uses. A thin wrapper so the
+// fused version above has ONE implementation; the discarded out param folds away.
+float SurfaceHeightAtXZChopInverted(float2 worldXZ)
+{
+    float verticalIgnored;
+    return SurfaceHeightAtXZChopInvertedVertical(worldXZ, verticalIgnored);
 }
 
 // Signed gap against the chop-inverted height - the CLASSIFICATION twin of SurfaceSignedGap.
@@ -125,6 +177,17 @@ float SurfaceHeightAtXZChopInverted(float2 worldXZ)
 float SurfaceSignedGapChopInverted(float3 world)
 {
     return world.y - SurfaceHeightAtXZChopInverted(world.xz);
+}
+
+// Both gaps at one point from ONE solve: the chop-inverted gap that decides which medium the
+// point is in, and the vertical gap whose screen derivative gives the feather its calm width.
+// The pair is exactly what ArmWeight and the meniscus fragment each used to buy with two solves.
+float SurfaceSignedGapChopInvertedPair(float3 world, out float verticalGap)
+{
+    float verticalY;
+    float invertedY = SurfaceHeightAtXZChopInvertedVertical(world.xz, verticalY);
+    verticalGap = world.y - verticalY;
+    return world.y - invertedY;
 }
 
 // Camera-following top-down height authority for FAR classifications and march samples.
@@ -160,6 +223,41 @@ float HeightRTSurfaceY(float2 worldXZ, float flatFallbackY)
 float SurfaceSignedGapRT(float3 world, float flatFallbackY)
 {
     return world.y - HeightRTSurfaceY(world.xz, flatFallbackY);
+}
+
+// How far the CAMERA must be from its local surface before the accurate waterline solve can be
+// skipped in favour of one height-RT tap. The only thing this has to exceed is the RT's own
+// interpolation error against the surface it was rendered FROM - a 2 m lattice of the real
+// displaced mesh, so sub-texel error is a fraction of a metre even in a steep sea. Four is
+// generous. RAISE IT if the fog or the meniscus ever pops as a crest approaches; the only cost of
+// raising it is that the expensive path starts from further away.
+#define WATERLINE_RT_SKIP_MARGIN_METERS 4.0
+
+// The waterline classification, collapsed to one texture tap for the frames where it cannot matter.
+//
+// WHY IT IS SOUND: every consumer classifies a point on the NEAR PLANE, a patch a few tens of
+// centimetres across. So when the camera is metres from its own local surface, EVERY classification
+// point is on the same side by the same large margin - the coverage feather is saturated at 0 or 1
+// across the whole screen and the meniscus band is off screen entirely. The three iterations of
+// chop inversion that produced that saturated answer were pure cost. The height RT is precisely the
+// authority for this question (it IS the displaced surface, rasterised), and one tap answers it.
+//
+// WHY THE TEST READS THE CAMERA AND NOT THE POINT: it must be UNIFORM. Both consumers take a screen
+// derivative of the value this feeds, and a per-pixel branch could split a quad exactly where the
+// two paths disagree - which is where derivatives stop being defined. Sampling at the camera's own
+// xz makes the decision identical for every lane by construction. The value returned still uses the
+// caller's own y, so the gap stays smooth across the screen and its derivative stays meaningful.
+//
+// Returns false when the RT is unavailable - not recorded this frame, or the camera sits in the
+// window's feather - which falls back to the accurate path. Never a wrong answer, only a slower one.
+bool WaterlineFarFromSurface(float3 classifyPoint, out float farGap)
+{
+    farGap = 0.0;
+    if (HeightRTFeatherWeight(_WorldSpaceCameraPos.xz) < 1.0) return false;
+    float surfaceY = SampleHeightRTWorldY(_WorldSpaceCameraPos.xz);
+    if (abs(_WorldSpaceCameraPos.y - surfaceY) <= WATERLINE_RT_SKIP_MARGIN_METERS) return false;
+    farGap = classifyPoint.y - surfaceY;
+    return true;
 }
 
 // ---- Displaced-surface height envelope ----------------------------------------------

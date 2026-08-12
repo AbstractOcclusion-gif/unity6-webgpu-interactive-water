@@ -8,6 +8,11 @@
 // the analytic pool renderer; the primitive (box / inscribed sphere) is resolved analytically in
 // WaterChunkWall.shader. Created lazily, HideAndDontSave (never serialized), parented to the body so
 // it is torn down with it.
+//
+// DEVELOPMENT STATUS: the current chunk path intentionally exposes a reduced authoring surface and
+// is not feature-equivalent to the standard ocean renderer. Full wave, shading, fog and effects
+// control parity is scheduled as a v1.1 feature. Keep additions compatible with that future shared
+// water-settings architecture; do not grow a second independent ocean stack inside this partial.
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -20,6 +25,9 @@ namespace AbstractOcclusion.WebGpuWater
         /// body into a floating chunk (analytic primitive). Mesh takes the water column's entry/exit
         /// from an ARBITRARY closed mesh via the depth prepass (WaterChunkDepthFeature).</summary>
         public enum ChunkFootprint { None, Box, Sphere, Mesh }
+
+        /// <summary>How a box chunk joins its displaced surface to the vertical shell.</summary>
+        public enum ChunkBoundaryMode { Vertical, Stabilized, CalmRim }
 
         [SerializeField, HideInInspector] internal ChunkFootprint chunkFootprint = ChunkFootprint.None;
         [SerializeField, HideInInspector] internal float chunkDensityBoost = 1f;
@@ -44,6 +52,8 @@ namespace AbstractOcclusion.WebGpuWater
         // Fill level 0..1: how full the chunk is. 0.5 = the rest plane (surface at the shape's centre,
         // the historical default); 1 = brim-full (surface at the top); 0 = empty. Maps to a pool-Y plane.
         [SerializeField, HideInInspector] internal float chunkFillLevel = 0.5f;
+        [SerializeField, HideInInspector] internal ChunkBoundaryMode chunkBoundaryMode = ChunkBoundaryMode.Stabilized;
+        [SerializeField, HideInInspector, Min(0f)] internal float chunkBoundaryWidth = 1f;
 
         internal bool IsChunk => chunkFootprint != ChunkFootprint.None;
 
@@ -109,6 +119,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_ChunkRefraction = Shader.PropertyToID("_ChunkRefraction");
         static readonly int ID_ChunkReflectivity = Shader.PropertyToID("_ChunkReflectivity");
         static readonly int ID_ChunkSphereClip = Shader.PropertyToID("_ChunkSphereClip");
+        static readonly int ID_ChunkBoxClip = Shader.PropertyToID("_ChunkBoxClip");
         static readonly int ID_ChunkFogClamp = Shader.PropertyToID("_ChunkFogClamp");
         static readonly int ID_ChunkWaterFogEnabled = WaterShaderProps.WaterFogEnabled;
         static readonly int ID_ChunkWaterFogDensity = WaterShaderProps.WaterFogDensity;
@@ -116,6 +127,10 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_ChunkMeniscus = Shader.PropertyToID("_ChunkMeniscus");
         static readonly int ID_ChunkUseMesh = Shader.PropertyToID("_ChunkUseMesh");
         static readonly int ID_ChunkSurfacePoolY = Shader.PropertyToID("_ChunkSurfacePoolY");
+        static readonly int ID_ChunkBoundaryEnabled = Shader.PropertyToID("_ChunkBoundaryEnabled");
+        static readonly int ID_ChunkBoundaryWidth = Shader.PropertyToID("_ChunkBoundaryWidth");
+        static readonly int ID_ChunkEdgeWaveHeight = Shader.PropertyToID("_ChunkEdgeWaveHeight");
+        static readonly int ID_ChunkEdgeChoppiness = Shader.PropertyToID("_ChunkEdgeChoppiness");
         static readonly int ID_ChunkGodRayStrength = Shader.PropertyToID("_ChunkGodRayStrength");
         static readonly int ID_ChunkGodRayColor = Shader.PropertyToID("_ChunkGodRayColor");
 
@@ -183,7 +198,9 @@ namespace AbstractOcclusion.WebGpuWater
         void SetChunkSurfaceProps(MaterialPropertyBlock block)
         {
             bool isSphere = chunkFootprint == ChunkFootprint.Sphere;
+            bool isBox = chunkFootprint == ChunkFootprint.Box;
             block.SetFloat(ID_ChunkSphereClip, isSphere ? 1f : 0f);
+            block.SetFloat(ID_ChunkBoxClip, isBox ? 1f : 0f);
             block.SetFloat(ID_ChunkFogClamp, IsChunk ? 1f : 0f);
             block.SetFloat(ID_ChunkShape, isSphere ? ChunkShapeSphereValue : ChunkShapeBoxValue);
             // Fill level -> surface pool-Y plane (0 = rest). Always written (0 off-chunk) so a body
@@ -194,6 +211,7 @@ namespace AbstractOcclusion.WebGpuWater
             // the shell wall (reads entry/exit from the depth prepass). Set here so the disc's block
             // carries it; always written (0 off-chunk) so a body leaving mesh mode resets.
             block.SetFloat(ID_ChunkUseMesh, chunkFootprint == ChunkFootprint.Mesh ? 1f : 0f);
+            SetChunkBoundaryProps(block, isBox);
             if (!IsChunk) return;
 
             // A chunk's fog comes from its OWN disc surface + shell, so the GPU fog gate is forced on
@@ -205,6 +223,17 @@ namespace AbstractOcclusion.WebGpuWater
             // any membership object all read the same (boosted) water - no per-consumer multiplier.
             block.SetFloat(ID_ChunkWaterFogDensity, fogDensity * chunkDensityBoost);
             block.SetFloat(ID_ChunkCameraUnderwater, ComputeChunkCameraUnder() ? 1f : 0f);
+        }
+
+        void SetChunkBoundaryProps(MaterialPropertyBlock block, bool isBox)
+        {
+            bool boundaryEnabled = isBox && chunkBoundaryMode != ChunkBoundaryMode.Vertical
+                                            && chunkBoundaryWidth > 0f;
+            float edgeWaveHeight = chunkBoundaryMode == ChunkBoundaryMode.CalmRim ? 0f : 1f;
+            block.SetFloat(ID_ChunkBoundaryEnabled, boundaryEnabled ? 1f : 0f);
+            block.SetFloat(ID_ChunkBoundaryWidth, Mathf.Max(chunkBoundaryWidth, 0f));
+            block.SetFloat(ID_ChunkEdgeWaveHeight, edgeWaveHeight);
+            block.SetFloat(ID_ChunkEdgeChoppiness, boundaryEnabled ? 0f : 1f);
         }
 
         // See the field block above: lowest near-plane corner vs the wave-aware surface height,

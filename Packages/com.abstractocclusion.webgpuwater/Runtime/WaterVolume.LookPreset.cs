@@ -71,10 +71,18 @@ namespace AbstractOcclusion.WebGpuWater
 
         void ApplySurfaceDomain(WaterLookPreset preset)
         {
-            // Preserved: the planar exclusion mask is project wiring, not look.
+            // Preserved: planar project wiring and render budgets are not look.
             LayerMask keepPlanarExcludeLayers = reflectionSettings.planarExcludeLayers;
+            float keepPlanarResolutionScale = reflectionSettings.planarResolutionScale;
+            int keepPlanarUpdateInterval = reflectionSettings.planarUpdateInterval;
+            bool keepPlanarRenderShadows = reflectionSettings.planarRenderShadows;
+            float keepPlanarFarClipDistance = reflectionSettings.planarFarClipDistance;
             Overwrite(preset.reflectionSettings, reflectionSettings);
             reflectionSettings.planarExcludeLayers = keepPlanarExcludeLayers;
+            reflectionSettings.planarResolutionScale = keepPlanarResolutionScale;
+            reflectionSettings.planarUpdateInterval = keepPlanarUpdateInterval;
+            reflectionSettings.planarRenderShadows = keepPlanarRenderShadows;
+            reflectionSettings.planarFarClipDistance = keepPlanarFarClipDistance;
 
             Overwrite(preset.detailNormalSettings, detailNormalSettings);
             foamPatternTexture = preset.foamPatternTexture;

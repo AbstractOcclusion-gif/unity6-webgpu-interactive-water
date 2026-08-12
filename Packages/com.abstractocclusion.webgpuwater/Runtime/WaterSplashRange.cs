@@ -123,8 +123,12 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("Console-log every throw, any single-step velocity spike, and every throwable-" +
                  "vs-throwable collision, tagged [SplashRange]. The measuring instrument for " +
                  "bounce reports: the log NAMES the culprit instead of anyone guessing. A spike " +
-                 "with no collision line right before it is a water force; with one, a contact.")]
-        [SerializeField] internal bool logDiagnostics = true;
+                 "with no collision line right before it is a water force; with one, a contact. " +
+                 "OFF by default: every entry is retained by the console with a stack trace, and " +
+                 "the CONTACT line fires per contact while the SPIKE line fires per throwable per " +
+                 "physics step, so a long session pays a monotonically growing framerate for a " +
+                 "diagnostic nobody is reading. Turn it on for the throw you are investigating.")]
+        [SerializeField] internal bool logDiagnostics = false;
 
         [Header("Buoyancy Tuning")]
         [Tooltip("Master scale on every kind's buoyancy.")]

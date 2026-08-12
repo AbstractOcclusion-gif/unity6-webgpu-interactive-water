@@ -40,10 +40,12 @@ namespace AbstractOcclusion.WebGpuWater
 
         // Reused each frame so the per-body loop allocates no garbage (mirrors WaterChunkDepthPass).
         readonly MaterialPropertyBlock _block = new MaterialPropertyBlock();
-        static readonly List<WaterVolume> s_Bodies = new List<WaterVolume>();
+        static readonly List<WaterVolume> s_CausticBodies = new List<WaterVolume>();
+        static readonly List<WaterVolume> s_RefractedShadowBodies = new List<WaterVolume>();
         static readonly int ID_ScreenCausticIntensity = Shader.PropertyToID("_ScreenCausticIntensity");
 
         // Set by the feature each frame before enqueue: whether to run the refracted-shadow multiply pass.
+        internal bool renderCaustics = true;
         internal bool renderRefractedShadow = true;
 
         internal WaterCausticProjectionPass(Material material)
@@ -67,30 +69,35 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (_material == null) return;
 
-            // One projection per body with Screen-Space Caustics on (primary AND any secondary chunk/pool),
-            // each drawn with that body's own frame + caustic RT. Empty -> nothing to project this frame.
-            WaterVolume.CollectCausticProjectionBodies(s_Bodies);
-            if (s_Bodies.Count == 0) return;
+            // Build independent body sets because caustic light and the refracted occluder channel
+            // have independent strengths. A zero-light ocean must not pay either fullscreen pass,
+            // while a pool may still need its shadow with caustic intensity at zero.
+            WaterVolume.CollectCausticProjectionBodies(s_CausticBodies, s_RefractedShadowBodies,
+                                                        renderCaustics, renderRefractedShadow);
+            if (s_CausticBodies.Count == 0 && s_RefractedShadowBodies.Count == 0) return;
 
             UniversalResourceData resources = frameData.Get<UniversalResourceData>();
             TextureHandle cameraColor = resources.activeColorTexture;
             if (!cameraColor.IsValid()) return;
 
-            // Shadow first (darken the base) for ALL bodies, then caustics add refracted light on top for ALL
-            // bodies - keeping the global shadow-then-caustic order the single-body path had.
-            if (renderRefractedShadow)
-                RecordProjectionPass(renderGraph, resources, cameraColor, ShadowShaderPass, "WaterRefractedShadow");
-            RecordProjectionPass(renderGraph, resources, cameraColor, CausticShaderPass, "WaterCausticProjection");
+            // Shadow first, then caustic light, preserving the established global composite order.
+            if (s_RefractedShadowBodies.Count > 0)
+                RecordProjectionPass(renderGraph, resources, cameraColor, ShadowShaderPass,
+                                     "WaterRefractedShadow", s_RefractedShadowBodies);
+            if (s_CausticBodies.Count > 0)
+                RecordProjectionPass(renderGraph, resources, cameraColor, CausticShaderPass,
+                                     "WaterCausticProjection", s_CausticBodies);
         }
 
         void RecordProjectionPass(RenderGraph renderGraph, UniversalResourceData resources,
-                                  TextureHandle cameraColor, int shaderPass, string passName)
+                                  TextureHandle cameraColor, int shaderPass, string passName,
+                                  List<WaterVolume> bodies)
         {
             using var builder = renderGraph.AddRasterRenderPass<PassData>(passName, out PassData data, _sampler);
 
             data.material = _material;
             data.shaderPass = shaderPass;
-            data.bodies = s_Bodies;
+            data.bodies = bodies;
             data.block = _block;
             // ReadWrite loads the existing scene so the hardware blend composites onto it.
             builder.SetRenderAttachment(cameraColor, 0, AccessFlags.ReadWrite);

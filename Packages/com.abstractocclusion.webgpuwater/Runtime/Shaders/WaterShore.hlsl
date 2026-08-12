@@ -87,6 +87,13 @@ ShoreData ShoreSample(float2 worldXZ)
 // never shoal.
 float ShoreShoalDepth(float2 worldXZ)
 {
+#ifdef WATER_STRIP_SHORE
+    // The compile-time strip ShoreSample has carried since 2026-08-10, applied here too: a
+    // stripped variant is by definition a body whose runtime gate below returns the sentinel on
+    // every frame, so the fetch was unreachable in effect but still compiled in - and the fog's
+    // clarity term calls this once per pixel per pass. Same value, no texture unit touched.
+    return SHORE_DEEP_SENTINEL;
+#endif
     if (_ShoreDepthValid < 0.5 || _ShoreBodyGate < 0.5) return SHORE_DEEP_SENTINEL;
     float2 uv = ShoreFieldUV(worldXZ);
     if (ShoreFieldInfluence(uv) <= 0.0) return SHORE_DEEP_SENTINEL;

@@ -23,6 +23,10 @@
             // chunk can be partly full; the sphere clip below reads the fragment's DISPLACED pool
             // position, so the disc circle tracks the shape's cross-section at the chosen level for free.
             float  _ChunkSurfacePoolY;
+            float  _ChunkBoundaryEnabled;
+            float  _ChunkBoundaryWidth;
+            float  _ChunkEdgeWaveHeight;
+            float  _ChunkEdgeChoppiness;
             // Unbounded-ocean clipmap: 1 = a camera-following world-locked geometry-clipmap LOD level
             // (authored in INTEGER CELL UNITS, scaled to metres by the transform, reaching the horizon),
             // 0 = pool-grid surfaces. Inert at the default (_IsClipmap = 0).
@@ -123,6 +127,26 @@
             // WindWaveSampleXZ + _OceanWorldWaves moved to WaterWaves.hlsl (2026-08-10): the foam
             // glue and the waterline must pick the SAME wind-wave coordinate as this vertex path.
 
+            float ChunkBoundaryInteriorWeight(float2 poolXZ)
+            {
+                if (_ChunkBoundaryEnabled < 0.5) return 1.0;
+                float3 extent = VolumeExtentSafe();
+                float edgeDistance = min((1.0 - abs(poolXZ.x)) * extent.x,
+                                         (1.0 - abs(poolXZ.y)) * extent.z);
+                return smoothstep(0.0, max(_ChunkBoundaryWidth, 1e-4), edgeDistance);
+            }
+
+            float3 StabilizeChunkBoundary(float3 worldFlat, float3 worldDisplaced, float2 poolXZ)
+            {
+                float interior = ChunkBoundaryInteriorWeight(poolXZ);
+                float verticalWeight = lerp(_ChunkEdgeWaveHeight, 1.0, interior);
+                float horizontalWeight = lerp(_ChunkEdgeChoppiness, 1.0, interior);
+                float3 stabilized = worldDisplaced;
+                stabilized.y = worldFlat.y + (worldDisplaced.y - worldFlat.y) * verticalWeight;
+                stabilized.xz = worldFlat.xz + (worldDisplaced.xz - worldFlat.xz) * horizontalWeight;
+                return stabilized;
+            }
+
             float3 DisplaceSurfaceVertex(float3 poolFlat, float3 worldFlat, float4 info,
                                          out float3 poolDisplaced, out float2 largeWaveSourceXZ)
             {
@@ -175,6 +199,7 @@
                 // metres that mismatch became a wake smearing across its own geometry.
                 if (_RippleChoppiness > 0.0)
                     worldPos.xz -= _RippleChoppiness * info.ba;
+                worldPos = StabilizeChunkBoundary(worldFlat, worldPos, poolXZ);
                 // Surf swash film: over the beach the surface HUGS THE SAND (a thin film a few
                 // centimetres proud of it) wherever the swash has recently reached - a flat plane
                 // below the terrain would lose the depth test and the breathing waterline + wet

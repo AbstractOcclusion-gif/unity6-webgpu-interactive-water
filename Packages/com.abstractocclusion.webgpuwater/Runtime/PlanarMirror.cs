@@ -22,6 +22,8 @@ namespace AbstractOcclusion.WebGpuWater
     {
         const int MinReflectionSize = 8;    // don't allocate a sub-8px reflection target
         const int ReflectionDepthBits = 24; // depth buffer for the mirrored scene render
+        const int MinimumUpdateIntervalFrames = 1;
+        const float UnlimitedFarClipDistance = 0f;
 
         // Absolute floor on the eye-to-clip-plane distance for the oblique projection, used when the
         // source camera's own near clip is smaller. CalculateObliqueMatrix REPLACES the near plane with
@@ -47,6 +49,7 @@ namespace AbstractOcclusion.WebGpuWater
         RenderTexture _rt;
         Vector2Int _rtSize;
         bool _rendering; // re-entrancy guard
+        int _lastRenderedFrame = -1;
 
         /// <summary>The most recently rendered mirror, or null before the first render.</summary>
         internal RenderTexture Texture => _rt;
@@ -56,11 +59,20 @@ namespace AbstractOcclusion.WebGpuWater
         /// Safe to call every frame; the RT persists between calls so consumers can sample last frame's
         /// mirror while this frame's is in flight.
         /// </summary>
-        internal void Render(Camera src, float waterHeight, float resolutionScale, float clipPlaneOffset, LayerMask reflectLayers)
+        internal void Render(Camera src, float waterHeight, float resolutionScale, float clipPlaneOffset,
+                             LayerMask reflectLayers,
+                             int updateIntervalFrames = MinimumUpdateIntervalFrames,
+                             bool renderShadows = true,
+                             float farClipDistance = UnlimitedFarClipDistance)
         {
             if (src == null || _rendering) return;
+            int updateInterval = Mathf.Max(MinimumUpdateIntervalFrames, updateIntervalFrames);
+            int elapsedFrames = Time.frameCount - _lastRenderedFrame;
+            if (_rt != null && _lastRenderedFrame >= 0 && elapsedFrames >= 0
+                && elapsedFrames < updateInterval)
+                return;
 
-            EnsureResources(src, resolutionScale, reflectLayers);
+            EnsureResources(src, resolutionScale, reflectLayers, renderShadows, farClipDistance);
 
             Vector3 normal = Vector3.up;
             Vector3 pos = src.transform.position;
@@ -74,7 +86,8 @@ namespace AbstractOcclusion.WebGpuWater
             // Push the plane off the eye, KEEPING ITS SIGN. The sign is which side the crop keeps, so
             // clamping the magnitude alone moves the plane away without ever flipping the mirror over.
             clipPlane.w = ClampPlaneStandoff(clipPlane.w, src.nearClipPlane);
-            _reflectionCamera.projectionMatrix = src.CalculateObliqueMatrix(clipPlane);
+            Matrix4x4 cullingProjection = _reflectionCamera.projectionMatrix;
+            _reflectionCamera.projectionMatrix = _reflectionCamera.CalculateObliqueMatrix(clipPlane);
 
             // CULL WITH THE NON-OBLIQUE PROJECTION. Unity's default culling frustum is
             // projectionMatrix * worldToCameraMatrix, and the oblique matrix above replaces the
@@ -87,7 +100,7 @@ namespace AbstractOcclusion.WebGpuWater
             // this property exists for; the oblique matrix still does the clipping, so submerged
             // geometry stays out of the mirror.
             // Must come after worldToCameraMatrix above, and after CopyFrom (which resets it).
-            _reflectionCamera.cullingMatrix = src.projectionMatrix * _reflectionCamera.worldToCameraMatrix;
+            _reflectionCamera.cullingMatrix = cullingProjection * _reflectionCamera.worldToCameraMatrix;
 
             _reflectionCamera.transform.position = mirroredPos;
 
@@ -101,6 +114,7 @@ namespace AbstractOcclusion.WebGpuWater
                 RenderPipeline.SubmitRenderRequest(
                     _reflectionCamera,
                     new UniversalRenderPipeline.SingleCameraRequest { destination = _rt });
+                _lastRenderedFrame = Time.frameCount;
             }
             finally
             {
@@ -118,9 +132,11 @@ namespace AbstractOcclusion.WebGpuWater
             }
             ReleaseAndDestroy(ref _rt);
             _rtSize = Vector2Int.zero;
+            _lastRenderedFrame = -1;
         }
 
-        void EnsureResources(Camera src, float resolutionScale, LayerMask reflectLayers)
+        void EnsureResources(Camera src, float resolutionScale, LayerMask reflectLayers,
+                             bool renderShadows, float farClipDistance)
         {
             int width = Mathf.Max(MinReflectionSize, Mathf.RoundToInt(src.pixelWidth * resolutionScale));
             int height = Mathf.Max(MinReflectionSize, Mathf.RoundToInt(src.pixelHeight * resolutionScale));
@@ -171,6 +187,10 @@ namespace AbstractOcclusion.WebGpuWater
             _reflectionCamera.cameraType = CameraType.Reflection;
             _reflectionCamera.targetTexture = _rt;
             _reflectionCamera.cullingMask = reflectLayers & src.cullingMask;
+            _reflectionCamera.farClipPlane = farClipDistance > UnlimitedFarClipDistance
+                ? Mathf.Min(src.farClipPlane, farClipDistance)
+                : src.farClipPlane;
+            _reflectionCamera.GetUniversalAdditionalCameraData().renderShadows = renderShadows;
             _reflectionCamera.enabled = false;
         }
 
@@ -220,7 +240,11 @@ namespace AbstractOcclusion.WebGpuWater
 #else
         /// <summary>Off URP there is no mirror; consumers fall back to SSR / sky.</summary>
         internal RenderTexture Texture => null;
-        internal void Render(Camera src, float waterHeight, float resolutionScale, float clipPlaneOffset, LayerMask reflectLayers) { }
+        internal void Render(Camera src, float waterHeight, float resolutionScale, float clipPlaneOffset,
+                             LayerMask reflectLayers,
+                             int updateIntervalFrames = MinimumUpdateIntervalFrames,
+                             bool renderShadows = true,
+                             float farClipDistance = UnlimitedFarClipDistance) { }
         internal void Dispose() { }
 #endif
     }

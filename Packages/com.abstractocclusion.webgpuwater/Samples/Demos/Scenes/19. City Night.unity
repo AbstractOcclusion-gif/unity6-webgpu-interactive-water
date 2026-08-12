@@ -5515,7 +5515,7 @@ Transform:
   m_GameObject: {fileID: 961739749}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0.46252248, z: 0, w: 0.8866076}
-  m_LocalPosition: {x: 0, y: 1, z: -10}
+  m_LocalPosition: {x: 0, y: 5.54, z: -10}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -5551,7 +5551,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: db95254d7fef3c3479d701adbd938abb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.OrbitCamera
-  pivot: {x: 0, y: 2, z: 0}
+  pivot: {x: 0, y: 6, z: 0}
   pivotTarget: {fileID: 0}
   yaw: -200.5
   pitch: 0
@@ -5743,6 +5743,8 @@ MonoBehaviour:
   chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
+  chunkBoundaryMode: 1
+  chunkBoundaryWidth: 1
   jerlovWaterType: 3
   bedDepthSettings:
     useBedDepth: 0
@@ -5848,7 +5850,7 @@ MonoBehaviour:
   tiles: {fileID: 2800000, guid: 6aa59030590aca540a3a3718c9934905, type: 3}
   sky: {fileID: 8900000, guid: ebf2f0f3910c5ed43a2aeffcc97174fa, type: 2}
   foamPatternTexture: {fileID: 2800000, guid: a5f2ef87d189d12951522a62b6df8920, type: 3}
-  foamPatternGrid: {x: 1, y: 1}
+  foamPatternGrid: {x: 4, y: 4}
   foamPatternFps: 10
   foamReliefStrength: 1
   oceanWhitecapTexture: {fileID: 2800000, guid: a374a10bbe76021021500e6b2fc9d34f, type: 3}
@@ -5939,6 +5941,16 @@ MonoBehaviour:
     cascadeReach: 3
     swellHeight: 1
     swellWavelength: 140
+    seaStateGusts: 0.374
+    seaStateSlicks: 0.484
+    seaStateFetchEnabled: 0
+    seaStateFetchStrength: 1
+    oceanAperiodicEnabled: 1
+    oceanDirectionMap: {fileID: 2800000, guid: 286a83755eafcc24b9fd164ae6cef800, type: 3}
+    oceanDirectionMapSize: 1024
+    oceanDirectionMapStrength: 1
+    oceanAperiodicTileScale: 1
+    swellHeadingOffsetDegrees: 0
     oceanWindTurbulence: 0.25
     unboundedOcean: 1
     edgeFeatherMeters: 10
@@ -6016,6 +6028,7 @@ MonoBehaviour:
     useScreenSpaceReflection: 1
     usePlanarReflection: 1
     reflectUrpProbe: 0
+    reflectionProbe: {fileID: 0}
     realRefraction: 1
     planarExcludeLayers:
       serializedVersion: 2

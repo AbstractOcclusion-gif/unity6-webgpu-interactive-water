@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: HighWaterQuality
   m_EditorClassIdentifier: Assembly-CSharp::WebGLWater.WaterQuality
   selection: 3
-  highSimResolution: 512
+  highSimResolution: 256
   highCausticResolution: 1024
   highGodRaySteps: 64
   highGodRays: 1
@@ -28,7 +28,7 @@ MonoBehaviour:
   highOceanFftInterval: 1
   highMaxFoamParticles: 65536
   highUnderwaterFog: 2
-  mediumSimResolution: 256
+  mediumSimResolution: 128
   mediumCausticResolution: 512
   mediumGodRaySteps: 32
   mediumGodRays: 1

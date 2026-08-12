@@ -45,6 +45,7 @@
 // Declared here - not in Pass 0 - so PondFoamLayer's overlay-skip gate can read them in
 // every pass that includes these stages.
 float _ChunkSphereClip;
+float _ChunkBoxClip;
 float _ChunkUseMesh;
 
 // ================== frag stages (SHADER-SPLIT-3) ==================
@@ -994,7 +995,8 @@ FoamLayer PondFoamLayer(v2f i, WaterGeomStage g)
     const bool foamDeferredToOverlay = false; // this IS the overlay pass: always evaluate
 #else
     bool foamDeferredToOverlay = _UnderwaterFogArmed > 0.5 && _CameraUnderwater < 0.5
-                                 && _ChunkSphereClip < 0.5 && _ChunkUseMesh < 0.5;
+                                 && _ChunkSphereClip < 0.5 && _ChunkBoxClip < 0.5
+                                 && _ChunkUseMesh < 0.5;
 #endif
     if (_FoamEnabled > 0.5 && !foamDeferredToOverlay)
     {

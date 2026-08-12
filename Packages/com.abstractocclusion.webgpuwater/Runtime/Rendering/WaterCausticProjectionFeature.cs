@@ -2,8 +2,8 @@
 // Paints the projected caustic pattern onto ANY underwater surface (terrain, Standard Lit props, a bare
 // ocean floor with no WaterReceiver) by reading the depth buffer and reusing the water's own pool-space
 // projection. Add this feature once to the renderer used by the water camera and assign the
-// WaterCausticProjection shader; it self-gates on WaterVolume.AnyCausticProjectionBody(), so it only enqueues
-// when at least one body has a caustic RT and its Screen-Space Caustics opt-in is on.
+// WaterCausticProjection shader; it self-gates on WaterVolume.AnyCausticProjectionWork(), so it only
+// enqueues when at least one body can contribute visible caustic light or a valid refracted shadow.
 //
 // WIRING / CAVEATS:
 //  * Must be ADDED to the URP Renderer asset(s) the water camera uses, and the shader assigned - exactly
@@ -91,10 +91,13 @@ namespace AbstractOcclusion.WebGpuWater
             // Never for material/prefab thumbnails - see WaterPassCameraGate.
             // Fullscreen paint: also excluded from reflections. See WaterPassCameraGate.
             if (WaterPassCameraGate.SkipCameraFullscreen(renderingData.cameraData.cameraType)) return;
-            if (_pass == null) return;                          // shader unassigned / not created
-            if (!WaterVolume.AnyCausticProjectionBody()) return; // no body has the opt-in on + a caustic RT
+            if (_pass == null) return; // shader unassigned / not created
+            bool renderCaustics = causticStrength > 0f;
+            bool renderRefractedShadows = projectRefractedShadows && refractedShadowStrength > 0f;
+            if (!WaterVolume.AnyCausticProjectionWork(renderCaustics, renderRefractedShadows)) return;
             ApplyMaterialParameters();
-            _pass.renderRefractedShadow = projectRefractedShadows;
+            _pass.renderCaustics = renderCaustics;
+            _pass.renderRefractedShadow = renderRefractedShadows;
             renderer.EnqueuePass(_pass);
         }
 

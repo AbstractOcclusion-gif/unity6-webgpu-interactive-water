@@ -102,7 +102,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 // planar mirror and do nothing to SSR or the environment base.
                 DrawFieldsIf(Prop(WaterVolumePropertyPaths.PlanarReflection).boolValue,
                     "reflectionSettings.planarExcludeLayers",
-                    "reflectionSettings.planarClipDepth");
+                    "reflectionSettings.planarClipDepth",
+                    "reflectionSettings.planarResolutionScale",
+                    "reflectionSettings.planarUpdateInterval",
+                    "reflectionSettings.planarRenderShadows",
+                    "reflectionSettings.planarFarClipDistance");
 
                 // Refraction gets its own heading rather than one line buried in the SSR foldout,
                 // where nobody looking for "how do I tune refraction" would ever find it. The two

@@ -48,7 +48,28 @@ namespace AbstractOcclusion.WebGpuWater
         void OnDisable()
         {
             RenderPipelineManager.beginCameraRendering -= OnBeginCamera;
-            _mirror?.Dispose();
+            ReleaseMirror();
+            // Unconditional, unlike ReleaseMirror's guarded clear: a disabled component must not
+            // leave a texture published from an earlier enable, mirror alive this run or not.
+            Shader.SetGlobalTexture(ID_PlanarTex, Texture2D.blackTexture);
+        }
+
+        // Honour the toggle HERE and not in the render callback: the mirror owns a hidden Camera
+        // GameObject, and destroying one from inside beginCameraRendering is the restriction
+        // WaterVolume's retire/drain slot exists for (see RetirePlanarMirror). Added 2026-08-11
+        // (perf audit): OnBeginCamera returned on !enableReflection BEFORE any teardown, so
+        // unticking Enable Reflection left a screen-sized mipped HDR render target and its camera
+        // alive for the rest of the session - the per-body path already frees on this condition.
+        void Update()
+        {
+            if (enableReflection) return;
+            ReleaseMirror();
+        }
+
+        void ReleaseMirror()
+        {
+            if (_mirror == null) return;
+            _mirror.Dispose();
             _mirror = null;
             Shader.SetGlobalTexture(ID_PlanarTex, Texture2D.blackTexture);
         }

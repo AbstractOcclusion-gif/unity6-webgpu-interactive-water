@@ -50,8 +50,10 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         // Move the window to the camera. Called once per simulated frame (and once at init
-        // to prime the centre before the first publish).
-        internal void Track()
+        // to prime the centre before the first publish). A pristine ocean can move only the
+        // frame: its field is identically zero, so scrolling six float textures would preserve
+        // the same zeroes at considerable WebGPU cost.
+        internal void Track(bool scrollSimulation = true)
         {
             WaterSimulation sim = _body.Simulation;
             if (sim == null) return;
@@ -109,7 +111,7 @@ namespace AbstractOcclusion.WebGpuWater
                     // Local x -> sim texel u, local z -> sim texel v. The kernel does
                     // Dst[p] = Src[p - offset]; offsetting by -delta keeps world features fixed
                     // (see WaterSimulation.Scroll).
-                    sim.Scroll(-dx, -dz);
+                    if (scrollSimulation) sim.Scroll(-dx, -dz);
                     _cellX = cellX; _cellZ = cellZ;
                 }
             }

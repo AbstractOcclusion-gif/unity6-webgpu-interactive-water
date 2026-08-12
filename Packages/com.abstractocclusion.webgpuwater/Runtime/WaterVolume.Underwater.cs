@@ -48,22 +48,44 @@ namespace AbstractOcclusion.WebGpuWater
         static bool QualifiesForCausticProjection(WaterVolume body)
             => body != null && body.isActiveAndEnabled && body.screenSpaceCaustics && body.CausticTexture != null;
 
+        const float MinimumProjectionStrength = 0f;
+
+        static bool QualifiesForCausticLightProjection(WaterVolume body)
+            => QualifiesForCausticProjection(body)
+            && body.screenCausticIntensity > MinimumProjectionStrength;
+
+        static bool QualifiesForRefractedShadowProjection(WaterVolume body)
+            => QualifiesForCausticProjection(body) && body.CausticOccluderActive;
+
         /// <summary>True when at least one active body should project screen-space caustics this frame
         /// (the feature's cheap CPU gate before it enqueues the pass).</summary>
-        internal static bool AnyCausticProjectionBody()
+        internal static bool AnyCausticProjectionWork(bool includeCaustics, bool includeRefractedShadows)
         {
             for (int i = 0; i < Bodies.Count; i++)
-                if (QualifiesForCausticProjection(Bodies[i])) return true;
+            {
+                WaterVolume body = Bodies[i];
+                if (includeCaustics && QualifiesForCausticLightProjection(body)) return true;
+                if (includeRefractedShadows && QualifiesForRefractedShadowProjection(body)) return true;
+            }
             return false;
         }
 
-        /// <summary>Fill <paramref name="into"/> with every body that projects screen-space caustics this
-        /// frame, so the pass can draw one fullscreen projection per body (each framed on its own RT).</summary>
-        internal static void CollectCausticProjectionBodies(List<WaterVolume> into)
+        /// <summary>Build the independent body sets that contribute visible caustic light and valid
+        /// refracted shadows this frame.</summary>
+        internal static void CollectCausticProjectionBodies(List<WaterVolume> causticBodies,
+                                                             List<WaterVolume> refractedShadowBodies,
+                                                             bool includeCaustics,
+                                                             bool includeRefractedShadows)
         {
-            into.Clear();
+            causticBodies.Clear();
+            refractedShadowBodies.Clear();
             for (int i = 0; i < Bodies.Count; i++)
-                if (QualifiesForCausticProjection(Bodies[i])) into.Add(Bodies[i]);
+            {
+                WaterVolume body = Bodies[i];
+                if (includeCaustics && QualifiesForCausticLightProjection(body)) causticBodies.Add(body);
+                if (includeRefractedShadows && QualifiesForRefractedShadowProjection(body))
+                    refractedShadowBodies.Add(body);
+            }
         }
 
         // Pond-foam overlay (the after-fog surface-foam redraw): a body qualifies when its sim
@@ -157,8 +179,9 @@ namespace AbstractOcclusion.WebGpuWater
             // displaced surface, so an object h above the plane is imaged at -h whatever the plane
             // does. PlanarExcludeLayers keeps it out of the mirror and SSR, which marches the real
             // reflected ray, owns it.
-            _planarMirror.Render(cam, VolumeCenter.y, PlanarMirrorResolutionScale,
-                                 PlanarMirrorClipOffset(), PlanarReflectLayers());
+            _planarMirror.Render(cam, VolumeCenter.y, PlanarResolutionScale,
+                                 PlanarMirrorClipOffset(), PlanarReflectLayers(),
+                                 PlanarUpdateInterval, PlanarRenderShadows, PlanarFarClipDistance);
         }
 
         // The oblique near-clip offset the mirror crops with, along the surface normal from the mirror
@@ -294,8 +317,9 @@ namespace AbstractOcclusion.WebGpuWater
             if (WaterDebugView.LogFogGates)
                 LogFogGateState(eyeCamera, eyeInWater, eyeInDryVolume, surfaceY,
                                 nearPlaneStraddles);
-            // Screen-space caustics are gated PER BODY (AnyCausticProjectionBody / CollectCausticProjectionBodies),
-            // not from this primary-only path, so a secondary chunk drives its own projection independently.
+            // Screen-space caustics are gated PER BODY (AnyCausticProjectionWork /
+            // CollectCausticProjectionBodies), not from this primary-only path, so a secondary
+            // chunk drives its own projection independently.
         }
 
         // ---- Console gate log (WaterDebugView 'Log Fog Gates') ---------------------------

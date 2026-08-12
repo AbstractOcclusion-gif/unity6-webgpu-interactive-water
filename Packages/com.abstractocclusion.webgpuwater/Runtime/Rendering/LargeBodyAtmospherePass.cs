@@ -65,6 +65,8 @@ namespace AbstractOcclusion.WebGpuWater
         readonly Material _material;
         readonly ProfilingSampler _raymarchSampler = new ProfilingSampler("LargeBodyGodRays.Raymarch");
         readonly ProfilingSampler _compositeSampler = new ProfilingSampler("LargeBodyGodRays.Composite");
+        readonly Dictionary<Camera, MaterialPropertyBlock> _sourceBlocks =
+            new Dictionary<Camera, MaterialPropertyBlock>();
 
         // Persistent half-res history for the temporal accumulation, filled by a copy AFTER the
         // march (single RT - the march never writes it directly, so there is no read/write hazard).
@@ -96,6 +98,7 @@ namespace AbstractOcclusion.WebGpuWater
             foreach (CameraHistory entry in _histories.Values)
                 entry.Rt?.Release();
             _histories.Clear();
+            _sourceBlocks.Clear();
             // Last-body-out reset (the stale-global trap): the surface's mirror term must never
             // sample a released RT. Black is also what the term multiplies to nothing.
             Shader.SetGlobalTexture(ID_ShaftsLastFrame, Texture2D.blackTexture);
@@ -128,16 +131,16 @@ namespace AbstractOcclusion.WebGpuWater
             if (!cameraColor.IsValid()) return;
             WaterVolume sourceOcean = LargeBodyAtmosphereGate.SourceOcean;
             if (sourceOcean == null) return;
-            // Graphs for two game cameras may both be recorded before either executes. Keep this
-            // camera's source block immutable until its graph has drawn; a reusable field would
-            // let the second camera overwrite the first camera's ocean parameters.
-            var sourceBlock = new MaterialPropertyBlock();
+            // Graphs for two cameras may both be recorded before either executes. Cache one block
+            // per camera so their source data cannot alias, without allocating a native-backed
+            // MaterialPropertyBlock every rendered frame.
+            Camera cam = cameraData.camera;
+            MaterialPropertyBlock sourceBlock = SourceBlockFor(cam);
             sourceOcean.WriteBodyProps(sourceBlock);
 
             TextureHandle shaftTexture = CreateHalfResTarget(renderGraph, cameraColor, out TextureDesc halfDesc);
 
             bool temporal = cameraData.cameraType == CameraType.Game;
-            Camera cam = cameraData.camera;
             CameraHistory entry = temporal ? EnsureHistory(cam, halfDesc, sourceOcean) : null;
 
             // VOLUMETRIC COUPLING (KWS increment, phase 1): bind LAST frame's post-blend shafts
@@ -180,6 +183,17 @@ namespace AbstractOcclusion.WebGpuWater
             }
 
             RecordComposite(renderGraph, cameraColor, sourceBlock);
+        }
+
+        MaterialPropertyBlock SourceBlockFor(Camera camera)
+        {
+            if (!_sourceBlocks.TryGetValue(camera, out MaterialPropertyBlock block))
+            {
+                if (_sourceBlocks.Count >= HistorySweepThreshold) SweepDeadSourceBlocks();
+                block = new MaterialPropertyBlock();
+                _sourceBlocks.Add(camera, block);
+            }
+            return block;
         }
 
         TextureHandle CreateHalfResTarget(RenderGraph renderGraph, TextureHandle cameraColor,
@@ -240,6 +254,18 @@ namespace AbstractOcclusion.WebGpuWater
                 _histories[dead[i]].Rt?.Release();
                 _histories.Remove(dead[i]);
             }
+        }
+
+        void SweepDeadSourceBlocks()
+        {
+            List<Camera> dead = null;
+            foreach (KeyValuePair<Camera, MaterialPropertyBlock> pair in _sourceBlocks)
+            {
+                if (pair.Key != null) continue;
+                (dead ??= new List<Camera>()).Add(pair.Key);
+            }
+            if (dead == null) return;
+            for (int i = 0; i < dead.Count; i++) _sourceBlocks.Remove(dead[i]);
         }
 
         void RecordRaymarch(RenderGraph renderGraph, UniversalResourceData resources,

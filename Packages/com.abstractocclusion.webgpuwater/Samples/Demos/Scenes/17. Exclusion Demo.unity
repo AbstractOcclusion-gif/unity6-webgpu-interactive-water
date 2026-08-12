@@ -762,6 +762,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterDebugView
   mode: 0
+  logFogGates: 0
 --- !u!4 &793104935
 Transform:
   m_ObjectHideFlags: 0
@@ -10683,8 +10684,22 @@ MonoBehaviour:
   crownMinStrength: 0.25
   crownBaseSize: 0.4
   crownLifetime: 0.5
+  crownLaunchHeight: 1
+  crownLaunchSpread: 1
   crownTint: {r: 0.95, g: 0.98, b: 1, a: 1}
   crownOpacity: 1
+  dropletOpacity: 1
+  jetParticles: {fileID: 0}
+  entryStreaksEnabled: 1
+  entryStreakAmount: 1
+  entryStreakHeight: 1
+  entryStreakWidth: 1
+  entryStreakGravity: 1
+  entryStreakOpacity: 1
+  entryStreakMinStrength: 0.2
+  entryStreakLifetimeRange: {x: 0.75, y: 1.5}
+  entryStreakSizeRange: {x: 0.35, y: 0.5}
+  entryStreakTint: {r: 0.95, g: 0.98, b: 1, a: 1}
 --- !u!1 &1579798797
 GameObject:
   m_ObjectHideFlags: 0
@@ -10741,6 +10756,8 @@ MonoBehaviour:
   chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
+  chunkBoundaryMode: 1
+  chunkBoundaryWidth: 1
   jerlovWaterType: 5
   bedDepthSettings:
     useBedDepth: 0
@@ -10844,8 +10861,8 @@ MonoBehaviour:
   targetCamera: {fileID: 961739752}
   sun: {fileID: 177695280}
   tiles: {fileID: 2800000, guid: 6aa59030590aca540a3a3718c9934905, type: 3}
-  sky: {fileID: 8900000, guid: 85bd64faed533b54a88c144de0f680b6, type: 3}
-  foamPatternTexture: {fileID: 2800000, guid: 74ed02889dbed0e4096685ebafa011b6, type: 3}
+  sky: {fileID: 8900000, guid: ebf2f0f3910c5ed43a2aeffcc97174fa, type: 2}
+  foamPatternTexture: {fileID: 2800000, guid: 0df415d28a3d4b4449f218789bea2891, type: 3}
   foamPatternGrid: {x: 4, y: 4}
   foamPatternFps: 10
   foamReliefStrength: 1
@@ -10927,6 +10944,8 @@ MonoBehaviour:
     openWater: 1
     largeWaveAmplitude: 1
     largeWaveChoppiness: 1
+    windDrivesAmbientSeaState: 0
+    ambientWindReferenceSpeed: 3
     significantWaveHeight: 0.6
     peakWavelength: 60
     peakSharpness: 3.3
@@ -10935,6 +10954,16 @@ MonoBehaviour:
     cascadeReach: 3
     swellHeight: 0.28
     swellWavelength: 110
+    seaStateGusts: 0
+    seaStateSlicks: 0
+    seaStateFetchEnabled: 0
+    seaStateFetchStrength: 1
+    oceanAperiodicEnabled: 0
+    oceanDirectionMap: {fileID: 0}
+    oceanDirectionMapSize: 1024
+    oceanDirectionMapStrength: 1
+    oceanAperiodicTileScale: 1
+    swellHeadingOffsetDegrees: 0
     oceanWindTurbulence: 0.25
     unboundedOcean: 1
     edgeFeatherMeters: 10
@@ -11012,6 +11041,7 @@ MonoBehaviour:
     useScreenSpaceReflection: 0
     usePlanarReflection: 1
     reflectUrpProbe: 0
+    reflectionProbe: {fileID: 0}
     realRefraction: 1
     planarExcludeLayers:
       serializedVersion: 2
@@ -11019,6 +11049,8 @@ MonoBehaviour:
     planarClipDepth: 0
     reflectionStrength: 0.5
     envReflectionIntensity: 0.5
+    reflectSunlight: 1
+    sunReflectionIntensity: 1
     fresnelFloor: 0.244
     fresnelPower: 2.2
     sunRoughness: 0.108
@@ -11063,6 +11095,7 @@ MonoBehaviour:
   _legacyFoamBorderWidth: 0.08
   _legacyFoamContactDepth: 0.06
   rippleSettings:
+    pointerWaterInteraction: 1
     waveSpeed: 0.6
     damping: 0.99
     rippleViscosity: 0
@@ -11071,6 +11104,7 @@ MonoBehaviour:
     rippleRadius: 0.03
     rippleChoppiness: 0.56
     wakeStartForceCap: 0
+    splashImpactRippleCap: 0
     seedRipplesOnStart: 1
     conserveVolume: 1
     conserveMaxCorrection: 0.05
@@ -11186,6 +11220,12 @@ MonoBehaviour:
   maxSpawnPerFrame: 256
   sprayChance: 0.15
   sprayLaunchSpeed: 0.6
+  rippleCrestFlecksEnabled: 0
+  rippleCrestFleckAmount: 1
+  rippleCrestFleckMaxPerFrame: 256
+  rippleCrestFleckLifetimeRange: {x: 0.4, y: 0.8}
+  rippleCrestFleckSizeRange: {x: 0.01, y: 0.025}
+  rippleCrestFleckMotion: 0.6
   lifeRange: {x: 1.5, y: 4}
   sizeRange: {x: 0.02, y: 0.06}
   sizeHeroPower: 1
@@ -11193,6 +11233,9 @@ MonoBehaviour:
   sprayMaterial: {fileID: 0}
   sprayLifeRange: {x: 0.5, y: 1.2}
   spraySizeRange: {x: 0.02, y: 0.05}
+  surfaceFoamOpacity: 1
+  sprayOpacity: 1
+  bubbleOpacity: 1
   sprayFlipbookGrid: {x: 1, y: 1}
   sprayFlipbookFps: 0
   depositLifeRange: {x: 0.5, y: 1}

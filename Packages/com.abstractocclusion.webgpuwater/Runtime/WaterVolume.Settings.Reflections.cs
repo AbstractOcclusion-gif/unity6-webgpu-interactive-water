@@ -180,10 +180,31 @@ namespace AbstractOcclusion.WebGpuWater
                      "geometry that far under the surface reaches the mirror too. 0 = crop at the " +
                      "plane. Affects PLANAR only.")]
             [Range(0f, PlanarClipDepthMaxMeters)] public float planarClipDepth = 0f;
+            [Tooltip("Planar mirror resolution as a fraction of the water camera. Cost follows the " +
+                     "SQUARE of this value: 0.5 renders one quarter of the camera pixels. Affects " +
+                     "PLANAR only.")]
+            [Range(PlanarResolutionScaleMin, PlanarResolutionScaleMax)]
+            public float planarResolutionScale = PlanarMirrorResolutionScale;
+            [Tooltip("Render the planar mirror every Nth frame and reuse its previous texture between " +
+                     "updates. 1 = every frame. 2 usually halves the mirror camera cost at the expense " +
+                     "of one frame of reflection latency. Affects PLANAR only.")]
+            [Range(PlanarUpdateIntervalMin, PlanarUpdateIntervalMax)]
+            public int planarUpdateInterval = PlanarUpdateIntervalMin;
+            [Tooltip("Render shadows inside the planar mirror camera. Disable when reflected shadow " +
+                     "detail is not worth repeating the shadow work. Affects PLANAR only.")]
+            public bool planarRenderShadows = true;
+            [Tooltip("Maximum planar mirror camera distance in metres. 0 keeps the source camera's far " +
+                     "distance. A finite value prevents an ocean camera's multi-kilometre far clip from " +
+                     "being inherited by the mirror. Affects PLANAR only.")]
+            [Min(0f)] public float planarFarClipDistance = 0f;
 
             // Below this the mirror starts showing the seabed instead of the shoreline strip the band
             // exists to save - a worse artifact than the gap it closes.
             const float PlanarClipDepthMaxMeters = 10f;
+            internal const float PlanarResolutionScaleMin = 0.1f;
+            internal const float PlanarResolutionScaleMax = 1f;
+            internal const int PlanarUpdateIntervalMin = 1;
+            internal const int PlanarUpdateIntervalMax = 8;
 
             // Look (drives the above-water surface; the under-water surface uses the same strength /
             // distortion for its total-internal-reflection view). Ranges mirror the shader.
@@ -269,6 +290,12 @@ namespace AbstractOcclusion.WebGpuWater
         /// non-negative: a negative value would crop ABOVE the plane and eat the very shoreline strip
         /// this exists to save. The slider cannot go there, a script or a migrated asset can.</summary>
         internal float PlanarClipDepth => Mathf.Max(0f, reflectionSettings.planarClipDepth);
+        internal float PlanarResolutionScale => Mathf.Clamp(reflectionSettings.planarResolutionScale,
+            ReflectionSettings.PlanarResolutionScaleMin, ReflectionSettings.PlanarResolutionScaleMax);
+        internal int PlanarUpdateInterval => Mathf.Clamp(reflectionSettings.planarUpdateInterval,
+            ReflectionSettings.PlanarUpdateIntervalMin, ReflectionSettings.PlanarUpdateIntervalMax);
+        internal bool PlanarRenderShadows => reflectionSettings.planarRenderShadows;
+        internal float PlanarFarClipDistance => Mathf.Max(0f, reflectionSettings.planarFarClipDistance);
         internal bool EffectiveRealRefraction => _realRefractionAllowed && reflectionSettings.realRefraction;
         internal bool ReflectUrpProbe => reflectionSettings.reflectUrpProbe;
         internal ReflectionProbe ReflectionProbe => reflectionSettings.reflectionProbe;

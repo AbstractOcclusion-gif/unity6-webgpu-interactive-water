@@ -354,10 +354,45 @@ float OceanCascadeShoalWeight(int c, ShoreData shore)
 }
 
 #if !defined(WATER_DISABLE_OCEAN_APERIODIC)
+// Bilinear tap of the direction map. TWO implementations, and which one a shader gets is a
+// SAMPLER REGISTER decision, not a taste one.
+//
+// This is one of the hottest reads in the package: three tile vertices x four cascades, and a
+// waterline classification runs the field three times - so the fullscreen fog composites pay it
+// ~36 times per pixel and the meniscus pass again (fog audit, 2026-08-11). The texture unit does
+// this exact filter in one instruction... but only for a program that can afford a sampler.
+//
+// It CANNOT be assumed. WaterSurface.shader pass 0 sits exactly at the ps_4_0 sampler cap of 16
+// (its own header says so), and its foam-overlay pass does not reference the FFT arrays at all.
+// Making this a hardware sample unconditionally is a compile error on both counts - measured,
+// 2026-08-11: "maximum ps_4_0 sampler register index (16) exceeded". THAT is why the manual
+// version below exists: Load needs no sampler. Do not "optimise" it away again without checking
+// the register budget of every program that includes this header.
+//
+// So: fullscreen passes with headroom define WATER_APERIODIC_MAP_SAMPLER and get the fast path;
+// everything else keeps the Loads. The two produce the same value - the half-texel conversion is
+// what makes that true rather than approximate. The manual version indexes texel CORNERS over
+// [0, size-1]; hardware bilinear samples texel CENTRES, so the same corner coordinate mapped
+// through (texel + 0.5) / size lands on the same four texels with the same fractional weights.
+// Callers have already rejected uv outside [0,1] (OceanAperiodicTileAngle), so edge handling
+// matches the old min()/saturate() clamping. The only residual is that the texture unit computes
+// its weights at fixed sub-texel precision rather than fp32 - far below what a wave heading angle
+// can express.
+#if defined(WATER_APERIODIC_MAP_SAMPLER)
+// Unity inline sampler state: linear filter, clamp addressing, resolved from the NAME, so it needs
+// no import settings and no companion texture. Costs one sampler register in this program only.
+SamplerState sampler_linear_clamp;
+#endif
+
 float2 OceanAperiodicDirectionMapBilinear(float2 uv)
 {
     uint width, height;
     _OceanDirectionMap.GetDimensions(width, height);
+#if defined(WATER_APERIODIC_MAP_SAMPLER)
+    float2 size = float2(max(width, 1u), max(height, 1u));
+    float2 texel = saturate(uv) * max(size - 1.0, 0.0);
+    return _OceanDirectionMap.SampleLevel(sampler_linear_clamp, (texel + 0.5) / size, 0).rg;
+#else
     float2 texel = saturate(uv) * float2(max((int)width - 1, 0), max((int)height - 1, 0));
     int2 p0 = (int2)floor(texel);
     int2 p1 = min(p0 + 1, int2((int)width - 1, (int)height - 1));
@@ -367,6 +402,7 @@ float2 OceanAperiodicDirectionMapBilinear(float2 uv)
     float2 row1 = lerp(_OceanDirectionMap.Load(int3(p0.x, p1.y, 0)).rg,
                        _OceanDirectionMap.Load(int3(p1, 0)).rg, fraction.x);
     return lerp(row0, row1, fraction.y);
+#endif
 }
 
 float OceanAperiodicTileAngle(float2 tileWorldCenter)

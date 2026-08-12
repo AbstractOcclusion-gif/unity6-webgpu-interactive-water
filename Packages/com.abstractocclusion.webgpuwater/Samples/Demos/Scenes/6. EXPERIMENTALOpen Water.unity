@@ -11235,6 +11235,8 @@ MonoBehaviour:
   chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
+  chunkBoundaryMode: 1
+  chunkBoundaryWidth: 1
   jerlovWaterType: 4
   bedDepthSettings:
     useBedDepth: 0
@@ -11339,11 +11341,11 @@ MonoBehaviour:
   sun: {fileID: 1209048383}
   tiles: {fileID: 2800000, guid: 6aa59030590aca540a3a3718c9934905, type: 3}
   sky: {fileID: 8900000, guid: ebf2f0f3910c5ed43a2aeffcc97174fa, type: 2}
-  foamPatternTexture: {fileID: 0}
-  foamPatternGrid: {x: 1, y: 1}
+  foamPatternTexture: {fileID: 2800000, guid: 0df415d28a3d4b4449f218789bea2891, type: 3}
+  foamPatternGrid: {x: 4, y: 4}
   foamPatternFps: 10
   foamReliefStrength: 1
-  oceanWhitecapTexture: {fileID: 0}
+  oceanWhitecapTexture: {fileID: 2800000, guid: a374a10bbe76021021500e6b2fc9d34f, type: 3}
   oceanWhitecapGrid: {x: 1, y: 1}
   oceanWhitecapFps: 10
   rippleQuality: 3
@@ -11376,33 +11378,33 @@ MonoBehaviour:
   _legacyWaveDirectionSpread: 1.04
   _legacyWaveNormalStrength: 3
   foamSettings:
-    foam: 0
-    foamGenRate: 0.65
+    foam: 1
+    foamGenRate: 1.33
     foamDecay: 0.9451
     foamDecayResidual: 0.99
-    foamDecayRate: 1
+    foamDecayRate: 0.24
     wetnessMemory: 0
     wetnessDryTime: 3
-    foamSpread: 0.086
+    foamSpread: 0.874
     foamGenThreshold: 0.15
-    foamMinWaveHeight: 0.01
+    foamMinWaveHeight: 0.164
     foamAdvect: 3
-    foamFromSpeed: 6
+    foamFromSpeed: 12.3
     foamFromCurvature: 30
-    foamDeposit: 0.5
+    foamDeposit: 0.626
     foamBreakStrength: 0
     foamBreakRange: 1.5
-    foamCrestBias: 0
+    foamCrestBias: 0.168
     foamHeadroom: 0
     foamWakeStrength: 0
     foamWakeRadiusScale: 1.5
     foamColor: {r: 1, g: 1, b: 1, a: 1}
-    foamPatternSize: 2
-    foamStrength: 0.62
-    foamFeather: 0.15
-    foamCoreCut: 0.5
+    foamPatternSize: 5
+    foamStrength: 0.98
+    foamFeather: 0.308
+    foamCoreCut: 0.763
     foamBorderWidth: 0.08
-    foamContactDepth: 0.06
+    foamContactDepth: 0.134
   objectInteractionSettings:
     objectInteraction: 0
     obstacleStrength: 0.08
@@ -11433,6 +11435,13 @@ MonoBehaviour:
     swellWavelength: 1
     seaStateGusts: 0
     seaStateSlicks: 0
+    seaStateFetchEnabled: 0
+    seaStateFetchStrength: 1
+    oceanAperiodicEnabled: 0
+    oceanDirectionMap: {fileID: 0}
+    oceanDirectionMapSize: 1024
+    oceanDirectionMapStrength: 1
+    oceanAperiodicTileScale: 1
     swellHeadingOffsetDegrees: 0
     oceanWindTurbulence: 0.25
     unboundedOcean: 1

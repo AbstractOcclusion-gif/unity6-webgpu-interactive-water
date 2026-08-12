@@ -4,8 +4,9 @@
 // both passes read the destination through the blender, which is why the colour attachment is
 // bound ReadWrite (load the scene) rather than Write (which would discard it).
 //
-// The shader reconstructs the scene from the resolved _CameraDepthTexture and computes the wavy
-// waterline ANALYTICALLY (or flat, on Simple tiers) - it does not read a post-transparent depth.
+    // The shader reconstructs the scene from the resolved _CameraDepthTexture. Full-tier beauty
+    // frames classify the analytic wavy waterline once into _WaterFogClassifyRT and share it across
+    // both composites plus the meniscus; Simple and automatic fallback paths stay direct/flat.
 // The former DepthHandoff sub-pass that published one (_WaterFogSceneDepth) was dead weight: the
 // shader declared the texture but never sampled it, so the handoff was removed (U3).
 //
@@ -28,6 +29,11 @@ namespace AbstractOcclusion.WebGpuWater
         const int AbsorbShaderPass = 0;
         const int InscatterShaderPass = 1;
         const int WaterlineShaderPass = 2;
+        const int InvalidShaderPass = -1;
+        const string ClassifyShaderPassName = "WaterFogClassify";
+        const string ClassifyRtTextureName = "_WaterFogClassifyRT";
+        const string ClassifyRtKeyword = "WATER_FOG_CLASSIFY_RT";
+        const GraphicsFormat ClassifyRtFormat = GraphicsFormat.R32G32_SFloat;
         // "WaterRestoreOpaqueDepth": rewrites the depth attachment from the opaque-only
         // _CameraDepthTexture so user transparents drawn after the water stack stop
         // z-failing behind the sheet's ZWrite On depth (the cross-side transparent fix).
@@ -65,12 +71,16 @@ namespace AbstractOcclusion.WebGpuWater
         // RT with pixel LOADs, so it must know the scale: published as _OceanSurfacePrepassScale.
         const float PrepassResolutionScale = 0.5f;
         static readonly int ID_WaterlineSceneTex = Shader.PropertyToID("_WaterlineSceneTex");
+        static readonly int ID_WaterFogClassifyRT = Shader.PropertyToID(ClassifyRtTextureName);
 
         readonly Material _material;
         readonly Material _heightRtMaterial;
         readonly ProfilingSampler _sampler = new ProfilingSampler("WaterUnderwaterFog");
         readonly ProfilingSampler _prepassSampler = new ProfilingSampler("WaterUnderwaterFog.SurfaceDepth");
         readonly ProfilingSampler _heightRtSampler = new ProfilingSampler("WaterUnderwaterFog.HeightRT");
+        readonly ProfilingSampler _classifySampler = new ProfilingSampler("WaterUnderwaterFog.Classify");
+        readonly int _classifyShaderPass;
+        readonly bool _classifyRtSupported;
         // Reused each frame so the prepass allocates no garbage.
         readonly MaterialPropertyBlock _scratchBlock = new MaterialPropertyBlock();
         static readonly List<Renderer> s_SurfaceRenderers = new List<Renderer>();
@@ -80,10 +90,25 @@ namespace AbstractOcclusion.WebGpuWater
         {
             _material = material;
             _heightRtMaterial = heightRtMaterial;
+            _classifyShaderPass = material != null
+                ? material.FindPass(ClassifyShaderPassName)
+                : InvalidShaderPass;
+            _classifyRtSupported = SystemInfo.IsFormatSupported(ClassifyRtFormat,
+                                                                GraphicsFormatUsage.Render);
             renderPassEvent = InjectionPoint;
         }
 
-        sealed class PassData { public Material material; }
+        sealed class PassData
+        {
+            public Material material;
+            public bool useClassifyRt;
+        }
+
+        sealed class ClassifyPassData
+        {
+            public Material material;
+            public int shaderPass;
+        }
 
         sealed class PrepassData
         {
@@ -162,6 +187,21 @@ namespace AbstractOcclusion.WebGpuWater
             else
                 Shader.SetGlobalVector(ID_WaterHeightRTFrame, Vector4.zero);
 
+            // Full-tier beauty frames share the expensive analytic waterline classification through
+            // one full-resolution RG32F target. Debug views deliberately retain the direct path: they
+            // stamp branch-local state that this two-channel first increment does not carry. A missing
+            // shader pass or unsupported render format automatically leaves every consumer on the
+            // established analytic variant; no manual fallback switch can be forgotten in a build.
+            bool classifyRtRecorded = (WaterVolume.UnderwaterFogActive || WaterVolume.WaterlineActive)
+                                   && fogSource != null
+                                   && !fogSource.UnderwaterFogSimple
+                                   && !WaterDebugView.FogViewActive
+                                   && _classifyShaderPass != InvalidShaderPass
+                                   && _classifyRtSupported;
+            TextureHandle classifyRt = classifyRtRecorded
+                ? RecordClassifyPass(renderGraph, cameraColor)
+                : default;
+
             // Order matters: absorb (scene *= transmittance) then inscatter (scene += fog),
             // then the waterline meniscus ON TOP of the fogged scene (it darkens the final
             // crossing band, whichever side of it is fogged). The same per-frame gates the
@@ -169,14 +209,40 @@ namespace AbstractOcclusion.WebGpuWater
             // independently (a straddling near plane arms the line before the eye submerges).
             if (WaterVolume.UnderwaterFogActive)
             {
-                RecordFogPass(renderGraph, resources, cameraColor, "WaterUnderwaterFog");
+                RecordFogPass(renderGraph, resources, cameraColor, "WaterUnderwaterFog",
+                              classifyRt);
             }
             // The meniscus darkens the finished frame along the crossing - the exact band a fog
             // debug view exists to show - so it stands down while one is selected. The absorb and
             // inscatter passes above are NOT gated: they ARE the view (absorb wipes, inscatter
             // writes), which is also why a view only appears while the fog is armed.
             if (WaterVolume.WaterlineActive && !WaterDebugView.FogViewActive)
-                RecordWaterlinePass(renderGraph, resources, cameraColor);
+                RecordWaterlinePass(renderGraph, resources, cameraColor, classifyRt);
+        }
+
+        TextureHandle RecordClassifyPass(RenderGraph renderGraph, TextureHandle sizeSource)
+        {
+            TextureDesc classifyDesc = renderGraph.GetTextureDesc(sizeSource);
+            classifyDesc.name = ClassifyRtTextureName;
+            classifyDesc.colorFormat = ClassifyRtFormat;
+            classifyDesc.depthBufferBits = DepthBits.None;
+            classifyDesc.msaaSamples = MSAASamples.None;
+            classifyDesc.clearBuffer = false;
+            TextureHandle classifyRt = renderGraph.CreateTexture(classifyDesc);
+
+            using var builder = renderGraph.AddRasterRenderPass<ClassifyPassData>(
+                _classifySampler.name, out ClassifyPassData data, _classifySampler);
+            data.material = _material;
+            data.shaderPass = _classifyShaderPass;
+            builder.SetRenderAttachment(classifyRt, 0, AccessFlags.Write);
+            builder.UseAllGlobalTextures(true);
+            builder.AllowPassCulling(false);
+            builder.SetGlobalTextureAfterPass(classifyRt, ID_WaterFogClassifyRT);
+            builder.SetRenderFunc((ClassifyPassData d, RasterGraphContext ctx) =>
+            {
+                CoreUtils.DrawFullScreen(ctx.cmd, d.material, null, d.shaderPass);
+            });
+            return classifyRt;
         }
 
         void RecordHeightRt(RenderGraph renderGraph, UniversalCameraData cameraData, float restPlaneY)
@@ -292,7 +358,7 @@ namespace AbstractOcclusion.WebGpuWater
         // scene is copied to a transient first and handed to the material. The copy costs one
         // camera-sized blit only during the few straddle frames the waterline is armed.
         void RecordWaterlinePass(RenderGraph renderGraph, UniversalResourceData resources,
-                                 TextureHandle cameraColor)
+                                 TextureHandle cameraColor, TextureHandle classifyRt)
         {
             // The scene copy feeds ONLY the lens-tension warp: the shader samples
             // _WaterlineSceneTex exclusively inside its `_WaterlineWarp > 0` branch, so at
@@ -317,16 +383,24 @@ namespace AbstractOcclusion.WebGpuWater
             data.material = _material;
             data.sceneCopy = sceneCopy;
             data.warpActive = warpActive;
+            data.useClassifyRt = classifyRt.IsValid();
             builder.SetRenderAttachment(cameraColor, 0, AccessFlags.ReadWrite);
             if (warpActive) builder.UseTexture(sceneCopy, AccessFlags.Read);
+            if (classifyRt.IsValid()) builder.UseTexture(classifyRt, AccessFlags.Read);
             if (resources.cameraDepthTexture.IsValid())
                 builder.UseTexture(resources.cameraDepthTexture, AccessFlags.Read);
             builder.UseAllGlobalTextures(true);
+            // The classified reader is a real shader variant, not a uniform branch. RenderGraph
+            // requires an explicit declaration before the command buffer may select that keyword.
+            builder.AllowGlobalStateModification(true);
             builder.SetRenderFunc((WaterlinePassData d, RasterGraphContext ctx) =>
             {
+                if (d.useClassifyRt) ctx.cmd.EnableShaderKeyword(ClassifyRtKeyword);
+                else ctx.cmd.DisableShaderKeyword(ClassifyRtKeyword);
                 if (d.warpActive) d.material.SetTexture(ID_WaterlineSceneTex, d.sceneCopy);
                 else d.material.SetTexture(ID_WaterlineSceneTex, Texture2D.blackTexture);
                 CoreUtils.DrawFullScreen(ctx.cmd, d.material, null, WaterlineShaderPass);
+                if (d.useClassifyRt) ctx.cmd.DisableShaderKeyword(ClassifyRtKeyword);
             });
         }
 
@@ -335,6 +409,7 @@ namespace AbstractOcclusion.WebGpuWater
             public Material material;
             public TextureHandle sceneCopy;
             public bool warpActive;
+            public bool useClassifyRt;
         }
 
         // Draw every canonical above-surface mesh with its OWN matrix, material and property block
@@ -424,16 +499,20 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         void RecordFogPass(RenderGraph renderGraph, UniversalResourceData resources,
-                           TextureHandle cameraColor, string passName)
+                           TextureHandle cameraColor, string passName, TextureHandle classifyRt)
         {
             using var builder = renderGraph.AddRasterRenderPass<PassData>(passName, out PassData data, _sampler);
 
             data.material = _material;
+            data.useClassifyRt = classifyRt.IsValid();
             // ReadWrite loads the existing scene so the hardware blend composites onto it.
             builder.SetRenderAttachment(cameraColor, 0, AccessFlags.ReadWrite);
             if (resources.cameraDepthTexture.IsValid())
                 builder.UseTexture(resources.cameraDepthTexture, AccessFlags.Read);
+            if (classifyRt.IsValid()) builder.UseTexture(classifyRt, AccessFlags.Read);
             builder.UseAllGlobalTextures(true); // published fog globals (shore field, FFT displacement, ...)
+            // See the waterline pass above: variant selection mutates command-buffer global state.
+            builder.AllowGlobalStateModification(true);
             // Two draws, ONE raster pass. Absorb multiplies the destination (Blend Zero SrcColor) and
             // inscatter adds to it (Blend One One) - both composite through the fixed-function blender,
             // and NEITHER shader samples the colour target, so this is ordinary blend accumulation in
@@ -443,8 +522,11 @@ namespace AbstractOcclusion.WebGpuWater
             // with this very pair of blend modes into one ReadWrite colour attachment.
             builder.SetRenderFunc((PassData d, RasterGraphContext ctx) =>
             {
+                if (d.useClassifyRt) ctx.cmd.EnableShaderKeyword(ClassifyRtKeyword);
+                else ctx.cmd.DisableShaderKeyword(ClassifyRtKeyword);
                 CoreUtils.DrawFullScreen(ctx.cmd, d.material, null, AbsorbShaderPass);
                 CoreUtils.DrawFullScreen(ctx.cmd, d.material, null, InscatterShaderPass);
+                if (d.useClassifyRt) ctx.cmd.DisableShaderKeyword(ClassifyRtKeyword);
             });
         }
     }

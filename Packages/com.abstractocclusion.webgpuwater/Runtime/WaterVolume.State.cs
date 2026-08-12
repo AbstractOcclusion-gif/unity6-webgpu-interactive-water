@@ -147,9 +147,18 @@ namespace AbstractOcclusion.WebGpuWater
         // fps. The per-frame cap bounds the catch-up burst on slow devices/hitches - beyond
         // it the debt is dropped, so waves degrade to "slightly slower" instead of bursting.
         const float ReferenceFrameRate = 60f;
-        const int MaxSolverStepsPerFrame = 8;
-        // Cap on the foam time debt (reference steps), mirroring MaxSolverStepsPerFrame:
-        // after a long pause foam catches up at most this much instead of vanishing in one pass.
+        // LOWERED 8 -> 3 (perf audit 2026-08-11): the cap was a positive-feedback amplifier on
+        // exactly the frames that could least afford it. A frame slowed by something ELSE (the
+        // first-use PSO compile of an 8000-line surface variant is the reproducible case) owes
+        // proportionally more debt, so it dispatched 4x the sim compute, which kept the NEXT
+        // frame slow - a compile hitch of a few frames stretched into seconds of low fps before
+        // the scene "settled". Three still absorbs an ordinary 20 fps dip at the authored
+        // stepsPerFrame = 2; past that the excess is dropped, which is the documented trade
+        // above (slightly slower waves, never a burst).
+        const int MaxSolverStepsPerFrame = 3;
+        // Cap on the foam time debt (reference steps). Deliberately NOT lowered with
+        // MaxSolverStepsPerFrame: foam runs ONE dispatch per frame whatever the debt, so the
+        // number only scales how much decay that dispatch applies - it costs nothing to catch up.
         const float MaxFoamTimeDebtSteps = 8f;
 
         // Numeric guards.

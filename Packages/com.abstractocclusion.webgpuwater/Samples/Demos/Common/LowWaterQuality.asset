@@ -43,7 +43,7 @@ MonoBehaviour:
   mediumOceanFftInterval: 1
   mediumMaxFoamParticles: 65536
   mediumUnderwaterFog: 2
-  lowSimResolution: 128
+  lowSimResolution: 64
   lowCausticResolution: 256
   lowGodRaySteps: 6
   lowGodRays: 0

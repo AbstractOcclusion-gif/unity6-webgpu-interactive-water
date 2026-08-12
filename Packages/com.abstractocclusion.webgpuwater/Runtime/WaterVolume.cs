@@ -199,10 +199,13 @@ namespace AbstractOcclusion.WebGpuWater
             WarnIfExperimentalTerrain(); // editor-only heads-up: terrain bed-depth is experimental
 #endif
 
-            // seed the pool with a few ripples. Compensate the strength for extent.y (like
-            // AddRipple) so seed splashes keep a fixed world height on a deep pool - PoolToWorld
-            // multiplies surface height by extent.y.
-            if (seedRipplesOnStart)
+            // Seed bounded water with a few ripples. An unbounded ocean already starts animated by
+            // its FFT sea; seeding its separate near-field ripple grid defeats the pristine-ocean
+            // sleep guard before gameplay has touched the water and permanently enables several
+            // full-grid compute passes for an imperceptible startup detail.
+            // Compensate the strength for extent.y (like AddRipple) so seed splashes keep a fixed
+            // world height on a deep pool - PoolToWorld multiplies surface height by extent.y.
+            if (seedRipplesOnStart && !IsOceanClipmap)
             {
                 float seedStrength = SeedRippleStrength / VolumeExtentSafe.y;
                 for (int i = 0; i < SeedRippleCount; i++)

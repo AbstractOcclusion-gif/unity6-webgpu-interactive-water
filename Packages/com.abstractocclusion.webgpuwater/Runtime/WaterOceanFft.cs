@@ -38,7 +38,7 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         /// <summary>Per-body whitecap-foam accumulation knobs, authored on the ocean WaterVolume.</summary>
-        internal readonly struct FoamParams
+        internal readonly struct FoamParams : System.IEquatable<FoamParams>
         {
             internal readonly float WindThreshold; // m/s; no foam below this wind speed
             internal readonly float Coverage;      // fold threshold: fresh = saturate(coverage - jacobian)
@@ -60,6 +60,19 @@ namespace AbstractOcclusion.WebGpuWater
                 CrestAnisotropy = crestAnisotropy; CrestGate = crestGate; FaceBias = faceBias;
                 CascadeMix = cascadeMix;
             }
+
+            public bool Equals(FoamParams other) =>
+                WindThreshold == other.WindThreshold && Coverage == other.Coverage
+                && Strength == other.Strength && FadeRate == other.FadeRate
+                && SlowFadeFraction == other.SlowFadeFraction && DriftFraction == other.DriftFraction
+                && Max == other.Max && CrestAnisotropy == other.CrestAnisotropy
+                && CrestGate == other.CrestGate && FaceBias == other.FaceBias
+                && CascadeMix == other.CascadeMix;
+            public override bool Equals(object obj) => obj is FoamParams other && Equals(other);
+            public override int GetHashCode() => System.HashCode.Combine(
+                System.HashCode.Combine(WindThreshold, Coverage, Strength, FadeRate,
+                                        SlowFadeFraction, DriftFraction, Max, CrestAnisotropy),
+                CrestGate, FaceBias, CascadeMix);
         }
 
         /// <summary>The authored sea state. Any change rebuilds the cascade layout, the gains and H0.</summary>
@@ -248,6 +261,8 @@ namespace AbstractOcclusion.WebGpuWater
         bool _spectrumBuilt;
         SeaParams _lastSea;
         bool _hasLastSea;
+        FoamParams _lastFoam;
+        bool _hasLastFoam;
 
         // Async buoyancy readback: throttle/error-streak/unsupported state lives on the shared
         // channel (the same machinery WaterSurfaceSampler uses); the landed buffer stays here.
@@ -539,6 +554,7 @@ namespace AbstractOcclusion.WebGpuWater
             // spectrum every frame. Order matters: the layout defines the lattice the gains integrate.
             bool shapeChanged = !_hasLastSea || !sea.ShapeEquals(_lastSea);
             bool seaChanged = !_hasLastSea || !sea.Equals(_lastSea);
+            bool foamChanged = !_hasLastFoam || !foam.Equals(_lastFoam);
             if (shapeChanged) RebuildSpectrumInputs(sea);
             SetSharedUniforms(sea);
 
@@ -565,12 +581,18 @@ namespace AbstractOcclusion.WebGpuWater
             // Normal + foam cascade from the finished displacement, then mips for per-pixel trilinear
             // sampling. GenerateMips on an array RT may no-op on some WebGPU backends; the fragment then
             // just samples mip 0 (still correct, less distance anti-aliasing) - it never hard-fails.
-            // Whitecap foam: framerate-independent accumulation needs the real time since the last dispatch,
-            // and must ignore uninitialised history on the very first frame (historyValid = 0 then).
-            float historyValid = _hasLastDispatchTime ? 1f : 0f;
+            // A spectrum or foam-control change defines a new whitecap field. Reusing the previous
+            // history would stamp each edited configuration over the last one, progressively widening
+            // the expensive rendered foam coverage. Invalidating the read keeps both ping-pong targets
+            // allocated: ComputeNormal overwrites the destination with the new state's settled prewarm,
+            // and the following frame naturally reads that result.
+            bool resetFoamHistory = seaChanged || foamChanged;
+            float historyValid = _hasLastDispatchTime && !resetFoamHistory ? 1f : 0f;
             float foamDt = _hasLastDispatchTime ? Mathf.Clamp(waveTime - _lastDispatchTime, 0f, MaxFoamDeltaTime) : 0f;
             _lastDispatchTime = waveTime;
             _hasLastDispatchTime = true;
+            _lastFoam = foam;
+            _hasLastFoam = true;
             _cs.SetFloat(ID_FoamDeltaTime, foamDt);
             _cs.SetFloat(ID_FoamHistoryValid, historyValid);
             _cs.SetFloat(ID_FoamMinWind, foam.WindThreshold);
@@ -915,6 +937,7 @@ namespace AbstractOcclusion.WebGpuWater
             _ready = false;
             _spectrumBuilt = false;
             _hasLastSea = false;
+            _hasLastFoam = false;
         }
 
         static void Release(ref RenderTexture rt)

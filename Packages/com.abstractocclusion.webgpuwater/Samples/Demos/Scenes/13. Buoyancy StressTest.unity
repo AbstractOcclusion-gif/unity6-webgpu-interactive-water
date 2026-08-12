@@ -677,6 +677,8 @@ MonoBehaviour:
   chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
+  chunkBoundaryMode: 1
+  chunkBoundaryWidth: 1
   jerlovWaterType: 3
   bedDepthSettings:
     useBedDepth: 0
@@ -781,7 +783,7 @@ MonoBehaviour:
   sun: {fileID: 709214167}
   tiles: {fileID: 2800000, guid: 6aa59030590aca540a3a3718c9934905, type: 3}
   sky: {fileID: 8900000, guid: ebf2f0f3910c5ed43a2aeffcc97174fa, type: 2}
-  foamPatternTexture: {fileID: 2800000, guid: 36879cca61e843178dae153ccadd00e8, type: 3}
+  foamPatternTexture: {fileID: 2800000, guid: 0df415d28a3d4b4449f218789bea2891, type: 3}
   foamPatternGrid: {x: 1, y: 1}
   foamPatternFps: 10
   foamReliefStrength: 1
@@ -863,6 +865,8 @@ MonoBehaviour:
     openWater: 1
     largeWaveAmplitude: 1
     largeWaveChoppiness: 1
+    windDrivesAmbientSeaState: 0
+    ambientWindReferenceSpeed: 3
     significantWaveHeight: 2
     peakWavelength: 60
     peakSharpness: 3.3
@@ -871,6 +875,16 @@ MonoBehaviour:
     cascadeReach: 3
     swellHeight: 0.25
     swellWavelength: 140
+    seaStateGusts: 0
+    seaStateSlicks: 0
+    seaStateFetchEnabled: 0
+    seaStateFetchStrength: 1
+    oceanAperiodicEnabled: 0
+    oceanDirectionMap: {fileID: 0}
+    oceanDirectionMapSize: 1024
+    oceanDirectionMapStrength: 1
+    oceanAperiodicTileScale: 1
+    swellHeadingOffsetDegrees: 0
     oceanWindTurbulence: 0.25
     unboundedOcean: 1
     edgeFeatherMeters: 10
@@ -948,6 +962,7 @@ MonoBehaviour:
     useScreenSpaceReflection: 1
     usePlanarReflection: 1
     reflectUrpProbe: 0
+    reflectionProbe: {fileID: 0}
     realRefraction: 1
     planarExcludeLayers:
       serializedVersion: 2
@@ -955,6 +970,8 @@ MonoBehaviour:
     planarClipDepth: 0
     reflectionStrength: 0.4
     envReflectionIntensity: 1
+    reflectSunlight: 1
+    sunReflectionIntensity: 1
     fresnelFloor: 0
     fresnelPower: 5
     sunRoughness: 0.08
@@ -999,6 +1016,7 @@ MonoBehaviour:
   _legacyFoamBorderWidth: 0.08
   _legacyFoamContactDepth: 0.06
   rippleSettings:
+    pointerWaterInteraction: 1
     waveSpeed: 0.6
     damping: 0.99
     rippleViscosity: 0
@@ -1006,6 +1024,8 @@ MonoBehaviour:
     rippleStrength: 0.001
     rippleRadius: 0.05
     rippleChoppiness: 0
+    wakeStartForceCap: 0
+    splashImpactRippleCap: 0
     seedRipplesOnStart: 1
     conserveVolume: 1
     conserveMaxCorrection: 0.05
@@ -1038,8 +1058,8 @@ MonoBehaviour:
     waterFog: 1
     fogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
     fogExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
-    fogDensity: 0.1
-    waterOpacity: 0
+    fogDensity: 5
+    waterOpacity: 0.7
     lightScatter: 0
   _legacyWaterFog: 0
   _legacyFogColor: {r: 0.1, g: 0.3, b: 0.4, a: 1}
@@ -1121,6 +1141,12 @@ MonoBehaviour:
   maxSpawnPerFrame: 256
   sprayChance: 0.15
   sprayLaunchSpeed: 0.6
+  rippleCrestFlecksEnabled: 0
+  rippleCrestFleckAmount: 1
+  rippleCrestFleckMaxPerFrame: 256
+  rippleCrestFleckLifetimeRange: {x: 0.4, y: 0.8}
+  rippleCrestFleckSizeRange: {x: 0.01, y: 0.025}
+  rippleCrestFleckMotion: 0.6
   lifeRange: {x: 1.5, y: 4}
   sizeRange: {x: 0.02, y: 0.06}
   sizeHeroPower: 1
@@ -1128,6 +1154,9 @@ MonoBehaviour:
   sprayMaterial: {fileID: 2100000, guid: 6b7389b27b6e2f44a8dc405111db89ef, type: 2}
   sprayLifeRange: {x: 0.5, y: 1.2}
   spraySizeRange: {x: 0.02, y: 0.05}
+  surfaceFoamOpacity: 1
+  sprayOpacity: 1
+  bubbleOpacity: 1
   sprayFlipbookGrid: {x: 1, y: 1}
   sprayFlipbookFps: 0
   depositLifeRange: {x: 0.5, y: 1}

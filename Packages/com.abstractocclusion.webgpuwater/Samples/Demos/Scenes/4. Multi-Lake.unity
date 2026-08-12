@@ -20594,6 +20594,8 @@ MonoBehaviour:
   chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
+  chunkBoundaryMode: 1
+  chunkBoundaryWidth: 1
   jerlovWaterType: 3
   bedDepthSettings:
     useBedDepth: 0
@@ -20698,11 +20700,11 @@ MonoBehaviour:
   sun: {fileID: 703285266}
   tiles: {fileID: 2800000, guid: 6aa59030590aca540a3a3718c9934905, type: 3}
   sky: {fileID: 8900000, guid: ebf2f0f3910c5ed43a2aeffcc97174fa, type: 2}
-  foamPatternTexture: {fileID: 0}
+  foamPatternTexture: {fileID: 2800000, guid: 0df415d28a3d4b4449f218789bea2891, type: 3}
   foamPatternGrid: {x: 1, y: 1}
   foamPatternFps: 10
   foamReliefStrength: 1
-  oceanWhitecapTexture: {fileID: 0}
+  oceanWhitecapTexture: {fileID: 2800000, guid: a374a10bbe76021021500e6b2fc9d34f, type: 3}
   oceanWhitecapGrid: {x: 1, y: 1}
   oceanWhitecapFps: 10
   rippleQuality: 2
@@ -20790,6 +20792,16 @@ MonoBehaviour:
     cascadeReach: 3
     swellHeight: 0
     swellWavelength: 140
+    seaStateGusts: 0
+    seaStateSlicks: 0
+    seaStateFetchEnabled: 0
+    seaStateFetchStrength: 1
+    oceanAperiodicEnabled: 0
+    oceanDirectionMap: {fileID: 0}
+    oceanDirectionMapSize: 1024
+    oceanDirectionMapStrength: 1
+    oceanAperiodicTileScale: 1
+    swellHeadingOffsetDegrees: 0
     oceanWindTurbulence: 0.25
     unboundedOcean: 0
     edgeFeatherMeters: 10
@@ -20867,6 +20879,7 @@ MonoBehaviour:
     useScreenSpaceReflection: 0
     usePlanarReflection: 1
     reflectUrpProbe: 0
+    reflectionProbe: {fileID: 0}
     realRefraction: 1
     planarExcludeLayers:
       serializedVersion: 2
@@ -20894,8 +20907,8 @@ MonoBehaviour:
     refractionDistortion: 0.05
     refractionStrength: 1
   detailNormalSettings:
-    texture: {fileID: 0}
-    strength: 0.6
+    texture: {fileID: 2800000, guid: 62664aadf524b76e2b375fdbd6c85003, type: 3}
+    strength: 0.05
     tileMeters: 18
     farTileMeters: 72
     farTileDistance: 200
@@ -41297,6 +41310,8 @@ MonoBehaviour:
   chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
+  chunkBoundaryMode: 1
+  chunkBoundaryWidth: 1
   jerlovWaterType: 3
   bedDepthSettings:
     useBedDepth: 0
@@ -41493,6 +41508,16 @@ MonoBehaviour:
     cascadeReach: 3
     swellHeight: 0
     swellWavelength: 140
+    seaStateGusts: 0
+    seaStateSlicks: 0
+    seaStateFetchEnabled: 0
+    seaStateFetchStrength: 1
+    oceanAperiodicEnabled: 0
+    oceanDirectionMap: {fileID: 0}
+    oceanDirectionMapSize: 1024
+    oceanDirectionMapStrength: 1
+    oceanAperiodicTileScale: 1
+    swellHeadingOffsetDegrees: 0
     oceanWindTurbulence: 0.25
     unboundedOcean: 0
     edgeFeatherMeters: 10
@@ -41570,6 +41595,7 @@ MonoBehaviour:
     useScreenSpaceReflection: 0
     usePlanarReflection: 1
     reflectUrpProbe: 0
+    reflectionProbe: {fileID: 0}
     realRefraction: 1
     planarExcludeLayers:
       serializedVersion: 2
@@ -41913,6 +41939,8 @@ MonoBehaviour:
   chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
+  chunkBoundaryMode: 1
+  chunkBoundaryWidth: 1
   jerlovWaterType: 3
   bedDepthSettings:
     useBedDepth: 0
@@ -42109,6 +42137,16 @@ MonoBehaviour:
     cascadeReach: 3
     swellHeight: 0
     swellWavelength: 140
+    seaStateGusts: 0
+    seaStateSlicks: 0
+    seaStateFetchEnabled: 0
+    seaStateFetchStrength: 1
+    oceanAperiodicEnabled: 0
+    oceanDirectionMap: {fileID: 0}
+    oceanDirectionMapSize: 1024
+    oceanDirectionMapStrength: 1
+    oceanAperiodicTileScale: 1
+    swellHeadingOffsetDegrees: 0
     oceanWindTurbulence: 0.25
     unboundedOcean: 0
     edgeFeatherMeters: 10
@@ -42186,6 +42224,7 @@ MonoBehaviour:
     useScreenSpaceReflection: 0
     usePlanarReflection: 1
     reflectUrpProbe: 0
+    reflectionProbe: {fileID: 0}
     realRefraction: 1
     planarExcludeLayers:
       serializedVersion: 2

@@ -23,6 +23,24 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         Cull Off
 
         HLSLINCLUDE
+        // Before ANY include that can pull WaterLargeWaves.hlsl. The fullscreen classify pass and
+        // analytic fallback variants have sampler headroom, so they take the one-instruction
+        // hardware bilinear for the ocean direction map instead of the four-Load fallback the
+        // surface passes are stuck with (see OceanAperiodicDirectionMapBilinear). This is the
+        // hottest classification read; beauty frames now pay it once in WaterFogClassify, while
+        // debug/fallback frames retain the established direct solve.
+        //
+        // The APERIODIC SHAPE ITSELF STAYS. Compiling it out here (WATER_DISABLE_OCEAN_APERIODIC,
+        // as LargeBodyCaustics.shader:38 does) was tried on 2026-08-12 and REVERTED: it desynced
+        // the fog transition from the visible under/above-water boundary. The reasoning that it
+        // would be invisible - that OceanRenderedCoverage multiplies the analytic term by
+        // (1 - ownership.g), so the rendered prepass owns every pixel the sheet drew - was wrong in
+        // practice. The analytic surface is consumed by more than that composite: the wet/dry ray
+        // decision and the segment solve read it too, and the CPU's own crossing gates are derived
+        // from the aperiodic field. Give the fog a differently-shaped ocean than the one on screen
+        // and the transition happens at the wrong moment. DO NOT RE-TRY without also moving those
+        // consumers onto the same field.
+        #define WATER_APERIODIC_MAP_SAMPLER 1
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
         #include "WaterFog.hlsl"    // _WaterFogColor/_WaterExtinction/_WaterFogDensity, WaterPathLength, DownwellingAttenuation
@@ -53,6 +71,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // surface itself - instead of the bounded analytic march.
         TEXTURE2D(_OceanSurfaceEyeDepth);
         TEXTURE2D(_OceanSurfaceOwnership); SAMPLER(sampler_OceanSurfaceOwnership);
+#ifdef WATER_FOG_CLASSIFY_RT
+        // Full-resolution, point-loaded classification shared by the two fog composites and the
+        // meniscus. RG32F keeps centimetre-scale precision across the full arming band without
+        // filtering opposite signs together at the waterline.
+        TEXTURE2D(_WaterFogClassifyRT);
+#endif
         float _OceanSurfaceDepthValid; // 1 = the prepass ran this frame (set by the fog pass)
         // Prepass resolution as a fraction of camera resolution (WaterUnderwaterFogPass publishes
         // it beside the validity flag). The RT is read with pixel LOADs, so every load coordinate
@@ -167,11 +191,18 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // Everything from here to OceanFlatPath is the per-pixel wavy-crossing machinery. It used to
         // be skipped by a UNIFORM BRANCH on _UnderwaterFogSimple, which is not the same thing: the
         // code stayed in the module, and a fragment shader's register allocation is sized to its
-        // WORST path. A 40-step march whose every step calls SurfaceHeightAtXZ (~6 texture fetches:
-        // 2x ShoreSample + 4x OceanFftDisplacementShore) plus a 12-iteration bisection was therefore
-        // setting the occupancy of every Simple-tier pixel too, on a FULLSCREEN pass, twice per frame
-        // (absorb + inscatter). Fencing it with the preprocessor is what actually removes it.
-        // Simple keeps exactly one path: OceanFlatPath, below.
+        // WORST path - so the whole marching module was setting the occupancy of every Simple-tier
+        // pixel too, on a FULLSCREEN pass, twice per frame (absorb + inscatter). Fencing it with the
+        // preprocessor is what actually removes it. Simple keeps exactly one path: OceanFlatPath.
+        //
+        // What the fence is worth has CHANGED, and the old note here ("a 40-step march whose every
+        // step calls SurfaceHeightAtXZ, ~6 texture fetches") no longer describes this file. Since
+        // F3 the march samples _WaterHeightRT (SurfaceSignedGapRT, one tap per step), so its 16
+        // steps + 8 refine iterations are 26 cheap taps. On direct fallback variants the fence also
+        // removes ArmWeight's three-evaluation analytic classification. Full-tier beauty variants
+        // read that classification from WaterFogClassify instead. Register pressure remains the
+        // reason Simple must be a preprocessor fence rather than a uniform branch. See
+        // WaterWaterline.hlsl's header for the per-evaluation price list.
 #ifndef WATER_FOG_SIMPLE
         // Refine a bracketed surface crossing [a(gapA), b(opposite sign)] to a world point on the surface.
         // 'gapA' is the signed gap at 'a' (passed in so it is not re-evaluated); bisection keeps the
@@ -817,22 +848,51 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // pool y at or above -epsilon came in THROUGH THE RENDERED SHEET, not a wall/floor.
         #define POND_TOP_FACE_EPSILON 1e-3
 
+#if !defined(WATER_FOG_SIMPLE) && !defined(WATER_FOG_CLASSIFY_RT)
+        void EvaluateWaterlineClassificationGaps(float3 classifyPoint, out float classifyGap,
+                                                 out float gapSmooth)
+        {
+            // One height-RT tap replaces the analytic solve whenever the camera is uniformly clear
+            // of the surface. Otherwise the inversion's first iteration supplies the smooth
+            // vertical read while the completed solve supplies the true chop-inverted position.
+            float farGap;
+            if (WaterlineFarFromSurface(classifyPoint, farGap))
+            {
+                classifyGap = farGap;
+                gapSmooth = farGap;
+                return;
+            }
+            classifyGap = SurfaceSignedGapChopInvertedPair(classifyPoint, gapSmooth);
+        }
+#endif
+
+#ifdef WATER_FOG_CLASSIFY_RT
+        float2 LoadWaterFogClassification(float2 uv)
+        {
+            int2 pixelMax = max(int2(_ScaledScreenParams.xy) - int2(1, 1), int2(0, 0));
+            int2 pixel = clamp(int2(uv * _ScaledScreenParams.xy), int2(0, 0), pixelMax);
+            return LOAD_TEXTURE2D(_WaterFogClassifyRT, pixel).rg;
+        }
+#endif
+
         float ArmWeight(float2 uv, out float classifyGap, out float classifyPushDist)
         {
             float3 classifyPoint = WaterlineClassifyPoint(uv, classifyPushDist);
+            // gapSmooth is declared with classifyGap because ONE solve now produces both - see
+            // the note on the smooth-vs-inverted split below, and SurfaceSignedGapChopInvertedPair.
+            float gapSmooth;
 #ifdef WATER_FOG_SIMPLE
             classifyGap = classifyPoint.y - _UnderwaterSurfaceY;
+            gapSmooth = classifyGap; // flat plane: already smooth
+#elif defined(WATER_FOG_CLASSIFY_RT)
+            float2 classifyGaps = LoadWaterFogClassification(uv);
+            classifyGap = classifyGaps.x;
+            gapSmooth = classifyGaps.y;
 #else
-            classifyGap = SurfaceSignedGapChopInverted(classifyPoint);
+            EvaluateWaterlineClassificationGaps(classifyPoint, classifyGap, gapSmooth);
 #endif
             float overCoverPixels = (_CameraDryVolume > 0.5) ? WATERLINE_CARVE_OVER_COVER_PIXELS
                                                              : 0.0;
-            // Derivative taken BEFORE the per-pixel top-face select below: fwidth needs its
-            // neighbours on the same code path, and the bounded/unbounded split alone is a
-            // uniform global so the gap is now computed for BOTH body kinds unconditionally.
-#ifdef WATER_FOG_SIMPLE
-            float gapSmooth = classifyGap; // flat plane: already smooth
-#else
             // Slopes from the SMOOTH vertical read, position from the accurate one. The
             // chop-inverted gap is a fixed-point search that can converge to DIFFERENT wave
             // sources on adjacent pixels near pinched crests, so its screen derivatives
@@ -840,8 +900,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // every frame. The vertical field is C1 by construction and its slope is the
             // right magnitude for a pixel metric, so the feather stays calm while the line
             // itself stays on the inverted (true) waterline.
-            float gapSmooth = SurfaceSignedGap(classifyPoint);
-#endif
+            //
+            // Both gaps come out of ONE solve as of 2026-08-11: the inversion's first iteration
+            // runs at the query xz, so it computes the vertical read on its way to the inverted
+            // one. The second full evaluation this used to make was a quarter of the whole
+            // classification cost and returned a number the first already had.
+            //
+            // Derivative taken BEFORE the per-pixel top-face select below: fwidth needs its
+            // neighbours on the same code path, and the bounded/unbounded split alone is a
+            // uniform global so the gap is now computed for BOTH body kinds unconditionally.
             float2 gapGradient = float2(ddx(gapSmooth), ddy(gapSmooth));
             float coverage = WaterlineCoverage(classifyGap,
                                                abs(gapGradient.x) + abs(gapGradient.y),
@@ -890,6 +957,18 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             return entersThroughTop ? coverage : 1.0;
         }
 
+#if !defined(WATER_FOG_SIMPLE) && !defined(WATER_FOG_CLASSIFY_RT)
+        float2 FragClassify(Varyings input) : SV_Target
+        {
+            float classifyPushDist;
+            float3 classifyPoint = WaterlineClassifyPoint(input.uv, classifyPushDist);
+            float classifyGap;
+            float gapSmooth;
+            EvaluateWaterlineClassificationGaps(classifyPoint, classifyGap, gapSmooth);
+            return float2(classifyGap, gapSmooth);
+        }
+#endif
+
         // Per-channel path transmittance for this pixel; also returns the depth-darkening term,
         // the sun visibility of the wet span past the exclusion volumes (1 = unshadowed), and the
         // per-pixel waterline mask (see ArmWeight).
@@ -907,6 +986,31 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             float classifyGap;
             float classifyPushDist;
             armWeight = ArmWeight(uv, classifyGap, classifyPushDist);
+            // Zero-coverage exit. The mask multiplies BOTH passes' output (absorb takes
+            // lerp(1, ..., armWeight), inscatter takes inscatter *= armWeight), so a pixel the
+            // waterline feather has already zeroed cannot change a single texel no matter what the
+            // rest of this function computes - and it used to compute all of it: scene depth
+            // reconstruction, the segment solve, the exclusion chain, the downwelling reference and
+            // the clarity fetch, then multiply the lot by zero. With the eye near the surface in a
+            // heavy sea that is routinely a third to a half of the frame (everything above the
+            // line, sky included), twice over.
+            //
+            // Returning identity (transmittance 1, attenuation 1) reproduces the multiplied-by-zero
+            // result exactly rather than approximating it. Derivatives are safe: ArmWeight took its
+            // ddx/ddy above, in uniform flow, and nothing below this point takes another.
+            //
+            // A selected fog debug view is the one caller that reads the numbers we would skip, so
+            // it keeps the long path - it is an instrument, and an instrument that measures a
+            // shortcut is measuring the wrong thing.
+            if (armWeight <= 0.0 && _WaterDebugMode < WATER_DEBUG_FOG_FIRST)
+            {
+                depthAttenuation = float3(1.0, 1.0, 1.0);
+                sunVisibility = 1.0;
+                debugColor = float4(0.0, 0.0, 0.0, 0.0);
+                wetStartOut = _WorldSpaceCameraPos;
+                wetSpanOut = 0.0;
+                return float3(1.0, 1.0, 1.0);
+            }
             // Does THIS PIXEL'S ray start in water? Per pixel, and from the SAME gap the mask
             // feathers over. It replaces `camUnder` - one camera-height boolean that held the
             // identical value for every pixel on screen while selecting between branches whose
@@ -1039,10 +1143,27 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // same reconverged point in the control flow.
             float2 downwellXZ = wetStart.xz + segDir.xz * downwellTMean;
             float downwellRtWeight = HeightRTFeatherWeight(downwellXZ);
-            float downwellRefY = downwellRtWeight > 0.0
-                               ? lerp(SurfaceHeightAtXZ(downwellXZ),
-                                      SampleHeightRTWorldY(downwellXZ), downwellRtWeight)
-                               : SurfaceHeightAtXZ(downwellXZ);
+            // Three explicit branches, not one lerp. HLSL's lerp is an arithmetic blend, not a
+            // select: written as lerp(analytic, rt, w) BOTH arms are evaluated, so every pixel paid
+            // a full analytic field evaluation even where the RT owns the answer outright - and it
+            // owns it almost everywhere, because the window is 512 m across and the feather only
+            // 16 m of that. On an aperiodic FFT ocean that discarded arm is 4 cascades x 15 source
+            // reads, per pixel, per fog pass. The weight-1 and weight-0 lanes are exact, and the
+            // feather band in between still blends the same two numbers it always did.
+            float downwellRefY;
+            if (downwellRtWeight >= 1.0)
+            {
+                downwellRefY = SampleHeightRTWorldY(downwellXZ);
+            }
+            else if (downwellRtWeight > 0.0)
+            {
+                downwellRefY = lerp(SurfaceHeightAtXZ(downwellXZ),
+                                    SampleHeightRTWorldY(downwellXZ), downwellRtWeight);
+            }
+            else
+            {
+                downwellRefY = SurfaceHeightAtXZ(downwellXZ);
+            }
 #else
             // Simple tier: the per-path reference is already the flat waterline - stripe-free by
             // construction, and this variant compiles no SurfaceHeightAtXZ to call.
@@ -1100,7 +1221,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // CoreUtils.CreateEngineMaterial, so build-time variant stripping would have no material
             // keyword state to inspect and could strip the variant we need.
             // WATER_FOG_SIMPLE : compile out the wavy-crossing machinery (see the fence above).
-            #pragma multi_compile_fragment _ WATER_FOG_SIMPLE
+            #pragma multi_compile_fragment _ WATER_FOG_SIMPLE WATER_FOG_CLASSIFY_RT
             // Strips the shore/surf machinery (ShoreSample + EvaluateSurfWaves fences) out of the
             // module for bodies that never consume the shore substrate (useBedDepth off). Purely a
             // COMPILE-TIME twin of the runtime inert path - identical output, a fraction of the
@@ -1152,7 +1273,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             #pragma vertex Vert
             #pragma fragment FragInscatter
             #pragma target 4.0
-            #pragma multi_compile_fragment _ WATER_FOG_SIMPLE
+            #pragma multi_compile_fragment _ WATER_FOG_SIMPLE WATER_FOG_CLASSIFY_RT
             // Strips the shore/surf machinery (ShoreSample + EvaluateSurfWaves fences) out of the
             // module for bodies that never consume the shore substrate (useBedDepth off). Purely a
             // COMPILE-TIME twin of the runtime inert path - identical output, a fraction of the
@@ -1238,5 +1359,17 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // independently from the fog implementation above.
         UsePass "Hidden/AbstractOcclusion/WebGpuWater/WaterUnderwaterWaterline/WaterUnderwaterFogWaterline"
         UsePass "Hidden/AbstractOcclusion/WebGpuWater/WaterRestoreOpaqueDepth/WaterRestoreOpaqueDepth"
+
+        Pass
+        {
+            Name "WaterFogClassify"
+
+            HLSLPROGRAM
+            #pragma vertex Vert
+            #pragma fragment FragClassify
+            #pragma target 4.0
+            #pragma multi_compile_fragment _ WATER_STRIP_SHORE
+            ENDHLSL
+        }
     }
 }

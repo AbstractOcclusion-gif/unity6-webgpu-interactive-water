@@ -15374,6 +15374,8 @@ MonoBehaviour:
   chunkGodRayColor: {r: 1, g: 0.97, b: 0.85, a: 1}
   chunkMesh: {fileID: 0}
   chunkFillLevel: 0.5
+  chunkBoundaryMode: 1
+  chunkBoundaryWidth: 1
   jerlovWaterType: 3
   bedDepthSettings:
     useBedDepth: 0
@@ -15478,7 +15480,7 @@ MonoBehaviour:
   sun: {fileID: 56078061}
   tiles: {fileID: 2800000, guid: 6aa59030590aca540a3a3718c9934905, type: 3}
   sky: {fileID: 8900000, guid: ebf2f0f3910c5ed43a2aeffcc97174fa, type: 2}
-  foamPatternTexture: {fileID: 2800000, guid: 74ed02889dbed0e4096685ebafa011b6, type: 3}
+  foamPatternTexture: {fileID: 2800000, guid: 0df415d28a3d4b4449f218789bea2891, type: 3}
   foamPatternGrid: {x: 4, y: 4}
   foamPatternFps: 10
   foamReliefStrength: 1
@@ -15541,7 +15543,7 @@ MonoBehaviour:
     foamFeather: 0.15
     foamCoreCut: 0.5
     foamBorderWidth: 0
-    foamContactDepth: 0.06
+    foamContactDepth: 0
   objectInteractionSettings:
     objectInteraction: 1
     obstacleStrength: 0.25
@@ -15570,6 +15572,16 @@ MonoBehaviour:
     cascadeReach: 3
     swellHeight: 0
     swellWavelength: 140
+    seaStateGusts: 0
+    seaStateSlicks: 0
+    seaStateFetchEnabled: 0
+    seaStateFetchStrength: 1
+    oceanAperiodicEnabled: 0
+    oceanDirectionMap: {fileID: 0}
+    oceanDirectionMapSize: 1024
+    oceanDirectionMapStrength: 1
+    oceanAperiodicTileScale: 1
+    swellHeadingOffsetDegrees: 0
     oceanWindTurbulence: 0.25
     unboundedOcean: 0
     edgeFeatherMeters: 10
@@ -15675,8 +15687,8 @@ MonoBehaviour:
     refractionDistortion: 0.05
     refractionStrength: 1
   detailNormalSettings:
-    texture: {fileID: 0}
-    strength: 0.6
+    texture: {fileID: 2800000, guid: 62664aadf524b76e2b375fdbd6c85003, type: 3}
+    strength: 0.05
     tileMeters: 18
     farTileMeters: 72
     farTileDistance: 200
@@ -16904,7 +16916,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1993690103}
   m_Layer: 0
-  m_Name: WebGL Water
+  m_Name: WebGPU Water
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0

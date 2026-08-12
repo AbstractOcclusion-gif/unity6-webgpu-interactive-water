@@ -25,6 +25,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 bool isChunk = footprint.enumValueIndex != (int)WaterVolume.ChunkFootprint.None;
                 EditorGUI.BeginDisabledGroup(!isChunk);
 
+                if (isChunk)
+                    EditorGUILayout.HelpBox(ChunkV11Warning, MessageType.Warning);
+
                 SerializedProperty disc = Prop("discSurface");
                 if (disc != null) EditorGUILayout.PropertyField(disc, ChunkRoundSurfaceLabel);
 
@@ -38,10 +41,27 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 }
 
                 ChunkSlider("chunkFillLevel", ChunkFillLabel, ChunkUnitMin, ChunkUnitMax);
+                bool isBox = footprint.enumValueIndex == (int)WaterVolume.ChunkFootprint.Box;
+                if (isBox)
+                {
+                    EditorGUILayout.Space();
+                    EditorGUILayout.LabelField("Boundary", EditorStyles.boldLabel);
+                    SerializedProperty boundaryMode = Prop("chunkBoundaryMode");
+                    if (boundaryMode != null)
+                        EditorGUILayout.PropertyField(boundaryMode, ChunkBoundaryModeLabel);
+                    SerializedProperty boundaryWidth = Prop("chunkBoundaryWidth");
+                    if (boundaryWidth != null)
+                        EditorGUILayout.PropertyField(boundaryWidth, ChunkBoundaryWidthLabel);
+                }
+
+                EditorGUILayout.Space();
+                EditorGUILayout.LabelField("Optics", EditorStyles.boldLabel);
                 ChunkSlider("chunkDensityBoost", ChunkDensityLabel, ChunkDensityMin, ChunkDensityMax);
                 ChunkSlider("chunkRefraction", ChunkRefractionLabel, ChunkUnitMin, ChunkUnitMax);
                 ChunkSlider("chunkReflectivity", ChunkReflectivityLabel, ChunkUnitMin, ChunkUnitMax);
                 ChunkSlider("chunkMeniscus", ChunkMeniscusLabel, ChunkUnitMin, ChunkUnitMax);
+                EditorGUILayout.Space();
+                EditorGUILayout.LabelField("Effects", EditorStyles.boldLabel);
                 ChunkSlider("chunkFoamStrength", ChunkFoamLabel, ChunkUnitMin, ChunkFoamMax);
                 ChunkSlider("chunkGodRayStrength", ChunkGodRayLabel, ChunkUnitMin, ChunkGodRayMax);
                 SerializedProperty godRayColor = Prop("chunkGodRayColor");
@@ -81,6 +101,13 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         static readonly GUIContent ChunkFillLabel = new GUIContent(
             "Fill Level", "How full the chunk is: 0.5 = half (surface at the shape's centre, the default), " +
             "1 = brim-full (surface at the top), 0 = empty.");
+        static readonly GUIContent ChunkBoundaryModeLabel = new GUIContent(
+            "Mode", "Vertical keeps the historical unrestricted waves. Stabilized preserves full wave " +
+            "height but fades horizontal chop to zero at the wall. Calm Rim also fades wave height to " +
+            "the fill plane for an aquarium-like edge.");
+        static readonly GUIContent ChunkBoundaryWidthLabel = new GUIContent(
+            "Transition Width", "Width in world metres over which the box surface blends into its wall " +
+            "boundary. Increase it when very large storm waves still bunch up near the rim.");
         static readonly GUIContent ChunkDensityLabel = new GUIContent(
             "Density Boost", "Optical density of the chunk relative to the open water (baked into the " +
             "body's fog density).");
@@ -105,6 +132,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             "Turns this body into a self-contained floating CHUNK of water (the invert of an exclusion " +
             "carve). For a Sphere, keep Round Surface on and Water Fog (Look tab) off - the chunk renders " +
             "its own fog volume through the shell.";
+        const string ChunkV11Warning =
+            "Chunk water is currently a reduced-control implementation. It reuses the body's core wave " +
+            "and optical settings, but does not yet provide the complete authoring control or rendering " +
+            "parity of a standard ocean. Full chunk-water parity is planned for v1.1.";
     }
 }
 #endif

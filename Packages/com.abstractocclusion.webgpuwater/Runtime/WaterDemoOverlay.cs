@@ -56,6 +56,7 @@ namespace AbstractOcclusion.WebGpuWater
         const float MaxFrameSmoothing = 1f;
 
         const float MillisecondsPerSecond = 1000f;
+        const float FrameRateRefreshSeconds = 0.25f;
         const string TitleFormat = "<size={0}><b>{1}</b></size>";
         const string FrameRateFormat = "{0:0} fps  ({1:0.0} ms)";
         const string ParagraphSeparator = "\n\n";
@@ -119,6 +120,7 @@ namespace AbstractOcclusion.WebGpuWater
         readonly GUIContent _panelContent = new GUIContent();
         GUIStyle _panelStyle;   // built lazily in OnGUI (GUI.skin only exists there)
         float _smoothedFrameMs;
+        float _nextFrameRateRefreshTime;
         bool _textDirty = true;
 
         /// <summary>Retitles the panel at runtime, e.g. from a scene cycler.</summary>
@@ -133,12 +135,13 @@ namespace AbstractOcclusion.WebGpuWater
         {
             _textDirty = true;
             _panelStyle = null;
+            _nextFrameRateRefreshTime = 0f;
         }
 
         void Update()
         {
-            // The caption never changes on its own, so it is built once; the frame-rate line changes every
-            // frame, and rebuilding here rather than in OnGUI costs one pass instead of two (Layout + Repaint).
+            // The caption never changes on its own, so it is built once. Smooth frame time every frame,
+            // but refresh the allocating formatted string at a human-readable rate instead of at render FPS.
             if (!showFrameRate)
             {
                 RebuildPanelTextIfDirty();
@@ -146,6 +149,8 @@ namespace AbstractOcclusion.WebGpuWater
             }
 
             SmoothFrameTime();
+            if (Time.unscaledTime < _nextFrameRateRefreshTime) return;
+            _nextFrameRateRefreshTime = Time.unscaledTime + FrameRateRefreshSeconds;
             RebuildPanelText();
         }
 

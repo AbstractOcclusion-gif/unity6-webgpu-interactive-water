@@ -17,8 +17,13 @@ Shader "Hidden/AbstractOcclusion/WebGpuWater/WaterUnderwaterWaterline"
             #pragma vertex Vert
             #pragma fragment FragWaterline
             #pragma target 4.0
-            #pragma multi_compile_fragment _ WATER_FOG_SIMPLE
+            #pragma multi_compile_fragment _ WATER_FOG_SIMPLE WATER_FOG_CLASSIFY_RT
 
+            // Before the includes: a fullscreen pass with sampler headroom takes the hardware
+            // bilinear for the direction map. See OceanAperiodicDirectionMapBilinear for why the
+            // Load fallback exists and must stay the default. The aperiodic SHAPE stays - see the
+            // reverted-experiment note in WaterUnderwaterFog.shader.
+            #define WATER_APERIODIC_MAP_SAMPLER 1
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "WaterVolume.hlsl"
             #include "WaterExclusion.hlsl"
@@ -40,6 +45,9 @@ Shader "Hidden/AbstractOcclusion/WebGpuWater/WaterUnderwaterWaterline"
 
             TEXTURE2D(_OceanSurfaceOwnership); SAMPLER(sampler_OceanSurfaceOwnership);
             TEXTURE2D(_WaterlineSceneTex); SAMPLER(sampler_WaterlineSceneTex);
+#ifdef WATER_FOG_CLASSIFY_RT
+            TEXTURE2D(_WaterFogClassifyRT);
+#endif
 
             struct Attributes { uint vertexID : SV_VertexID; };
             struct Varyings { float4 positionCS : SV_POSITION; float2 uv : TEXCOORD0; };
@@ -60,6 +68,15 @@ Shader "Hidden/AbstractOcclusion/WebGpuWater/WaterUnderwaterWaterline"
 
             #include "WaterOceanRenderedCoverage.hlsl"
 
+#ifdef WATER_FOG_CLASSIFY_RT
+            float2 LoadWaterFogClassification(float2 uv)
+            {
+                int2 pixelMax = max(int2(_ScaledScreenParams.xy) - int2(1, 1), int2(0, 0));
+                int2 pixel = clamp(int2(uv * _ScaledScreenParams.xy), int2(0, 0), pixelMax);
+                return LOAD_TEXTURE2D(_WaterFogClassifyRT, pixel).rg;
+            }
+#endif
+
             half4 FragWaterline(Varyings input) : SV_Target
             {
                 float3 nearWorld = ComputeWorldSpacePosition(input.uv, UNITY_NEAR_CLIP_VALUE,
@@ -70,12 +87,37 @@ Shader "Hidden/AbstractOcclusion/WebGpuWater/WaterUnderwaterWaterline"
                     float3 nearPool = WorldToPool(nearWorld);
                     if (max(abs(nearPool.x), abs(nearPool.z)) > 1.0) discard;
                 }
+                float gap;
+                float gapSmooth;
 #ifdef WATER_FOG_SIMPLE
-                float gap = nearWorld.y - _UnderwaterSurfaceY;
-                float gapSmooth = gap;
+                gap = nearWorld.y - _UnderwaterSurfaceY;
+                gapSmooth = gap;
+#elif defined(WATER_FOG_CLASSIFY_RT)
+                float2 classifyGaps = LoadWaterFogClassification(input.uv);
+                gap = classifyGaps.x;
+                gapSmooth = classifyGaps.y;
 #else
-                float gap = SurfaceSignedGapChopInverted(nearWorld);
-                float gapSmooth = SurfaceSignedGap(nearWorld);
+                // ONE solve for both gaps (2026-08-11): the inversion's first iteration already
+                // evaluates the vertical field at this xz, so the separate SurfaceSignedGap call
+                // this replaces was re-deriving a number the inversion had. Same division of duties
+                // as the fog's ArmWeight - position from the inverted read, feather width from the
+                // smooth one - at three field evaluations instead of four.
+                //
+                // And NO solve at all when the camera is metres clear of its own surface: the whole
+                // near plane is then on one side, this band is off screen, and every pixel is about
+                // to be clipped below. One height-RT tap decides it, uniformly across the screen so
+                // the derivative below stays defined. Same test and same margin as the fog pass -
+                // see WaterlineFarFromSurface in WaterWaterline.hlsl for why it is sound.
+                float farGap;
+                if (WaterlineFarFromSurface(nearWorld, farGap))
+                {
+                    gap = farGap;
+                    gapSmooth = farGap;
+                }
+                else
+                {
+                    gap = SurfaceSignedGapChopInvertedPair(nearWorld, gapSmooth);
+                }
 #endif
                 float2 gapGradient = float2(ddx(gapSmooth), ddy(gapSmooth));
                 float metersPerPixel = max(abs(gapGradient.x) + abs(gapGradient.y),

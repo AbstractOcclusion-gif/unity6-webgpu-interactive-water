@@ -153,6 +153,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
                 float ripple = ChunkRippleHeight(poolXZ, worldPos);
                 float rippleLift = PoolToWorld(float3(poolXZ.x, ripple, poolXZ.y)).y
                                  - PoolToWorld(float3(poolXZ.x, 0.0, poolXZ.y)).y;
+                rippleLift *= ChunkBoundaryHeightWeight(poolXZ);
                 // Fill level: the world-Y shift of moving the surface plane from the rest pool-Y (0)
                 // to _ChunkSurfacePoolY. Zero for a full/rest chunk; negative lowers the waterline.
                 float levelLift = PoolToWorld(float3(poolXZ.x, _ChunkSurfacePoolY, poolXZ.y)).y

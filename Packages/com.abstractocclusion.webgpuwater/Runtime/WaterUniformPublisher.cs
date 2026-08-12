@@ -474,10 +474,14 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalFloat(ID_UnderwaterSurfaceY, surfaceY);
             Shader.SetGlobalFloat(ID_UnderwaterUnbounded, unbounded);
             Shader.SetGlobalFloat(ID_UnderwaterFogSimple, fogSimple);
-            // A uniform branch skips the march at runtime, but the code is still in the module and a
-            // fragment shader's register allocation is sized to its worst path - so the 40-step
-            // crossing march (~6 texture fetches per step) was setting the occupancy of every
-            // Simple-tier pixel on a fullscreen pass, twice a frame. The keyword removes it.
+            // A uniform branch skips the work at runtime, but the code is still in the module and a
+            // fragment shader's register allocation is sized to its worst path, so the keyword is
+            // what actually removes it from a Simple-tier pixel. What it removes is mostly NOT the
+            // march, despite what this comment used to say ("the 40-step crossing march, ~6 texture
+            // fetches per step"): since F3 every march sample is one tap of _WaterHeightRT. The
+            // expensive half is the per-pixel waterline CLASSIFICATION - three evaluations of the
+            // analytic ocean field, each 4 source reads on a periodic ocean and 24 on an aperiodic
+            // one - paid by both fullscreen fog draws and again by the meniscus pass.
             if (fogSimple > 0.5f) Shader.EnableKeyword(KW_UnderwaterFogSimple);
             else Shader.DisableKeyword(KW_UnderwaterFogSimple);
             // Shore strip rides the same publish: useBedDepth is the per-body opt-in that
@@ -502,7 +506,18 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalFloat(ID_UnderwaterFogArmed, fogArmed);
             // See KW_UndersideFoam: the underside sheet is only ever looked at from below, so above
             // the surface the whitecap/whitewash taps are compiled out of the surface pass entirely.
-            if (fogArmed > 0.5f) Shader.EnableKeyword(KW_UndersideFoam);
+            // REGATED 2026-08-11 (perf audit): this read fogArmed, which is the WIDE near-surface
+            // band (WaterVolume.Underwater.cs arms it from the wave envelope - ~20 m above the rest
+            // plane on a heavy sea), not "the eye can see an underside". Two costs followed from
+            // that. The keyword is a multi_compile_fragment on WaterSurface pass 0, so merely
+            // DESCENDING toward the sea swapped the compiled variant for every surface renderer in
+            // the scene - a first-crossing PSO compile, mid-flight. And in between it paid the
+            // whitecap/whitewash taps on every water pixel while the camera was still in the air.
+            // The undersides are visible from exactly two places: the eye in the water, or the eye
+            // in a dry carve below the surface (a semi-submerged room looks up at the sheet). Both
+            // are already published here, so the gate now says what the comment above always claimed.
+            bool undersideVisible = cameraUnderwater > 0.5f || cameraDryVolume > 0.5f;
+            if (undersideVisible) Shader.EnableKeyword(KW_UndersideFoam);
             else Shader.DisableKeyword(KW_UndersideFoam);
         }
 

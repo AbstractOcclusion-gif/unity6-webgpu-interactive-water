@@ -194,7 +194,15 @@ namespace AbstractOcclusion.WebGpuWater
         readonly DropInjection[] _dropQueue = new DropInjection[MaxQueuedInjections];
         readonly SphereInjection[] _sphereQueue = new SphereInjection[MaxQueuedInjections];
         int _dropCount, _sphereCount;
+        bool _hasReceivedInjection;
         ComputeBuffer _dropBuffer, _sphereBuffer;   // allocated on first use; a scene with no ripples pays nothing
+
+        // One-way wake latch for the owning WaterVolume. An unbounded ocean already has its FFT sea,
+        // so running this second, initially-flat heightfield before gameplay touches it only burns a
+        // chain of full-grid WebGPU dispatches. Once real input arrives we keep the legacy continuous
+        // solver behaviour: no guessed timeout can safely decide when a long-lived wake or foam trace
+        // has become invisible.
+        internal bool HasReceivedInjection => _hasReceivedInjection;
 
         /// <summary>The texture holding the current simulation state.</summary>
         public RenderTexture Texture => _a;
@@ -607,6 +615,7 @@ namespace AbstractOcclusion.WebGpuWater
         /// the queued centres are still in the field coordinates they were measured in.</summary>
         public void AddDrop(float x, float y, float radius, float strength)
         {
+            if (strength != 0f) _hasReceivedInjection = true;
             radius = Mathf.Max(radius, MinDropTexelRadius / Resolution);
             // Never drop input: a frame busy enough to fill the queue flushes what it has and keeps
             // going, which costs one extra pass on that frame instead of silently losing splashes.
@@ -632,6 +641,8 @@ namespace AbstractOcclusion.WebGpuWater
         public void AddSphereInteraction(Vector2 center, float radius, Vector2 velXZ, float velY,
                                          float weight, float strength, float wakeFoamDose, float verticalForceCap)
         {
+            if ((weight != 0f && strength != 0f) || wakeFoamDose > 0f)
+                _hasReceivedInjection = true;
             radius = Mathf.Max(radius, MinDropTexelRadius / Resolution);
             if (_sphereCount >= MaxQueuedInjections) FlushSpheres();
             _sphereQueue[_sphereCount++] = new SphereInjection

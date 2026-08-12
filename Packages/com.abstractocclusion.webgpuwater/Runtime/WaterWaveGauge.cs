@@ -1,5 +1,6 @@
 // WebGpuWater - placeable wave staff backed by the canonical buoyancy-height sampler.
 using System;
+using System.Text;
 using UnityEngine;
 
 namespace AbstractOcclusion.WebGpuWater
@@ -67,6 +68,19 @@ namespace AbstractOcclusion.WebGpuWater
         Material _runtimeLineMaterial;
         Material _runtimeTextMaterial;
 
+        // Readout throttle (perf audit 2026-08-11). The six lines are metre readings that a human
+        // reads; rebuilding them EVERY LateUpdate cost six interpolated strings plus their concat
+        // intermediates of managed garbage per frame, and assigning TextMesh.text re-tessellates
+        // the glyph mesh even when the characters are identical. Unity's heap never shrinks, so
+        // that steady drip is one of the mechanisms behind "fps falls the longer the scene runs".
+        // The billboard transform below still updates every frame - only the TEXT is throttled.
+        const float ReadoutRefreshIntervalSeconds = 0.25f;
+        const int ReadoutBuilderCapacity = 160;
+        // Real time, not Time.time: the gauge runs in edit mode too, where the game clock stalls.
+        float _nextReadoutRefreshTime;
+        string _readoutText;
+        readonly StringBuilder _readoutBuilder = new StringBuilder(ReadoutBuilderCapacity);
+
         float[] _waveHeights;
         float[] _waveTimes;
         float[] _sortScratch;
@@ -96,6 +110,9 @@ namespace AbstractOcclusion.WebGpuWater
             AllocateHistory();
             EnsureVisuals();
             ResetMeasurement();
+            // Drop the throttle's cached string: EnsureVisuals may have just built a FRESH
+            // TextMesh, whose text is empty, and the cache is what decides whether to assign.
+            _readoutText = null;
         }
 
         void OnDisable()
@@ -325,15 +342,23 @@ namespace AbstractOcclusion.WebGpuWater
         {
             MeshRenderer renderer = _readout.GetComponent<MeshRenderer>();
             if (renderer == null || _readout.font == null) return;
-            Shader shader = Shader.Find(GaugeTextShaderName);
-            if (shader == null)
+
+            // Guarded exactly like ResolveLineMaterial (which always was): unguarded, a second
+            // EnsureVisuals - a re-enable, a domain reload, any re-init - overwrote the field and
+            // stranded the previous instance, since only OnDisable destroys what the field holds.
+            if (_runtimeTextMaterial == null)
             {
-                Debug.LogError($"WaterWaveGauge: shader '{GaugeTextShaderName}' was not found.", this);
-                return;
+                Shader shader = Shader.Find(GaugeTextShaderName);
+                if (shader == null)
+                {
+                    Debug.LogError($"WaterWaveGauge: shader '{GaugeTextShaderName}' was not found.", this);
+                    return;
+                }
+
+                _runtimeTextMaterial = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
+                _runtimeTextMaterial.mainTexture = _readout.font.material.mainTexture;
             }
 
-            _runtimeTextMaterial = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
-            _runtimeTextMaterial.mainTexture = _readout.font.material.mainTexture;
             renderer.sharedMaterial = _runtimeTextMaterial;
         }
 
@@ -358,12 +383,7 @@ namespace AbstractOcclusion.WebGpuWater
 
             _readout.gameObject.SetActive(showReadout);
             if (!showReadout) return;
-            _readout.text = $"SURFACE {CurrentElevation:+0.0;-0.0;0.0} m\n"
-                          + $"CREST   {_capturedCrest:+0.0;-0.0;0.0} m\n"
-                          + $"TROUGH  {_capturedTrough:+0.0;-0.0;0.0} m\n"
-                          + $"WAVE    {LastWaveHeight:0.0} m\n"
-                          + $"MAX {rollingWindowSeconds:0}s  {RollingMaximumHeight:0.0} m\n"
-                          + $"Hs OBS  {ObservedSignificantHeight:0.0} m";
+            RefreshReadoutText();
             _readout.transform.localPosition = new Vector3(LabelHorizontalOffset,
                                                            CurrentElevation + LabelVerticalOffset, 0f);
             _readout.transform.localScale = Vector3.one * labelScale;
@@ -372,6 +392,30 @@ namespace AbstractOcclusion.WebGpuWater
                 _readout.transform.rotation = Quaternion.LookRotation(
                     _readout.transform.position - facingCamera.transform.position,
                     facingCamera.transform.up);
+        }
+
+        // Rebuild the readout at ReadoutRefreshIntervalSeconds into a reused StringBuilder, and
+        // hand it to the TextMesh only when the characters actually changed - assigning an
+        // identical string still re-tessellates the glyph mesh. See the throttle field block.
+        void RefreshReadoutText()
+        {
+            float now = Time.realtimeSinceStartup;
+            if (_readoutText != null && now < _nextReadoutRefreshTime) return;
+            _nextReadoutRefreshTime = now + ReadoutRefreshIntervalSeconds;
+
+            _readoutBuilder.Clear();
+            _readoutBuilder.AppendFormat("SURFACE {0:+0.0;-0.0;0.0} m\n", CurrentElevation);
+            _readoutBuilder.AppendFormat("CREST   {0:+0.0;-0.0;0.0} m\n", _capturedCrest);
+            _readoutBuilder.AppendFormat("TROUGH  {0:+0.0;-0.0;0.0} m\n", _capturedTrough);
+            _readoutBuilder.AppendFormat("WAVE    {0:0.0} m\n", LastWaveHeight);
+            _readoutBuilder.AppendFormat("MAX {0:0}s  {1:0.0} m\n", rollingWindowSeconds,
+                                         RollingMaximumHeight);
+            _readoutBuilder.AppendFormat("Hs OBS  {0:0.0} m", ObservedSignificantHeight);
+
+            string text = _readoutBuilder.ToString();
+            if (text == _readoutText) return;
+            _readoutText = text;
+            _readout.text = text;
         }
 
         static void SetVerticalLine(LineRenderer line, float bottom, float top)

@@ -65,7 +65,10 @@ namespace AbstractOcclusion.WebGpuWater
                     // frames, and the stamps must still land every frame the way an immediate dispatch
                     // did. Also before Step so the flush precedes the sim window's scroll.
                     _water?.FlushInjections();
-                    Step(dt);
+                    if (ShouldRunRippleSolver())
+                        Step(dt);
+                    else if (_windowed)
+                        _simWindow?.Track(scrollSimulation: false);
                 }
             }
 
@@ -132,6 +135,23 @@ namespace AbstractOcclusion.WebGpuWater
                 _sampler.RequestReadback();  // paused bodies keep their last height (objects still float)
                 if (IsOceanClipmap) _oceanFft?.RequestHeightReadback(); // FFT swell height for buoyancy
             }
+        }
+
+        bool ShouldRunRippleSolver()
+        {
+            if (!IsOceanClipmap) return true;
+            if (_water == null) return false;
+
+            // FootprintDelta creates its disturbance inside Step rather than through the queued
+            // injection API, so it must be allowed to inspect the obstacle even while pristine.
+            if (objectInteraction == ObjectInteraction.FootprintDelta) return true;
+
+            // Analytic surf fronts can inject whitewash into the ripple foam field without a drop
+            // or sphere wake. Keep that producer live whenever its baked shoreline is active.
+            WaterSimulation.ShoreFoamState shoreFoam = BuildShoreFoamState();
+            if (shoreFoam.Active && shoreFoam.InjectionActive) return true;
+
+            return _water.HasReceivedInjection;
         }
 
         // Per-body uniforms pushed to THIS body's own renderers via a property block, so

@@ -15,6 +15,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         readonly Material _material;
         readonly ProfilingSampler _sampler = new ProfilingSampler("WaterSkyFog");
+        readonly MaterialPropertyBlock _block = new MaterialPropertyBlock();
 
         internal float skyFogOpacity;
 
@@ -43,11 +44,13 @@ namespace AbstractOcclusion.WebGpuWater
                 _sampler.name, out PassData data, _sampler);
             data.material = _material;
             data.opacity = skyFogOpacity;
-            data.block = new MaterialPropertyBlock();
+            data.block = _block;
             // The existing skybox must be loaded before alpha blending the fog colour over it.
             builder.SetRenderAttachment(cameraColor, 0, AccessFlags.ReadWrite);
             builder.SetRenderFunc((PassData d, RasterGraphContext ctx) =>
             {
+                // Set at execution time so cameras recorded into separate graphs cannot overwrite
+                // each other's opacity while still sharing one allocation-free scratch block.
                 d.block.SetFloat(SkyFogOpacityId, d.opacity);
                 CoreUtils.DrawFullScreen(ctx.cmd, d.material, d.block);
             });

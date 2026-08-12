@@ -63,6 +63,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             "ocean.clipmapGridResolution",
             "ocean.largeGodRaySteps",
             "reflectionSettings.planarExcludeLayers",
+            "reflectionSettings.planarResolutionScale",
+            "reflectionSettings.planarUpdateInterval",
+            "reflectionSettings.planarRenderShadows",
+            "reflectionSettings.planarFarClipDistance",
         };
 
         // Volume -> preset, every domain. The caller commits the preset's SerializedObject.

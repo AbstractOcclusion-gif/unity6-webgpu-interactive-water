@@ -19,13 +19,27 @@ namespace AbstractOcclusion.WebGpuWater
         // shape, not an error.
         Renderer[] _renderers;
 
+        // How long an EMPTY renderer set is trusted before the hierarchy is walked again.
+        // Real time, not Time.time: this component runs under ExecuteAlways and the editor's
+        // game clock does not advance outside Play.
+        const float EmptyRescanIntervalSeconds = 0.5f;
+        float _nextRescanTime;
+
         // Lazy init (not Awake): with ExecuteAlways the first edit-mode tick can arrive
         // before Awake after a domain reload. Re-tried while empty so visuals that spawn a
-        // frame later are still picked up.
+        // frame later are still picked up - but ON A TIMER (perf audit 2026-08-11): the retry
+        // condition is "the set is empty", and an object that legitimately has NO renderers
+        // (a bare physics root - the boat's normal shape, see above) never leaves it, so this
+        // walked the whole hierarchy AND allocated a fresh array every single LateUpdate, in
+        // edit mode too, forever.
         void EnsureInitialized()
         {
-            if (_renderers == null || _renderers.Length == 0)
-                _renderers = GetComponentsInChildren<Renderer>();
+            if (_renderers != null && _renderers.Length > 0) return;
+
+            float now = Time.realtimeSinceStartup;
+            if (_renderers != null && now < _nextRescanTime) return;
+            _nextRescanTime = now + EmptyRescanIntervalSeconds;
+            _renderers = GetComponentsInChildren<Renderer>();
         }
 
         // LateUpdate so the containing body has finished this frame's sim/caustic pass
