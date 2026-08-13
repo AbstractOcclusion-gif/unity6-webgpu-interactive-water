@@ -221,6 +221,11 @@ namespace AbstractOcclusion.WebGpuWater
         // height, velocity, flow, foam and wetness are all below explicit visibility thresholds.
         internal bool HasReceivedInjection => _hasReceivedInjection;
 
+        /// <summary>Force the wake latch on without an injection. Bounded bodies call this at
+        /// enable so they boot with a warm, stepping sim (their legacy behaviour) and then EARN
+        /// sleep through the same activity reduction the ocean uses.</summary>
+        internal void Wake() => _hasReceivedInjection = true;
+
         // The activity reduction is normalized by its thresholds on the GPU; finite values at or below
         // one are settled. Kept as a pure function so the fail-closed NaN/Infinity rule is testable.
         internal static bool IsSettledActivity(float normalizedActivity)

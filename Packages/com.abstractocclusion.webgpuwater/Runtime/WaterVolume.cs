@@ -251,6 +251,12 @@ namespace AbstractOcclusion.WebGpuWater
             ApplyBodyBlock();
             if (isPrimary) PublishBodyGlobalsTracked();
 
+            // Bounded bodies boot AWAKE so the ripple state textures are warm from frame one
+            // (their legacy always-on behaviour), then EARN sleep through the activity reduction
+            // once everything visible has faded - see ShouldRunRippleSolver. Oceans keep booting
+            // asleep until gameplay touches them.
+            if (!IsOceanClipmap) _water?.Wake();
+
             _initialized = true;
         }
 

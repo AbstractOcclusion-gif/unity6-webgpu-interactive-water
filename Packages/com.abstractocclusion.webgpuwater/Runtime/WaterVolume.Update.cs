@@ -139,7 +139,11 @@ namespace AbstractOcclusion.WebGpuWater
 
         bool ShouldRunRippleSolver()
         {
-            if (!IsOceanClipmap) return true;
+            // EVERY body earns sleep through the injection latch + activity reduction (bounded
+            // bodies used to return true unconditionally and dispatch the whole solver chain on
+            // still water forever). Bounded bodies boot AWAKE (TryInitialize calls Wake) so the
+            // state textures are warm from frame one; any queued drop/sphere injection re-arms
+            // the latch at ENQUEUE time, so a sleeping pool wakes the same frame it is touched.
             if (_water == null) return false;
             return HasContinuousRippleSource() || _water.HasReceivedInjection;
         }
@@ -181,7 +185,8 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>Overwrite <paramref name="mpb"/> with this body's per-renderer uniforms
         /// (sim + caustic textures, volume frame, waves, fog, foam). Used for this body's own
         /// renderers and by <see cref="WaterMembership"/> to light a floating object with the
-        /// lake it is in. The block is cleared, so any per-object look must live in the material.</summary>
+        /// lake it is in. The block is publisher-owned (persistent + cached: only changed values
+        /// are pushed), so any per-object look must live in the material.</summary>
         public void WriteBodyProps(MaterialPropertyBlock mpb)
         {
             if (mpb == null) throw new System.ArgumentNullException(nameof(mpb));

@@ -20,15 +20,17 @@ namespace AbstractOcclusion.WebGpuWater
         const float ObstacleReflectSolidThreshold = 0.02f;
         const float ObstacleReflectRestDip = 0f;
 
-        // Ocean near-field ripple sleep. One tiny max-reduction/readback per interval replaces the
-        // old permanent wake latch after every visible part of the secondary ripple field has faded.
-        // Height-like values are authored in world metres and converted to pool units at the call.
-        const int OceanRippleSleepCheckIntervalFrames = 30;
-        const float OceanRippleSleepHeightMeters = 0.001f;
-        const float OceanRippleSleepVerticalVelocityMetersPerStep = 0.00025f;
-        const float OceanRippleSleepHorizontalFlowMetersPerSecond = 0.01f;
-        const float OceanRippleSleepFoamCoverage = 0.002f;
-        const float OceanRippleSleepWetMarkMeters = 0.001f;
+        // Ripple sleep - EVERY body since 2026-08-13 (ocean-only before). One tiny max-reduction/
+        // readback per interval replaces a permanent wake state once every visible part of the
+        // ripple field has faded: bounded bodies used to run the full simRes^2 dispatch chain
+        // forever on still water. Height-like values are authored in world metres and converted
+        // to pool units at the call.
+        const int RippleSleepCheckIntervalFrames = 30;
+        const float RippleSleepHeightMeters = 0.001f;
+        const float RippleSleepVerticalVelocityMetersPerStep = 0.00025f;
+        const float RippleSleepHorizontalFlowMetersPerSecond = 0.01f;
+        const float RippleSleepFoamCoverage = 0.002f;
+        const float RippleSleepWetMarkMeters = 0.001f;
 
         // True when at least one enabled interactable is flagged as a wave reflector. The solid mask clips
         // to this body's frame, so a reflector living in another body contributes nothing here.
@@ -185,21 +187,21 @@ namespace AbstractOcclusion.WebGpuWater
                 _foamTimeDebt = 0f;
             }
 
-            RequestOceanRippleSleepCheck();
+            RequestRippleSleepCheck();
         }
 
-        void RequestOceanRippleSleepCheck()
+        void RequestRippleSleepCheck()
         {
-            if (!IsOceanClipmap || HasContinuousRippleSource()) return;
-            if (Time.frameCount % OceanRippleSleepCheckIntervalFrames != 0) return;
+            if (HasContinuousRippleSource()) return;
+            if (Time.frameCount % RippleSleepCheckIntervalFrames != 0) return;
 
             float inverseVerticalExtent = 1f / VolumeExtentSafe.y;
             _water.RequestSleepCheck(
-                OceanRippleSleepHeightMeters * inverseVerticalExtent,
-                OceanRippleSleepVerticalVelocityMetersPerStep * inverseVerticalExtent,
-                OceanRippleSleepHorizontalFlowMetersPerSecond,
-                OceanRippleSleepFoamCoverage,
-                OceanRippleSleepWetMarkMeters * inverseVerticalExtent);
+                RippleSleepHeightMeters * inverseVerticalExtent,
+                RippleSleepVerticalVelocityMetersPerStep * inverseVerticalExtent,
+                RippleSleepHorizontalFlowMetersPerSecond,
+                RippleSleepFoamCoverage,
+                RippleSleepWetMarkMeters * inverseVerticalExtent);
         }
 
         // Authored DRY TIME (seconds) -> the per-reference-step survival factor the kernel decays the

@@ -16,7 +16,13 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_Params = Shader.PropertyToID("_SeaStateFetchParams");
 
         const float MinimumHalfExtentMeters = 0.01f;
-        const float WindDirectionChangeEpsilonDegrees = 0.001f;
+        // 0.05 deg is invisible in the fetch weighting but stops micro-jitter rebakes; the real
+        // drag protection is MinRebakeIntervalFrames below.
+        const float WindDirectionChangeEpsilonDegrees = 0.05f;
+        // A rebake is a 256^2 CPU shore raymarch; dragging the wind-direction slider used to run
+        // it EVERY editor frame. While a change is pending inside the interval the stale bake
+        // holds; EnsureBaked runs every frame, so the drag's final value always lands.
+        const int MinRebakeIntervalFrames = 30;
 
         readonly WaterVolume _body;
         Texture2D _texture;
@@ -26,6 +32,8 @@ namespace AbstractOcclusion.WebGpuWater
         float _bakedWindFromDegrees = float.NaN;
         int _shoreBakeVersion = -1;
         bool _baked;
+        int _lastRebakeFrame = -MinRebakeIntervalFrames;
+        Color[] _pixels; // rebake scratch - Resolution is const, so both buffers are reusable
 
         internal WaterSeaStateFetchField(WaterVolume body)
             => _body = body ?? throw new System.ArgumentNullException(nameof(body));
@@ -53,8 +61,13 @@ namespace AbstractOcclusion.WebGpuWater
                                            Mathf.Max(bodyHalfSize.y, MinimumHalfExtentMeters));
             bool frameChanged = !Approximately(_center, new Vector2(volumeCenter.x, volumeCenter.z))
                              || !Approximately(_halfSize, halfSize);
-            if (!_baked || windChanged || frameChanged || _shoreBakeVersion != shore.BakeVersion)
-                Rebake();
+            bool changed = windChanged || frameChanged || _shoreBakeVersion != shore.BakeVersion;
+            if (_baked && !changed) return;
+            // Throttle change-driven rebakes: a slider drag re-detects the change every frame, so
+            // the stale bake holds until the interval passes. A never-baked field skips the
+            // throttle - there is nothing stale to show while waiting.
+            if (_baked && Time.frameCount - _lastRebakeFrame < MinRebakeIntervalFrames) return;
+            Rebake();
         }
 
         internal void Rebake()
@@ -85,8 +98,8 @@ namespace AbstractOcclusion.WebGpuWater
                                                 2f * shore.FieldHalfSize.magnitude);
             int maxSteps = Mathf.CeilToInt(maxMarchDistance / marchStep);
 
-            _fetch = new float[Resolution * Resolution];
-            var pixels = new Color[_fetch.Length];
+            _fetch ??= new float[Resolution * Resolution];
+            Color[] pixels = _pixels ??= new Color[Resolution * Resolution];
             for (int z = 0; z < Resolution; z++)
             {
                 float worldZ = TexelToWorld(z, _center.y, _halfSize.y);
@@ -106,6 +119,7 @@ namespace AbstractOcclusion.WebGpuWater
             _texture.Apply(false, false);
             _bakedWindFromDegrees = _body.windFromDegrees;
             _shoreBakeVersion = shore.BakeVersion;
+            _lastRebakeFrame = Time.frameCount;
             _baked = true;
         }
 

@@ -84,8 +84,9 @@ namespace AbstractOcclusion.WebGpuWater
         void ApplyClipmapBlock()
         {
             if (_clipmapLevels == null) return;
-            // Body uniforms ONCE for the whole clipmap. WriteBodyProps clears the block first, so last
-            // frame's per-level floats cannot survive into this one.
+            // Body uniforms ONCE for the whole clipmap. The per-level floats below are written
+            // unconditionally for every level, so nothing stale survives even though the block is
+            // persistent now (cached publisher sinks push only changed body values).
             _clipmapBlock ??= new MaterialPropertyBlock();
             WriteBodyProps(_clipmapBlock);
             for (int i = 0; i < _clipmapLevels.Length; i++)

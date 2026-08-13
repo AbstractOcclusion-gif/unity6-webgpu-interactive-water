@@ -212,17 +212,18 @@ namespace AbstractOcclusion.WebGpuWater
             // carries it; always written (0 off-chunk) so a body leaving mesh mode resets.
             block.SetFloat(ID_ChunkUseMesh, chunkFootprint == ChunkFootprint.Mesh ? 1f : 0f);
             SetChunkBoundaryProps(block, isBox);
-            if (!IsChunk) return;
 
             // A chunk's fog comes from its OWN disc surface + shell, so the GPU fog gate is forced on
             // here while the C# WaterFog flag stays false - that flag must keep the fullscreen
             // underwater pass disarmed (it runs on the primary's globals and clips to the pool BOX,
             // not the chunk primitive, so it would fog the wrong volume).
-            block.SetFloat(ID_ChunkWaterFogEnabled, 1f);
+            // ALWAYS written (0 off-chunk) like every flag above: the body block is PERSISTENT now
+            // (cached publisher sinks), so a body leaving chunk mode must reset these itself.
+            block.SetFloat(ID_ChunkWaterFogEnabled, IsChunk ? 1f : 0f);
             // Density boost baked into the body's fog density ONCE, so the disc column, the shell and
             // any membership object all read the same (boosted) water - no per-consumer multiplier.
-            block.SetFloat(ID_ChunkWaterFogDensity, fogDensity * chunkDensityBoost);
-            block.SetFloat(ID_ChunkCameraUnderwater, ComputeChunkCameraUnder() ? 1f : 0f);
+            block.SetFloat(ID_ChunkWaterFogDensity, IsChunk ? fogDensity * chunkDensityBoost : 0f);
+            block.SetFloat(ID_ChunkCameraUnderwater, IsChunk && ComputeChunkCameraUnder() ? 1f : 0f);
         }
 
         void SetChunkBoundaryProps(MaterialPropertyBlock block, bool isBox)

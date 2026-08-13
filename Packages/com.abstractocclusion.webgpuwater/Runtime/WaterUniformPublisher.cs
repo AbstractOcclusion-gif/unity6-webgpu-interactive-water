@@ -5,6 +5,7 @@
 // state (the primary body's fallback for objects without a membership) - so the
 // values are derived once and the two paths can never drift.
 using System.Collections.Generic;
+using System.Runtime.CompilerServices; // ConditionalWeakTable: per-target uniform shadows
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -276,9 +277,19 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly Vector4[] _exclusionEdgeParams = new Vector4[WaterExclusionVolume.MaxVolumes];
 
         readonly WaterVolume _body;
-        // Two sinks over the SAME derivations; cached to avoid per-frame allocation.
-        readonly MpbUniformSink _mpbSink = new MpbUniformSink();
-        readonly GlobalUniformSink _globalSink = new GlobalUniformSink();
+        // Per-TARGET cached sinks over the SAME derivations (see CachedUniformSink below): every
+        // MaterialPropertyBlock handed to WriteBodyProps gets a shadow keyed on the block itself
+        // (weak - a dead block collects its cache with it), and the shader-global state gets one
+        // static shadow. The old raw sinks live on INSIDE the caches as their write targets.
+        static ConditionalWeakTable<MaterialPropertyBlock, CachedUniformSink> s_mpbCaches =
+            new ConditionalWeakTable<MaterialPropertyBlock, CachedUniformSink>();
+        static readonly CachedUniformSink s_globalCache =
+            new CachedUniformSink(new GlobalUniformSink());
+        static CachedUniformSink CreateMpbCache(MaterialPropertyBlock mpb)
+            => new CachedUniformSink(new MpbUniformSink { Target = mpb });
+        // Cached delegate: a method-group argument to GetValue would allocate per call.
+        static readonly ConditionalWeakTable<MaterialPropertyBlock, CachedUniformSink>.CreateValueCallback
+            s_createMpbCache = CreateMpbCache;
 
         internal WaterUniformPublisher(WaterVolume body)
         {
@@ -381,6 +392,8 @@ namespace AbstractOcclusion.WebGpuWater
             s_SceneLightCacheRefreshAt = 0f;
             _skyboxCube = null;
             _skyboxCubeFrame = InvalidSkyboxCacheFrame;
+            s_mpbCaches = new ConditionalWeakTable<MaterialPropertyBlock, CachedUniformSink>();
+            s_globalCache.Invalidate();
         }
 
         static Cubemap SceneSkyboxCubemap()
@@ -394,17 +407,40 @@ namespace AbstractOcclusion.WebGpuWater
             return _skyboxCube;
         }
 
-        /// <summary>Overwrite the block with the body's per-renderer uniforms.</summary>
+        /// <summary>Write the body's per-renderer uniforms into the block THROUGH its cache: only
+        /// values that changed since this body's last pass over this block reach a native setter.
+        /// The block is no longer cleared every call - it is cleared exactly when its cache demands
+        /// a full rebuild (owner change, a conditional write turning off, periodic self-heal).</summary>
         internal void WriteBodyProps(MaterialPropertyBlock mpb)
         {
-            mpb.Clear();
-            _mpbSink.Target = mpb;
-            WriteBodyUniforms(_mpbSink);
+            CachedUniformSink cache = s_mpbCaches.GetValue(mpb, s_createMpbCache);
+            if (cache.BeginPass(this)) mpb.Clear();
+            WriteBodyUniforms(cache);
+            if (cache.EndPassNeedsRebuild())
+            {
+                // A previously-written conditional value (an unassigned texture and its riders)
+                // was skipped this pass. A MaterialPropertyBlock has no per-property remove, so
+                // the only correct reset is clear + full rewrite - rare (an authoring action).
+                mpb.Clear();
+                cache.Invalidate();
+                cache.BeginPass(this);
+                WriteBodyUniforms(cache);
+                cache.EndPassNeedsRebuild(); // rotate the tracker; a fresh pass cannot miss ids
+            }
         }
 
         // The primary body mirrors its per-body uniforms to shader globals, the fallback that
         // object shaders without a WaterMembership read. Same derivations as the property block.
-        internal void PublishBodyGlobals() => WriteBodyUniforms(_globalSink);
+        // Cached like the blocks and owner-stamped, so a fog-source switch between bodies rewrites
+        // in full. Globals cannot drop properties (there is no clear), so the missing-id rebuild
+        // does not apply - exactly today's semantics, where stale conditional globals already
+        // linger until the next full publish.
+        internal void PublishBodyGlobals()
+        {
+            s_globalCache.BeginPass(this);
+            WriteBodyUniforms(s_globalCache);
+            s_globalCache.EndPassNeedsRebuild(); // tracker rotation only (see note above)
+        }
 
         /// <summary>Stand the water globals down after the LAST body leaves. Shader globals survive
         /// scene loads, so without this the dead body's volume frame keeps describing a real box and a
@@ -415,6 +451,9 @@ namespace AbstractOcclusion.WebGpuWater
         /// Static: the caller is the body on its way out, and there is nothing left to derive from.</summary>
         internal static void ClearBodyGlobals()
         {
+            // The globals are about to be overwritten OUTSIDE the cached sink - drop the shadow so
+            // the next PublishBodyGlobals rewrites everything instead of trusting stale skips.
+            s_globalCache.Invalidate();
             Shader.SetGlobalFloat(ID_NoWaterBodies, 1f);
             Shader.SetGlobalTexture(ID_Water, Texture2D.blackTexture);
             Shader.SetGlobalTexture(ID_Caustic, Texture2D.blackTexture);
@@ -920,6 +959,157 @@ namespace AbstractOcclusion.WebGpuWater
                 0f));
             sink.SetVector(ID_OceanDirectionMapFrame,
                 new Vector4(center.x, center.z, 1f / mapSize, 0f));
+        }
+
+        // ---- Cached sink layer (perf batch 3, 2026-08-13) ----
+        // WriteBodyUniforms is ~170 native property writes and ran 10-22x per frame per body over
+        // targets it had written near-identically the frame before (self-documented at the skybox
+        // cache above). Each target now owns a SHADOW of every tracked write, and only changed
+        // values reach the native setter - steady state costs managed lookups instead of ~2,000
+        // native calls per frame per body. THE DERIVATION IS UNTOUCHED: WriteBodyUniforms stays
+        // the single source of truth; this layer only decides whether a value still needs pushing.
+        //
+        // Correctness seams, each handled:
+        //  * another BODY wrote the same target in between -> owner stamp; owner change = clear +
+        //    full rewrite (covers the atmosphere pass reusing pooled blocks across oceans, and the
+        //    global state alternating between the primary and a secondary fog source).
+        //  * a CONDITIONAL write turned off (texture unassigned) -> the pass tracker sees a
+        //    previously-written id go missing and forces clear + full rewrite.
+        //  * writes from OUTSIDE the publisher -> consumer extras rewrite their own ids every
+        //    frame (audited 2026-08-13: the only id overlaps - _PatchPoolCenter/Half and the
+        //    compute-side _SimEdgeFadeTexels - carry byte-identical values or a different target);
+        //    ClearBodyGlobals invalidates the global shadow explicitly.
+        //  * self-heal backstop: every FullRewriteIntervalFrames the pass clears its target and
+        //    rewrites in full, so any unforeseen divergence lasts at most ~2 s.
+        //
+        // Comparisons are EXACT (bitwise float equality, reference identity for textures) - the
+        // Unity ==-operators are approximate and would silently swallow small drifts.
+        const int FullRewriteIntervalFrames = 128;
+
+        sealed class CachedUniformSink : IUniformSink
+        {
+            readonly IUniformSink _inner;
+            readonly Dictionary<int, float> _floats = new Dictionary<int, float>();
+            readonly Dictionary<int, Vector4> _vectors = new Dictionary<int, Vector4>();    // colors ride as Vector4
+            readonly Dictionary<int, Matrix4x4> _matrices = new Dictionary<int, Matrix4x4>();
+            readonly Dictionary<int, Texture> _textures = new Dictionary<int, Texture>();   // reference identity
+            readonly Dictionary<int, Vector4[]> _arrays = new Dictionary<int, Vector4[]>(); // content copies
+            // ids written last pass vs this pass: a formerly-written id that goes missing means a
+            // conditional write turned off, and a MaterialPropertyBlock has no per-property remove.
+            readonly HashSet<int> _previousIds = new HashSet<int>();
+            readonly HashSet<int> _currentIds = new HashSet<int>();
+            WaterUniformPublisher _owner;
+            int _nextFullRewriteFrame;
+
+            public CachedUniformSink(IUniformSink inner) => _inner = inner;
+
+            public void Invalidate()
+            {
+                _floats.Clear(); _vectors.Clear(); _matrices.Clear();
+                _textures.Clear(); _arrays.Clear();
+                _previousIds.Clear(); _currentIds.Clear();
+                _owner = null;
+            }
+
+            /// <summary>Arm a pass for <paramref name="owner"/>. True = the shadow was reset and a
+            /// clearable target must be Clear()ed by the caller: the owner changed, or the periodic
+            /// self-heal rewrite is due.</summary>
+            public bool BeginPass(WaterUniformPublisher owner)
+            {
+                bool rebuild = !ReferenceEquals(_owner, owner)
+                            || Time.frameCount >= _nextFullRewriteFrame;
+                if (rebuild)
+                {
+                    Invalidate();
+                    _owner = owner;
+                    _nextFullRewriteFrame = Time.frameCount + FullRewriteIntervalFrames;
+                }
+                _currentIds.Clear();
+                return rebuild;
+            }
+
+            /// <summary>True when a previously-written id was skipped this pass. Also rotates the
+            /// pass tracker, so call it exactly once per pass.</summary>
+            public bool EndPassNeedsRebuild()
+            {
+                bool missing = false;
+                foreach (int id in _previousIds)
+                    if (!_currentIds.Contains(id)) { missing = true; break; }
+                _previousIds.Clear();
+                foreach (int id in _currentIds) _previousIds.Add(id);
+                return missing;
+            }
+
+            static bool ExactlyEqual(Vector4 a, Vector4 b)
+                => a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w;
+
+            static bool ExactlyEqual(in Matrix4x4 a, in Matrix4x4 b)
+                => ExactlyEqual(a.GetColumn(0), b.GetColumn(0))
+                && ExactlyEqual(a.GetColumn(1), b.GetColumn(1))
+                && ExactlyEqual(a.GetColumn(2), b.GetColumn(2))
+                && ExactlyEqual(a.GetColumn(3), b.GetColumn(3));
+
+            public void SetFloat(int id, float value)
+            {
+                _currentIds.Add(id);
+                if (_floats.TryGetValue(id, out float previous) && previous == value) return;
+                _floats[id] = value;
+                _inner.SetFloat(id, value);
+            }
+
+            public void SetColor(int id, Color value)
+            {
+                _currentIds.Add(id);
+                Vector4 packed = value;
+                if (_vectors.TryGetValue(id, out Vector4 previous) && ExactlyEqual(previous, packed)) return;
+                _vectors[id] = packed;
+                _inner.SetColor(id, value);
+            }
+
+            public void SetVector(int id, Vector4 value)
+            {
+                _currentIds.Add(id);
+                if (_vectors.TryGetValue(id, out Vector4 previous) && ExactlyEqual(previous, value)) return;
+                _vectors[id] = value;
+                _inner.SetVector(id, value);
+            }
+
+            public void SetMatrix(int id, Matrix4x4 value)
+            {
+                _currentIds.Add(id);
+                if (_matrices.TryGetValue(id, out Matrix4x4 previous) && ExactlyEqual(previous, value)) return;
+                _matrices[id] = value;
+                _inner.SetMatrix(id, value);
+            }
+
+            public void SetVectorArray(int id, Vector4[] value)
+            {
+                _currentIds.Add(id);
+                if (_arrays.TryGetValue(id, out Vector4[] shadow) && shadow.Length == value.Length)
+                {
+                    bool same = true;
+                    for (int i = 0; i < value.Length; i++)
+                        if (!ExactlyEqual(shadow[i], value[i])) { same = false; break; }
+                    if (same) return;
+                }
+                else
+                {
+                    shadow = new Vector4[value.Length]; // once per (target, id): the banks are fixed-size
+                    _arrays[id] = shadow;
+                }
+                System.Array.Copy(value, shadow, value.Length);
+                _inner.SetVectorArray(id, value);
+            }
+
+            public void SetTexture(int id, Texture value)
+            {
+                _currentIds.Add(id);
+                // Reference identity is the right test: rebinding the same texture object is a
+                // semantic no-op even when its CONTENT changed (RTs render in place).
+                if (_textures.TryGetValue(id, out Texture previous) && ReferenceEquals(previous, value)) return;
+                _textures[id] = value;
+                _inner.SetTexture(id, value);
+            }
         }
 
         // A write target for the per-body uniforms: either a MaterialPropertyBlock or the

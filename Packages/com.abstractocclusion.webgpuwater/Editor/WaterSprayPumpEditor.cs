@@ -421,7 +421,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             float reach = Mathf.Cos(launchElevationRadians);
             float length = radius * PetalWedgeRadii;
 
-            var rim = new Vector3[PetalWedgeSegments + 1];
+            // Cached scratch: this ran per probe per scene-GUI EVENT (layout + repaint),
+            // allocating up to 128 x 25 vectors per frame on a fully-probed boat while selected.
+            Vector3[] rim = _petalRim ??= new Vector3[PetalWedgeSegments + 1];
             for (int i = 0; i <= PetalWedgeSegments; i++)
             {
                 float azimuth = Mathf.Lerp(-0.5f * sweep, 0.5f * sweep, i / (float)PetalWedgeSegments);
@@ -456,11 +458,30 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         // Preview-only resolve: the explicit override, else the scene's emitter. The runtime resolve can
         // also CREATE one on first impact, which edit time cannot and must not do.
+        // The scene lookup is CACHED: FindFirstObjectByType walks the whole scene, and this
+        // resolve runs from the inspector readout AND every scene-GUI event (per probe on a
+        // multi-probe boat), so a selected pump used to pay many scene walks per repaint.
+        // Re-resolved at most once a second; a destroyed emitter fails the fake-null check and
+        // re-resolves on the same schedule.
+        WaterSplashEmitter _cachedSceneEmitter;
+        double _cachedSceneEmitterTime = double.NegativeInfinity;
+        const double SceneEmitterCacheSeconds = 1.0;
+
         WaterSplashEmitter ResolvePreviewEmitter()
         {
             var assigned = serializedObject.FindProperty("emitter").objectReferenceValue as WaterSplashEmitter;
-            return assigned != null ? assigned : Object.FindFirstObjectByType<WaterSplashEmitter>();
+            if (assigned != null) return assigned;
+            double now = EditorApplication.timeSinceStartup;
+            if (_cachedSceneEmitter == null || now - _cachedSceneEmitterTime > SceneEmitterCacheSeconds)
+            {
+                _cachedSceneEmitter = Object.FindFirstObjectByType<WaterSplashEmitter>();
+                _cachedSceneEmitterTime = now;
+            }
+            return _cachedSceneEmitter;
         }
+
+        // Petal-wedge rim scratch buffer - see the DrawAAPolyLine site for why this is cached.
+        static Vector3[] _petalRim;
 
         static Color ModeColor(WaterSprayMode mode) => mode switch
         {

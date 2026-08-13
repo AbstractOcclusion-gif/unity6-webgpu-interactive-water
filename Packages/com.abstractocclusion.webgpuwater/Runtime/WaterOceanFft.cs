@@ -261,6 +261,11 @@ namespace AbstractOcclusion.WebGpuWater
         bool _spectrumBuilt;
         SeaParams _lastSea;
         bool _hasLastSea;
+        // Shape-rebuild throttle (see Dispatch): the CPU gain re-integration runs at most once per
+        // interval. ~0.25 s at 60 fps - fast enough to feel live under a slider drag, 15x cheaper
+        // than the per-frame re-integration an exact-equality edge produced while dragging.
+        const int MinShapeRebuildIntervalFrames = 15;
+        int _lastShapeRebuildFrame = -MinShapeRebuildIntervalFrames;
         FoamParams _lastFoam;
         bool _hasLastFoam;
 
@@ -553,10 +558,28 @@ namespace AbstractOcclusion.WebGpuWater
             // moves on the wide one. Collapsing them would make a turning wind re-integrate the
             // spectrum every frame. Order matters: the layout defines the lattice the gains integrate.
             bool shapeChanged = !_hasLastSea || !sea.ShapeEquals(_lastSea);
-            bool seaChanged = !_hasLastSea || !sea.Equals(_lastSea);
+            // THROTTLE the narrow edge: the shape rebuild is the resolution^2 * cascades CPU
+            // integral (~65k transcendentals), and ShapeEquals is EXACT float equality, so an
+            // inspector DRAG on any sea-shape slider used to re-integrate it on every mouse-move
+            // frame. While inside the interval, hold the WHOLE previous sea (uniforms included) so
+            // layout, gains and H0 can never desync; Dispatch keeps running, so the drag's final
+            // value always lands within one interval of the mouse stopping. The wide edge (wind,
+            // turbulence, choppiness - one GPU dispatch) is deliberately NOT throttled.
+            SeaParams activeSea = sea;
+            if (shapeChanged && _hasLastSea
+                && Time.frameCount - _lastShapeRebuildFrame < MinShapeRebuildIntervalFrames)
+            {
+                activeSea = _lastSea;
+                shapeChanged = false;
+            }
+            bool seaChanged = !_hasLastSea || !activeSea.Equals(_lastSea);
             bool foamChanged = !_hasLastFoam || !foam.Equals(_lastFoam);
-            if (shapeChanged) RebuildSpectrumInputs(sea);
-            SetSharedUniforms(sea);
+            if (shapeChanged)
+            {
+                RebuildSpectrumInputs(activeSea);
+                _lastShapeRebuildFrame = Time.frameCount;
+            }
+            SetSharedUniforms(activeSea);
 
             // H0 is static: rebuild only when a spectrum input actually changes.
             if (!_spectrumBuilt || seaChanged)
@@ -564,7 +587,7 @@ namespace AbstractOcclusion.WebGpuWater
                 _cs.SetTexture(_kInit, ID_H0, _h0);
                 _cs.Dispatch(_kInit, _groups, _groups, _cascades);
                 _spectrumBuilt = true;
-                _lastSea = sea;
+                _lastSea = activeSea;
                 _hasLastSea = true;
             }
 
