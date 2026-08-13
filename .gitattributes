@@ -1,0 +1,19 @@
+# Keep Unity source files identical across Windows, macOS, and Linux checkouts.
+# Explicit LF endings prevent editors from producing mixed-ending source files.
+*.cs      text eol=lf
+*.shader  text eol=lf
+*.compute text eol=lf
+*.hlsl    text eol=lf
+*.cginc   text eol=lf
+*.asmdef  text eol=lf
+*.asmref  text eol=lf
+*.ps1     text eol=lf
+
+# Unity YAML and package metadata are text assets and should remain diffable on every platform.
+*.unity   text eol=lf
+*.prefab  text eol=lf
+*.mat     text eol=lf
+*.asset   text eol=lf
+*.meta    text eol=lf
+*.json    text eol=lf
+*.md      text eol=lf

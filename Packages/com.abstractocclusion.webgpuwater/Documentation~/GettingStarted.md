@@ -1,6 +1,6 @@
 # WebGpuWater — Getting Started
 
-**Version 1.0.0** | Unity 6 (6000.0+) | URP 17+ | Desktop · WebGPU/WebGL · Mobile
+**Version 1.0.0** | Unity 6 (6000.3.9f1+) | URP 17+ | Desktop · WebGPU/WebGL · Mobile
 
 Support: abstractocclusion@outlook.com
 
@@ -8,7 +8,7 @@ Support: abstractocclusion@outlook.com
 
 ## Requirements
 
-- **Unity 6 (6000.0) or newer.** This is a hard requirement, not a preference: the runtime
+- **Unity 6 (6000.3.9f1) or newer.** This is a hard requirement, not a preference: the runtime
   uses `Rigidbody.linearVelocity` and the URP 17 RenderGraph pass API with no version guards,
   so an older Unity will not compile the package.
 - **URP 17+** for rendering (declared as a package dependency, so it installs with the
@@ -20,6 +20,24 @@ Support: abstractocclusion@outlook.com
   - **Opaque Texture** — required for real refraction.
   - **Transparent Receive Shadows** — required for god-ray shadow shafts
     (they render in the transparent queue; with this off the shafts vanish).
+
+### URP Renderer Features
+
+The package's custom render passes are added to the **URP Renderer Data asset**, not to
+the URP asset above. Select the Renderer Data used by the water camera, choose
+**Add Renderer Feature**, and add the features needed by your scene:
+
+- **WaterUnderwaterFogFeature** — underwater fog while the camera is submerged.
+- **WaterCausticProjectionFeature** — screen-space caustics on non-water surfaces.
+- **WaterChunkDepthFeature** — mesh-footprint water chunks.
+- **WaterExclusionDepthFeature** — mesh-shaped exclusion volumes.
+- **LargeBodyAtmosphereFeature** — ocean god-ray shafts.
+- **WaterSkyFogFeature** — Unity scene fog on the skybox.
+
+Assign each feature's requested WebGpuWater shader in its Inspector. The Water Wizard
+reports missing features and can select the active Renderer Data asset for you. These
+features are optional unless you use their corresponding effect; real refraction itself
+requires **Opaque Texture** and **Depth Texture** on the active URP asset.
 
 ## Install
 

@@ -1,0 +1,697 @@
+// WebGpuWater - FFT-cascade ocean waves: spectrum + butterfly FFT (increment 1c).
+//
+// Reference-first (KWS KWS_WavesSpectrum/KWS_WavesFFT, Crest FFTSpectrum/FFTCompute), written fresh.
+// Pipeline per frame:
+//   SpectrumInit      - static random spectrum H0(k) from a Tessendorf/Phillips density. Wind change only.
+//   SpectrumUpdate    - evolve H0 to the current time into 3 complex displacement spectra (x, height, z).
+//   FftHorizontal     - inverse FFT along each row (in place on the spectra), groupshared butterfly.
+//   FftVertical       - inverse FFT along each column, then (-1)^(x+y) fftshift + per-cascade height
+//                       scale, combining the 3 signals into the spatial displacement cascade.
+//   VisualizePreview  - remap displacement to a readable grey/colour image for the debug view
+//                       (dispatched by C# only in editor/development builds).
+//
+// The butterfly (twiddle + index pairs) is precomputed CPU-side into OceanButterfly. Grid is fixed at
+// FFT_SIZE so the groupshared buffers are compile-time sized; the C# side asserts resolution == FFT_SIZE.
+// WebGPU-safe: FFT_SIZE=128 -> 128 threads/group (<256) and 6 KB groupshared (<16 KB); half-float targets.
+#include "WaterShared.hlsl"     // OCEAN_FFT_MAX_CASCADES (shared cascade layout)
+#include "WaterSeaStateFetch.hlsl"
+#include "WaterFoamCommon.hlsl" // FoamDecayBlend: split decay shared with WaterSim.compute
+#include "WaterOceanAperiodic.hlsl"
+
+#pragma kernel SpectrumInit
+#pragma kernel SpectrumUpdate
+#pragma kernel FftHorizontal
+#pragma kernel FftVertical
+#pragma kernel ComputeNormal
+#pragma kernel BakeHeightField
+#pragma kernel VisualizePreview
+
+RWTexture2DArray<float4> OceanH0;          // .xy = H0(k), .zw = conj(H0(-k))
+// Complex spectra packed as R32_UINT (two half-floats per texel). WebGPU only permits READ-WRITE storage
+// on the r32 formats, and the in-place butterfly FFT below reads AND writes these in one dispatch; a
+// two-channel half target (rg16float) is not a valid read-write storage format. Pack/unpack via
+// OceanPackC/OceanUnpackC - half precision, so identical to the original rg16float targets.
+RWTexture2DArray<uint> OceanSpecX;         // horizontal x spectrum, then spatial row/col FFT scratch
+RWTexture2DArray<uint> OceanSpecY;         // height spectrum
+RWTexture2DArray<uint> OceanSpecZ;         // horizontal z spectrum
+RWTexture2DArray<float4> OceanDisplacement;// spatial cascade (x, height, z, foam)
+// CHANNEL CONTRACT - OceanNormal repurposes two lanes; every consumer must honour this:
+//   .xz = surface normal tilt          (OceanFftNormalTilt, WaterLargeWaves.hlsl)
+//   .y  = crest pinch saturate(1 - J)  (OceanFftJacobianShore -> SSS crest glow) - NOT the normal's up-component,
+//         which no consumer reads; reconstruct up as sqrt(1 - dot(xz, xz)) if ever needed.
+//   .w  = accumulated whitecap foam    (OceanFftFoam -> surface shading + particle spawns)
+RWTexture2DArray<float4> OceanNormal;
+RWTexture2DArray<float4> OceanPreview;     // remapped displacement for the debug view (editor/dev only)
+Texture2D<float4>        OceanButterfly;   // (twiddle.x, twiddle.y, indexA, indexB) per (stage, element)
+Texture2D<float4> _OceanDirectionMap;
+float4 _OceanAperiodicParams;    // x = enabled, y = tile scale, z = direction strength
+float4 _OceanDirectionMapFrame; // xy = world centre, z = inverse world size
+
+uint   OceanFftResolution;
+uint   OceanFftCascades;
+float4 OceanDomainSizes;     // metres per cascade (lane = slice)
+float4 OceanBandMin;         // per-cascade shortest kept wavelength (metres) - disjoint cascade bands
+float4 OceanBandMax;         // per-cascade longest kept wavelength (metres)
+float4 OceanVisibleAreas;    // per-cascade view distance (m) at which its detail fully fades out
+float2 OceanWindDir;
+float2 OceanSwellDir;        // unit swell travel direction; = OceanWindDir until the authored heading
+                             // offset decouples the swell from the local wind (C#: SeaParams.SwellHeadingRad).
+                             // The CPU gain integral is heading-invariant (WaterOceanSpectrum uses a fixed
+                             // reference direction), so turning the swell never re-pays the normalisation.
+float  OceanWindSpeed;
+float  OceanWindTurbulence;  // 0 = fully one-sided wind sea, 1 = isotropic (KWS WindTurbulence)
+// --- JONSWAP/TMA sea state (increment S1). The spectrum is authored as a SHAPE (peak wavelength,
+// peak sharpness, depth) and scaled to an authored significant height by OceanSpectrumGain, which
+// WaterOceanSpectrum computes on the CPU over this exact k-lattice. Wind no longer sets the wave
+// SCALE at all - it only steers the directional spreading, the foam gate and the foam drift.
+float  OceanPeakAngularFreq; // omega_p (rad/s) of the wind sea, derived from the authored peak wavelength
+float  OceanPeakSharpness;   // JONSWAP gamma: 1 = broad Pierson-Moskowitz chop, 7 = narrow corduroy swell
+float  OceanSeaDepth;        // metres for the TMA shallow-water factor; <= 0 = deep water (factor off)
+float  OceanSpectrumGain;    // scales the wind-sea shape so the field's Hs matches the authored height
+float  OceanSwellGain;       // same, for the swell ring, so Swell Height is also metres of Hs
+float  OceanChoppiness;      // horizontal (Gerstner) displacement scale; 0 = pure vertical sine swell
+float  OceanSwellWavelength; // metres, peak wavelength of the long-period swell
+float  OceanSwellHeight;     // metres, swell amplitude knob (remote swell, independent of wind speed)
+float  OceanFftTime;
+uint   OceanSpectrumSeed;
+float  OceanPreviewGain;     // display gain for VisualizePreview (editor/dev only)
+
+// --- Ocean whitecap foam: temporal Jacobian accumulation (ComputeNormal) ---
+Texture2DArray<float>   OceanFoamPrev;   // previous-frame accumulated foam (read-only SRV)
+RWTexture2DArray<float>  OceanFoamNext;  // this-frame accumulated foam (write-only UAV; ping-ponged)
+float  OceanFoamDeltaTime;    // seconds since the last dispatch (framerate-independent decay/gen)
+float  OceanFoamHistoryValid; // 0 on the first dispatch so uninitialised history can't leak in, else 1
+float  OceanFoamMinWind;      // m/s; no whitecaps below this wind speed
+float  OceanFoamAnisotropy;   // 0 = area fold (determinant), 1 = single-axis fold (smallest eigenvalue)
+float  OceanFoamCrestGate;    // 0 = fold anywhere, 1 = only on the crest line
+float  OceanFoamFaceBias;     // 0 = both faces, 1 = leading (downwind) face only
+float  OceanFoamCascadeMix;   // 0 = the damped per-cascade weights, 1 = every cascade folds (Ceto)
+float  OceanFoamCoverage;     // fold threshold: fresh = saturate(coverage - jacobian)
+float  OceanFoamStrength;     // accumulation gain per unit fold
+float  OceanFoamFadeRate;     // exponential decay rate per second (foam lingers, then fades)
+float  OceanFoamMax;          // soft ceiling on accumulated foam (Foam Max Buildup slider)
+float  OceanFoamSlowFadeFraction; // dense-foam decay as a fraction of the fade rate (Deposit slider: lower = more deposit)
+float  OceanFoamDriftFraction;    // downwind foam-drift speed as a fraction of wind speed (Drift slider)
+
+// --- CPU buoyancy height-field bake (increment 4) ---
+RWTexture2D<float4> OceanHeightField; // camera-centred (dispX, height, dispZ, 0) in metres for async CPU readback
+// .y (height) feeds buoyancy exactly as the old single-channel field did; .xz is the summed horizontal
+// Gerstner displacement, read back so the CPU can INVERT chop (wake injection, Crest-style) - see
+// WaterVolume.InvertLargeWaveChopXZ. Same cascade fade + amplitude scale as the render path's fft.xz.
+float2 OceanFieldCenter;             // world XZ centre of the baked region
+float  OceanFieldSize;               // world metres spanned by the (square) region
+uint   OceanFieldRes;                // texels per side of the height field
+float  OceanFieldAmplitude;          // matches the surface shader's _LargeWaveAmplitude height scaling
+
+#define OCEAN_FFT_TG        8
+// OCEAN_FFT_MAX_CASCADES comes from WaterShared.hlsl (shared with the sampling/foam sides).
+// C# pair: WaterOceanFft.FftSize / FftStages (WaterWaveConstantsValidator guards both). The
+// RESOLUTION a body asks for is a separate check - WaterOceanFft warns and disables the FFT ocean
+// when it does not equal FftSize.
+#define FFT_SIZE            128
+#define FFT_STAGES          7     // log2(FFT_SIZE)
+// Tile wrap for the two manual bilinear fetches below. FFT_SIZE is a power of two and WaterOceanFft
+// refuses to run at any other resolution (it warns and disables the FFT ocean), so a bitmask is an
+// exact substitute for the modulus - and on two's-complement ints it wraps NEGATIVE indices correctly
+// on its own, which is what lets the ((x % N) + N) % N dance go away entirely. fxc warns that signed
+// integer modulus is "much slower", and these run per texel per cascade every frame.
+#define OCEAN_TILE_WRAP     (FFT_SIZE - 1)
+#define OCEAN_TWO_PI        6.28318530718
+#define OCEAN_GRAVITY       9.81
+#define OCEAN_KMIN          1e-4
+// JONSWAP shape constants (Hasselmann et al.; same values the analytic wind-wave bank already runs -
+// WaterWaveBank.JonswapSigmaLow/High - so the two wave layers finally describe the same sea).
+// C# pair: WaterOceanSpectrum.* (validator-guarded).
+#define OCEAN_JONSWAP_PEAK_DECAY  1.25   // the 5/4 in exp(-1.25 (w_p/w)^4); puts the peak exactly at w_p
+#define OCEAN_JONSWAP_SIGMA_LOW   0.07   // peak-enhancement width below w_p
+#define OCEAN_JONSWAP_SIGMA_HIGH  0.09   // ... and above it
+// TMA finite-depth attenuation, Horvath's smooth tanh form of Kitaigorodskii's piecewise factor.
+// C-infinity, so it costs no branch and cannot kink the spectrum at the transition.
+#define OCEAN_TMA_SLOPE           1.8
+#define OCEAN_TMA_OFFSET          1.125
+// Directional spreading. OCEAN_SPREAD_PEDESTAL is KWS's isotropic floor PI4 (0.33661977236) expressed
+// RELATIVE to its cos^2 peak INVPI2 (0.63661977236), so the lobe below peaks at 1 and the pedestal keeps
+// KWS's downwind:upwind ratio exactly (KWS_WavesSpectrum.compute:86-97).
+#define OCEAN_SPREAD_PEDESTAL 0.5287611
+// Per-cascade turbulence floor (KWS GetTurbulenceRelativeToLod, KWS_WavesSpectrum.compute:29-35): the
+// shortest waves scatter far more than the swell, so the FINE cascades (0 = 5 m, 1 = 20 m, same order as
+// KWS) are forced toward isotropic whatever the art knob says.
+#define OCEAN_TURBULENCE_FLOOR_FINEST 0.5
+#define OCEAN_TURBULENCE_FLOOR_FINE   0.25
+#define OCEAN_SWELL_WIDTH     0.12  // relative width of the swell peak in k-space (narrow = coherent)
+#define OCEAN_SWELL_DIR_POWER 6.0   // directional coherence: higher = tighter along the wind
+#define OCEAN_FOAM_ACCUM_RATE     5.0   // foam gained per second at full fold * strength (Crest-calibrated)
+#define OCEAN_FOAM_CASCADE1_DAMP  0.25  // cascade 1 carries only a little breaking detail (KWS quarters it)
+// Split decay (foam "deposit"): dense deposited foam lingers as windrows while thin lace fades fast. The
+// art fade-rate knob is the FAST (thin) rate; OceanFoamSlowFadeFraction (the Deposit slider) sets how
+// slowly dense foam decays relative to it, and OceanFoamDriftFraction rolls it downwind. DENSE_REFERENCE
+// is the accumulated-foam value treated as "fully dense" for the fast/slow blend.
+#define OCEAN_FOAM_DENSE_REFERENCE    0.6
+// Crest's "_FilterWaves" analog: the FINEST cascade folds everywhere at high frequency, which reads as
+// uniform near-camera foam soup rather than discrete whitecaps (Crest excludes its finest LODs from foam
+// generation entirely by default; KWS damps per cascade). Damp - don't silence - so close-up crests still
+// seed some fine lace.
+#define OCEAN_FOAM_FINEST_DAMP        0.5
+// Where the crest gate starts biting, as a position inside the local height range: 0.5 is the plain
+// slope value, so the gate only ever REMOVES foam from below mid-slope and never adds any.
+#define OCEAN_FOAM_CREST_GATE_LOW     0.5
+
+float2 OceanCMul(float2 a, float2 b) { return float2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
+float2 OceanConj(float2 a) { return float2(a.x, -a.y); }
+
+// Pack/unpack a complex value into one R32_UINT texel as two half-floats (see the spectra declarations).
+uint OceanPackC(float2 v) { return f32tof16(v.x) | (f32tof16(v.y) << 16); }
+float2 OceanUnpackC(uint p) { return float2(f16tof32(p & 0xFFFFu), f16tof32(p >> 16)); }
+
+float2 OceanWaveVector(uint2 xy, uint slice)
+{
+    float2 centred = float2(xy) - (OceanFftResolution * 0.5);
+    float domain = max(OceanDomainSizes[slice], 1e-3);
+    return OCEAN_TWO_PI * centred / domain;
+}
+
+uint OceanWangHash(uint s)
+{
+    s = (s ^ 61u) ^ (s >> 16); s *= 9u; s ^= s >> 4; s *= 0x27d4eb2du; s ^= s >> 15; return s;
+}
+float OceanRandom(inout uint state) { state = OceanWangHash(state); return state * (1.0 / 4294967296.0); }
+float2 OceanGaussian(inout uint state)
+{
+    float u1 = max(1e-6, OceanRandom(state));
+    float u2 = OceanRandom(state);
+    float r = sqrt(-2.0 * log(u1));
+    float theta = OCEAN_TWO_PI * u2;
+    return float2(r * cos(theta), r * sin(theta));
+}
+
+// OMNIDIRECTIONAL wind-sea density, as a 2D density in k (m^4 / rad^2). The directional factor is NOT
+// folded in here: it used to be, as (k.w)^2, which is SYMMETRIC in +-k, so the +k and -k amplitudes came
+// out identical and the wind sea heaved in place instead of marching. The direction now comes from
+// OceanDirectionalSpreading below, evaluated once per travel direction.
+//
+// WHY JONSWAP AND NOT PHILLIPS. Phillips' only input is wind speed, through a long-wave cutoff at
+// lambda ~ 2 pi U^2 / g. At the wind speeds this asset can author (<= 15 m/s) that cutoff sits at 144 m
+// AT BEST and 5.8 m at the default breeze - so the coarse cascade, which is the ONLY one still drawn
+// past its neighbours' visible range, carried numerically zero energy and the far ocean shaded as a
+// flat plane. It also made steepness unauthorable: lowering the wind shrank wavelength and height
+// together, so "small but agitated" did not exist anywhere in the parameter space.
+//
+// JONSWAP separates the two. The peak wavelength sets WHERE the energy sits and the significant height
+// sets HOW MUCH there is, independently, so steepness (Hs / lambda_p) is something you dial directly.
+// Gamma then sets the sea's CHARACTER: 1 degenerates to Pierson-Moskowitz - a broad peak, many scales
+// at once, confused and choppy - while 5-7 concentrates the energy into one narrow band that reads as
+// organised corduroy swell.
+float OceanJonswapOmni(float kMag)
+{
+    if (kMag < OCEAN_KMIN) return 0.0;
+    float omega = sqrt(OCEAN_GRAVITY * kMag);           // deep-water dispersion, as SpectrumUpdate evolves it
+    float peakRatio = OceanPeakAngularFreq / omega;
+    float peakRatio2 = peakRatio * peakRatio;
+    float shape = exp(-OCEAN_JONSWAP_PEAK_DECAY * peakRatio2 * peakRatio2) / pow(omega, 5.0);
+
+    // Peak enhancement: a narrow gaussian bump of height gamma centred on w_p, asymmetric about it.
+    float sigma = (omega <= OceanPeakAngularFreq) ? OCEAN_JONSWAP_SIGMA_LOW : OCEAN_JONSWAP_SIGMA_HIGH;
+    float peakOffset = (omega - OceanPeakAngularFreq) / max(sigma * OceanPeakAngularFreq, 1e-6);
+    shape *= pow(max(OceanPeakSharpness, 1.0), exp(-0.5 * peakOffset * peakOffset));
+
+    // TMA: shallow water drains the low-frequency end, which is what makes a coastal sea read shorter
+    // and steeper than the same wind offshore. Skipped entirely in deep water.
+    if (OceanSeaDepth > 0.0)
+        shape *= 0.5 + 0.5 * tanh(OCEAN_TMA_SLOPE
+                                  * (omega * sqrt(OceanSeaDepth / OCEAN_GRAVITY) - OCEAN_TMA_OFFSET));
+
+    // S(w) -> S(kx, kz): one factor dw/dk for the change of variable, one 1/k for the polar Jacobian.
+    // The absolute scale is deliberately absent - OceanSpectrumGain carries it, so what survives here
+    // is purely the SHAPE and the authored significant height is exact rather than calibrated.
+    float dOmegaDk = 0.5 * sqrt(OCEAN_GRAVITY / kMag);
+    return shape * dOmegaDk / kMag;
+}
+
+// One-sided directional spreading (KWS PosCosSquaredDirectionalSpreading): a cos^2 lobe DOWNWIND, a flat
+// isotropic pedestal UPWIND. Crest does the same thing with the same shape. Peak is 1 at turbulence 0, so
+// downwind it is bit-for-bit the (k.w)^2 the old Phillips applied; upwind is what changes.
+float OceanDirectionalSpreading(float cosTheta, float turbulence)
+{
+    float pedestal = OCEAN_SPREAD_PEDESTAL * turbulence;
+    return (cosTheta > 0.0) ? (cosTheta * cosTheta * (1.0 - turbulence) + pedestal) : pedestal;
+}
+
+// Energy-conserving gain for that spreading. Integrated over all directions, S(c) + S(-c) comes to
+// (1 - t) + 4 * PEDESTAL * t, against 2 for the symmetric cos^2 pair it replaces. Restoring the ratio
+// means the knob redistributes energy in DIRECTION without changing the sea's height - so every existing
+// ocean scene keeps its wave scale and only stops standing still.
+float OceanSpreadingNormalisation(float turbulence)
+{
+    return 2.0 / max((1.0 - turbulence) + 4.0 * OCEAN_SPREAD_PEDESTAL * turbulence, 1e-4);
+}
+
+// The k-lattice cell area dk^2 = (2 pi / tile)^2. A spectral DENSITY has to be multiplied by the area
+// of the cell it is sampled on to become a variance, which is what makes the field's height independent
+// of how finely the tile samples the band: widening the tile (WaterOceanFft.CascadeTileOversample) buys
+// spectral variety at CONSTANT wave height, and the same expression makes cascades of different tile
+// sizes sum without double-counting.
+//
+// This used to be the same ratio expressed RELATIVE to the band top, which - because the tile is always
+// the band top times a fixed oversample - was the constant 1/16 wearing a function's clothes. The
+// absolute measure is what the CPU normalisation (WaterOceanSpectrum) integrates against, so the two
+// sides now agree by construction rather than by a shared fudge.
+float OceanCascadeMeasure(uint slice)
+{
+    float dk = OCEAN_TWO_PI / max(OceanDomainSizes[slice], 1e-3);
+    return dk * dk;
+}
+
+float OceanCascadeTurbulence(uint slice)
+{
+    float t = saturate(OceanWindTurbulence);
+    if (slice == 0u) return max(t, OCEAN_TURBULENCE_FLOOR_FINEST);
+    if (slice == 1u) return max(t, OCEAN_TURBULENCE_FLOOR_FINE);
+    return t;
+}
+
+// Long-period swell: a narrow peak in |k| around the swell wavelength, biased strongly along the wind
+// (remote-generated, so independent of wind speed). Directional term uses signed k, so it is asymmetric
+// in +k/-k - that one-sidedness is what makes the swell a TRAVELLING wave rather than a standing one.
+//
+// SHAPE ONLY - the height comes from OceanSwellGain, which WaterOceanSpectrum normalises over this same
+// lattice so that Swell Height is metres of significant height, exactly like the wind sea's. It used to
+// carry its own squared-height term times a constant documented as a "rough calibration"; the ring's
+// integrated energy depends on the swell wavelength and the cascade layout, so that constant could only
+// ever be right for one sea.
+float OceanSwellShape(float2 k, float kMag)
+{
+    if (OceanSwellHeight <= 0.0 || kMag < OCEAN_KMIN) return 0.0;
+    float kSwell = OCEAN_TWO_PI / max(OceanSwellWavelength, 1e-3);
+    float width = kSwell * OCEAN_SWELL_WIDTH;
+    float radial = exp(-((kMag - kSwell) * (kMag - kSwell)) / (2.0 * width * width));
+    float directional = pow(saturate(dot(k / kMag, OceanSwellDir)), OCEAN_SWELL_DIR_POWER);
+    return radial * directional;
+}
+
+[numthreads(OCEAN_FFT_TG, OCEAN_FFT_TG, 1)]
+void SpectrumInit(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= OceanFftResolution || id.y >= OceanFftResolution) return;
+    float2 k = OceanWaveVector(id.xy, id.z);
+    float kMag = length(k);
+    // The wind sea is ONE-SIDED: the omnidirectional density is shared between the two travel directions
+    // but each gets its own spreading weight, so +k (downwind) outruns -k. Giving them equal weight - what
+    // this did before - is a standing field with no net march, which is what read as "weirdly symmetrical".
+    // The swell was already one-sided (signed k) and is added after the spreading, untouched.
+    float turbulence = OceanCascadeTurbulence(id.z);
+    float windSea = OceanJonswapOmni(kMag) * OceanSpreadingNormalisation(turbulence) * OceanSpectrumGain;
+    float cosTheta = (kMag > OCEAN_KMIN) ? dot(k / kMag, OceanWindDir) : 0.0;
+    // The measure is a property of the k-LATTICE, so the swell takes it too: its band's bin count grew
+    // by the same factor, and leaving it out would quietly make the swell the whole ocean.
+    float measure = OceanCascadeMeasure(id.z);
+    float ampK  = sqrt((windSea * OceanDirectionalSpreading(cosTheta, turbulence)
+                        + OceanSwellShape(k, kMag) * OceanSwellGain) * measure * 0.5);
+    float ampMK = sqrt((windSea * OceanDirectionalSpreading(-cosTheta, turbulence)
+                        + OceanSwellShape(-k, kMag) * OceanSwellGain) * measure * 0.5);
+    // Disjoint cascade bands: keep only wavelengths this cascade owns, so summing cascades never
+    // double-counts a frequency that a coarser/finer cascade also carries (swell lands in its band).
+    // NOTE the band top is NOT the tile - the tile is CascadeTileOversample times longer - so the kept
+    // region is an annulus well away from the lowest bins instead of a disc of radius 1-5.
+    float wavelength = (kMag > OCEAN_KMIN) ? (OCEAN_TWO_PI / kMag) : 1e9;
+    if (wavelength <= OceanBandMin[id.z] || wavelength > OceanBandMax[id.z]) { ampK = 0.0; ampMK = 0.0; }
+    uint state = (id.x * 1973u + id.y * 9277u + id.z * 26699u + OceanSpectrumSeed) | 1u;
+    float2 h0k = OceanGaussian(state) * ampK;
+    float2 h0mk = OceanGaussian(state) * ampMK;
+    OceanH0[id] = float4(h0k, OceanConj(h0mk));
+}
+
+[numthreads(OCEAN_FFT_TG, OCEAN_FFT_TG, 1)]
+void SpectrumUpdate(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= OceanFftResolution || id.y >= OceanFftResolution) return;
+    float4 h0 = OceanH0[id];
+    float2 k = OceanWaveVector(id.xy, id.z);
+    float kMag = length(k);
+    float omega = sqrt(OCEAN_GRAVITY * kMag);
+    float s, c; sincos(omega * OceanFftTime, s, c);
+    float2 h = OceanCMul(h0.xy, float2(c, s)) + OceanCMul(h0.zw, float2(c, -s));
+    float2 nk = (kMag > OCEAN_KMIN) ? k / kMag : float2(0.0, 0.0);
+    // Horizontal (Gerstner) displacement, scaled by the authored choppiness. This was hardwired at 1
+    // here, so the ocean's Choppiness slider reached the ANALYTIC generator and nothing else - the FFT
+    // surface pinched its crests at full strength whatever the slider said. Chop is what turns round
+    // sine humps into the sharp crests / broad troughs a real sea has, and past ~1 the surface starts
+    // folding through itself, which is exactly what the whitecap Jacobian is looking for.
+    float2 iH = float2(-h.y, h.x) * OceanChoppiness;
+    OceanSpecX[id] = OceanPackC(iH * nk.x);
+    OceanSpecY[id] = OceanPackC(h);
+    OceanSpecZ[id] = OceanPackC(iH * nk.y);
+}
+
+// ---- Butterfly FFT ---------------------------------------------------------------------------------
+// Three complex signals transformed together in groupshared, ping-ponged across the stages. One
+// threadgroup handles one row (horizontal) or one column (vertical) of length FFT_SIZE.
+groupshared float2 gX[2][FFT_SIZE];
+groupshared float2 gY[2][FFT_SIZE];
+groupshared float2 gZ[2][FFT_SIZE];
+
+// One butterfly stage for output element 'e': out = in[a] + twiddle * in[b], for all three signals.
+void OceanButterflyStage(uint stage, uint e, int src)
+{
+    float4 bf = OceanButterfly[uint2(stage, e)];
+    uint a = (uint)(bf.z + 0.5);
+    uint b = (uint)(bf.w + 0.5);
+    float2 w = bf.xy;
+    gX[1 - src][e] = gX[src][a] + OceanCMul(w, gX[src][b]);
+    gY[1 - src][e] = gY[src][a] + OceanCMul(w, gY[src][b]);
+    gZ[1 - src][e] = gZ[src][a] + OceanCMul(w, gZ[src][b]);
+}
+
+[numthreads(FFT_SIZE, 1, 1)]
+void FftHorizontal(uint3 id : SV_DispatchThreadID)
+{
+    uint col = id.x, row = id.y, slice = id.z;
+    uint3 p = uint3(col, row, slice);
+    gX[0][col] = OceanUnpackC(OceanSpecX[p]);
+    gY[0][col] = OceanUnpackC(OceanSpecY[p]);
+    gZ[0][col] = OceanUnpackC(OceanSpecZ[p]);
+    GroupMemoryBarrierWithGroupSync();
+
+    int src = 0;
+    // Unrolled: a constant-trip loop makes the group barriers provably uniform control flow (WebGPU/Naga
+    // rejects barriers reachable through a loop whose analysis touches the invocation id).
+    [unroll]
+    for (uint stage = 0; stage < FFT_STAGES; stage++)
+    {
+        OceanButterflyStage(stage, col, src);
+        GroupMemoryBarrierWithGroupSync();
+        src = 1 - src;
+    }
+    OceanSpecX[p] = OceanPackC(gX[src][col]);
+    OceanSpecY[p] = OceanPackC(gY[src][col]);
+    OceanSpecZ[p] = OceanPackC(gZ[src][col]);
+}
+
+[numthreads(1, FFT_SIZE, 1)]
+void FftVertical(uint3 id : SV_DispatchThreadID)
+{
+    uint col = id.x, row = id.y, slice = id.z;
+    uint3 p = uint3(col, row, slice);
+    gX[0][row] = OceanUnpackC(OceanSpecX[p]);
+    gY[0][row] = OceanUnpackC(OceanSpecY[p]);
+    gZ[0][row] = OceanUnpackC(OceanSpecZ[p]);
+    GroupMemoryBarrierWithGroupSync();
+
+    int src = 0;
+    [unroll]
+    for (uint stage = 0; stage < FFT_STAGES; stage++)
+    {
+        OceanButterflyStage(stage, row, src);
+        GroupMemoryBarrierWithGroupSync();
+        src = 1 - src;
+    }
+    // Write the transformed spectra back. FUNCTIONALLY REDUNDANT (the spectra are scratch after this pass,
+    // overwritten by next frame's SpectrumUpdate) but REQUIRED for WebGPU: a RWTexture read-only in a kernel
+    // is compiled to a SAMPLED texture, whose Uint sample type then mismatches the r32uint STORAGE binding
+    // (FftHorizontal reads AND writes them, so it stays a storage texture and validates). Writing here keeps
+    // this pass read-write too, so both kernels agree on the binding type.
+    OceanSpecX[p] = OceanPackC(gX[src][row]);
+    OceanSpecY[p] = OceanPackC(gY[src][row]);
+    OceanSpecZ[p] = OceanPackC(gZ[src][row]);
+
+    // Centred spectrum -> multiply the spatial result by (-1)^(x+y) to undo the N/2 shift.
+    //
+    // NO per-cascade height scale any more. It used to carry KWS's 0.5/0.5/0.6/0.9 fudge, which was a
+    // way of shaping the spectrum through the back door on a spectrum that had no shape knobs. It is
+    // now actively wrong: JONSWAP already decides how energy splits across the bands, and re-weighting
+    // the bands afterwards both distorts that shape and breaks the significant-height normalisation
+    // (which integrates the spectrum, not the spectrum-times-a-per-band-fudge).
+    float sign = ((col + row) & 1u) ? -1.0 : 1.0;
+    float3 disp = float3(gX[src][row].x, gY[src][row].x, gZ[src][row].x) * sign;
+    OceanDisplacement[p] = float4(disp, 0.0);
+}
+
+// Manual bilinear read of the persistent foam history at a fractional tile-texel position, wrapping at
+// the cascade edge. The cascade tiles (periodic FFT), so the foam field is periodic and the back-trace
+// wraps seamlessly. Manual (not Sample) because the history is an r32f target - NOT hardware-filterable
+// on WebGPU - so a hardware sample would point-snap and make the advection blocky.
+float OceanFoamHistoryBilinear(float2 texelPos, uint slice, int N)
+{
+    float2 baseF = floor(texelPos);
+    float2 frac2 = texelPos - baseF;
+    int x0 = (int)baseF.x & OCEAN_TILE_WRAP;
+    int y0 = (int)baseF.y & OCEAN_TILE_WRAP;
+    int x1 = (x0 + 1) & OCEAN_TILE_WRAP;
+    int y1 = (y0 + 1) & OCEAN_TILE_WRAP;
+    float c00 = OceanFoamPrev[uint3(x0, y0, slice)];
+    float c10 = OceanFoamPrev[uint3(x1, y0, slice)];
+    float c01 = OceanFoamPrev[uint3(x0, y1, slice)];
+    float c11 = OceanFoamPrev[uint3(x1, y1, slice)];
+    return lerp(lerp(c00, c10, frac2.x), lerp(c01, c11, frac2.x), frac2.y);
+}
+
+// Surface normal + Jacobian foam from central differences of the spatial displacement (cascades tile,
+// so neighbour taps wrap). Decoupling the normal into its own cascade is what lets the fragment shader
+// sample crisp ripple detail per pixel later, independent of mesh tessellation.
+[numthreads(OCEAN_FFT_TG, OCEAN_FFT_TG, 1)]
+void ComputeNormal(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= OceanFftResolution || id.y >= OceanFftResolution) return;
+    uint slice = id.z;
+    uint N = OceanFftResolution;
+    float step = max(OceanDomainSizes[slice], 1e-3) / N;    // metres per texel
+    // Same power-of-two wrap as the bilinear helpers (see OCEAN_TILE_WRAP). These are unsigned, so
+    // fxc does not warn about them, but N is a runtime uniform and therefore not foldable - the mask
+    // turns four integer divisions per texel per cascade into four ANDs.
+    uint xr = (id.x + 1u) & OCEAN_TILE_WRAP, xl = (id.x + FFT_SIZE - 1u) & OCEAN_TILE_WRAP;
+    uint yu = (id.y + 1u) & OCEAN_TILE_WRAP, yd = (id.y + FFT_SIZE - 1u) & OCEAN_TILE_WRAP;
+
+    float3 dr = OceanDisplacement[uint3(xr, id.y, slice)].xyz;
+    float3 dl = OceanDisplacement[uint3(xl, id.y, slice)].xyz;
+    float3 du = OceanDisplacement[uint3(id.x, yu, slice)].xyz;
+    float3 dd = OceanDisplacement[uint3(id.x, yd, slice)].xyz;
+    float centreHeight = OceanDisplacement[id].y;   // this texel's own height, for the crest gate below
+
+    // Tangents of the displaced surface P = (x + Dx, height, z + Dz), then normal = tangentZ x tangentX.
+    float3 tangentX = float3(2.0 * step + dr.x - dl.x, dr.y - dl.y, dr.z - dl.z);
+    float3 tangentZ = float3(du.x - dd.x, du.y - dd.y, 2.0 * step + du.z - dd.z);
+    float3 n = normalize(cross(tangentZ, tangentX));
+
+    // Jacobian determinant of the horizontal displacement; below the coverage threshold the surface is
+    // folding onto itself - a breaking crest that throws foam. (Crest form saturate(coverage - det);
+    // coverage = 1 reproduces the plain saturate(1 - det) fold this used to write directly.)
+    float invTwoStep = 1.0 / (2.0 * step);
+    float jxx = 1.0 + (dr.x - dl.x) * invTwoStep;
+    float jzz = 1.0 + (du.z - dd.z) * invTwoStep;
+    float jxz = (dr.z - dl.z) * invTwoStep;
+    float jzx = (du.x - dd.x) * invTwoStep;
+    float jacobian = jxx * jzz - jxz * jzx;
+
+    // DIRECTIONAL fold. The determinant is an AREA measure, so it cannot tell a crest folding along
+    // ONE axis - which is what breaking actually is, the surface compressing along the wave's travel
+    // direction while the perpendicular axis usually STRETCHES - from a mild squeeze in every
+    // direction. Worse, on a crest the stretch can cancel the compression and leave the determinant
+    // near 1, so the fold is missed entirely. Foam keyed on it therefore reads as round patches
+    // rather than following the crest line.
+    //
+    // The SMALLEST EIGENVALUE of the same 2x2 measures the strongest SINGLE-AXIS compression, so a
+    // mask built on it lights up ALONG crests - the streaks a real whitecap field shows. Closed form
+    // for a 2x2: lambda = (trace -/+ sqrt(trace^2 - 4*det)) / 2. The discriminant is clamped at 0: a
+    // complex pair means a rotation-dominated cell, which is not a fold at all.
+    //
+    // Both measures agree exactly on flat water (1) and on a pure one-axis compression, so at
+    // anisotropy 0 this is bit-identical to what shipped and the coverage knob keeps its calibration.
+    // Turning it up finds crest folds the determinant was cancelling out, so coverage may want to
+    // come DOWN a little to keep the same overall amount of foam.
+    float foldTrace = jxx + jzz;
+    float foldDiscriminant = max(foldTrace * foldTrace - 4.0 * jacobian, 0.0);
+    float foldMeasure = lerp(jacobian, 0.5 * (foldTrace - sqrt(foldDiscriminant)),
+                             saturate(OceanFoamAnisotropy));
+
+    float fresh = saturate(OceanFoamCoverage - foldMeasure);
+
+    // PER-CASCADE FOLD WEIGHT. Slice 0 is silenced and slice 1 quartered (KWS's per-cascade damping),
+    // and the last slice is halved (Crest FilterWaves) - the idea being that constantly-folding fine
+    // detail would turn the near field into foam soup. Ceto goes the other way and sums the fold over
+    // ALL FOUR of its grid scales, which is where its filament structure comes from. This knob blends
+    // between the two: 0 = the damped weights below, 1 = every cascade's fold counts in full.
+    //
+    // ⚠️ THE NAMES ARE BACKWARDS RELATIVE TO OUR ORDERING. The derived cascade bands are ASCENDING
+    // (WaterOceanSpectrum.DeriveCascadeBands fills from the coarsest end backwards), so slice 0 is the
+    // FINEST cascade and slice (count-1) is the COARSEST. The
+    // second line is therefore damping the SWELL cascade even though the constant is called
+    // OCEAN_FOAM_FINEST_DAMP and its comment cites Crest's fine-detail filter. Kept bit-identical at
+    // mix 0 rather than silently re-pointed - retuning that is a separate, deliberate change.
+    float cascadeDamp = (slice == 0u) ? 0.0 : ((slice == 1u) ? OCEAN_FOAM_CASCADE1_DAMP : 1.0);
+    cascadeDamp *= (slice == OceanFftCascades - 1u && OceanFftCascades > 2u)
+                 ? OCEAN_FOAM_FINEST_DAMP : 1.0;
+    fresh *= lerp(cascadeDamp, 1.0, saturate(OceanFoamCascadeMix));
+    fresh *= (OceanWindSpeed > OceanFoamMinWind) ? 1.0 : 0.0;
+
+    // ---- WHERE ON THE WAVE the foam is born ----------------------------------------------------
+    // Until now the fold was the ONLY rule, so caps appeared wherever the surface happened to pinch:
+    // scattered through the field, with no notion of crest or trough. Real breaking happens at the
+    // TOP of a wave and on its FORWARD face, and that is what makes a whitecapping sea read as lines
+    // running along the crests instead of round blobs. This is the OVERALL SHAPE of the foam field -
+    // a different thing from the foam texture, which can only add detail inside a shape it is given.
+    //
+    // CREST GATE: where this texel sits inside the local height range of its own four neighbours.
+    // 1 = higher than all of them, i.e. on a crest line; 0 = the local minimum; ~0.5 on a plain
+    // slope. Dimensionless and self-scaling, so ONE knob behaves the same on every cascade no matter
+    // how many metres of amplitude that cascade carries - which a raw height threshold could not do
+    // (cascade 3 runs metres, cascade 0 centimetres).
+    float neighbourMin = min(min(dr.y, dl.y), min(du.y, dd.y));
+    float neighbourMax = max(max(dr.y, dl.y), max(du.y, dd.y));
+    float crestRise = saturate((centreHeight - neighbourMin)
+                               / max(neighbourMax - neighbourMin, 1e-5));
+    fresh *= lerp(1.0, smoothstep(OCEAN_FOAM_CREST_GATE_LOW, 1.0, crestRise), saturate(OceanFoamCrestGate));
+
+    // FACE GATE: a breaking crest throws its foam FORWARD, so the leading face carries it while the
+    // back stays clean - the asymmetry that stops a whitecap looking like a symmetric cap sitting on
+    // top of a bump. For a height field the normal's horizontal part points DOWN-slope, so its
+    // alignment with the wind separates the leading face (+1) from the trailing one (-1). Remapped
+    // to 0..1 rather than clipped, so it is a bias across the crest and not a hard edge down it.
+    float tiltLength = length(n.xz);
+    float faceAlign = (tiltLength > 1e-5) ? dot(n.xz / tiltLength, OceanWindDir) : 0.0;
+    fresh *= lerp(1.0, saturate(faceAlign * 0.5 + 0.5), saturate(OceanFoamFaceBias));
+
+    // Advection ("roll and deposit"): carry the persistent foam downwind and resample it, instead of
+    // pinning foam to the texel where the fold was born. Back-trace this texel by the wind-drift velocity
+    // (metres -> texels via 'step', the cascade's metres-per-texel) and bilinearly read last frame's foam
+    // there. The cascade tiles, so the periodic back-trace wraps seamlessly. Ping-ponged targets keep this
+    // WebGPU-safe - a storage texture can't be read AND written in one pass.
+    float driftSpeed = OceanWindSpeed * OceanFoamDriftFraction;                  // m/s downwind
+    float2 driftTexels = OceanWindDir * (driftSpeed * OceanFoamDeltaTime / step); // metres -> texels
+    float advectedFoam = OceanFoamHistoryBilinear(float2(id.xy) - driftTexels, slice, (int)N)
+                       * OceanFoamHistoryValid;
+
+    // Split decay + accumulation (framerate-independent, Crest-style): dense deposited foam lingers as
+    // windrows while thin lace fades fast, then add the fresh fold so whitecaps build up and streak
+    // instead of flickering per frame. Shared blend (FoamDecayBlend, WaterFoamCommon.hlsl); NOTE this
+    // path blends decay RATES (dense = SLOWER) while WaterSim's foam blends SURVIVAL factors
+    // (fresh/thick = FASTER) - opposite semantics, both deliberate, documented at the helper.
+    // Prewarm (Crest): on the very first dispatch (no history) substitute dt with the decay's
+    // steady-state time constant 1/fadeRate, so the accumulation term lands directly at its
+    // equilibrium (gain/decay) and the ocean loads with settled whitecaps instead of visibly
+    // building foam up over the first seconds. History is zero on that frame, so only the
+    // accumulation term sees the substituted dt.
+    float foamDt = (OceanFoamHistoryValid < 0.5) ? (1.0 / max(OceanFoamFadeRate, 1e-3))
+                                                 : OceanFoamDeltaTime;
+    float slowFade = OceanFoamFadeRate * OceanFoamSlowFadeFraction;
+    float fadeRate = FoamDecayBlend(advectedFoam, OCEAN_FOAM_DENSE_REFERENCE, OceanFoamFadeRate, slowFade);
+    float foam = advectedFoam * saturate(1.0 - fadeRate * OceanFoamDeltaTime)
+               + OCEAN_FOAM_ACCUM_RATE * OceanFoamStrength * foamDt * fresh;
+    foam = min(foam, OceanFoamMax);
+
+    OceanFoamNext[id] = foam;           // history the next frame decays from
+    // Store the raw fold amount (crest "pinch" = saturate(1 - Jacobian)) in .y. The normal's up-component
+    // is never sampled by any consumer (they read .xz for tilt, .w for foam), so .y is free real estate,
+    // and this target is mipped so the pinch gets distance anti-aliasing for free. The surface reads it
+    // as the TRUE wave-crest steepness for the subsurface glow, instead of proxying it with wave height.
+    // The crest pinch rides the SAME fold measure as the foam - they are one physical quantity read
+    // two ways, and letting them diverge is what puts glow on water that carries no whitecap.
+    OceanNormal[id] = float4(n.x, saturate(1.0 - foldMeasure), n.z, foam);
+}
+
+// Manual bilinear read of one cascade's height (.y) at a world xz. Cascades tile every 'domain' metres
+// and the FFT is periodic, so the taps wrap around the grid edge seamlessly. Manual (not Sample) because
+// the displacement array is bound as a UAV here, and WebGPU won't hardware-filter it anyway.
+// Full displacement (x, height, z) - the height lane is what buoyancy always read; the horizontal
+// lanes now ride along for the CPU chop inversion (renamed from OceanCascadeHeightBilinear).
+float3 OceanCascadeDisplacementBilinear(float2 worldXZ, uint c)
+{
+    int N = (int)OceanFftResolution;
+    float2 texel = frac(worldXZ / max(OceanDomainSizes[c], 1e-3)) * N; // tile-local texel coordinate
+    int x0 = (int)floor(texel.x); int y0 = (int)floor(texel.y);
+    float fx = texel.x - x0; float fy = texel.y - y0;
+    x0 &= OCEAN_TILE_WRAP; y0 &= OCEAN_TILE_WRAP;
+    int x1 = (x0 + 1) & OCEAN_TILE_WRAP; int y1 = (y0 + 1) & OCEAN_TILE_WRAP;
+    float3 h00 = OceanDisplacement[uint3(x0, y0, c)].xyz;
+    float3 h10 = OceanDisplacement[uint3(x1, y0, c)].xyz;
+    float3 h01 = OceanDisplacement[uint3(x0, y1, c)].xyz;
+    float3 h11 = OceanDisplacement[uint3(x1, y1, c)].xyz;
+    return lerp(lerp(h00, h10, fx), lerp(h01, h11, fx), fy);
+}
+
+float2 OceanDirectionMapBilinear(float2 uv)
+{
+    uint width, height;
+    _OceanDirectionMap.GetDimensions(width, height);
+    float2 texel = saturate(uv) * float2(max((int)width - 1, 0), max((int)height - 1, 0));
+    int2 p0 = (int2)floor(texel);
+    int2 p1 = min(p0 + 1, int2((int)width - 1, (int)height - 1));
+    float2 fraction = frac(texel);
+    float2 row0 = lerp(_OceanDirectionMap.Load(int3(p0, 0)).rg,
+                       _OceanDirectionMap.Load(int3(p1.x, p0.y, 0)).rg, fraction.x);
+    float2 row1 = lerp(_OceanDirectionMap.Load(int3(p0.x, p1.y, 0)).rg,
+                       _OceanDirectionMap.Load(int3(p1, 0)).rg, fraction.x);
+    return lerp(row0, row1, fraction.y);
+}
+
+float OceanBakeTileAngle(float2 tileWorldCenter)
+{
+    float2 mapUv = (tileWorldCenter - _OceanDirectionMapFrame.xy) * _OceanDirectionMapFrame.z + 0.5;
+    if (any(mapUv < 0.0) || any(mapUv > 1.0)) return 0.0;
+    return OceanAperiodicDirectionAngle(OceanDirectionMapBilinear(mapUv), _OceanAperiodicParams.z);
+}
+
+float3 OceanBakeTileDisplacement(float2 worldXZ, uint cascade, int2 vertex)
+{
+    float domain = max(OceanDomainSizes[cascade], 1e-3);
+    float2 tileCenterUv = OceanAperiodicVertexUv(vertex, _OceanAperiodicParams.y);
+    float2 tileWorldCenter = tileCenterUv * domain;
+    float angle = OceanBakeTileAngle(tileWorldCenter);
+    float2 localWorld = OceanAperiodicRotate(worldXZ - tileWorldCenter, -angle);
+    float2 sampleWorld = (localWorld / domain + tileCenterUv + OceanAperiodicHash(vertex)) * domain;
+    float3 displacement = OceanCascadeDisplacementBilinear(sampleWorld, cascade);
+    displacement.xz = OceanAperiodicRotate(displacement.xz, angle);
+    return displacement;
+}
+
+float3 OceanBakeDisplacement(float2 worldXZ, uint cascade)
+{
+    if (_OceanAperiodicParams.x <= 0.5)
+        return OceanCascadeDisplacementBilinear(worldXZ, cascade);
+
+    float domain = max(OceanDomainSizes[cascade], 1e-3);
+    OceanAperiodicTriangle tileTriangle = OceanAperiodicTriangleAt(worldXZ / domain, _OceanAperiodicParams.y);
+    float3 weights = OceanAperiodicVarianceWeights(tileTriangle.weights);
+    return OceanBakeTileDisplacement(worldXZ, cascade, tileTriangle.vertex0) * weights.x
+         + OceanBakeTileDisplacement(worldXZ, cascade, tileTriangle.vertex1) * weights.y
+         + OceanBakeTileDisplacement(worldXZ, cascade, tileTriangle.vertex2) * weights.z;
+}
+
+// Bake the summed cascade height over a camera-centred world region into a single-channel field, so the
+// CPU can async-read it and float objects on the exact rendered swell (height is a function of world XZ).
+[numthreads(OCEAN_FFT_TG, OCEAN_FFT_TG, 1)]
+void BakeHeightField(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= OceanFieldRes || id.y >= OceanFieldRes) return;
+    float2 uv = (float2(id.xy) + 0.5) / (float)OceanFieldRes;
+    float2 worldXZ = OceanFieldCenter + (uv - 0.5) * OceanFieldSize;
+    // The bake region is CAMERA-CENTRED (WaterOceanFft.Dispatch passes the camera xz as the centre), so
+    // the distance the render fades by is simply the distance from that centre. Applying the SAME fade
+    // here is what keeps buoyancy on the surface that is actually drawn: without it a floater 128 m out
+    // rides cascade 1 at full strength while the surface has already faded it to half.
+    float camDist = distance(worldXZ, OceanFieldCenter);
+    float3 disp = 0.0;
+    for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
+    {
+        if (c >= (int)OceanFftCascades) break;
+        float wavelength = OceanDomainSizes[c] * OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION;
+        disp += OceanCascadeDistanceFade(camDist, OceanVisibleAreas[c])
+              * SeaStateFetchWeight(worldXZ, wavelength)
+              * OceanBakeDisplacement(worldXZ, (uint)c);
+    }
+    // Amplitude scales ALL channels, mirroring the render path (WaterLargeWaves.hlsl:
+    // height = fft.y * _LargeWaveAmplitude ..., disp = fft.xz * (_LargeWaveAmplitude ...)).
+    OceanHeightField[id.xy] = float4(disp, 0.0) * OceanFieldAmplitude;
+}
+
+// TEMP (1c): remap displacement to a readable image - height as grey around mid, choppiness as tint.
+[numthreads(OCEAN_FFT_TG, OCEAN_FFT_TG, 1)]
+void VisualizePreview(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= OceanFftResolution || id.y >= OceanFftResolution) return;
+    float4 d = OceanDisplacement[id];
+    float3 col = float3(0.5 + d.y * OceanPreviewGain,
+                        0.5 + d.x * OceanPreviewGain,
+                        0.5 + d.z * OceanPreviewGain);
+    // Overlay accumulated whitecap foam (OceanNormal.w) as white so it can be verified in the debug view.
+    float foam = saturate(OceanNormal[id].w);
+    OceanPreview[id] = float4(lerp(col, float3(1.0, 1.0, 1.0), foam), 1.0);
+}

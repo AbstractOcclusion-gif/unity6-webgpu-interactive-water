@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en-us">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <title>{{{ PRODUCT_NAME }}}</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0a0f14; color: #cfe3ee;
+                 font-family: system-ui, -apple-system, sans-serif; }
+    #unity-container { position: absolute; inset: 0; display: flex;
+                       align-items: center; justify-content: center; }
+    #unity-canvas { width: 100%; height: 100%; display: none; }
+    #message { max-width: 560px; padding: 32px; text-align: center; line-height: 1.55; }
+    #message h1 { font-size: 20px; margin: 0 0 14px; color: #eaf6ff; }
+    #message p { font-size: 15px; opacity: 0.85; margin: 0 0 10px; }
+    #message .hint { font-size: 13px; opacity: 0.6; }
+    #message b { color: #9fe0ff; }
+  </style>
+</head>
+<body>
+  <div id="unity-container">
+    <canvas id="unity-canvas" tabindex="-1"></canvas>
+  </div>
+
+  <script>
+    var buildUrl = "Build";
+    var config = {
+      dataUrl: buildUrl + "/{{{ DATA_FILENAME }}}",
+      frameworkUrl: buildUrl + "/{{{ FRAMEWORK_FILENAME }}}",
+      codeUrl: buildUrl + "/{{{ CODE_FILENAME }}}",
+      streamingAssetsUrl: "StreamingAssets",
+      companyName: "{{{ COMPANY_NAME }}}",
+      productName: "{{{ PRODUCT_NAME }}}",
+      productVersion: "{{{ PRODUCT_VERSION }}}",
+    };
+
+    function showMessage(title, html) {
+      document.getElementById("unity-container").innerHTML =
+        '<div id="message"><h1>' + title + '</h1>' + html + '</div>';
+    }
+
+    // True only if WebGPU exists AND an adapter can actually be acquired. Catches both
+    // "no navigator.gpu" (e.g. PowerVR / older browsers) and "present but blocklisted".
+    async function webGpuAvailable() {
+      if (!("gpu" in navigator)) return false;
+      try { return !!(await navigator.gpu.requestAdapter()); }
+      catch (e) { return false; }
+    }
+
+    function bootUnity() {
+      var canvas = document.getElementById("unity-canvas");
+      canvas.style.display = "block";
+      var loader = document.createElement("script");
+      loader.src = buildUrl + "/{{{ LOADER_FILENAME }}}";
+      loader.onload = function () {
+        createUnityInstance(canvas, config).catch(function (e) {
+          showMessage("Couldn't start the demo",
+            "<p>The graphics device failed to initialise on this device.</p>" +
+            "<p class='hint'>" + (e && e.message ? e.message : "") + "</p>");
+        });
+      };
+      loader.onerror = function () {
+        showMessage("Couldn't load the demo", "<p>The player files failed to download.</p>");
+      };
+      document.body.appendChild(loader);
+    }
+
+    webGpuAvailable().then(function (ok) {
+      if (ok) { bootUnity(); return; }
+      showMessage("WebGPU required",
+        "<p>This water demo runs on <b>WebGPU</b>, which this device or browser doesn't support.</p>" +
+        "<p>Open it on desktop <b>Chrome</b> or <b>Edge</b>, or a recent Android phone with an " +
+        "<b>Adreno&nbsp;600-series+</b> or <b>Mali-G78+</b> GPU.</p>" +
+        "<p class='hint'>Older / low-end GPUs (e.g. PowerVR) aren't supported by browser WebGPU yet.</p>");
+    });
+  </script>
+</body>
+</html>

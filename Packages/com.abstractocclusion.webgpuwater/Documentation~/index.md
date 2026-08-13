@@ -1,6 +1,6 @@
 # WebGpuWater — Documentation
 
-**Version 1.0.0** | Unity 6 (6000.0+) | URP 17+ | Desktop · WebGPU/WebGL · Mobile
+**Version 1.0.0** | Unity 6 (6000.3.9f1+) | URP 17+ | Desktop · WebGPU/WebGL · Mobile
 
 Support: abstractocclusion@outlook.com
 

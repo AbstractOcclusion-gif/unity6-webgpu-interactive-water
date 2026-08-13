@@ -1,0 +1,223 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b54282e4be6639b4097a9dc1014d5416, type: 3}
+  m_Name: Ocean - North Atlantic Storm
+  m_EditorClassIdentifier: 
+  notes: 'A heavy confused sea: 7 m waves, dense driven whitecaps, murkier green
+    water, dim sky. Jerlov Ocean III.'
+  includeWaves: 1
+  includeAppearance: 1
+  includeSurface: 1
+  includeFoam: 1
+  includeUnderwater: 1
+  includeRipples: 1
+  jerlovWaterType: 4
+  ocean:
+    openWater: 1
+    largeWaveAmplitude: 1
+    largeWaveChoppiness: 1.2
+    significantWaveHeight: 7
+    peakWavelength: 250
+    peakSharpness: 2
+    waveScale: 1
+    seaDepth: 0
+    cascadeReach: 8
+    swellHeight: 4
+    swellWavelength: 200
+    oceanWindTurbulence: 0.5
+    unboundedOcean: 1
+    edgeFeatherMeters: 10
+    clipmapGridResolution: 96
+    clipmapOuterRadius: 10000
+    oceanDetailFalloff: 0.003
+    horizonFadeDistance: 9000
+    horizonHazeColor: {r: 0.7, g: 0.8, b: 0.9, a: 0}
+    horizonHazeDensity: 0.1
+    largeGodRayColor: {r: 0, g: 0.75, b: 1, a: 1}
+    largeGodRayDensity: 0.15
+    largeGodRayFromAir: 0
+    largeGodRayLightScatter: 0
+    largeGodRaySteps: 24
+    largeGodRayAnisotropy: 0.6
+    largeGodRayExtinction: 0
+    largeGodRayCausticStrength: 4
+    largeGodRayCausticSmooth: 2
+    largeGodRayCausticDepthSoften: 0.25
+    largeCausticTimeScale: 0.5
+    largeCausticRippleScale: 3
+    largeCausticRippleStrength: 1
+    largeCausticProjectionSoften: 0
+    oceanFoamWindThreshold: 2
+    oceanFoamCoverage: 0.8
+    oceanFoamStrength: 2
+    oceanFoamFadeRate: 0.4
+    oceanFoamColor: {r: 1, g: 1, b: 1, a: 1}
+    oceanFoamTileSize: 8
+    oceanFoamFeather: 0.7
+    oceanFoamStreakStretch: 2.5
+    oceanFoamTextureInfluence: 0.8
+    oceanFoamCrestAnisotropy: 1
+    oceanFoamCrestGate: 0.8
+    oceanFoamFaceBias: 0.85
+    oceanFoamDepthTint: 0.45
+    oceanFoamCascadeMix: 1
+    oceanFoamDeposit: 0.9
+    oceanFoamDrift: 0.3
+    oceanFoamMaxBuildup: 1
+  windWaveSettings:
+    windWaves: 0
+    windSpeed: 3
+    windFromDegrees: 0
+    waveLengthMeters: 1.2
+    waveHeightMeters: 0.05
+    waveGrouping: 0.4
+    waveCrestSharpness: 0.6
+    waveCount: 12
+    waveDirectionSpread: 2
+    waveNormalStrength: 1
+    windResponse: 1
+    waveAnimationSpeed: 1
+    legacyFetchMeters: 10
+    legacyAmplitudeScale: 4
+  waterFogSettings:
+    waterFog: 1
+    fogColor: {r: 0.0335, g: 0.5801, b: 0.85, a: 1}
+    fogExtinction: {r: 0.7124, g: 0.0612, b: 0.0514, a: 1}
+    fogDensity: 0.5
+    waterOpacity: 0.3
+    lightScatter: 0.5
+  volumeScatterSettings:
+    volumeScatter: 1
+    scatterColor: {r: 0.0335, g: 0.5801, b: 0.85, a: 1}
+    scatterIntensity: 0.1
+    scatterAnisotropy: 0.5
+    scatterAmbientTerm: 1
+    scatterSunTerm: 1
+    crestScatter: 0
+    sssIntensity: 3
+    sssSunFalloff: 2
+    sssPinchMin: 0.1
+    sssPinchMax: 0.6
+    sssPinchFalloff: 1.5
+  depthAttenuation:
+    depthDarken: 1
+    depthExtinction: {r: 0.45, g: 0.15, b: 0.08, a: 1}
+    depthDarkenStrength: 1
+    causticDepthFade: 0.5
+    screenSpaceCaustics: 1
+    screenCausticIntensity: 1
+    godRayDepthFade: 0.5
+    causticWindWaveStrength: 1
+    linkDepthToFog: 0
+  refractShadows: 1
+  refractShadowSoftness: 0.05
+  reflectionSettings:
+    useScreenSpaceReflection: 0
+    usePlanarReflection: 1
+    reflectUrpProbe: 0
+    realRefraction: 1
+    planarExcludeLayers:
+      serializedVersion: 2
+      m_Bits: 0
+    planarClipDepth: 0.007
+    reflectionStrength: 0.1
+    envReflectionIntensity: 0.2
+    fresnelFloor: 0.25
+    fresnelPower: 3.3
+    sunRoughness: 0.08
+    roughnessFar: 0.35
+    roughnessFarDistance: 1000
+    roughnessFalloff: 1
+    reflectionAnisoStretch: 0.5
+    sunSheen: 0
+    sunSheenRoughness: 0.6
+    sunGrazeBoost: 0
+    reflectionDistortion: 0.05
+    ssrStrength: 1
+    ssrStepSize: 0.03
+    ssrMaxSteps: 24
+    ssrThickness: 0.2
+    refractionDistortion: 0.05
+    refractionStrength: 1
+  detailNormalSettings:
+    texture: {fileID: 2800000, guid: 62664aadf524b76e2b375fdbd6c85003, type: 3}
+    strength: 0.8
+    tileMeters: 8
+    farTileMeters: 250
+    farTileDistance: 700
+    scrollSpeed: 0.25
+    farScrollSpeed: 3
+    hexTiling: 1
+    windResponse: 1
+    crestBoost: 0.5
+    distanceBoost: 0.35
+  foamPatternTexture: {fileID: 2800000, guid: a5f2ef87d189d12951522a62b6df8920, type: 3}
+  foamPatternGrid: {x: 1, y: 1}
+  foamPatternFps: 10
+  foamReliefStrength: 1
+  oceanWhitecapTexture: {fileID: 2800000, guid: a374a10bbe76021021500e6b2fc9d34f, type: 3}
+  oceanWhitecapGrid: {x: 1, y: 1}
+  oceanWhitecapFps: 10
+  foamSettings:
+    foam: 1
+    foamGenRate: 0.6
+    foamDecay: 0.96
+    foamDecayResidual: 0.993
+    foamDecayRate: 1.25
+    wetnessMemory: 1
+    wetnessDryTime: 30
+    foamSpread: 0.2
+    foamGenThreshold: 0.3
+    foamMinWaveHeight: 0.09
+    foamAdvect: 3
+    foamFromSpeed: 6
+    foamFromCurvature: 30
+    foamDeposit: 0.45
+    foamBreakStrength: 0.6
+    foamBreakRange: 1.5
+    foamCrestBias: 0.7
+    foamHeadroom: 1
+    foamWakeStrength: 0
+    foamWakeRadiusScale: 1.5
+    foamColor: {r: 1, g: 1, b: 1, a: 1}
+    foamPatternSize: 5
+    foamStrength: 0.5
+    foamFeather: 0.5
+    foamCoreCut: 0.1
+    foamBorderWidth: 0
+    foamContactDepth: 0.06
+  underwaterSurfaceSettings:
+    physicalFresnel: 1
+    tirEdgeSoftness: 0.08
+    fresnelFloor: 0
+    reflectionStrength: 0.15
+    mirrorWaterBlend: 0.8
+    mirrorShafts: 0.25
+    foamSilhouetteDarken: 0.6
+    foamSunGlow: 0.4
+    detailNormalStrength: 1.3
+    meniscus: 1
+    meniscusWidthPixels: 5
+    meniscusStrength: 0.7
+    meniscusWarp: 0.35
+  rippleSettings:
+    waveSpeed: 0.6
+    damping: 0.99
+    rippleViscosity: 0
+    stepsPerFrame: 2
+    rippleStrength: 0.025
+    rippleRadius: 0.05
+    rippleChoppiness: 0
+    wakeStartForceCap: 0
+    seedRipplesOnStart: 1
+    conserveVolume: 1
+    conserveMaxCorrection: 0.05

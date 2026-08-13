@@ -37,11 +37,18 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         static readonly Vector2 RippleCrestFleckLifetimeRange = new Vector2(0.4f, 0.8f);
         static readonly Vector2 RippleCrestFleckSizeRange = new Vector2(0.01f, 0.025f);
         const float RippleCrestFleckMotion = 0.6f;
+        const float DensitySurfaceSizeScale = 0.35f;
         const int FlowGradientResolution = 256;
         const float FlowGradientVerticalExtent = 2f;
         const float ExpectedFlowGradientX = 32f;
         const float ExpectedFlowGradientZ = 16f;
         const int FlowTextureResolution = 8;
+        const float SettledActivity = 1f;
+        const float ActiveActivity = 1.0001f;
+        const float SleepTestThreshold = 1f;
+        const float SleepTestDropCoordinate = 0f;
+        const float SleepTestDropRadius = 0.1f;
+        const float SleepTestDropStrength = 0.1f;
         const string WaterSimComputePath =
             "Packages/com.abstractocclusion.webgpuwater/Runtime/Shaders/WaterSim.compute";
         static readonly Vector2 FlowGradientHalfExtent = new Vector2(4f, 8f);
@@ -289,6 +296,22 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         }
 
         [Test]
+        public void RippleSleepActivity_SleepsOnlyAtOrBelowTheNormalizedThreshold()
+        {
+            Assert.That(WaterSimulation.IsSettledActivity(0f), Is.True);
+            Assert.That(WaterSimulation.IsSettledActivity(SettledActivity), Is.True);
+            Assert.That(WaterSimulation.IsSettledActivity(ActiveActivity), Is.False);
+        }
+
+        [Test]
+        public void RippleSleepActivity_FailsClosedForNonFiniteGpuResults()
+        {
+            Assert.That(WaterSimulation.IsSettledActivity(float.NaN), Is.False);
+            Assert.That(WaterSimulation.IsSettledActivity(float.PositiveInfinity), Is.False);
+            Assert.That(WaterSimulation.IsSettledActivity(float.NegativeInfinity), Is.False);
+        }
+
+        [Test]
         public void ParticleDefaults_KeepRippleCrestFlecksDisabled()
         {
             GameObject host = new GameObject("Ripple Crest Fleck Defaults Test");
@@ -299,6 +322,44 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             }
             finally
             {
+                Object.DestroyImmediate(host);
+            }
+        }
+
+        [Test]
+        public void ParticleDefaults_KeepSimulationDrivenSpawningDisabled()
+        {
+            GameObject host = new GameObject("Simulation Driven Spawning Defaults Test");
+            try
+            {
+                WaterFoamParticles particles = host.AddComponent<WaterFoamParticles>();
+                Assert.That(particles.simulationDrivenSpawning, Is.False);
+            }
+            finally
+            {
+                Object.DestroyImmediate(host);
+            }
+        }
+
+        [Test]
+        public void FoamProfile_AppliesDensitySurfaceSizeScaleToParticlePool()
+        {
+            GameObject host = new GameObject("Density Surface Size Scale Profile Test");
+            WaterFoamProfile profile = ScriptableObject.CreateInstance<WaterFoamProfile>();
+            try
+            {
+                WaterFoamParticles particles = host.AddComponent<WaterFoamParticles>();
+                profile.veil.drive = true;
+                profile.veil.surfaceSizeScale = DensitySurfaceSizeScale;
+
+                profile.ApplyTo(particles);
+
+                Assert.That(particles.densitySurfaceSizeScale,
+                    Is.EqualTo(DensitySurfaceSizeScale).Within(FloatTolerance));
+            }
+            finally
+            {
+                Object.DestroyImmediate(profile);
                 Object.DestroyImmediate(host);
             }
         }
@@ -324,6 +385,43 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             {
                 first.Dispose();
                 second.Dispose();
+            }
+        }
+
+        [Test]
+        public void RippleSleepReadback_ClearsOnlyAnUnchangedSettledGeneration()
+        {
+            if (!SystemInfo.supportsAsyncGPUReadback)
+                Assert.Ignore("This graphics backend does not support the async activity readback.");
+
+            ComputeShader compute = AssetDatabase.LoadAssetAtPath<ComputeShader>(WaterSimComputePath);
+            Assert.That(compute, Is.Not.Null);
+            var settled = new WaterSimulation(compute, FlowTextureResolution);
+            var reinjected = new WaterSimulation(compute, FlowTextureResolution);
+            try
+            {
+                settled.AddDrop(SleepTestDropCoordinate, SleepTestDropCoordinate,
+                                SleepTestDropRadius, SleepTestDropStrength);
+                settled.RequestSleepCheck(SleepTestThreshold, SleepTestThreshold, SleepTestThreshold,
+                                          SleepTestThreshold, SleepTestThreshold);
+
+                reinjected.AddDrop(SleepTestDropCoordinate, SleepTestDropCoordinate,
+                                   SleepTestDropRadius, SleepTestDropStrength);
+                reinjected.RequestSleepCheck(SleepTestThreshold, SleepTestThreshold, SleepTestThreshold,
+                                             SleepTestThreshold, SleepTestThreshold);
+                reinjected.AddDrop(SleepTestDropCoordinate, SleepTestDropCoordinate,
+                                   SleepTestDropRadius, SleepTestDropStrength);
+
+                UnityEngine.Rendering.AsyncGPUReadback.WaitAllRequests();
+
+                Assert.That(settled.HasReceivedInjection, Is.False);
+                Assert.That(reinjected.HasReceivedInjection, Is.True);
+            }
+            finally
+            {
+                UnityEngine.Rendering.AsyncGPUReadback.WaitAllRequests();
+                settled.Dispose();
+                reinjected.Dispose();
             }
         }
 #endif

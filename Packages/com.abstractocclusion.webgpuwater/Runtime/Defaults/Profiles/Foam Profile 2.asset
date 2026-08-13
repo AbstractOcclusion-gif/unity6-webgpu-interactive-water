@@ -1,0 +1,92 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0e816f6b662842e45b344a2c2b234aa9, type: 3}
+  m_Name: Foam Profile 2
+  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterFoamProfile
+  look:
+    drive: 1
+    tint: {r: 1, g: 1, b: 1, a: 1}
+    opacity: 0.345
+    particleAtlas: {fileID: 2800000, guid: da3c1f866a847c34f9d37f4990d73d92, type: 3}
+    flipbookGrid: {x: 2, y: 2}
+    flipbookFps: 5
+    sizeHeroPower: 6
+  ambient:
+    drive: 1
+    spawnThreshold: 0.52
+    spawnRate: 25
+    maxSpawnPerFrame: 1525
+    sprayChance: 0.158
+    sprayLaunchSpeed: 0.32
+    rippleCrestFlecksEnabled: 0
+    rippleCrestFleckAmount: 2
+    rippleCrestFleckMaxPerFrame: 508
+    rippleCrestFleckLifetimeRange: {x: 0.1, y: 0.2}
+    rippleCrestFleckSizeRange: {x: 0.01, y: 0.015}
+    rippleCrestFleckMotion: 1
+    surfaceFoamOpacity: 0.722
+    sprayOpacity: 0.642
+    lifeRange: {x: 0.2, y: 0.5}
+    sizeRange: {x: 0.1, y: 0.2}
+    spawnMaxDistance: 400
+    sprayLifeRange: {x: 0.1, y: 0.2}
+    spraySizeRange: {x: 0.02, y: 0.03}
+    depositLifeRange: {x: 1, y: 2}
+    depositSizeRange: {x: 0.1, y: 0.2}
+  motion:
+    drive: 1
+    gravity: 4
+    flowDrift: 0.25
+    windDriftSpeed: 0.02
+    drag: 2
+  veil:
+    drive: 1
+    surfaceSizeScale: 1
+    opacity: 0.877
+    densityLowGain: 0.2
+    densityHighGain: 1
+    breakupTexture: {fileID: 2800000, guid: 8fc49b69d0d057948be747fa1a37627c, type: 3}
+    breakupTiling: 20
+    breakupStrength: 1
+  splash:
+    drive: 1
+    maxParticlesPerBurst: 91
+    upwardBias: 1.64
+    outwardSpread: 0.49
+    dropletSize: 0.1
+    lifetime: {x: 1, y: 1.5}
+    crownMinStrength: 0.077
+    crownBaseSize: 0.3
+    crownLifetime: 0.5
+    crownLaunchHeight: 1
+    crownLaunchSpread: 0.71
+    crownTint: {r: 1, g: 1, b: 1, a: 1}
+    crownOpacity: 0.63
+    dropletOpacity: 1
+    entryStreaksEnabled: 1
+    entryStreakAmount: 0.39
+    entryStreakHeight: 0.04
+    entryStreakWidth: 0.22
+    entryStreakGravity: 0.6
+    entryStreakOpacity: 0.549
+    entryStreakMinStrength: 0.065
+    entryStreakLifetimeRange: {x: 0.75, y: 1.5}
+    entryStreakSizeRange: {x: 0.35, y: 0.5}
+    entryStreakTint: {r: 0.95, g: 0.98, b: 1, a: 1}
+  bubbles:
+    drive: 1
+    bubbleAmount: 0.274
+    bubbleRiseSpeed: 0.25
+    bubbleLifeRange: {x: 1, y: 2}
+    bubbleSizeRange: {x: 0.008, y: 0.01}
+    bubbleWobble: 1
+    opacity: 0.214
