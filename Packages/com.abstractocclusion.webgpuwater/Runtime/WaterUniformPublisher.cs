@@ -781,8 +781,19 @@ namespace AbstractOcclusion.WebGpuWater
 
             sink.SetColor(ID_FogColor, _body.fogColor);
             sink.SetColor(ID_FogExt, _body.fogExtinction);
-            sink.SetFloat(ID_FogDensity, _body.fogDensity);
-            sink.SetFloat(ID_FogEnabled, _body.WaterFog ? 1f : 0f);
+            // The CHUNK fog override is folded in HERE, not in SetChunkSurfaceProps: the chunk's
+            // former writes aliased these SAME _WaterFogDensity/_WaterFogEnabled ids, and an
+            // out-of-band overwrite of a cache-tracked id is exactly what the cached-sink layer
+            // cannot see (the 2026-08-13 double-pool "no fog through the surface" regression).
+            // Semantics unchanged: a chunk forces the GPU fog gate on while the C# WaterFog flag
+            // stays false (the fullscreen pass must stay disarmed - it runs on the primary's
+            // globals and clips to the pool BOX, not the chunk primitive), and the density boost
+            // is baked in ONCE so the disc column, the shell and any membership object all read
+            // the same boosted water.
+            sink.SetFloat(ID_FogDensity, _body.IsChunk
+                ? _body.fogDensity * _body.chunkDensityBoost
+                : _body.fogDensity);
+            sink.SetFloat(ID_FogEnabled, (_body.WaterFog || _body.IsChunk) ? 1f : 0f);
             sink.SetFloat(ID_WaterOpacity, _body.waterOpacity);
             // Point/spot-light scattering strength in the underwater fog (the WATER_FOG_POINT_LIGHTS
             // variant, armed by PublishUnderwater from the SAME field so gate and shader agree).
