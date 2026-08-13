@@ -32,6 +32,12 @@ namespace AbstractOcclusion.WebGpuWater
         public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
         {
             if (_pass == null || !RenderSettings.fog) return;
+            // Preview thumbnails never need a fogged skybox - this was the ONE water feature with
+            // no camera gate, so it recorded a fullscreen pass for material/prefab previews too.
+            // Reflection cameras DELIBERATELY keep the pass: this is scene fog, not a water-volume
+            // paint, and the reflected horizon must stay as fogged as the directly-viewed one - so
+            // the SkipCameraFullscreen doctrine does not apply here (see WaterPassCameraGate).
+            if (WaterPassCameraGate.SkipCamera(renderingData.cameraData.cameraType)) return;
             Camera camera = renderingData.cameraData.camera;
             if (camera == null) return;
 

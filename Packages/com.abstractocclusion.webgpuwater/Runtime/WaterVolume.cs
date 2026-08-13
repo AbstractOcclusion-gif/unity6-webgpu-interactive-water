@@ -249,7 +249,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (_windowed) _simWindow.Track();  // prime the window centre before first publish
             RenderCausticsForThisBody();        // pool caustic (bounded), or the window-frame ocean caustic
             ApplyBodyBlock();
-            if (isPrimary) Publisher.PublishBodyGlobals();
+            if (isPrimary) PublishBodyGlobalsTracked();
 
             _initialized = true;
         }
@@ -258,7 +258,18 @@ namespace AbstractOcclusion.WebGpuWater
         {
             RenderPipelineManager.beginCameraRendering -= OnBeginCameraRender;
             DestroySurfCrestFoamLut(); // FOAM-1 LUT is lazy-baked, so it may exist pre-init too
-            if (!_initialized) return; // never initialized (missing wiring / capability guard)
+            if (!_initialized)
+            {
+                // Never initialized (missing wiring / capability guard) - but TryInitialize
+                // registers into Bodies BEFORE it sets _initialized, so a mid-init exception
+                // (device loss, late wiring failure) used to leave a ghost entry here forever:
+                // ActiveBodyCount stayed > 0, which kept the editor preview driver pumping the
+                // player loop at 60 Hz even in an empty scene, and Update retried the throwing
+                // init every tick. Unregister unconditionally before bailing.
+                if (Primary == this) Primary = FindNextPrimary(this);
+                Bodies.Remove(this);
+                return;
+            }
 
             _initialized = false;
             // A disabled body must STOP DRAWING. Nothing else hid these renderers - SetRenderersEnabled
@@ -285,6 +296,8 @@ namespace AbstractOcclusion.WebGpuWater
                 WaterlineActive = false; // same static-gate pattern: the meniscus pass reads it too
                 CameraSubmerged = false; // same pattern: the after-fog foam overlay reads it
                 FogSource = null;
+                _globalsSource = null;   // the globals occupant stands down with ClearBodyGlobals below
+                _globalsFrame = -1;
                 Publisher.PublishUnderwater(0f, 0f, 0f, 0f, 0f, 0f);
                 // The rest of the body globals - the volume frame above all. Without this the dead
                 // body's footprint still describes a real box, and a WaterReceiver floor in the NEXT

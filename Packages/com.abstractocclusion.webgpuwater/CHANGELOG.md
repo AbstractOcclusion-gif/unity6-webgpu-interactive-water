@@ -4,6 +4,12 @@ All notable changes to this package are documented here.
 
 ## [Unreleased] - pre-release audit pass
 
+### Added
+- **Water Wizard Renderer Setup tool** installs or repairs all six WebGpuWater renderer
+  features on the active URP asset's default Renderer Data. It assigns all seven required
+  shaders, preserves existing custom assignments, avoids duplicates, maintains URP's local-ID
+  feature map, and supports Undo. Camera renderer overrides remain explicit.
+
 ### Fixed
 - **Large-body caustics no longer time out the D3D11 shader compiler on a cold package import**:
   the five-point projection now samples the generated ocean FFT through a dedicated compile-bounded

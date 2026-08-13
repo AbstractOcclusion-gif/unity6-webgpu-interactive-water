@@ -34,10 +34,13 @@ the URP asset above. Select the Renderer Data used by the water camera, choose
 - **LargeBodyAtmosphereFeature** — ocean god-ray shafts.
 - **WaterSkyFogFeature** — Unity scene fog on the skybox.
 
-Assign each feature's requested WebGpuWater shader in its Inspector. The Water Wizard
-reports missing features and can select the active Renderer Data asset for you. These
-features are optional unless you use their corresponding effect; real refraction itself
-requires **Opaque Texture** and **Depth Texture** on the active URP asset.
+The Water Wizard's **Utilities > Renderer Setup** section can install all six features on
+the active URP asset's default Renderer Data and assign their seven shaders automatically.
+It adds only missing features, fills only empty shader fields, and preserves custom shader
+assignments. You can still add them manually with **Add Renderer Feature**. Cameras using a
+Renderer override need the same setup on that Renderer Data asset. These features are
+optional unless you use their corresponding effect; real refraction itself requires
+**Opaque Texture** and **Depth Texture** on the active URP asset.
 
 ## Install
 

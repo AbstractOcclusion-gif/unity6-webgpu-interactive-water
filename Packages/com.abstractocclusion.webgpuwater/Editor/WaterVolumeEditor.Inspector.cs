@@ -119,7 +119,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             Sync(ref _showBodyAdvanced, nameof(_showBodyAdvanced), load);
             Sync(ref _showBedSource, nameof(_showBedSource), load);
             Sync(ref _showChunk, nameof(_showChunk), load);
-            Sync(ref _showWiring, nameof(_showWiring), load);
+            // _showWiring is DELIBERATELY not persisted: it is the one foldout that turns on
+            // RequiresConstantRepaint (the live sun-driven lightDir readout), and a SessionState
+            // -persisted "open" latched EVERY later WaterVolume inspector into continuous repaint
+            // until editor restart - SessionState survives selection changes and domain reloads.
+            // It now opens closed on each selection; live repaint runs only while it is open.
             Sync(ref _showCamera, nameof(_showCamera), load);
             Sync(ref _showPointerInteraction, nameof(_showPointerInteraction), load);
 

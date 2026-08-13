@@ -225,6 +225,8 @@ namespace AbstractOcclusion.WebGpuWater
             WaterlineActive = false;
             CameraSubmerged = false;
             FogSource = null;
+            _globalsSource = null;
+            _globalsFrame = -1;
             WaterSimScheduler.ResetStaticState();
             WaterInteractable.ResetStaticState();
             WaterDebugView.ResetStaticState();

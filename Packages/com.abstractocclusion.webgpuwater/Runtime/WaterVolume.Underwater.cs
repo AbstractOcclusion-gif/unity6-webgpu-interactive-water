@@ -19,6 +19,22 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>The body whose camera-relative data drives this frame's fullscreen fog passes.</summary>
         internal static WaterVolume FogSource { get; private set; }
 
+        // Which body's uniforms currently occupy the global shader constants, and the frame they
+        // were pushed on. Lets the fog-source refresh skip a byte-identical same-frame republish
+        // (WriteBodyUniforms is ~170 native property writes). Scene-lifetime static state - reset
+        // by ResetStaticState and stood down with the other globals on last-body-out.
+        static WaterVolume _globalsSource;
+        static int _globalsFrame = -1;
+
+        // Every body-globals publish goes through here so the dedupe above always knows the
+        // current occupant. Never call Publisher.PublishBodyGlobals() directly.
+        void PublishBodyGlobalsTracked()
+        {
+            Publisher.PublishBodyGlobals();
+            _globalsSource = this;
+            _globalsFrame = Time.frameCount;
+        }
+
         /// <summary>True while the camera's near plane straddles the (displaced) surface, so the
         /// screen-space waterline meniscus pass should draw this frame (set each frame by the primary
         /// body, reset by the last body out in OnDisable like <see cref="UnderwaterFogActive"/>).
@@ -146,7 +162,12 @@ namespace AbstractOcclusion.WebGpuWater
         // callback ("You must use Destroy instead"), so retiring a mirror in place threw once per
         // planar/budget flip. Handing it over here and destroying it from Update keeps the destroy out of
         // the callback in BOTH modes. Runtime-only state; never serialized.
-        PlanarMirror _planarMirrorRetiring;
+        // A LIST, not a single slot: the old slot was overwritten blind, and its safety rested on
+        // "Update always drains between two retires" - a scheduling assumption, not code. Editor
+        // repaints and explicit render requests can render the target camera twice without a
+        // player-loop tick while EffectiveUsePlanar flaps, and every overwrite leaked a whole
+        // mirror rig (screen-sized HideAndDontSave RT + hidden camera) until editor restart.
+        readonly List<PlanarMirror> _planarMirrorsRetiring = new List<PlanarMirror>();
 
         /// <summary>This body's most recent planar mirror, or null when it isn't rendering planar.</summary>
         internal Texture PlanarReflectionTexture => _planarMirror?.Texture;
@@ -201,10 +222,7 @@ namespace AbstractOcclusion.WebGpuWater
         void RetirePlanarMirror()
         {
             if (_planarMirror == null) return;
-            // At most one can ever be pending: the slot is filled only when a LIVE mirror exists, and the
-            // next live mirror is built only once EffectiveUsePlanar is true again - the branch that never
-            // retires. The Update drain therefore always runs in between.
-            _planarMirrorRetiring = _planarMirror;
+            _planarMirrorsRetiring.Add(_planarMirror);
             _planarMirror = null;
         }
 
@@ -212,9 +230,10 @@ namespace AbstractOcclusion.WebGpuWater
         // from beginCameraRendering - that restriction is the whole reason the slot exists.
         void DrainRetiredPlanarMirror()
         {
-            if (_planarMirrorRetiring == null) return;
-            _planarMirrorRetiring.Dispose();
-            _planarMirrorRetiring = null;
+            if (_planarMirrorsRetiring.Count == 0) return;
+            for (int i = 0; i < _planarMirrorsRetiring.Count; i++)
+                _planarMirrorsRetiring[i]?.Dispose();
+            _planarMirrorsRetiring.Clear();
         }
 
         // Reflect everything the camera sees EXCEPT this body's own water surface layer, so the mirror
@@ -248,7 +267,12 @@ namespace AbstractOcclusion.WebGpuWater
             // shader path: it is the path that keeps exclusion-wall scattering stable. Refresh
             // that global body frame from the camera-selected source here, after all bodies have
             // updated, so a secondary pool's fog no longer inherits the primary body's volume.
-            Publisher.PublishBodyGlobals();
+            // Skipped when THIS body's uniforms already occupy the globals from this same frame
+            // (the primary publishes in Update): that republish was byte-identical - two reads of
+            // the same body state on the same frame - at ~170 native property writes per camera.
+            // A secondary FogSource still republishes, which is this refresh's whole purpose.
+            if (_globalsSource != this || _globalsFrame != Time.frameCount)
+                PublishBodyGlobalsTracked();
             bool submerged = ComputeCameraSubmerged(eyeCamera, out float surfaceY, out bool nearPlaneStraddles);
             // "The fog pass must run" and "the eye is in water" are two DIFFERENT questions, and
             // inside a semi-submerged exclusion volume they have opposite answers: the eye sits in

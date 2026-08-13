@@ -121,7 +121,7 @@ namespace AbstractOcclusion.WebGpuWater
             ApplyBodyBlock();           // per-body uniforms -> this body's renderers (MPB)
             // Primary bridge: mirror this body's data to globals as the fallback for objects
             // without a WaterMembership (those resolve their own containing body instead).
-            if (isPrimary) Publisher.PublishBodyGlobals();
+            if (isPrimary) PublishBodyGlobalsTracked();
             // The camera-submerged fog gate is refreshed in OnBeginCameraRender, NOT here: this body
             // updates at DefaultExecutionOrder -50, before the OrbitCamera moves the camera in
             // LateUpdate, so an Update-time read used the pre-move position and lagged the fog one
