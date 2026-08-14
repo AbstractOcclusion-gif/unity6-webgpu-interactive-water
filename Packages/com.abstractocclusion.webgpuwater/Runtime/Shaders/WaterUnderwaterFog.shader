@@ -5,9 +5,12 @@
 //   * Pond  (bounded):   the ray clipped to the pool box (pool space [-1,1] xz, [-1,0] y) via
 //                        IntersectCube -> a finite fog volume you can circle around.
 // Per-channel Beer-Lambert absorption + downwelling depth darkening, reusing the body's fog and
-// depth globals. Two hardware-blend passes so the scene colour never has to be copied:
-//   0 Absorb:    scene *= pathTransmittance * depthAttenuation   (Blend Zero SrcColor)
-//   1 Inscatter: scene += fog * (1 - pathTransmittance) * depthAttenuation   (Blend One One)
+// depth globals. The per-pixel solve runs ONCE (C1, 2026-08-13): the "WaterFogSolve" MRT pass at
+// the end of this file computes BOTH blend terms into two intermediate targets, and the two
+// hardware-blend passes are now single pixel loads of those targets - the scene colour still
+// never has to be copied and the blend states/order are unchanged:
+//   0 Absorb:    scene *= pathTransmittance * depthAttenuation   (Blend Zero SrcColor, loads _WaterFogSolveAbsorb)
+//   1 Inscatter: scene += fog * (1 - pathTransmittance) * depthAttenuation   (Blend One One, loads _WaterFogSolveInscatter)
 // Driven by WaterUnderwaterFogFeature (gated on WaterVolume.UnderwaterFogActive: ocean = submerged
 // only, pond = whenever Water Fog is on). U2: per-pixel wave-aware waterline - the surface crossing follows crests/troughs.
 // U3: quality-tier Simple mode (_UnderwaterFogSimple, a uniform so every pixel takes the same branch):
@@ -77,6 +80,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // filtering opposite signs together at the waterline.
         TEXTURE2D(_WaterFogClassifyRT);
 #endif
+        // C1 single-solve intermediates (2026-08-13): written by the "WaterFogSolve" MRT pass,
+        // loaded by the absorb/inscatter blend passes. Alpha carries the debug-view flag (1 = a
+        // fog debug view owns this pixel: absorb wipes, inscatter writes the false colour).
+        TEXTURE2D(_WaterFogSolveAbsorb);
+        TEXTURE2D(_WaterFogSolveInscatter);
         // Camera-local displaced height used only while producing the shared classification RT.
         // Unlike the 512 m / 2 m-texel march authority, this covers four metres at centimetre
         // texels and includes interactive ripples. G is raster coverage; an uncovered texel falls
@@ -590,7 +598,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // the flat rest plane past its reach - UNDERWATER_SEAM_BLEND_START).
             //
             // This block used to keep a closed-form FLAT rest-plane crossing for open water
-            // (WATER_FOG_BRANCH_FLAT_FALLBACK, now unreachable), on the premise that "no sheet
+            // (WATER_FOG_BRANCH_FLAT_FALLBACK - unreachable; its debug id is deleted), on the premise that "no sheet
             // rasterised" means the far horizon or a straight-down look. PARTIAL SUBMERSION
             // breaks that premise: the sheet is NEAR-CLIPPED around the lens, so the crossing
             // band itself has no prepass sample - and there the flat plane sits a whole swell
@@ -913,11 +921,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         }
 #endif
 
-        float ArmWeight(float2 uv, out float classifyGap, out float classifyPushDist)
+        float ArmWeight(float2 uv, out float classifyPushDist)
         {
             float3 classifyPoint = WaterlineClassifyPoint(uv, classifyPushDist);
+            // classifyGap pruned from the signature (2026-08-13): the caller reads the WEIGHT,
+            // never the raw gap, ever since the carve-waterline fix - and that fix is
+            // play-confirmed and committed (2026-07-28), so the parked refactor was unblocked.
             // gapSmooth is declared with classifyGap because ONE solve now produces both - see
             // the note on the smooth-vs-inverted split below, and SurfaceSignedGapChopInvertedPair.
+            float classifyGap;
             float gapSmooth;
 #ifdef WATER_FOG_SIMPLE
             classifyGap = classifyPoint.y - _UnderwaterSurfaceY;
@@ -1021,9 +1033,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         {
             // FIRST, ahead of every per-pixel march below: the waterline mask takes a screen
             // derivative and must be evaluated in uniform control flow.
-            float classifyGap;
             float classifyPushDist;
-            armWeight = ArmWeight(uv, classifyGap, classifyPushDist);
+            armWeight = ArmWeight(uv, classifyPushDist);
             // Zero-coverage exit. The mask multiplies BOTH passes' output (absorb takes
             // lerp(1, ..., armWeight), inscatter takes inscatter *= armWeight), so a pixel the
             // waterline feather has already zeroed cannot change a single texel no matter what the
@@ -1074,10 +1085,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // classifyGap <= 0, so open water, ponds, the straddling near plane and the horizon
             // are untouched.
             //
-            // classifyGap is now written and never read here. Left in place deliberately rather
-            // than pruned from ArmWeight's signature: that is a refactor and this is an experiment
-            // awaiting a play-test, and the two must not travel together. (The out-param the debug
-            // views actually read is classifyPushDist, via WaterFogDebugColor.)
+            // classifyGap was pruned from ArmWeight's signature on 2026-08-13: the play-test
+            // this paragraph once waited on confirmed the fix (committed 2026-07-28). (The
+            // out-param the debug views actually read is classifyPushDist, via WaterFogDebugColor.)
             bool rayStartsWet = armWeight >= WATERLINE_COVERAGE_WET_MIN;
             float3 sceneWorld = SceneWorldPos(uv);
             float pathLen;
@@ -1255,48 +1265,22 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             #pragma vertex Vert
             #pragma fragment FragAbsorb
             #pragma target 4.0
-            // multi_compile, NOT shader_feature: this material is created at runtime by
-            // CoreUtils.CreateEngineMaterial, so build-time variant stripping would have no material
-            // keyword state to inspect and could strip the variant we need.
-            // WATER_FOG_SIMPLE : compile out the wavy-crossing machinery (see the fence above).
-            #pragma multi_compile_fragment _ WATER_FOG_SIMPLE WATER_FOG_CLASSIFY_RT
-            // Strips the shore/surf machinery (ShoreSample + EvaluateSurfWaves fences) out of the
-            // module for bodies that never consume the shore substrate (useBedDepth off). Purely a
-            // COMPILE-TIME twin of the runtime inert path - identical output, a fraction of the
-            // ~600 KB Full-variant bytecode and its minutes-long d3d11 optimize (2026-08-10).
-            // Keyword set beside WATER_FOG_SIMPLE in WaterUniformPublisher.PublishUnderwater.
-            #pragma multi_compile_fragment _ WATER_STRIP_SHORE
+            // The heavy solve and ALL its variants (WATER_FOG_SIMPLE / WATER_FOG_CLASSIFY_RT /
+            // WATER_STRIP_SHORE / WATER_FOG_POINT_LIGHTS) live in the "WaterFogSolve" MRT pass
+            // since the C1 single-solve restructure (2026-08-13): this fragment is one pixel
+            // load of the solved absorb term, identical in every variant, so the heavy module
+            // compiles once per variant instead of twice across two fullscreen passes.
 
             half4 FragAbsorb(Varyings input) : SV_Target
             {
-                float3 depthAttenuation;
-                float sunVisibilityUnused; // absorption is sun-independent; only the in-scatter shadows
-                float armWeight;
-                float4 debugColor;
-                float3 wetStartUnused;    // the wet segment feeds only the inscatter's light loop
-                float wetSpanUnused;
-                float3 pathTransmittance = UnderwaterFog(input.uv, depthAttenuation, sunVisibilityUnused,
-                                                         armWeight, debugColor,
-                                                         wetStartUnused, wetSpanUnused);
+                float4 solved = LOAD_TEXTURE2D(_WaterFogSolveAbsorb, int2(input.positionCS.xy));
                 // Debug view: WIPE the frame. This pass blends Zero SrcColor (dst *= src), so
                 // returning 0 clears the target and the in-scatter pass immediately after - Blend
                 // One One - writes the false colour into it. The two passes that already exist ARE
-                // the replacement: no extra render pass, no C# change, nothing left behind when off.
-                if (debugColor.a > 0.5) return half4(0.0, 0.0, 0.0, 1.0);
-                // Per-pixel arm fade: below-line rays are full-strength instantly (weight 1); only
-                // the through-surface murk eases in, so the gate can flip a frame early/late with
-                // no visible change (at murk weight 0 the multiplier is 1 = scene untouched).
-                float3 absorb = lerp(float3(1.0, 1.0, 1.0), pathTransmittance * depthAttenuation,
-                                     armWeight);
-                // F8 finite tattler (2026-08-11): a non-finite absorb multiplies the scene by
-                // NaN/Inf - rendered as unpredictable dark pixels no debug VIEW can show,
-                // because the views replace this output instead of measuring it. Confess in
-                // the beauty instead: output "no absorb" (1), so if the dark marks vanish
-                // while the inscatter tattler below stays quiet, the NaN lives in THIS chain
-                // (transmittance / depth attenuation / mask). Never fires on healthy pixels.
-                if (any(isnan(absorb)) || any(isinf(absorb)))
-                    return half4(1.0, 1.0, 1.0, 1.0);
-                return half4(absorb + FogDither(input.positionCS.xy), 1.0);
+                // the replacement: no extra render pass, nothing left behind when off. The flag
+                // rides the solve target's alpha - decided once, in the solve.
+                if (solved.a > 0.5) return half4(0.0, 0.0, 0.0, 1.0);
+                return half4(solved.rgb + FogDither(input.positionCS.xy), 1.0);
             }
             ENDHLSL
         }
@@ -1311,84 +1295,16 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             #pragma vertex Vert
             #pragma fragment FragInscatter
             #pragma target 4.0
-            #pragma multi_compile_fragment _ WATER_FOG_SIMPLE WATER_FOG_CLASSIFY_RT
-            // Strips the shore/surf machinery (ShoreSample + EvaluateSurfWaves fences) out of the
-            // module for bodies that never consume the shore substrate (useBedDepth off). Purely a
-            // COMPILE-TIME twin of the runtime inert path - identical output, a fraction of the
-            // ~600 KB Full-variant bytecode and its minutes-long d3d11 optimize (2026-08-10).
-            // Keyword set beside WATER_FOG_SIMPLE in WaterUniformPublisher.PublishUnderwater.
-            #pragma multi_compile_fragment _ WATER_STRIP_SHORE
-            // Point/spot-light scattering in the fog. THIS PASS ONLY (the absorb pass never
-            // in-scatters), so the variant count stays contained. A keyword, not a uniform: an
-            // 8-light loop behind a uniform branch would still size every legacy pixel's
-            // registers (the fps-cliff rule). multi_compile because this material is created at
-            // runtime by CoreUtils.CreateEngineMaterial - build-time stripping has no material
-            // keyword state to inspect. Armed by the publisher from the SAME per-body knob the
-            // strength float carries, and never together with WATER_FOG_SIMPLE.
-            #pragma multi_compile_fragment _ WATER_FOG_POINT_LIGHTS
-
-            // The light list + the shared closed-form integral (WaterSceneLightsInscatter) live
-            // in WaterFog.hlsl - the package's OWN published lights, shared verbatim with the
-            // surface's from-above transmitted term. See that header for the math and for why
-            // URP's additional-light arrays are deliberately not used.
+            // Variant-free since C1 (2026-08-13) - see the absorb pass note. The point-light
+            // loop moved to the "WaterFogSolve" pass with everything else.
 
             half4 FragInscatter(Varyings input) : SV_Target
             {
-                float3 depthAttenuation;
-                float sunVisibility;
-                float armWeight;
-                float4 debugColor;
-                float3 wetStart;
-                float wetSpanLen;
-                float3 pathTransmittance = UnderwaterFog(input.uv, depthAttenuation, sunVisibility,
-                                                         armWeight, debugColor,
-                                                         wetStart, wetSpanLen);
-                // Additive onto the target the absorb pass just cleared: this IS the view.
-                if (debugColor.a > 0.5) return half4(debugColor.rgb, 1.0);
-                // Lit in-scatter target: the same WaterInscatterColor the surface uses, so the fog colour
-                // seen from below matches the water colour seen from above (continuous across the waterline).
-                // The view ray is surface->camera, reconstructed from the scene depth. WaterInscatterColor
-                // returns the flat _WaterFogColor when scattering is off, so this is a no-op until enabled.
-                float3 sceneWorld = SceneWorldPos(input.uv);
-                float3 viewDirWS = normalize(_WorldSpaceCameraPos - sceneWorld);
-                // Sun colour attenuated by the exclusion-volume sun visibility: only the DIRECT
-                // term darkens (WaterInscatterColor's ambient term ignores sunColor), so the
-                // carve shadow reads as a lit fog losing its beam, never as black.
-                float3 fogColor = WaterInscatterColor(viewDirWS, _LightDir, _SunColor * sunVisibility, 0.0);
-                // Overall floor multiplier on top: with Volume Scatter OFF the flat fog colour
-                // ignores sunColor entirely, which made the carve shadow invisible on flat-fog
-                // bodies; this keeps a visible (never black) shadow column in both modes.
-                fogColor *= lerp(EXCLUSION_SHADOW_FLOOR, 1.0, sunVisibility);
-                float3 inscatter = fogColor * (1.0 - pathTransmittance);
-                // Per-pixel arm fade: additive term scales straight to 0, mirroring the absorb pass.
-                inscatter *= armWeight;
-                float3 total = inscatter * depthAttenuation;
-#if defined(WATER_FOG_POINT_LIGHTS) && !defined(WATER_FOG_SIMPLE)
-                // Scene-light glow, added AFTER the downwelling multiply above: local lights
-                // never crossed the surface, so the sun's depth darkening does not apply to them
-                // (their own extinction-to-light is inside the integral, measured from where the
-                // WATER starts - tStart - so a from-air crossing ray does not extinguish its
-                // glow through the air segment). Rides the SAME armWeight as the fog, so the
-                // glow can never paint an above-waterline pixel.
-                if (wetSpanLen > 0.0)
-                {
-                    float3 dir = normalize(sceneWorld - _WorldSpaceCameraPos);
-                    float tStart = distance(_WorldSpaceCameraPos, wetStart);
-                    total += WaterSceneLightsInscatter(_WorldSpaceCameraPos, dir, tStart,
-                                                       tStart + wetSpanLen, tStart,
-                                                       _VolumeCenter.y)
-                           * (_UnderwaterLightScatter * armWeight);
-                }
-#endif
-                // F8 finite tattler (2026-08-11), the inscatter half: a non-finite total adds
-                // NaN/Inf into the scene - dark marks in the beauty that cluster wherever the
-                // guilty term is strong (the lamp glow being the standing suspect: the div0
-                // compile diagnostic names THIS pass's POINT_LIGHTS variant). Confess as pure
-                // MAGENTA in the beauty - no debug view to select, no frame-debugger jitter.
-                // Never fires on healthy pixels.
-                if (any(isnan(total)) || any(isinf(total)))
-                    return half4(1.0, 0.0, 1.0, 1.0);
-                return half4(total + FogDither(input.positionCS.xy), 1.0);
+                float4 solved = LOAD_TEXTURE2D(_WaterFogSolveInscatter, int2(input.positionCS.xy));
+                // Additive onto the target the absorb pass just cleared: this IS the view. No
+                // dither on a debug false colour - the views are read by exact colour purity.
+                if (solved.a > 0.5) return half4(solved.rgb, 1.0);
+                return half4(solved.rgb + FogDither(input.positionCS.xy), 1.0);
             }
             ENDHLSL
         }
@@ -1407,6 +1323,121 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             #pragma fragment FragClassify
             #pragma target 4.0
             #pragma multi_compile_fragment _ WATER_STRIP_SHORE
+            ENDHLSL
+        }
+
+        // ---- Solve pass (C1, 2026-08-13): the ONE full per-pixel fog solve ------------------
+        // Absorb and inscatter each used to run the entire UnderwaterFog() machinery - segment
+        // solve, 16-step march + refine, exclusion loops, downwelling, clarity - so every armed
+        // pixel paid it twice. This MRT pass runs it once and writes both finished blend terms;
+        // passes 0/1 load them. Found by NAME in WaterUnderwaterFogPass (material pass indices
+        // 0-4 are load-bearing), and carrying ALL the heavy variants so each expensive program
+        // compiles once instead of twice across two fullscreen passes.
+        Pass
+        {
+            Name "WaterFogSolve"
+
+            HLSLPROGRAM
+            #pragma vertex Vert
+            #pragma fragment FragSolve
+            #pragma target 4.0
+            // multi_compile, NOT shader_feature: this material is created at runtime by
+            // CoreUtils.CreateEngineMaterial, so build-time variant stripping would have no material
+            // keyword state to inspect and could strip the variant we need.
+            // WATER_FOG_SIMPLE : compile out the wavy-crossing machinery (see the fence above).
+            #pragma multi_compile_fragment _ WATER_FOG_SIMPLE WATER_FOG_CLASSIFY_RT
+            // Strips the shore/surf machinery (ShoreSample + EvaluateSurfWaves fences) out of the
+            // module for bodies that never consume the shore substrate (useBedDepth off). Purely a
+            // COMPILE-TIME twin of the runtime inert path - identical output, a fraction of the
+            // ~600 KB Full-variant bytecode and its minutes-long d3d11 optimize (2026-08-10).
+            // Keyword set beside WATER_FOG_SIMPLE in WaterUniformPublisher.PublishUnderwater.
+            #pragma multi_compile_fragment _ WATER_STRIP_SHORE
+            // Point/spot-light scattering in the fog. Solve-only (the blend passes carry no
+            // light loop). A keyword, not a uniform: an 8-light loop behind a uniform branch
+            // would still size every pixel's registers (the fps-cliff rule, 2026-07-29). Armed
+            // by the publisher, and never together with WATER_FOG_SIMPLE.
+            #pragma multi_compile_fragment _ WATER_FOG_POINT_LIGHTS
+
+            struct SolveOutputs
+            {
+                // rgb = lerp(1, pathTransmittance * depthAttenuation, armWeight); a = debug flag.
+                half4 absorb : SV_Target0;
+                // rgb = armed inscatter total (or the debug false colour); a = debug flag.
+                half4 inscatter : SV_Target1;
+            };
+
+            SolveOutputs FragSolve(Varyings input)
+            {
+                float3 depthAttenuation;
+                float sunVisibility;
+                float armWeight;
+                float4 debugColor;
+                float3 wetStart;
+                float wetSpanLen;
+                float3 pathTransmittance = UnderwaterFog(input.uv, depthAttenuation, sunVisibility,
+                                                         armWeight, debugColor,
+                                                         wetStart, wetSpanLen);
+                SolveOutputs output;
+                if (debugColor.a > 0.5)
+                {
+                    // A fog debug view owns the frame: the absorb pass wipes, the inscatter pass
+                    // writes this false colour. Decided here, carried on the alpha flags.
+                    output.absorb = half4(0.0, 0.0, 0.0, 1.0);
+                    output.inscatter = half4(debugColor.rgb, 1.0);
+                    return output;
+                }
+                // Per-pixel arm fade: below-line rays are full-strength instantly (weight 1); only
+                // the through-surface murk eases in, so the gate can flip a frame early/late with
+                // no visible change (at murk weight 0 the multiplier is 1 = scene untouched).
+                float3 absorb = lerp(float3(1.0, 1.0, 1.0), pathTransmittance * depthAttenuation,
+                                     armWeight);
+                // F8 finite tattler (2026-08-11), absorb half: a non-finite absorb multiplies the
+                // scene by NaN/Inf. Confess in the beauty as "no absorb" (1): if the dark marks
+                // vanish while the magenta tattler below stays quiet, the NaN lives in the
+                // transmittance / depth-attenuation / mask chain. Never fires on healthy pixels.
+                if (any(isnan(absorb)) || any(isinf(absorb)))
+                    absorb = float3(1.0, 1.0, 1.0);
+                // Lit in-scatter target: the same WaterInscatterColor the surface uses, so the fog
+                // colour seen from below matches the water colour seen from above (continuous
+                // across the waterline). The view ray is surface->camera, from the scene depth.
+                float3 sceneWorld = SceneWorldPos(input.uv);
+                float3 viewDirWS = normalize(_WorldSpaceCameraPos - sceneWorld);
+                // Sun colour attenuated by the exclusion-volume sun visibility: only the DIRECT
+                // term darkens (WaterInscatterColor's ambient term ignores sunColor), so the
+                // carve shadow reads as a lit fog losing its beam, never as black.
+                float3 fogColor = WaterInscatterColor(viewDirWS, _LightDir, _SunColor * sunVisibility, 0.0);
+                // Overall floor multiplier on top: keeps a visible (never black) shadow column
+                // whether Volume Scatter is on or off.
+                fogColor *= lerp(EXCLUSION_SHADOW_FLOOR, 1.0, sunVisibility);
+                float3 inscatter = fogColor * (1.0 - pathTransmittance);
+                // Per-pixel arm fade: additive term scales straight to 0, mirroring the absorb term.
+                inscatter *= armWeight;
+                float3 total = inscatter * depthAttenuation;
+#if defined(WATER_FOG_POINT_LIGHTS) && !defined(WATER_FOG_SIMPLE)
+                // Scene-light glow, added AFTER the downwelling multiply above: local lights
+                // never crossed the surface, so the sun's depth darkening does not apply to them
+                // (their own extinction-to-light is inside the integral, measured from where the
+                // WATER starts - tStart). Rides the SAME armWeight as the fog, so the glow can
+                // never paint an above-waterline pixel.
+                if (wetSpanLen > 0.0)
+                {
+                    float3 dir = normalize(sceneWorld - _WorldSpaceCameraPos);
+                    float tStart = distance(_WorldSpaceCameraPos, wetStart);
+                    total += WaterSceneLightsInscatter(_WorldSpaceCameraPos, dir, tStart,
+                                                       tStart + wetSpanLen, tStart,
+                                                       _VolumeCenter.y)
+                           * (_UnderwaterLightScatter * armWeight);
+                }
+#endif
+                // F8 finite tattler, inscatter half: a non-finite total adds NaN/Inf into the
+                // scene. Confess as pure MAGENTA in the beauty - no debug view to select, no
+                // frame-debugger jitter. Never fires on healthy pixels.
+                if (any(isnan(total)) || any(isinf(total)))
+                    total = float3(1.0, 0.0, 1.0);
+                output.absorb = half4(absorb, 0.0);
+                output.inscatter = half4(total, 0.0);
+                return output;
+            }
             ENDHLSL
         }
     }

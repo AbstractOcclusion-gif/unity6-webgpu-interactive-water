@@ -34,6 +34,14 @@ namespace AbstractOcclusion.WebGpuWater
         const string ClassifyRtTextureName = "_WaterFogClassifyRT";
         const string ClassifyRtKeyword = "WATER_FOG_CLASSIFY_RT";
         const GraphicsFormat ClassifyRtFormat = GraphicsFormat.R32G32_SFloat;
+        // C1 single-solve intermediates (2026-08-13): the "WaterFogSolve" MRT pass runs the full
+        // per-pixel fog solve ONCE and writes both blend terms; the absorb/inscatter draws just
+        // load them. Half floats: the terms already travelled through half4 fragment outputs, so
+        // 16 bits per channel loses nothing. Alpha carries the debug-view flag.
+        const string SolveShaderPassName = "WaterFogSolve";
+        const string SolveAbsorbTextureName = "_WaterFogSolveAbsorb";
+        const string SolveInscatterTextureName = "_WaterFogSolveInscatter";
+        const GraphicsFormat SolveRtFormat = GraphicsFormat.R16G16B16A16_SFloat;
         // "WaterRestoreOpaqueDepth": rewrites the depth attachment from the opaque-only
         // _CameraDepthTexture so user transparents drawn after the water stack stop
         // z-failing behind the sheet's ZWrite On depth (the cross-side transparent fix).
@@ -74,6 +82,14 @@ namespace AbstractOcclusion.WebGpuWater
         const float LensHeightRtHalfExtent = LensHeightRtWindowSize * 0.5f;
         const float LensHeightRtTexelSize = LensHeightRtWindowSize / LensHeightRtResolution;
         const float LensHeightRtGridCellSize = 0.125f;
+        // C3 (2026-08-13): the 16 m chop apron is the maximum horizontal chop reach and must NOT
+        // shrink (storm chop would hole the centimetre waterline) - but at 0.125 m cells it was
+        // 128 cells per side: ~98% of an 83k-vert grid whose only job is delivering geometry
+        // displaced INTO the 4 m window, which the raster interpolates anyway. The apron ring
+        // therefore samples at 1 m; the dense window keeps its centimetre cells; the 8:1 boundary
+        // is stitched with triangle fans so independently displaced vertices cannot open
+        // T-junction cracks in the height/coverage raster. ~83k verts -> ~2.4k.
+        const float LensApronCellSize = 1f;
         const string LensHeightRtTextureName = "_WaterLensHeightRT";
         const string LensHeightRtDepthName = "WaterLensHeightRT.Depth";
         const string HeightRtGridName = "WaterHeightRT.Grid";
@@ -92,6 +108,9 @@ namespace AbstractOcclusion.WebGpuWater
         const float PrepassResolutionScale = 0.5f;
         static readonly int ID_WaterlineSceneTex = Shader.PropertyToID("_WaterlineSceneTex");
         static readonly int ID_WaterFogClassifyRT = Shader.PropertyToID(ClassifyRtTextureName);
+        static readonly int ID_WaterFogSolveAbsorb = Shader.PropertyToID(SolveAbsorbTextureName);
+        static readonly int ID_WaterFogSolveInscatter =
+            Shader.PropertyToID(SolveInscatterTextureName);
 
         readonly Material _material;
         readonly Material _heightRtMaterial;
@@ -100,9 +119,16 @@ namespace AbstractOcclusion.WebGpuWater
         readonly ProfilingSampler _heightRtSampler = new ProfilingSampler("WaterUnderwaterFog.HeightRT");
         readonly ProfilingSampler _lensHeightRtSampler = new ProfilingSampler(LensHeightRtPassName);
         readonly ProfilingSampler _classifySampler = new ProfilingSampler("WaterUnderwaterFog.Classify");
+        readonly ProfilingSampler _solveSampler = new ProfilingSampler("WaterUnderwaterFog.Solve");
         readonly int _classifyShaderPass;
         readonly bool _classifyRtSupported;
         readonly bool _lensHeightRtSupported;
+        readonly int _solveShaderPass;
+        readonly bool _solveRtSupported;
+        // One complaint per session, not per frame: C1 makes the solve pass a hard requirement
+        // of the fog chain (the blend passes have nothing correct to load without it), so a
+        // missing pass/format skips the fog and says so once.
+        static bool s_SolveUnsupportedLogged;
         // Reused each frame so the prepass allocates no garbage.
         readonly MaterialPropertyBlock _scratchBlock = new MaterialPropertyBlock();
         static readonly List<Renderer> s_SurfaceRenderers = new List<Renderer>();
@@ -116,8 +142,13 @@ namespace AbstractOcclusion.WebGpuWater
             _classifyShaderPass = material != null
                 ? material.FindPass(ClassifyShaderPassName)
                 : InvalidShaderPass;
+            _solveShaderPass = material != null
+                ? material.FindPass(SolveShaderPassName)
+                : InvalidShaderPass;
             _classifyRtSupported = SystemInfo.IsFormatSupported(ClassifyRtFormat,
                                                                 GraphicsFormatUsage.Render);
+            _solveRtSupported = SystemInfo.IsFormatSupported(SolveRtFormat,
+                                                             GraphicsFormatUsage.Render);
             _lensHeightRtSupported = SystemInfo.IsFormatSupported(LensHeightRtFormat,
                                                                    GraphicsFormatUsage.Render)
                                   && SystemInfo.IsFormatSupported(LensHeightRtFormat,
@@ -128,6 +159,12 @@ namespace AbstractOcclusion.WebGpuWater
         sealed class PassData
         {
             public Material material;
+        }
+
+        sealed class SolvePassData
+        {
+            public Material material;
+            public int shaderPass;
             public bool useClassifyRt;
         }
 
@@ -412,8 +449,12 @@ namespace AbstractOcclusion.WebGpuWater
 
         static Mesh GetLensHeightRtGrid()
         {
-            return GetOrCreateHeightRtGrid(ref s_LensHeightRtGrid, LensHeightRtGridName,
-                                           LensHeightRtWindowSize, LensHeightRtGridCellSize);
+            if (s_LensHeightRtGrid != null) return s_LensHeightRtGrid;
+            s_LensHeightRtGrid = CreateTwoDensityGrid(LensHeightRtGridName,
+                                                      LensHeightRtWindowSize,
+                                                      LensHeightRtGridCellSize,
+                                                      HeightRtChopApron, LensApronCellSize);
+            return s_LensHeightRtGrid;
         }
 
         static Mesh GetOrCreateHeightRtGrid(ref Mesh grid, string name, float windowSize,
@@ -464,6 +505,182 @@ namespace AbstractOcclusion.WebGpuWater
             grid.bounds = new Bounds(Vector3.zero,
                 new Vector3(gridHalfExtent * 2f, HeightRtDepthRange, gridHalfExtent * 2f));
             return grid;
+        }
+
+        // Two-density grid (C3): a dense inner window, a coarse apron ring, and a one-coarse-cell
+        // stitching band of triangle fans between them, so the 8:1 vertex-density change shares
+        // every boundary vertex. A T-junction would let independently displaced vertices open
+        // cracks in the rasterised height/coverage exactly where storm chop hands off into the
+        // window; the fans make the two lattices watertight by construction.
+        static Mesh CreateTwoDensityGrid(string name, float windowSize, float innerCellSize,
+                                         float apron, float coarseCellSize)
+        {
+            const float LatticeEpsilon = 1e-4f;
+            int stitchRatio = Mathf.RoundToInt(coarseCellSize / innerCellSize);
+            if (Mathf.Abs(stitchRatio * innerCellSize - coarseCellSize) > LatticeEpsilon)
+                throw new System.InvalidOperationException(
+                    "CreateTwoDensityGrid: the coarse cell must be an integer multiple of the inner cell.");
+            float innerHalf = windowSize * 0.5f;
+            if (Mathf.Abs(Mathf.Round(innerHalf / coarseCellSize) * coarseCellSize - innerHalf)
+                > LatticeEpsilon)
+                throw new System.InvalidOperationException(
+                    "CreateTwoDensityGrid: the window half extent must sit on the coarse lattice.");
+            float outerHalf = innerHalf + apron;
+            // The pure-coarse region starts one coarse cell outside the dense window; the frame
+            // between the two squares is the stitching band.
+            float coarseInnerHalf = innerHalf + coarseCellSize;
+
+            var vertices = new List<Vector3>();
+            var indices = new List<int>();
+
+            void AddQuad(int lowerLeft, int upperLeft, int lowerRight, int upperRight)
+            {
+                indices.Add(lowerLeft); indices.Add(upperLeft); indices.Add(lowerRight);
+                indices.Add(lowerRight); indices.Add(upperLeft); indices.Add(upperRight);
+            }
+
+            // Winding of the plain quads above is negative in xz; the fans match it by
+            // construction here, so the mesh stays orientation-consistent (the height RT
+            // material culls off today, but a consistent mesh keeps that a free choice).
+            void AddTriangleOriented(int a, int b, int c)
+            {
+                Vector3 pa = vertices[a];
+                Vector3 pb = vertices[b];
+                Vector3 pc = vertices[c];
+                float cross = (pb.x - pa.x) * (pc.z - pa.z) - (pb.z - pa.z) * (pc.x - pa.x);
+                if (cross > 0f) { int swap = b; b = c; c = swap; }
+                indices.Add(a); indices.Add(b); indices.Add(c);
+            }
+
+            // 1) Dense inner grid, plain quads.
+            int innerCells = Mathf.RoundToInt(windowSize / innerCellSize);
+            int innerVertsPerAxis = innerCells + 1;
+            for (int z = 0; z < innerVertsPerAxis; z++)
+                for (int x = 0; x < innerVertsPerAxis; x++)
+                    vertices.Add(new Vector3(-innerHalf + x * innerCellSize, 0f,
+                                             -innerHalf + z * innerCellSize));
+            int DenseIndex(int xi, int zi) => zi * innerVertsPerAxis + xi;
+            for (int z = 0; z < innerCells; z++)
+            {
+                for (int x = 0; x < innerCells; x++)
+                {
+                    int lowerLeft = DenseIndex(x, z);
+                    AddQuad(lowerLeft, lowerLeft + innerVertsPerAxis,
+                            lowerLeft + 1, lowerLeft + innerVertsPerAxis + 1);
+                }
+            }
+
+            // 2) Coarse lattice vertices: every coarse point of the full grid on or outside the
+            //    coarse inner square (its strict interior belongs to the dense grid + the fans).
+            int coarseCellsPerAxis = Mathf.RoundToInt(outerHalf * 2f / coarseCellSize);
+            int coarseVertsPerAxis = coarseCellsPerAxis + 1;
+            var coarseLookup = new int[coarseVertsPerAxis * coarseVertsPerAxis];
+            for (int i = 0; i < coarseLookup.Length; i++) coarseLookup[i] = -1;
+            for (int z = 0; z < coarseVertsPerAxis; z++)
+            {
+                for (int x = 0; x < coarseVertsPerAxis; x++)
+                {
+                    float worldX = -outerHalf + x * coarseCellSize;
+                    float worldZ = -outerHalf + z * coarseCellSize;
+                    if (Mathf.Max(Mathf.Abs(worldX), Mathf.Abs(worldZ))
+                        < coarseInnerHalf - LatticeEpsilon) continue;
+                    coarseLookup[z * coarseVertsPerAxis + x] = vertices.Count;
+                    vertices.Add(new Vector3(worldX, 0f, worldZ));
+                }
+            }
+            int CoarseAt(float worldX, float worldZ)
+            {
+                int xi = Mathf.RoundToInt((worldX + outerHalf) / coarseCellSize);
+                int zi = Mathf.RoundToInt((worldZ + outerHalf) / coarseCellSize);
+                int index = coarseLookup[zi * coarseVertsPerAxis + xi];
+                if (index < 0)
+                    throw new System.InvalidOperationException(
+                        "CreateTwoDensityGrid: missing coarse vertex at (" + worldX + ", "
+                        + worldZ + ").");
+                return index;
+            }
+
+            // 3) Coarse quads: every coarse cell not fully inside the coarse inner square.
+            for (int z = 0; z < coarseCellsPerAxis; z++)
+            {
+                for (int x = 0; x < coarseCellsPerAxis; x++)
+                {
+                    float x0 = -outerHalf + x * coarseCellSize;
+                    float z0 = -outerHalf + z * coarseCellSize;
+                    bool insideHole = x0 > -coarseInnerHalf - LatticeEpsilon
+                                   && x0 + coarseCellSize < coarseInnerHalf + LatticeEpsilon
+                                   && z0 > -coarseInnerHalf - LatticeEpsilon
+                                   && z0 + coarseCellSize < coarseInnerHalf + LatticeEpsilon;
+                    if (insideHole) continue;
+                    AddQuad(CoarseAt(x0, z0),
+                            CoarseAt(x0, z0 + coarseCellSize),
+                            CoarseAt(x0 + coarseCellSize, z0),
+                            CoarseAt(x0 + coarseCellSize, z0 + coarseCellSize));
+                }
+            }
+
+            // 4) Stitching fans: each 1-coarse-cell boundary segment fans onto the stitchRatio+1
+            //    dense edge vertices it spans, split at the midpoint so the fans stay shallow.
+            void StitchSide(bool horizontal, float sign)
+            {
+                float outerEdge = coarseInnerHalf * sign;
+                int denseEdgeIndex = sign > 0f ? innerCells : 0;
+                int segments = Mathf.RoundToInt(windowSize / coarseCellSize);
+                int mid = stitchRatio / 2;
+                for (int segment = 0; segment < segments; segment++)
+                {
+                    float segmentStart = -innerHalf + segment * coarseCellSize;
+                    int outer0 = horizontal ? CoarseAt(segmentStart, outerEdge)
+                                            : CoarseAt(outerEdge, segmentStart);
+                    int outer1 = horizontal
+                        ? CoarseAt(segmentStart + coarseCellSize, outerEdge)
+                        : CoarseAt(outerEdge, segmentStart + coarseCellSize);
+                    int Dense(int step)
+                    {
+                        int along = segment * stitchRatio + step;
+                        return horizontal ? DenseIndex(along, denseEdgeIndex)
+                                          : DenseIndex(denseEdgeIndex, along);
+                    }
+                    for (int step = 0; step < mid; step++)
+                        AddTriangleOriented(outer0, Dense(step), Dense(step + 1));
+                    AddTriangleOriented(outer0, Dense(mid), outer1);
+                    for (int step = mid; step < stitchRatio; step++)
+                        AddTriangleOriented(outer1, Dense(step), Dense(step + 1));
+                }
+            }
+            StitchSide(true, 1f);   // north (+z)
+            StitchSide(true, -1f);  // south
+            StitchSide(false, 1f);  // east (+x)
+            StitchSide(false, -1f); // west
+
+            // 5) The four corner cells of the stitching band: one dense corner + three coarse
+            //    vertices each, every edge shared with a neighbouring fan or coarse quad.
+            void CornerQuad(float signX, float signZ)
+            {
+                int denseCorner = DenseIndex(signX > 0f ? innerCells : 0,
+                                             signZ > 0f ? innerCells : 0);
+                int outerCorner = CoarseAt(coarseInnerHalf * signX, coarseInnerHalf * signZ);
+                int edgeAlongX = CoarseAt(coarseInnerHalf * signX, innerHalf * signZ);
+                int edgeAlongZ = CoarseAt(innerHalf * signX, coarseInnerHalf * signZ);
+                AddTriangleOriented(denseCorner, edgeAlongX, outerCorner);
+                AddTriangleOriented(denseCorner, outerCorner, edgeAlongZ);
+            }
+            CornerQuad(1f, 1f);
+            CornerQuad(1f, -1f);
+            CornerQuad(-1f, 1f);
+            CornerQuad(-1f, -1f);
+
+            var mesh = new Mesh
+            {
+                name = name,
+                indexFormat = IndexFormat.UInt32,
+                hideFlags = HideFlags.HideAndDontSave
+            };
+            mesh.SetVertices(vertices);
+            mesh.SetIndices(indices, MeshTopology.Triangles, 0, calculateBounds: false);
+            mesh.bounds = new Bounds(Vector3.zero,
+                new Vector3(outerHalf * 2f, HeightRtDepthRange, outerHalf * 2f));
+            return mesh;
         }
 
         // The waterline meniscus draws over the fogged scene AND (for the KWS-style lens tension)
@@ -614,31 +831,92 @@ namespace AbstractOcclusion.WebGpuWater
         void RecordFogPass(RenderGraph renderGraph, UniversalResourceData resources,
                            TextureHandle cameraColor, string passName, TextureHandle classifyRt)
         {
+            // C1 hard requirement: the blend draws below only load what the solve pass wrote, so
+            // without the pass or a renderable half-float MRT format there is nothing correct to
+            // composite. Fail fast and visibly (once) rather than blending garbage.
+            if (_solveShaderPass == InvalidShaderPass || !_solveRtSupported)
+            {
+                if (!s_SolveUnsupportedLogged)
+                {
+                    s_SolveUnsupportedLogged = true;
+                    Debug.LogError(
+                        "WaterUnderwaterFogPass: 'WaterFogSolve' shader pass or R16G16B16A16_SFloat "
+                        + "render support missing - underwater fog skipped.");
+                }
+                return;
+            }
+
+            TextureHandle solveAbsorb = CreateSolveTexture(renderGraph, cameraColor,
+                                                           SolveAbsorbTextureName);
+            TextureHandle solveInscatter = CreateSolveTexture(renderGraph, cameraColor,
+                                                              SolveInscatterTextureName);
+            RecordFogSolvePass(renderGraph, resources, solveAbsorb, solveInscatter, classifyRt);
+
             using var builder = renderGraph.AddRasterRenderPass<PassData>(passName, out PassData data, _sampler);
 
             data.material = _material;
-            data.useClassifyRt = classifyRt.IsValid();
             // ReadWrite loads the existing scene so the hardware blend composites onto it.
             builder.SetRenderAttachment(cameraColor, 0, AccessFlags.ReadWrite);
-            if (resources.cameraDepthTexture.IsValid())
-                builder.UseTexture(resources.cameraDepthTexture, AccessFlags.Read);
-            if (classifyRt.IsValid()) builder.UseTexture(classifyRt, AccessFlags.Read);
-            builder.UseAllGlobalTextures(true); // published fog globals (shore field, FFT displacement, ...)
-            // See the waterline pass above: variant selection mutates command-buffer global state.
-            builder.AllowGlobalStateModification(true);
+            builder.UseTexture(solveAbsorb, AccessFlags.Read);
+            builder.UseTexture(solveInscatter, AccessFlags.Read);
+            // The solve targets are read through their global names (the SetGlobalTextureAfterPass
+            // handoff convention) - same UseTexture + globals pairing the classify RT ships with.
+            builder.UseAllGlobalTextures(true);
             // Two draws, ONE raster pass. Absorb multiplies the destination (Blend Zero SrcColor) and
             // inscatter adds to it (Blend One One) - both composite through the fixed-function blender,
             // and NEITHER shader samples the colour target, so this is ordinary blend accumulation in
             // submission order, not a read-after-write on the attachment. (Where a self-read IS needed,
             // RecordWaterlinePass copies to a transient first - deliberately, for exactly that reason.)
-            // Same shape as WaterCausticProjectionPass, which already accumulates N fullscreen draws
-            // with this very pair of blend modes into one ReadWrite colour attachment.
+            // Since C1 both draws are single loads of the solve targets: variant-free, so the keyword
+            // juggling this pass used to do moved to RecordFogSolvePass with the heavy programs.
             builder.SetRenderFunc((PassData d, RasterGraphContext ctx) =>
+            {
+                CoreUtils.DrawFullScreen(ctx.cmd, d.material, null, AbsorbShaderPass);
+                CoreUtils.DrawFullScreen(ctx.cmd, d.material, null, InscatterShaderPass);
+            });
+        }
+
+        static TextureHandle CreateSolveTexture(RenderGraph renderGraph, TextureHandle sizeSource,
+                                                string name)
+        {
+            TextureDesc desc = renderGraph.GetTextureDesc(sizeSource);
+            desc.name = name;
+            desc.colorFormat = SolveRtFormat;
+            desc.depthBufferBits = DepthBits.None;
+            desc.msaaSamples = MSAASamples.None;
+            desc.clearBuffer = false; // the fullscreen solve writes every pixel
+            return renderGraph.CreateTexture(desc);
+        }
+
+        // The single full per-pixel fog solve (C1): runs the "WaterFogSolve" MRT pass once into
+        // the two intermediates the blend pass loads. Carries the classify-RT keyword selection
+        // that used to wrap the two heavy draws.
+        void RecordFogSolvePass(RenderGraph renderGraph, UniversalResourceData resources,
+                                TextureHandle solveAbsorb, TextureHandle solveInscatter,
+                                TextureHandle classifyRt)
+        {
+            using var builder = renderGraph.AddRasterRenderPass<SolvePassData>(
+                _solveSampler.name, out SolvePassData data, _solveSampler);
+            data.material = _material;
+            data.shaderPass = _solveShaderPass;
+            data.useClassifyRt = classifyRt.IsValid();
+            builder.SetRenderAttachment(solveAbsorb, 0, AccessFlags.Write);
+            builder.SetRenderAttachment(solveInscatter, 1, AccessFlags.Write);
+            if (resources.cameraDepthTexture.IsValid())
+                builder.UseTexture(resources.cameraDepthTexture, AccessFlags.Read);
+            if (classifyRt.IsValid()) builder.UseTexture(classifyRt, AccessFlags.Read);
+            builder.UseAllGlobalTextures(true); // published fog globals (shore field, FFT displacement, ...)
+            builder.AllowPassCulling(false);
+            // The classified reader is a real shader variant, not a uniform branch. RenderGraph
+            // requires an explicit declaration before the command buffer may select that keyword.
+            builder.AllowGlobalStateModification(true);
+            builder.SetGlobalTextureAfterPass(solveAbsorb, ID_WaterFogSolveAbsorb);
+            builder.SetGlobalTextureAfterPass(solveInscatter, ID_WaterFogSolveInscatter);
+            builder.SetRenderFunc((SolvePassData d, RasterGraphContext ctx) =>
             {
                 if (d.useClassifyRt) ctx.cmd.EnableShaderKeyword(ClassifyRtKeyword);
                 else ctx.cmd.DisableShaderKeyword(ClassifyRtKeyword);
-                CoreUtils.DrawFullScreen(ctx.cmd, d.material, null, AbsorbShaderPass);
-                CoreUtils.DrawFullScreen(ctx.cmd, d.material, null, InscatterShaderPass);
+                CoreUtils.DrawFullScreen(ctx.cmd, d.material, null, d.shaderPass);
                 if (d.useClassifyRt) ctx.cmd.DisableShaderKeyword(ClassifyRtKeyword);
             });
         }

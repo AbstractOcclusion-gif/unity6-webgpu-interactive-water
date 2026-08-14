@@ -81,7 +81,8 @@ namespace AbstractOcclusion.WebGpuWater
             /// grey = Simple tier flat waterline, GREEN = rendered sheet seen from air (fog
             /// suppressed), BLUE = submerged, span ends at the rendered sheet, YELLOW = analytic
             /// early-out with no prepass sample, MAGENTA = carve pixel handed to the crossing
-            /// march, RED = flat rest-plane fallback, CYAN = the no-prepass tier's own march.
+            /// march, CYAN = the no-prepass tier's own march. (RED, the flat rest-plane
+            /// fallback, was retired 2026-08-13 with its unreachable span path.)
             /// Black means nothing ran, which is a wiring bug rather than a water one.</summary>
             FogPathBranch = 10,
 

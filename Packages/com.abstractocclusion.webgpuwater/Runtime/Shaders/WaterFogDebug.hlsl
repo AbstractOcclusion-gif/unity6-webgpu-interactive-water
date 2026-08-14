@@ -49,7 +49,9 @@
 #define WATER_FOG_BRANCH_PREPASS_WET   4 // submerged eye, span ends AT the rendered sheet
 #define WATER_FOG_BRANCH_ANALYTIC      5 // no prepass sample: both-under / both-above early-out
 #define WATER_FOG_BRANCH_CARVE_MARCH   6 // no prepass (carve discarded the sheet) -> OceanWavyPath
-#define WATER_FOG_BRANCH_FLAT_FALLBACK 7 // no prepass, mixed ray, flat rest-plane crossing
+// id 7 (FLAT_FALLBACK) retired 2026-08-13: its span path was unreachable - the mixed no-prepass
+// ray always takes OceanWavyPath now (see the fog shader's partial-submersion note). Id kept
+// vacant so WAVY_MARCH screenshots stay comparable across sessions.
 #define WATER_FOG_BRANCH_WAVY_MARCH    8 // no-prepass tier: OceanWavyPath's own crossing march
 
 // Per-invocation scratch. A static rather than an out parameter threaded through
@@ -89,7 +91,6 @@ float3 WaterFogDebugBranchColor()
     if (g_WaterFogDebugBranch == WATER_FOG_BRANCH_PREPASS_WET)   return float3(0.2, 0.4, 1.0);
     if (g_WaterFogDebugBranch == WATER_FOG_BRANCH_ANALYTIC)      return float3(1.0, 1.0, 0.0);
     if (g_WaterFogDebugBranch == WATER_FOG_BRANCH_CARVE_MARCH)   return float3(1.0, 0.0, 1.0);
-    if (g_WaterFogDebugBranch == WATER_FOG_BRANCH_FLAT_FALLBACK) return float3(1.0, 0.0, 0.0);
     if (g_WaterFogDebugBranch == WATER_FOG_BRANCH_WAVY_MARCH)    return float3(0.0, 1.0, 1.0);
     return float3(0.0, 0.0, 0.0); // NONE
 }
