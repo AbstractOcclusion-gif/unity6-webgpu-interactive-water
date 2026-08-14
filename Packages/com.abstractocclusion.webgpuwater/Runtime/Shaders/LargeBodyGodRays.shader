@@ -86,6 +86,15 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             // PublishUnderwater arms it only when the god-ray knob is non-zero, Full fog is active,
             // and the published list contains an eligible point/spot light.
             #pragma multi_compile_fragment _ WATER_GODRAY_POINT_LIGHTS
+            // WEBGPU TRANSLATOR GUARD (2026-08-15): with optimizations on, Unity's HLSL->GLSL
+            // translator emits an undeclared u_xlat temp somewhere in this pass's Simple-tier
+            // variants (glslang: undeclared identifier; all 8 WATER_FOG_SIMPLE variants failed
+            // the web build while every Full variant compiled clean). The bug follows the
+            // OPTIMIZER, not one construct - removing the aperiodic graph only moved the error
+            // (line 1985 -> 854) - so optimization is disabled for webgpu ONLY. Every other API
+            // keeps the optimized codegen, and the browser's own WGSL compiler still optimizes
+            // downstream, so the runtime cost is bounded to this pass on web.
+            #pragma skip_optimizations webgpu
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
