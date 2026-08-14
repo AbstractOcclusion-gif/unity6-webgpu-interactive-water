@@ -19,22 +19,6 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>The body whose camera-relative data drives this frame's fullscreen fog passes.</summary>
         internal static WaterVolume FogSource { get; private set; }
 
-        // Which body's uniforms currently occupy the global shader constants, and the frame they
-        // were pushed on. Lets the fog-source refresh skip a byte-identical same-frame republish
-        // (WriteBodyUniforms is ~170 native property writes). Scene-lifetime static state - reset
-        // by ResetStaticState and stood down with the other globals on last-body-out.
-        static WaterVolume _globalsSource;
-        static int _globalsFrame = -1;
-
-        // Every body-globals publish goes through here so the dedupe above always knows the
-        // current occupant. Never call Publisher.PublishBodyGlobals() directly.
-        void PublishBodyGlobalsTracked()
-        {
-            Publisher.PublishBodyGlobals();
-            _globalsSource = this;
-            _globalsFrame = Time.frameCount;
-        }
-
         /// <summary>True while the camera's near plane straddles the (displaced) surface, so the
         /// screen-space waterline meniscus pass should draw this frame (set each frame by the primary
         /// body, reset by the last body out in OnDisable like <see cref="UnderwaterFogActive"/>).
@@ -267,12 +251,7 @@ namespace AbstractOcclusion.WebGpuWater
             // shader path: it is the path that keeps exclusion-wall scattering stable. Refresh
             // that global body frame from the camera-selected source here, after all bodies have
             // updated, so a secondary pool's fog no longer inherits the primary body's volume.
-            // Skipped when THIS body's uniforms already occupy the globals from this same frame
-            // (the primary publishes in Update): that republish was byte-identical - two reads of
-            // the same body state on the same frame - at ~170 native property writes per camera.
-            // A secondary FogSource still republishes, which is this refresh's whole purpose.
-            if (_globalsSource != this || _globalsFrame != Time.frameCount)
-                PublishBodyGlobalsTracked();
+            Publisher.PublishBodyGlobals();
             bool submerged = ComputeCameraSubmerged(eyeCamera, out float surfaceY, out bool nearPlaneStraddles);
             // "The fog pass must run" and "the eye is in water" are two DIFFERENT questions, and
             // inside a semi-submerged exclusion volume they have opposite answers: the eye sits in
