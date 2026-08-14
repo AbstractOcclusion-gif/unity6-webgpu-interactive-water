@@ -102,6 +102,33 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             // experiment, which is what forced that revert. Nothing here writes to it.
             #include "WaterWaterline.hlsl"
 
+            // RT-when-valid, ANALYTIC-when-not surface queries (2026-08-14, "god rays from air
+            // stay a cube"). The height RT is produced by the underwater fog chain, which for an
+            // ocean only arms near the surface or inside a carve - the from-air pane draws at
+            // distances where that chain never runs, so SurfaceSignedGapRT's FLAT fallback
+            // clipped the pane to a horizontal plane and the carve silhouette read as a box.
+            // Fallback here is the analytic waves (exactly what these call sites used before the
+            // Aug 11 RT migration); frames with a valid RT keep the cheap taps, feather-blended.
+            float GodRaySurfaceY(float3 world, float flatFallbackY)
+            {
+                float w = HeightRTFeatherWeight(world.xz);
+                if (w >= 1.0) return HeightRTSurfaceY(world.xz, flatFallbackY);
+                // COMPILE-BOUNDED fallback (the LargeBodyCaustics precedent): SurfaceSignedGap
+                // expands the complete shore/surf graph at every call site and this helper feeds
+                // seven of them - the D3D compiler crawled. The FFT cascade height alone carries
+                // the swell silhouette the pane needs; shore/surf stay owned by the visible
+                // surface. FFT inactive degrades to the flat fallback, same as the RT there.
+                float analyticY = _VolumeCenter.y
+                                + OceanFftDisplacementShore(world.xz, ShoreDataInert()).y
+                                * _LargeWaveAmplitude;
+                if (w <= 0.0) return analyticY;
+                return lerp(analyticY, HeightRTSurfaceY(world.xz, flatFallbackY), w);
+            }
+            float GodRayGap(float3 world, float flatFallbackY)
+            {
+                return world.y - GodRaySurfaceY(world, flatFallbackY);
+            }
+
             float3 _LightDir;   // global, normalized direction toward the sun
             // _SunColor is declared by WaterFog.hlsl (included above) - the header that owns the in-scatter needing it.
 
@@ -277,7 +304,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 for (int i = 0; i < GODRAY_SURFACE_CROSS_ITERS; i++)
                 {
                     float t = clamp((planeY - camWorld.y) / rayDir.y, 0.0, maxDist);
-                    planeY = HeightRTSurfaceY((camWorld + rayDir * t).xz, firstGuessY);
+                    planeY = GodRaySurfaceY(camWorld + rayDir * t, firstGuessY);
                 }
                 return clamp((planeY - camWorld.y) / rayDir.y, 0.0, maxDist);
             }
@@ -306,8 +333,8 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
 
             float SubmergedExitDistance(float3 camWorld, float3 rayDir, float maxDist)
             {
-                float flatFallbackY = HeightRTSurfaceY(camWorld.xz, _VolumeCenter.y);
-                if (SurfaceSignedGapRT(camWorld + rayDir * maxDist, flatFallbackY) <= 0.0)
+                float flatFallbackY = GodRaySurfaceY(camWorld, _VolumeCenter.y);
+                if (GodRayGap(camWorld + rayDir * maxDist, flatFallbackY) <= 0.0)
                     return maxDist; // still underwater at reach: no exit to stop at
                 float tLo = 0.0;    // submerged eye: underwater by definition
                 float tHi = maxDist;
@@ -315,7 +342,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 for (int i = 0; i < GODRAY_EXIT_BISECT_ITERS; i++)
                 {
                     float tMid = 0.5 * (tLo + tHi);
-                    if (SurfaceSignedGapRT(camWorld + rayDir * tMid, flatFallbackY) <= 0.0) tLo = tMid;
+                    if (GodRayGap(camWorld + rayDir * tMid, flatFallbackY) <= 0.0) tLo = tMid;
                     else tHi = tMid;
                 }
                 return 0.5 * (tLo + tHi);
@@ -368,7 +395,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 if (_WorldSpaceCameraPos.y > _VolumeCenter.y + SurfaceHeightBand()
                     && _LargeGodRayFromAir <= 0.0)
                     return half4(0.0, 0.0, 0.0, 1.0);
-                float camSurfY = HeightRTSurfaceY(_WorldSpaceCameraPos.xz, _VolumeCenter.y);
+                float camSurfY = GodRaySurfaceY(_WorldSpaceCameraPos, _VolumeCenter.y);
 #endif
 
                 // Submerged: fade in over the first centimetres of submersion rather than
@@ -492,7 +519,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                     // is not a water entry, and that ray falls through to the waterline rule.
                     if (_CameraDryVolume > 0.5 && rayLeavesCarve
                         && carveExit < tExit
-                        && SurfaceSignedGapRT(camWorld + rayDir * carveExit, camSurfY) <= 0.0)
+                        && GodRayGap(camWorld + rayDir * carveExit, camSurfY) <= 0.0)
                     {
                         tEnter = carveExit;
                         enteredThroughCarve = true;
@@ -596,7 +623,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 //    already applied to the dry-carve eye's water entry above. A ray that leaves the
                 //    carve into AIR met no water inside it, so there is no pane weight to floor.
                 bool carveExitInWater = rayLeavesCarve
-                                      && SurfaceSignedGapRT(camWorld + rayDir * carveExit, camSurfY) <= 0.0;
+                                      && GodRayGap(camWorld + rayDir * carveExit, camSurfY) <= 0.0;
                 float paneFloor = (eyeInWater && carveExitInWater) ? _LargeGodRayFromAir : 0.0;
                 float regime = max(lerp(paneFloor, 1.0, submergeFade), paneWeight);
                 if (regime <= 0.0) return half4(0.0, 0.0, 0.0, 1.0);

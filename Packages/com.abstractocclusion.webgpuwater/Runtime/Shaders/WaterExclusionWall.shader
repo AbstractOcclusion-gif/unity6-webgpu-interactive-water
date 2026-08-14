@@ -43,7 +43,6 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
             #pragma vertex vert
             #pragma fragment frag
             #pragma target 4.0
-            #pragma multi_compile_fog
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
             #include "WaterFog.hlsl"       // WaterInscatterColor + DownwellingAttenuation + fog globals
@@ -207,7 +206,6 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
             {
                 float4 positionCS : SV_POSITION;
                 float3 positionWS : TEXCOORD0;
-                half fogFactor : TEXCOORD1;
             };
 
             Varyings vert(Attributes IN)
@@ -215,7 +213,6 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
                 Varyings o;
                 o.positionWS = TransformObjectToWorld(IN.positionOS.xyz);
                 o.positionCS = TransformWorldToHClip(o.positionWS);
-                o.fogFactor = ComputeFogFactor(o.positionCS.z);
                 return o;
             }
 
@@ -360,8 +357,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
                 color *= submerged;
                 coverage *= submerged;
                 clip(coverage - WALL_MIN_COVERAGE); // fully dry fragments skip the blend entirely
-                if (_CameraUnderwater < 0.5)
-                    color = lerp(unity_FogColor.rgb * coverage, color, IN.fogFactor);
+                // NO Unity scene fog on this wall (removed 2026-08-14, bisected to the Aug 8
+                // "unity fog" commit). The water SURFACE carries no scene fog, so fogging the
+                // wall alone washes its scattering/color with camera distance whenever the eye
+                // is in air, and re-opens the water/wall junction seam. If scene fog is ever
+                // wanted here again, it must be added to surface AND wall with the same factor.
                 return half4(color, coverage);
             }
             ENDHLSL
