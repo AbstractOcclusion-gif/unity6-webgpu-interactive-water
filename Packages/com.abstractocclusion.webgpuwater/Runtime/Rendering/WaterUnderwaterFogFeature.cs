@@ -92,6 +92,17 @@ namespace AbstractOcclusion.WebGpuWater
             // the crossing shows a meniscus line instead of a hard pop. The pass records only
             // the sub-passes whose gate is set.
             if (!WaterVolume.UnderwaterFogActive && !WaterVolume.WaterlineActive) return;
+            // PER-CAMERA pond cull: a bounded fog volume entirely outside THIS camera's frustum
+            // can put nothing on its screen, so the whole recorded chain (prepass, height RTs,
+            // classify, absorb, inscatter, waterline) is skipped for this camera - the pond arm
+            // is otherwise unconditional ("murk from any angle"), so a pool BEHIND the camera
+            // used to pay it all. The particle/transparent pass above deliberately does NOT take
+            // this cull (transparents exist outside the volume); each scene view runs its own
+            // test, so authoring keeps its fog while the game camera looks away. Oceans always
+            // pass (infinite fog), and a null fog source fails ARMED.
+            WaterVolume fogSource = WaterVolume.FogSource;
+            if (fogSource != null && !fogSource.FogVolumeVisibleTo(renderingData.cameraData.camera))
+                return;
             renderer.EnqueuePass(_pass);
         }
 

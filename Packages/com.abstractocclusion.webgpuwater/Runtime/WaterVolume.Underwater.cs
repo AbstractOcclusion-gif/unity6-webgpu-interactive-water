@@ -364,6 +364,22 @@ namespace AbstractOcclusion.WebGpuWater
         // box-clips the fog per pixel, so this CPU gate only has to be roughly right.
         const float UnderwaterFootprintMargin = 1.25f;
 
+        // Scratch for the bounded-fog frustum cull (the Plane[]-returning CalculateFrustumPlanes
+        // overload allocates every call). Main-thread only, like every render callback here.
+        static readonly Plane[] s_fogFrustumPlanes = new Plane[6];
+
+        /// <summary>True when this body's fog volume can appear in <paramref name="cam"/>'s
+        /// frustum. An ocean's fog is infinite (always visible); a bounded body tests the same
+        /// expanded box its renderers cull with (CullBounds), so "circle the pond and see the
+        /// murk" is preserved - only a pond entirely OFF SCREEN for this camera reports false.
+        /// Fail-armed on a missing camera. Read by WaterUnderwaterFogFeature per camera.</summary>
+        internal bool FogVolumeVisibleTo(Camera cam)
+        {
+            if (IsOceanClipmap || cam == null) return true;
+            GeometryUtility.CalculateFrustumPlanes(cam, s_fogFrustumPlanes);
+            return GeometryUtility.TestPlanesAABB(s_fogFrustumPlanes, CullBounds());
+        }
+
         // Keep three distinct readings here. The wave envelope arms the fog before it can affect a
         // pixel; the near-plane corners detect a screen-space waterline for the meniscus; only the
         // camera position says the EYE is submerged. Conflating the latter two switches every
