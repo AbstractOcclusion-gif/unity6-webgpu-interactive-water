@@ -27,7 +27,7 @@ namespace AbstractOcclusion.WebGpuWater
         static bool AllFinite(float a, float b, float c, float d)
             => float.IsFinite(a) && float.IsFinite(b) && float.IsFinite(c) && float.IsFinite(d);
         static bool AllFinite(Vector3 v)
-            => float.IsFinite(v.x) && float.IsFinite(v.y) && float.IsFinite(v.z);
+            => WaterSurfaceKinematics.IsFinite(v);
 
         /// <summary>Inject a ripple at a WORLD position (x,z). Converted into the pool
         /// footprint via the volume frame; out-of-footprint calls are ignored. Radius is

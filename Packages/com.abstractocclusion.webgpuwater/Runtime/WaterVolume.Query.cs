@@ -15,7 +15,7 @@ using UnityEngine;
 
 namespace AbstractOcclusion.WebGpuWater
 {
-    public partial class WaterVolume : IWaterHeightSampler
+    public partial class WaterVolume : IWaterHeightSampler, IWaterCurrentSampler
     {
         // Explicit Scripts category so a ProfilerRecorder (WaterMetricsOverlay) can match it by
         // (category, name). The name is a shared const: the overlay reads the SAME string, so a
@@ -114,7 +114,8 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         // World surface velocity = analytic vertical wave velocity (exact d(Height)/dt from the closed-form
-        // wave mirrors, no cross-frame state) plus the horizontal wave-drift push buoyancy already uses.
+        // wave mirrors, no cross-frame state), the horizontal wave-drift push buoyancy already uses, and
+        // every authored physical-current field affecting this body.
         // Interactive ripple / FFT dynamics are not yet folded into the velocity (they add in a later phase).
         // largeWaveVerticalRate is the open-water swell's d(height)/dt, ALREADY edge-weighted, handed
         // down from the swell sample the caller just took. It used to be recomputed here from the
@@ -134,8 +135,9 @@ namespace AbstractOcclusion.WebGpuWater
             float worldRate = (VolumeRotation * new Vector3(0f, poolRate * VolumeExtentSafe.y, 0f)).y;
             worldRate += largeWaveVerticalRate;
 
+            Vector3 currentVelocity = SampleCurrentFields(worldPoint);
             return WaterSurfaceKinematics.ComposeVelocity(
-                waveDriftVelocity, Vector3.zero, worldRate);
+                waveDriftVelocity, currentVelocity, worldRate);
         }
     }
 }

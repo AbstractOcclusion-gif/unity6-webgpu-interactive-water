@@ -30,8 +30,8 @@ namespace AbstractOcclusion.WebGpuWater
         public float Height;
         /// <summary>World-space surface normal (unit). Only filled when <see cref="WaterQueryFields.Normal"/> is requested.</summary>
         public Vector3 Normal;
-        /// <summary>World-space surface velocity (wave orbital motion). Only filled when
-        /// <see cref="WaterQueryFields.Velocity"/> is requested. River/current flow is a later iteration.</summary>
+        /// <summary>World-space surface velocity (wave motion plus authored physical current). Only
+        /// filled when <see cref="WaterQueryFields.Velocity"/> is requested.</summary>
         public Vector3 Velocity;
         /// <summary>False = outside the footprint or not ready; the other fields are meaningless.</summary>
         public bool Valid;

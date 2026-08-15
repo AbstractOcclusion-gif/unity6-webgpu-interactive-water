@@ -20,12 +20,27 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 {
     public partial class WaterVolumeEditor
     {
+        const string CurrentFieldsPath = "currentFields";
+        const string CurrentFieldsHelp =
+            "Current fields add physical world-space velocity without changing the surface normal. " +
+            "Use a Constant Current Field for a whole-body stream; spline and baked fields can share " +
+            "the same list as they are added.";
+
         // Drawn before the first foldout: one knob that scales every motion source below it, so it
         // reads as the tab's master rather than as a section of its own.
         void DrawMotionGlobals()
         {
             DrawFields("timeScale");
             EditorGUILayout.Space();
+        }
+
+        void DrawCurrentSection()
+        {
+            _showCurrent = WaterEditorUI.Section("Currents", _showCurrent, () =>
+            {
+                EditorGUILayout.HelpBox(CurrentFieldsHelp, MessageType.None);
+                DrawFields(CurrentFieldsPath);
+            });
         }
 
         void DrawRippleSection()

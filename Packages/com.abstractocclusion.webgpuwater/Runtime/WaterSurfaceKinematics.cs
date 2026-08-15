@@ -29,6 +29,9 @@ namespace AbstractOcclusion.WebGpuWater
         internal static Vector3 WaveDriftVelocityFromTilt(Vector3 worldSurfaceTilt)
             => worldSurfaceTilt;
 
+        internal static bool IsFinite(Vector3 value)
+            => float.IsFinite(value.x) && float.IsFinite(value.y) && float.IsFinite(value.z);
+
         internal static Vector3 ComposeVelocity(Vector3 waveDriftVelocity, Vector3 currentVelocity,
                                                 float verticalWaveVelocity)
         {
