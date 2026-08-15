@@ -181,8 +181,9 @@ namespace AbstractOcclusion.WebGpuWater
             return true;
         }
 
-        /// <summary>World surface height (Y) plus the horizontal surface-flow (world x,z)
-        /// above WORLD (x,z). For surface effects that ride the waterline (splash drift).
+        /// <summary>World surface height (Y) plus the legacy horizontal wave-drift vector (world x,z)
+        /// above WORLD (x,z). For surface effects that ride the waterline (splash drift). The output
+        /// parameter keeps its original name for source compatibility; authored current is separate.
         /// Approximate under steep tilt; exact for rotation/rectangular/depth.</summary>
         public bool TryGetSurface(float worldX, float worldZ, out float height, out Vector2 flow)
         {
@@ -191,24 +192,29 @@ namespace AbstractOcclusion.WebGpuWater
             if (_sampler == null) return false; // not initialized yet
             Vector3 probe = new Vector3(worldX, VolumeCenter.y, worldZ);
             if (!QueryPoolXZ(probe, out float px, out float pz)) return false;
-            if (!_sampler.TrySamplePoolSurface(probe, px, pz, out float poolHeight, out Vector2 poolFlow)) return false;
+            if (!_sampler.TrySamplePoolSurface(probe, px, pz, out float poolHeight,
+                                               out Vector2 poolSurfaceTilt)) return false;
 
             height = PoolToWorld(new Vector3(px, poolHeight, pz)).y;
-            Vector3 worldFlow = VolumeRotation * new Vector3(poolFlow.x, 0f, poolFlow.y);
+            Vector3 worldSurfaceTilt =
+                WaterSurfaceKinematics.TiltToWorld(VolumeRotation, poolSurfaceTilt);
             if (openWater)
             {
                 Vector3 wave = SampleLargeWaveField(worldX, worldZ);
                 height += wave.x;
-                worldFlow += new Vector3(-wave.y, 0f, -wave.z) * waveNormalStrength;
+                worldSurfaceTilt += new Vector3(-wave.y, 0f, -wave.z) * waveNormalStrength;
             }
-            flow = new Vector2(worldFlow.x, worldFlow.z);
+            Vector3 waveDriftVelocity =
+                WaterSurfaceKinematics.WaveDriftVelocityFromTilt(worldSurfaceTilt);
+            flow = new Vector2(waveDriftVelocity.x, waveDriftVelocity.z);
             return true;
         }
 
         /// <summary>Sample submersion for a buoyancy point at an arbitrary WORLD point.
         /// Works under rotation/tilt/non-uniform extent because it is evaluated in pool
         /// space. Returns the world-space depth below the surface (negative = above),
-        /// the volume's up direction, and the world-space surface-flow push.</summary>
+        /// the volume's up direction, and the legacy world-space wave-drift push. The output
+        /// parameter keeps its original name for source compatibility; authored current is separate.</summary>
         public bool TrySampleSubmersion(Vector3 worldPoint, out float depthWorld, out Vector3 up, out Vector3 worldFlow)
         {
             depthWorld = 0f;
@@ -219,10 +225,12 @@ namespace AbstractOcclusion.WebGpuWater
             Vector3 pool = WorldToPool(worldPoint);
             // An unbounded ocean spans everywhere; bounded bodies still reject out-of-footprint points.
             if (!IsOceanClipmap && (pool.x < -1f || pool.x > 1f || pool.z < -1f || pool.z > 1f)) return false;
-            if (!_sampler.TrySamplePoolSurface(worldPoint, pool.x, pool.z, out float surfaceH, out Vector2 poolFlow)) return false;
+            if (!_sampler.TrySamplePoolSurface(worldPoint, pool.x, pool.z, out float surfaceH,
+                                               out Vector2 poolSurfaceTilt)) return false;
 
             depthWorld = (surfaceH - pool.y) * VolumeExtentSafe.y; // pool depth -> world depth along up
-            worldFlow = VolumeRotation * new Vector3(poolFlow.x, 0f, poolFlow.y);
+            Vector3 worldSurfaceTilt =
+                WaterSurfaceKinematics.TiltToWorld(VolumeRotation, poolSurfaceTilt);
             // Open water: the world-space swell is the wind-wave source (the pool wavebank is
             // suppressed for these bodies). Raise the surface by the wave height so the point sits
             // deeper on a crest, and push along the wave slope so the swell carries the object.
@@ -230,8 +238,9 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 Vector3 wave = SampleLargeWaveField(worldPoint.x, worldPoint.z);
                 depthWorld += wave.x;
-                worldFlow += new Vector3(-wave.y, 0f, -wave.z) * waveNormalStrength;
+                worldSurfaceTilt += new Vector3(-wave.y, 0f, -wave.z) * waveNormalStrength;
             }
+            worldFlow = WaterSurfaceKinematics.WaveDriftVelocityFromTilt(worldSurfaceTilt);
             return true;
         }
 

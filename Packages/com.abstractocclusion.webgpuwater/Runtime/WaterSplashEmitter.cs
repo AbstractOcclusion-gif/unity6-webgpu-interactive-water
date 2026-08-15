@@ -327,7 +327,8 @@ namespace AbstractOcclusion.WebGpuWater
             // Resolve the body under THIS droplet so a splash in lake B drifts on lake B's
             // surface, not the primary's. Outside every footprint TryGetSurface returns false.
             WaterVolume body = WaterVolume.BodyContaining(position);
-            if (body == null || !body.TryGetSurface(position.x, position.z, out float surfaceY, out Vector2 flow))
+            if (body == null ||
+                !body.TryGetSurface(position.x, position.z, out float surfaceY, out Vector2 waveDrift))
                 return; // outside the pool or no readback yet: stay ballistic
 
             float age = droplet.startLifetime - droplet.remainingLifetime;
@@ -342,7 +343,7 @@ namespace AbstractOcclusion.WebGpuWater
 
             Vector3 velocity = droplet.velocity;
             velocity.y = 0f;
-            velocity += new Vector3(flow.x, 0f, flow.y) * (driftStrength * dt);
+            velocity += new Vector3(waveDrift.x, 0f, waveDrift.y) * (driftStrength * dt);
             velocity -= velocity * Mathf.Min(1f, driftDamping * dt);
 
             position += velocity * dt;

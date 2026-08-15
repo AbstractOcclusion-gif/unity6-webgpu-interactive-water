@@ -21,6 +21,7 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         const float Gravity = 9.81f;
         const float FloatStrength = 2.5f;
         const float GlueIntensity = 1f;
+        const float VerticalWaveVelocity = 0.75f;
         const float EquilibriumFraction = 1f / FloatStrength;
         const float AboveEquilibriumFraction = 0.2f;
         const float BelowEquilibriumFraction = 0.6f;
@@ -29,6 +30,9 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         static readonly Color BottomRight = new Color(1f, 0f, 0f, 1f);
         static readonly Color TopLeft = new Color(0f, 1f, 0f, 1f);
         static readonly Color TopRight = new Color(1f, 1f, 0f, 1f);
+        static readonly Vector3 SurfaceUp = Vector3.up;
+        static readonly Vector3 SurfaceTilt = new Vector3(0.25f, 0f, -0.5f);
+        static readonly Vector3 AuthoredCurrentVelocity = new Vector3(2f, 0f, 1f);
 
         [Test]
         public void ColorFieldSampling_UsesTheSameCentredBilinearConventionAsFloatFields()
@@ -72,6 +76,32 @@ namespace AbstractOcclusion.WebGpuWater.Tests
 
             Assert.That(aboveDraft, Is.LessThan(0f));
             Assert.That(belowDraft, Is.GreaterThan(0f));
+        }
+
+        [Test]
+        public void SurfaceKinematics_WaveDriftCompatibilityMappingPreservesExistingResponse()
+        {
+            Vector3 waveDriftVelocity =
+                WaterSurfaceKinematics.WaveDriftVelocityFromTilt(SurfaceTilt);
+
+            Assert.That(waveDriftVelocity, Is.EqualTo(SurfaceTilt));
+        }
+
+        [Test]
+        public void SurfaceKinematics_CurrentChangesVelocityWithoutChangingNormal()
+        {
+            Vector3 normalBeforeCurrent =
+                WaterSurfaceKinematics.NormalFromTilt(SurfaceUp, SurfaceTilt);
+            Vector3 velocityWithoutCurrent = WaterSurfaceKinematics.ComposeVelocity(
+                SurfaceTilt, Vector3.zero, VerticalWaveVelocity);
+            Vector3 velocityWithCurrent = WaterSurfaceKinematics.ComposeVelocity(
+                SurfaceTilt, AuthoredCurrentVelocity, VerticalWaveVelocity);
+            Vector3 normalAfterCurrent =
+                WaterSurfaceKinematics.NormalFromTilt(SurfaceUp, SurfaceTilt);
+
+            Assert.That(normalAfterCurrent, Is.EqualTo(normalBeforeCurrent));
+            Assert.That(velocityWithCurrent - velocityWithoutCurrent,
+                        Is.EqualTo(AuthoredCurrentVelocity));
         }
 
         [Test]

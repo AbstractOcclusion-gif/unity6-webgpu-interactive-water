@@ -78,7 +78,7 @@ namespace AbstractOcclusion.WebGpuWater
                              "times in a row; falling back to the analytic waterline for buoyancy.", _body);
         }
 
-        // Pool-space surface height + flow (normal.xz) at a world point (pool xz in [-1,1]).
+        // Pool-space surface height + horizontal normal tilt at a world point (pool xz in [-1,1]).
         // Uses the GPU readback ripple field when available; when it is not - no AsyncGPUReadback on
         // the backend, a landing not yet arrived, or the demand gate having been shut while nothing
         // queried - it falls back to the analytic surface (flat rest + wind waves) so buoyancy and
@@ -86,11 +86,11 @@ namespace AbstractOcclusion.WebGpuWater
         // absent). Always true for a point inside the body: valid from frame 0, which is the
         // contract IWaterHeightSampler documents.
         internal bool TrySamplePoolSurface(Vector3 world, float poolX, float poolZ,
-                                           out float surfaceH, out Vector2 poolFlow,
+                                           out float surfaceH, out Vector2 poolSurfaceTilt,
                                            float minWavelengthMeters = 0f, bool excludeRipples = false)
         {
             surfaceH = 0f;
-            poolFlow = Vector2.zero;
+            poolSurfaceTilt = Vector2.zero;
 
             // A self-emitting floater (one with a WaterInteractable wake) reads its OWN ripples back and
             // gets pushed by them - it self-propels. excludeRipples serves such a body the analytic surface
@@ -107,7 +107,7 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 Color sample = SampleRipple(world, poolX, poolZ);
                 surfaceH = sample.r;
-                poolFlow = new Vector2(sample.b, sample.a); // (normal.x, normal.z)
+                poolSurfaceTilt = new Vector2(sample.b, sample.a); // stored (normal.x, normal.z)
             }
             // No early-out when the readback has not landed. Serving the ANALYTIC surface here is
             // exactly what a backend with Unsupported latched already did, so this is an existing
@@ -128,8 +128,9 @@ namespace AbstractOcclusion.WebGpuWater
                 float waveX = _body.IsOceanClipmap ? world.x / mpu : poolX;
                 float waveZ = _body.IsOceanClipmap ? world.z / mpu : poolZ;
                 surfaceH += _body.WaveBank.SampleHeight(waveX, waveZ, _body.WaveTime, mpu, minWavelengthMeters);
-                poolFlow -= _body.WaveBank.SampleSlope(waveX, waveZ, _body.WaveTime, mpu, minWavelengthMeters)
-                            * _body.waveNormalStrength;
+                Vector2 waveSlope = _body.WaveBank.SampleSlope(
+                    waveX, waveZ, _body.WaveTime, mpu, minWavelengthMeters);
+                poolSurfaceTilt -= waveSlope * _body.waveNormalStrength;
             }
             return true;
         }

@@ -18,6 +18,10 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         const string SceneLightSpotDirectionName = "_WaterSceneLightSpotDir";
         const string UnderwaterPointLightsKeyword = "WATER_FOG_POINT_LIGHTS";
         const string GodRayPointLightsKeyword = "WATER_GODRAY_POINT_LIGHTS";
+        const string RippleCrestFleckProfileTestName = "Ripple Crest Fleck Profile Test";
+        const string RippleCrestFleckDefaultsTestName = "Ripple Crest Fleck Defaults Test";
+        const string SimulationDrivenSpawningDefaultsTestName = "Simulation Driven Spawning Defaults Test";
+        const string DensitySurfaceSizeScaleProfileTestName = "Density Surface Size Scale Profile Test";
         const float SpotlightOuterAngle = 60f;
         const float SpotlightInnerAngle = 30f;
         const int SplashAtlasColumns = 4;
@@ -66,6 +70,12 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         static readonly Vector3 VolumeExtent = new Vector3(4f, 2f, 6f);
         static readonly Vector3 PoolPoint = new Vector3(0.25f, -0.5f, 0.75f);
         static readonly Quaternion VolumeRotation = Quaternion.Euler(0f, 35f, 0f);
+
+        [SetUp]
+        public void SetUp() => WaterUniformPublisher.ResetStaticState();
+
+        [TearDown]
+        public void TearDown() => WaterUniformPublisher.ResetStaticState();
 
         [Test]
         public void PoolAndWorldFrames_RoundTripWithNonUniformExtentAndRotation()
@@ -246,11 +256,11 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         [Test]
         public void FoamProfile_AppliesRippleCrestFleckControlsToParticlePool()
         {
-            GameObject host = new GameObject("Ripple Crest Fleck Profile Test");
+            GameObject host = CreateInactiveFoamParticles(
+                RippleCrestFleckProfileTestName, out WaterFoamParticles particles);
             WaterFoamProfile profile = ScriptableObject.CreateInstance<WaterFoamProfile>();
             try
             {
-                WaterFoamParticles particles = host.AddComponent<WaterFoamParticles>();
                 profile.ambient.spawnThreshold = GenericFoamSpawnThreshold;
                 profile.ambient.spawnRate = GenericFoamSpawnRate;
                 profile.ambient.rippleCrestFlecksEnabled = true;
@@ -314,10 +324,10 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         [Test]
         public void ParticleDefaults_KeepRippleCrestFlecksDisabled()
         {
-            GameObject host = new GameObject("Ripple Crest Fleck Defaults Test");
+            GameObject host = CreateInactiveFoamParticles(
+                RippleCrestFleckDefaultsTestName, out WaterFoamParticles particles);
             try
             {
-                WaterFoamParticles particles = host.AddComponent<WaterFoamParticles>();
                 Assert.That(particles.rippleCrestFlecksEnabled, Is.False);
             }
             finally
@@ -329,10 +339,10 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         [Test]
         public void ParticleDefaults_KeepSimulationDrivenSpawningDisabled()
         {
-            GameObject host = new GameObject("Simulation Driven Spawning Defaults Test");
+            GameObject host = CreateInactiveFoamParticles(
+                SimulationDrivenSpawningDefaultsTestName, out WaterFoamParticles particles);
             try
             {
-                WaterFoamParticles particles = host.AddComponent<WaterFoamParticles>();
                 Assert.That(particles.simulationDrivenSpawning, Is.False);
             }
             finally
@@ -344,11 +354,11 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         [Test]
         public void FoamProfile_AppliesDensitySurfaceSizeScaleToParticlePool()
         {
-            GameObject host = new GameObject("Density Surface Size Scale Profile Test");
+            GameObject host = CreateInactiveFoamParticles(
+                DensitySurfaceSizeScaleProfileTestName, out WaterFoamParticles particles);
             WaterFoamProfile profile = ScriptableObject.CreateInstance<WaterFoamProfile>();
             try
             {
-                WaterFoamParticles particles = host.AddComponent<WaterFoamParticles>();
                 profile.veil.drive = true;
                 profile.veil.surfaceSizeScale = DensitySurfaceSizeScale;
 
@@ -597,6 +607,15 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             var host = new GameObject(TestVolumeName);
             host.SetActive(false);
             volume = host.AddComponent<WaterVolume>();
+            return host;
+        }
+
+        static GameObject CreateInactiveFoamParticles(
+            string hostName, out WaterFoamParticles particles)
+        {
+            var host = new GameObject(hostName);
+            host.SetActive(false);
+            particles = host.AddComponent<WaterFoamParticles>();
             return host;
         }
 
