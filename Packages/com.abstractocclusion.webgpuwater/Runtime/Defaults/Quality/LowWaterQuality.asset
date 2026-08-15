@@ -43,8 +43,8 @@ MonoBehaviour:
   mediumOceanFftInterval: 1
   mediumMaxFoamParticles: 65536
   mediumUnderwaterFog: 2
-  lowSimResolution: 64
-  lowCausticResolution: 256
+  lowSimResolution: 32
+  lowCausticResolution: 128
   lowGodRaySteps: 6
   lowGodRays: 0
   lowRichReflections: 1
@@ -55,6 +55,6 @@ MonoBehaviour:
   lowMeshDetail: 50
   lowCausticInterval: 2
   lowReadbackInterval: 3
-  lowOceanFftInterval: 2
-  lowMaxFoamParticles: 1024
+  lowOceanFftInterval: 3
+  lowMaxFoamParticles: 512
   lowUnderwaterFog: 1

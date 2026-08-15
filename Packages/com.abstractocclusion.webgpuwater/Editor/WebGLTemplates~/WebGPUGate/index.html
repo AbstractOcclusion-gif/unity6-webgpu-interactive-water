@@ -23,6 +23,88 @@
   </div>
 
   <script>
+    // ---- On-phone debug console (URL must contain "debug", e.g. ?debug) - inert otherwise ----
+    // Blocklisted-GPU phones often have no USB inspector, so this mirrors the console AND the
+    // WebGPU device's own failure signals (uncaptured errors, device-lost reason) onto the page.
+    // The FIRST GPU-ERR / GPU-LOST line names what actually killed a boot; the later
+    // mapAsync / "external Instance" spam is post-loss fallout that only obscures it.
+    // Consecutive repeats collapse into a xN counter so that spam stays legible.
+    (function () {
+      if (!/debug/.test(location.search + location.hash)) return;
+      var MaxLines = 300;
+      var box = document.createElement("div");
+      box.style.cssText = "position:fixed;left:0;right:0;top:0;max-height:55%;overflow:auto;" +
+        "z-index:9999;background:rgba(0,0,0,.88);color:#cfe3ee;" +
+        "font:11px/1.45 monospace;padding:22px 8px 6px;white-space:pre-wrap;word-break:break-all";
+      var copy = document.createElement("button");
+      copy.textContent = "copy";
+      copy.style.cssText = "position:fixed;right:4px;top:2px;z-index:10000;font:11px monospace";
+      var all = [];
+      copy.onclick = function () {
+        if (navigator.clipboard) navigator.clipboard.writeText(all.join("\n"));
+      };
+      document.body.appendChild(box);
+      document.body.appendChild(copy);
+      var lastText = null, lastEl = null, repeat = 1;
+      function push(tag, msg) {
+        var text = "[" + tag + "] " + msg;
+        all.push(text);
+        if (text === lastText && lastEl) { repeat++; lastEl.textContent = text + "  x" + repeat; return; }
+        lastText = text; repeat = 1;
+        var el = document.createElement("div");
+        if (tag === "GPU-ERR" || tag === "GPU-LOST" || tag === "EXC" || tag === "error")
+          el.style.color = "#ff8080";
+        el.textContent = text;
+        box.appendChild(el);
+        lastEl = el;
+        while (box.childNodes.length > MaxLines) box.removeChild(box.firstChild);
+      }
+      ["log", "info", "warn", "error"].forEach(function (kind) {
+        var orig = console[kind].bind(console);
+        console[kind] = function () {
+          push(kind, Array.prototype.slice.call(arguments).map(String).join(" "));
+          orig.apply(null, arguments);
+        };
+      });
+      window.addEventListener("error", function (e) {
+        push("EXC", e.message + " @ " + e.filename + ":" + e.lineno);
+      });
+      window.addEventListener("unhandledrejection", function (e) {
+        push("REJ", String(e.reason));
+      });
+      // WebGPU taps: wrap requestAdapter/requestDevice so Unity's OWN device reports its
+      // uncaptured validation/OOM errors and its loss reason. Shadowing the instance method
+      // is enough - both the gate below and Unity's loader resolve
+      // navigator.gpu.requestAdapter at call time.
+      if ("gpu" in navigator) {
+        var origRequestAdapter = navigator.gpu.requestAdapter.bind(navigator.gpu);
+        navigator.gpu.requestAdapter = function () {
+          return origRequestAdapter.apply(null, arguments).then(function (adapter) {
+            if (!adapter) { push("GPU", "requestAdapter -> null"); return adapter; }
+            try {
+              var info = adapter.info || {};
+              push("GPU", "adapter: " + [info.vendor, info.architecture, info.device, info.description]
+                .filter(Boolean).join(" | "));
+            } catch (e) {}
+            var origRequestDevice = adapter.requestDevice.bind(adapter);
+            adapter.requestDevice = function () {
+              return origRequestDevice.apply(null, arguments).then(function (device) {
+                device.addEventListener("uncapturederror", function (ev) {
+                  push("GPU-ERR", (ev.error && ev.error.message) ? ev.error.message : String(ev.error));
+                });
+                device.lost.then(function (lostInfo) {
+                  push("GPU-LOST", lostInfo.reason + ": " + lostInfo.message);
+                });
+                return device;
+              });
+            };
+            return adapter;
+          });
+        };
+      }
+      push("dbg", "overlay active | " + navigator.userAgent);
+    })();
+
     var buildUrl = "Build";
     var config = {
       dataUrl: buildUrl + "/{{{ DATA_FILENAME }}}",

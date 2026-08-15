@@ -61,13 +61,19 @@ namespace AbstractOcclusion.WebGpuWater
         Transform _driveReference;
         float _rawThrottle, _rawSteer;   // polled each frame in Update
         float _throttle, _steer;         // smoothed toward the raw input
+        // Camera-relative stick from BoatTouchDriver (x = lateral, y = forward), zero when no
+        // touch drive is active. Summed with the keyboard axes then clamped, so either input
+        // can drive without fighting the other; desktop behaviour is unchanged at (0,0).
+        Vector2 _touchInput;
+
+        internal void SetTouchInput(Vector2 stick) => _touchInput = stick;
 
         void Awake() => _rb = GetComponent<Rigidbody>();
 
         void Update()
         {
-            float throttleInput = ReadAxis(ThrottleAxis);
-            float steerInput = ReadAxis(SteerAxis);
+            float throttleInput = Mathf.Clamp(ReadAxis(ThrottleAxis) + _touchInput.y, -1f, 1f);
+            float steerInput = Mathf.Clamp(ReadAxis(SteerAxis) + _touchInput.x, -1f, 1f);
             if (_driveReference == null)
             {
                 _rawThrottle = throttleInput;

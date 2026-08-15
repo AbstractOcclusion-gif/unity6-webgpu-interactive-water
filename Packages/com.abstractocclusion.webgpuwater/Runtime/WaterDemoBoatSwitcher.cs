@@ -25,6 +25,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         BoatController[] _boats = Array.Empty<BoatController>();
         int _activeIndex;
+        BoatTouchDriver _touchDriver;
 
         void Awake()
         {
@@ -38,6 +39,9 @@ namespace AbstractOcclusion.WebGpuWater
 
             if (followCamera == null) followCamera = FindSceneFollowCamera();
             _activeIndex = FindInitialBoatIndex();
+            // Touch drive for phone/tablet/browser builds: spawned here so every boat demo
+            // scene gains the on-screen stick without a scene edit. Inert without a touchscreen.
+            _touchDriver = gameObject.AddComponent<BoatTouchDriver>();
             SelectBoat(_activeIndex, false);
         }
 
@@ -106,6 +110,7 @@ namespace AbstractOcclusion.WebGpuWater
 
             if (followCamera != null)
                 followCamera.SetTarget(selectedBoat.transform, CalculateFramingDistance(selectedBoat));
+            if (_touchDriver != null) _touchDriver.SetTargets(selectedBoat, followCamera);
             if (announce) Debug.Log($"{LogPrefix}Driving '{selectedBoat.name}'.", selectedBoat);
         }
 

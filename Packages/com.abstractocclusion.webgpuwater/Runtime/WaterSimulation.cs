@@ -331,7 +331,13 @@ namespace AbstractOcclusion.WebGpuWater
             _activityResult = new GraphicsBuffer(GraphicsBuffer.Target.Structured, 1, sizeof(float));
             _activityResult.SetData(new float[1]);
             _onActivityReadback = OnActivityReadback;
-            _activityReadback = new AsyncReadbackChannel();
+            // On backends where this buffer readback cannot complete (partial-WebGPU
+            // mobile GPUs), the channel latches Unsupported and the sim simply never
+            // auto-sleeps - its pre-sleep-check behaviour. One clear line beats silence
+            // in buyer bug reports from such devices.
+            _activityReadback = new AsyncReadbackChannel(onGaveUp: static () => Debug.LogWarning(
+                "WaterSimulation: ripple sleep-check readback unavailable on this backend; " +
+                "the ripple sim stays awake."));
         }
 
         RenderTexture Create(RenderTextureFormat format, string name)

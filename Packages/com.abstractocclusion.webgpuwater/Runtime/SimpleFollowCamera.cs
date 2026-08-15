@@ -78,6 +78,25 @@ namespace AbstractOcclusion.WebGpuWater
             _distance = ClampDistance(Mathf.Max(_defaultDistance, framingDistance));
         }
 
+        // Touch entry points (BoatTouchDriver). Same math and clamps as the mouse-orbit and
+        // scroll-zoom paths in ReadOrbitInput; the pixels-to-degrees / pixels-to-steps scaling
+        // stays with the CALLER (the driver's serialized tunables), so touch feel can be tuned
+        // without touching this camera's mouse feel.
+        internal void OrbitBy(Vector2 delta)
+        {
+            if (!allowOrbit) return;
+            if (!_orbitInitialized) InitializeOrbit();
+            _orbitYaw += delta.x;
+            _orbitPitch = Mathf.Clamp(_orbitPitch + delta.y, minimumPitch, maximumPitch);
+        }
+
+        internal void ZoomSteps(float steps)
+        {
+            if (steps == 0f) return;
+            if (!_orbitInitialized) InitializeOrbit();
+            _distance = ClampDistance(_distance - steps * zoomSpeed);
+        }
+
         void InitializeOrbit()
         {
             Vector3 lookRelativeOffset = localOffset - Vector3.up * lookHeight;

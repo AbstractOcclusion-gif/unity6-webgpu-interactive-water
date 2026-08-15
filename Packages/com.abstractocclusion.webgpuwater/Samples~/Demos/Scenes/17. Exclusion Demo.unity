@@ -212,7 +212,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 474bcb49853aa07438625e644c072ee6, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Unity.RenderPipelines.Universal.Runtime::UnityEngine.Rendering.Universal.UniversalAdditionalLightData
   m_UsePipelineSettings: 1
   m_AdditionalLightsShadowResolutionTier: 2
@@ -510,7 +510,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2427031642822514521, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: profile
-      value:
+      value: 
       objectReference: {fileID: 11400000, guid: 096db223712859741bc8affb5f738dd9, type: 2}
     - target: {fileID: 2439696289600386818, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: InitialModule.gravityModifier.scalar
@@ -526,7 +526,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2463587723445124726, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
-      value:
+      value: 
       objectReference: {fileID: 2100000, guid: 909b276cc9362bf4e8526facffff30c2, type: 2}
     - target: {fileID: 3130769476850268295, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: m_Name
@@ -534,11 +534,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 3732076380331823914, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
-      value:
+      value: 
       objectReference: {fileID: 2100000, guid: 909b276cc9362bf4e8526facffff30c2, type: 2}
     - target: {fileID: 3756076545826541038, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
-      value:
+      value: 
       objectReference: {fileID: 2100000, guid: 2b1eaf485cc59674c88dda7e3ca2d131, type: 2}
     - target: {fileID: 6698408623575663652, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: UVModule.tilesX
@@ -770,7 +770,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 172515602e62fb746b5d573b38a5fe58, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Unity.RenderPipelines.Core.Runtime::UnityEngine.Rendering.Volume
   m_IsGlobal: 1
   priority: 0
@@ -964,7 +964,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 7eb9d5ff936dc3d4d8ed8d039315f50f, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterDebugView
   mode: 0
   logFogGates: 0
@@ -1014,8 +1014,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: a79441f348de89743a2939f4d699eac1, type: 3}
-  m_Name:
-  m_EditorClassIdentifier:
+  m_Name: 
+  m_EditorClassIdentifier: 
   m_RenderShadows: 1
   m_RequiresDepthTextureOption: 2
   m_RequiresOpaqueTextureOption: 2
@@ -1132,7 +1132,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: cddd9544bc6aa3a4a952344b09c15c46, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.FlyCamera
   moveSpeed: 6
   boostMultiplier: 3
@@ -1150,12 +1150,20 @@ MonoBehaviour:
   m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 0c2f11fcb19c4fd478b030ada99be5fb, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.SimpleFollowCamera
   target: {fileID: 0}
   localOffset: {x: 0, y: 4.5, z: -11}
   lookHeight: 1
   followSharpness: 4
+  allowOrbit: 1
+  mouseOrbitSensitivity: 0.15
+  gamepadOrbitSpeed: 120
+  minimumPitch: -10
+  maximumPitch: 75
+  minimumDistance: 3
+  maximumDistance: 40
+  zoomSpeed: 1.5
 --- !u!4 &1449948433 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 632534965383370087, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
@@ -1170,7 +1178,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: b55cb88d347492c4f95965747729bf4e, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterSplashEmitter
 --- !u!1 &1579798797
 GameObject:
@@ -1216,7 +1224,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 5b7c69d58eef6734798f9cf5eba11a88, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterVolume
   chunkFootprint: 0
   chunkDensityBoost: 1
@@ -1518,11 +1526,11 @@ MonoBehaviour:
     planarExcludeLayers:
       serializedVersion: 2
       m_Bits: 16
-    planarClipDepth: 0
+    planarClipDepth: 0.007
     planarResolutionScale: 0.5
-    planarUpdateInterval: 1
+    planarUpdateInterval: 5
     planarRenderShadows: 1
-    planarFarClipDistance: 0
+    planarFarClipDistance: 1000
     reflectionStrength: 0.5
     envReflectionIntensity: 0.5
     reflectSunlight: 1
@@ -1681,7 +1689,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 7c2b6569e97b14744848833682c436b7, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterFoamParticles
   useParticles: 1
   volume: {fileID: 1579798799}
@@ -1790,7 +1798,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 915077c3dcbfd574299c2b79a0e61be4, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterExclusionVolume
   shape: 0
   carveMesh: {fileID: 0}
@@ -1884,13 +1892,14 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 3f9c1d5a7b2e4c8d9a0f6b3e5c7d1a24, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterDemoOverlay
   title: Exclusion Demo
   description: 'Exclusion volumes discard the ocean surface inside a region, leaving
     a dry pit whose cut faces are shaded as real slabs of water so the carve never
     reads as a hole. To display godrays on wall use Godrays From air tweak. Multiple
-    exclusion zone currently buggy , sorting is a headache ; '
+    exclusion zone currently buggy , sorting is a headache ; And still some FPS drop
+    when inside at high quality  '
   corner: 2
   panelWidth: 460
   screenMargin: 14
