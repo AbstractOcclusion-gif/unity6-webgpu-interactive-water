@@ -69,6 +69,8 @@ namespace AbstractOcclusion.WebGpuWater
                  "downstream metres per second. Tangents are mirrored to keep adjacent spans smooth.")]
         [SerializeField] internal List<WaterRiverKnot> knots = CreateDefaultKnots();
 
+        internal event Action Changed;
+
         public int KnotCount => knots?.Count ?? 0;
         public int SegmentCount => Mathf.Max(0, KnotCount - 1);
 
@@ -123,20 +125,32 @@ namespace AbstractOcclusion.WebGpuWater
             Vector3 tangent = continuation * BezierHandleLengthFraction;
             knots.Add(new WaterRiverKnot(
                 last.localPosition + continuation, tangent, last.width, last.speed));
+            NotifyChanged();
         }
 
         internal bool RemoveLastKnot()
         {
             if (knots == null || knots.Count <= MinimumKnotCount) return false;
             knots.RemoveAt(knots.Count - 1);
+            NotifyChanged();
             return true;
         }
 
-        internal void ResetToDefaults() => knots = CreateDefaultKnots();
+        internal void ResetToDefaults()
+        {
+            knots = CreateDefaultKnots();
+            NotifyChanged();
+        }
+
+        internal void NotifyChanged() => Changed?.Invoke();
 
         void Reset() => ResetToDefaults();
 
-        void OnValidate() => EnsureValidKnots();
+        void OnValidate()
+        {
+            EnsureValidKnots();
+            NotifyChanged();
+        }
 
         void EnsureValidKnots()
         {

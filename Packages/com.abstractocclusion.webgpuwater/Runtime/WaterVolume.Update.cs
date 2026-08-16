@@ -241,27 +241,29 @@ namespace AbstractOcclusion.WebGpuWater
             return b;
         }
 
-        void SetRenderersEnabled(bool on)
+        internal void SetRenderersEnabled(bool on)
         {
+            bool renderGeometry = on && renderBuiltInGeometry;
             // An ocean body draws the horizon-reaching clipmaps INSTEAD of the bounded surface planes,
             // so the two never double-draw (z-fight). Above and under each have their own twin; the
             // clipmaps only exist in play mode, so gate on their ACTUAL presence - otherwise edit mode
             // hides a plane with nothing to replace it (the surface looks cut).
             bool clipmapActive = _clipmapLevels != null;
             bool underClipmapActive = clipmapActive && _clipmapLevels.Length > 0 && _clipmapLevels[0].under != null;
-            SetRendererEnabled(surfaceAbove, on && !clipmapActive);
-            SetRendererEnabled(surfaceUnder, on && !underClipmapActive);
-            SetRendererEnabled(poolRenderer, on);
-            SetRendererEnabled(_patchRenderer, on && _windowed);
-            SetRendererEnabled(_patchUnderRenderer, on && IsOceanClipmap);
-            SetClipmapRenderersEnabled(on && IsOceanClipmap);
+            SetRendererEnabled(surfaceAbove, renderGeometry && !clipmapActive);
+            SetRendererEnabled(surfaceUnder, renderGeometry && !underClipmapActive);
+            SetRendererEnabled(poolRenderer, renderGeometry);
+            SetRendererEnabled(_patchRenderer, renderGeometry && _windowed);
+            SetRendererEnabled(_patchUnderRenderer, renderGeometry && IsOceanClipmap);
+            SetClipmapRenderersEnabled(renderGeometry && IsOceanClipmap);
             // God rays obey the quality tier as well as culling: a tier that disables them
             // keeps the renderer off even when the body is on-screen. Windowed bodies also
             // suppress god rays (out of scope, same reason as caustics). A CHUNK draws its own
             // shafts inside the shell wall (shaped to its primitive + fill), so the pool god-ray
             // box is suppressed for chunks to avoid double, unshaped shafts.
-            SetRendererEnabled(godRayRenderer, on && _godRaysAllowed && !_windowed && !IsChunk);
-            SetChunkShellEnabled(on);
+            SetRendererEnabled(godRayRenderer,
+                               renderGeometry && _godRaysAllowed && !_windowed && !IsChunk);
+            SetChunkShellEnabled(renderGeometry);
         }
 
         // forceRenderingOff, NOT '.enabled': enabled is SERIALIZED, and this runs every frame from

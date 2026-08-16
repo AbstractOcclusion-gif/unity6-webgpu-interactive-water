@@ -67,6 +67,12 @@ namespace AbstractOcclusion.WebGpuWater
                  "Ocean = unbounded open water to the horizon.")]
         [SerializeField] internal WaterBodyType bodyType = WaterBodyType.Pond;
 
+        [Tooltip("Render this volume's built-in flat surfaces, analytic pool, god rays, and " +
+                 "runtime patch/clipmap geometry. Disable for an external surface such as a river " +
+                 "ribbon; simulation and per-body shader uniforms remain active. Fullscreen volume " +
+                 "fog is controlled separately in the Volume tab.")]
+        [SerializeField] internal bool renderBuiltInGeometry = true;
+
         [Header("Water volume (placement)")]
         [Tooltip("World half-size per pool unit, per axis: X = half width, Y = depth to the " +
                  "floor, Z = half length. (1,1,1) is the original 1:1 pool. X != Z gives a " +

@@ -26,6 +26,10 @@ namespace AbstractOcclusion.WebGpuWater
         [System.Serializable]
         public sealed class WaterFogSettings
         {
+            [Tooltip("Render the camera/scene through this WaterVolume's rectangular fullscreen fog " +
+                     "and waterline passes. Disable when the volume only supplies waves and surface " +
+                     "fog uniforms to external geometry such as a river ribbon.")]
+            public bool fullscreenVolumeFog = true;
             [Tooltip("Global depth absorption, shared by the surface, objects and pool. The " +
                      "UNDERWATER view of it (the fullscreen fog you see with the camera below the " +
                      "surface) is drawn by the WaterUnderwaterFog renderer feature - add it to your " +
@@ -54,6 +58,7 @@ namespace AbstractOcclusion.WebGpuWater
         // Same-named forwarding accessors keep every reader unchanged. WaterFog stays a public get/set
         // (used by the sample scripting API) but now targets the settings; the rest are read-only.
         bool waterFog => waterFogSettings.waterFog;
+        bool fullscreenVolumeFog => waterFogSettings.fullscreenVolumeFog;
         internal Color fogColor => waterFogSettings.fogColor;
         internal Color fogExtinction => waterFogSettings.fogExtinction;
         internal float fogDensity => waterFogSettings.fogDensity;

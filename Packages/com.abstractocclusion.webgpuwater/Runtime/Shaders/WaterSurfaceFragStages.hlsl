@@ -87,12 +87,18 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
     // pre-displacement, so the non-windowed branch was already source-correct.
     float3 rippleSourcePos = float3(i.largeWaveSourceXZ.x, i.worldPos.y, i.largeWaveSourceXZ.y);
     float4 info = SampleRipple(i.position, rippleSourcePos, fade);
+    float interactiveRippleWeight = 1.0 - saturate(_IsRiver);
+    // A river has no valid coordinates in the rectangular interactive-ripple simulation. The
+    // vertex stage therefore excludes this field too; matching that gate here keeps its shading
+    // normal attached to the analytic wind-wave geometry instead of an unrelated volume texture.
+    info *= interactiveRippleWeight;
 
     // make the water look more "peaked": walk a few steps along the ripple normal
     // in the active UV domain (pool for whole-body, sim window for windowed).
     float2 coord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
                                         : (WorldToSim(rippleSourcePos).xz * 0.5 + 0.5);
-    int refineSteps = clamp((int)_PeakedRefineSteps, 0, PEAKED_REFINE_MAX_STEPS);
+    int refineSteps = clamp((int)(_PeakedRefineSteps * interactiveRippleWeight),
+                            0, PEAKED_REFINE_MAX_STEPS);
     [loop] // uniform trip count (tier knob); explicit-LOD samples are loop-safe
     for (int k = 0; k < refineSteps; k++)
     {
@@ -127,9 +133,14 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
     // Converting first means nothing ever exceeds a real slope, at any depth or footprint.
     float2 nxzWorld = info.ba * SIM_SLOPE_TO_POOL * _SimSlopeToWorld.xy
                     - windSlope * _PoolSlopeToWorld.xy;
-    // Rotation only - the extent division is already carried by _PoolSlopeToWorld above. Reflection
-    // and refraction angles stay correct on a rotated or rectangular volume, as before.
-    float3 normal = normalize(mul(VolumeRot(), float3(nxzWorld.x, 1.0, nxzWorld.y)));
+    // Rotation only - the extent division is already carried by _PoolSlopeToWorld above. The
+    // interpolated basis is VolumeRot's x/up/z frame for every existing grid and the mesh's
+    // transported width/up/flow frame for a river, so slopes follow descending waterfall spans.
+    float3 slopeAxisX = normalize(i.worldTangent.xyz);
+    float3 slopeAxisZ = normalize(cross(i.worldNormal, slopeAxisX) * i.worldTangent.w);
+    float3 normal = normalize(i.worldNormal
+                            + slopeAxisX * nxzWorld.x
+                            + slopeAxisZ * nxzWorld.y);
     // ---- Coastline: ONE shore-substrate + surf-front sample at the SOURCE xz, hoisted
     // here and shared by the wave normal, the whitewash foam, the crest glow and the
     // swash below - both cheaper and far less inlining pressure on the shader compiler
@@ -155,10 +166,21 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
     float surfGeomFoam = 0.0;
     if (_LargeBody > 0.5)
     {
-        float4 normalFoam = ApplyLargeBodyWaveNormalFoamShore(normal, i.largeWaveSourceXZ,
+        float riverWeight = saturate(_IsRiver);
+        // Large-body waves are evaluated in world XZ. For a ribbon, ask the established wave
+        // function for its world-XZ tilt relative to world-up, then express that same tilt in the
+        // transported width/flow frame. The pool/lake/ocean input and result remain unchanged.
+        float3 largeWaveBaseNormal = normalize(lerp(normal, float3(0.0, 1.0, 0.0), riverWeight));
+        float4 normalFoam = ApplyLargeBodyWaveNormalFoamShore(largeWaveBaseNormal,
+                                                              i.largeWaveSourceXZ,
                                                               _WaveNormalStrength,
                                                               shoreFrag, surfFrag);
-        normal = normalFoam.xyz;
+        float inverseLargeWaveUp = rcp(max(normalFoam.y, LBW_NORMAL_MIN_Y));
+        float2 riverLargeWaveTilt = normalFoam.xz * inverseLargeWaveUp;
+        float3 riverLargeWaveNormal = normalize(normal
+                                              + slopeAxisX * riverLargeWaveTilt.x
+                                              + slopeAxisZ * riverLargeWaveTilt.y);
+        normal = normalize(lerp(normalFoam.xyz, riverLargeWaveNormal, riverWeight));
         surfGeomFoam = normalFoam.w;
     }
     // View ray + distance from one subtraction (the distance also drives the detail
@@ -192,8 +214,12 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
         // so near-field micro-ripple and far-field cascade roughness tell one story.
         detailNormalStrength *= SeaStateMssScale(i.largeWaveSourceXZ);
         float2 detailTilt = DetailNormalTilt(i.largeWaveSourceXZ, viewDistWorld);
-        normal = normalize(normal + float3(detailTilt.x, 0.0, detailTilt.y)
-                                    * detailNormalStrength);
+        float3 gridDetailTilt = float3(detailTilt.x, 0.0, detailTilt.y);
+        float3 riverDetailTilt = slopeAxisX * detailTilt.x + slopeAxisZ * detailTilt.y;
+        // Preserve the original unrotated-pool detail path byte-for-byte while orienting only
+        // river microdetail in the transported ribbon frame.
+        float3 detailTiltWorld = lerp(gridDetailTilt, riverDetailTilt, saturate(_IsRiver));
+        normal = normalize(normal + detailTiltWorld * detailNormalStrength);
     }
     WaterGeomStage g;
     g.normal = normal;

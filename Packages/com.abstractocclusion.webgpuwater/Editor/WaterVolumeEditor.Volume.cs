@@ -20,6 +20,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 "Water Fog (Beer-Lambert)", _showWaterFog, Prop(WaterVolumePropertyPaths.WaterFog), () =>
             {
                 DrawFields(
+                    "waterFogSettings.fullscreenVolumeFog",
                     WaterVolumePropertyPaths.FogColor,
                     WaterVolumePropertyPaths.FogExtinction,
                     WaterVolumePropertyPaths.FogDensity,

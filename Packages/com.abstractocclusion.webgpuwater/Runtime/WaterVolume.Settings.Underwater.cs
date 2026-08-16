@@ -124,12 +124,20 @@ namespace AbstractOcclusion.WebGpuWater
         /// primary body as a fallback when the point is outside every footprint. Objects call
         /// this each frame so they float on, and are lit by, the lake they are actually in.</summary>
         public static WaterVolume BodyContaining(Vector3 worldPoint)
+            => ResolveContainingBody(worldPoint, requireFullscreenVolumeFog: false);
+
+        internal static WaterVolume BodyContainingForUnderwaterEffects(Vector3 worldPoint)
+            => ResolveContainingBody(worldPoint, requireFullscreenVolumeFog: true);
+
+        static WaterVolume ResolveContainingBody(Vector3 worldPoint,
+                                                  bool requireFullscreenVolumeFog)
         {
             WaterVolume best = null;
             float bestSqr = float.MaxValue;
             for (int i = 0; i < Bodies.Count; i++)
             {
                 WaterVolume body = Bodies[i];
+                if (requireFullscreenVolumeFog && !body.fullscreenVolumeFog) continue;
                 if (!body.WorldToPoolXZ(worldPoint, out _, out _)) continue;
 
                 // Tiebreak on HORIZONTAL distance to centre; the footprint ignores height,
@@ -138,7 +146,19 @@ namespace AbstractOcclusion.WebGpuWater
                 float sqr = toCenter.x * toCenter.x + toCenter.z * toCenter.z;
                 if (sqr < bestSqr) { bestSqr = sqr; best = body; }
             }
-            return best != null ? best : Resolve();
+            if (best != null) return best;
+
+            WaterVolume fallback = Resolve();
+            if (!requireFullscreenVolumeFog || fallback == null || fallback.fullscreenVolumeFog)
+                return fallback;
+
+            // An external-surface provider may be primary while another body still owns valid
+            // fullscreen fog. Preserve the established primary-first fallback among eligible bodies.
+            for (int i = 0; i < Bodies.Count; i++)
+                if (Bodies[i].fullscreenVolumeFog && Bodies[i].isPrimary) return Bodies[i];
+            for (int i = 0; i < Bodies.Count; i++)
+                if (Bodies[i].fullscreenVolumeFog) return Bodies[i];
+            return null;
         }
 
         /// <summary>All live water bodies. Used by the input router to send a click to

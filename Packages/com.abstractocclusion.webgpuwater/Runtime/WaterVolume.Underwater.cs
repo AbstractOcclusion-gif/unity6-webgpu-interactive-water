@@ -142,9 +142,24 @@ namespace AbstractOcclusion.WebGpuWater
             RenderPlanarMirror(cam); // per-body planar: every planar body mirrors its OWN plane, not just primary
 
             if (!isPrimary) return;
-            WaterVolume fogSource = BodyContaining(cam.transform.position);
-            if (fogSource == null) return;
+            WaterVolume fogSource = BodyContainingForUnderwaterEffects(cam.transform.position);
+            if (fogSource == null)
+            {
+                ClearUnderwaterCameraState();
+                return;
+            }
             fogSource.UpdateUnderwaterState(cam);
+        }
+
+        void ClearUnderwaterCameraState()
+        {
+            if (!UnderwaterFogActive && !WaterlineActive && !CameraSubmerged && FogSource == null)
+                return;
+            UnderwaterFogActive = false;
+            WaterlineActive = false;
+            CameraSubmerged = false;
+            FogSource = null;
+            Publisher.PublishUnderwater(0f, 0f, 0f, 0f, 0f, 0f);
         }
 
         // Fraction of screen resolution + clip-plane push for the per-body planar mirror. Constants (not

@@ -9,6 +9,10 @@
 #define WATER_SURFACE_VERT_STAGE_INCLUDED
 
             float _Underwater;
+            // River ribbons use the same material and fragment stack, but their vertices are already
+            // authored in full 3D instead of being a [-1,1] pool grid. Per-renderer and default-zero,
+            // so every existing pool, lake, patch and clipmap stays on its original path.
+            float _IsRiver;
             // Camera-following high-detail patch (windowed large bodies): a dense [-1,1] grid
             // remapped into just the sim window's sub-region of pool space, so near-field
             // ripple/wave geometry is sampled densely enough (target ~one vertex per sim texel)
@@ -71,19 +75,31 @@
             float4 SampleRipple(float3 poolPos, float3 worldPos, out float fade)
             {
                 fade = 1.0;
+                float4 info = (float4)0.0;
                 if (_SimWindowed < 0.5)
-                    return SampleWaterBicubic(poolPos.xz * 0.5 + 0.5);
-
-                float2 uv = WorldToSim(worldPos).xz * 0.5 + 0.5;
-                if (any(uv < 0.0) || any(uv > 1.0)) { fade = 0.0; return (float4)0.0; }
-
-                float band = max(_SimEdgeFadeTexels, 0.0) * _WaterTexel.x; // texels -> UV
-                float2 d = min(uv, 1.0 - uv);
-                fade = saturate(min(d.x, d.y) / max(band, 1e-5));
-
-                float4 info = SampleWaterBicubic(uv);
-                info.r  *= fade; // fade ripple height
-                info.ba *= fade; // fade normal tilt back to flat
+                {
+                    // A single explicit exit keeps Unity's D3D compiler from losing the definite
+                    // assignment of the out parameter across this uniform branch (Unity 6000.3.9f1
+                    // otherwise terminates the shader worker instead of reporting the diagnostic).
+                    info = SampleWaterBicubic(poolPos.xz * 0.5 + 0.5);
+                }
+                else
+                {
+                    float2 uv = WorldToSim(worldPos).xz * 0.5 + 0.5;
+                    if (any(uv < 0.0) || any(uv > 1.0))
+                    {
+                        fade = 0.0;
+                    }
+                    else
+                    {
+                        float band = max(_SimEdgeFadeTexels, 0.0) * _WaterTexel.x; // texels -> UV
+                        float2 d = min(uv, 1.0 - uv);
+                        fade = saturate(min(d.x, d.y) / max(band, 1e-5));
+                        info = SampleWaterBicubic(uv);
+                        info.r  *= fade; // fade ripple height
+                        info.ba *= fade; // fade normal tilt back to flat
+                    }
+                }
                 return info;
             }
 
@@ -111,7 +127,12 @@
                 return all(abs(poolPos.xz - _PatchPoolCenter) < inner);
             }
 
-            struct appdata { float4 vertex : POSITION; };
+            struct appdata
+            {
+                float4 vertex : POSITION;
+                float3 normal : NORMAL;
+                float4 tangent : TANGENT;
+            };
             struct v2f
             {
                 float4 pos      : SV_POSITION;
@@ -122,7 +143,12 @@
                                                       // so the fragment normal reads the SOURCE point
                                                       // (not the chop-displaced worldPos)
                 UNITY_FOG_COORDS(4)
+                float3 worldNormal : TEXCOORD5; // base sheet normal; transported ribbon-up for rivers
+                float4 worldTangent : TEXCOORD6; // x-slope axis; w reconstructs the z-slope axis
             };
+
+            #define RIVER_FRAME_MIN_LENGTH_SQ 1e-8
+            #define GRID_TANGENT_HANDEDNESS -1.0
 
             // WindWaveSampleXZ + _OceanWorldWaves moved to WaterWaves.hlsl (2026-08-10): the foam
             // glue and the waterline must pick the SAME wind-wave coordinate as this vertex path.
@@ -291,12 +317,48 @@
                     poolFlat = float3(gridPoolXZ.x, _ChunkSurfacePoolY, gridPoolXZ.y); // grid -> pool (x, level, z); level 0 for non-chunks
                     worldFlat = PoolToWorld(poolFlat);
                 }
+                // River meshes are already authored in full 3D. Select that source without a second
+                // vertex control-flow fork: Unity's D3D compiler duplicated this already-large stage
+                // around the uniform branch and terminated its worker process. Pools, patches and
+                // clipmaps retain riverWeight = 0 and therefore their original path exactly.
+                float riverWeight = saturate(_IsRiver);
+                float3 riverWorldFlat = mul(unity_ObjectToWorld, v.vertex).xyz;
+                worldFlat = lerp(worldFlat, riverWorldFlat, riverWeight);
+                poolFlat = lerp(poolFlat, WorldToPool(riverWorldFlat), riverWeight);
+                float3 gridWorldNormal = mul(VolumeRot(), float3(0.0, 1.0, 0.0));
+                float3 riverWorldNormal = UnityObjectToWorldNormal(v.normal);
+                o.worldNormal = normalize(lerp(gridWorldNormal, riverWorldNormal, riverWeight));
+                float3 gridWorldTangent = mul(VolumeRot(), float3(1.0, 0.0, 0.0));
+                float3 riverWorldTangent = mul((float3x3)unity_ObjectToWorld, v.tangent.xyz);
+                // Non-uniform scale can make a transformed tangent lean into the normal. Removing
+                // that component keeps the transported ribbon frame orthogonal on waterfall spans.
+                riverWorldTangent = riverWorldTangent
+                                  - riverWorldNormal
+                                  * dot(riverWorldTangent, riverWorldNormal);
+                float riverTangentLengthSq = max(dot(riverWorldTangent, riverWorldTangent),
+                                                  RIVER_FRAME_MIN_LENGTH_SQ);
+                riverWorldTangent *= rsqrt(riverTangentLengthSq);
+                o.worldTangent.xyz = normalize(lerp(gridWorldTangent, riverWorldTangent,
+                                                    riverWeight));
+                o.worldTangent.w = lerp(GRID_TANGENT_HANDEDNESS, v.tangent.w, riverWeight);
                 // World position at the surface plane (height 0) picks the windowed UV; the
                 // xz mapping doesn't depend on ripple height, so this is exact.
                 float fade;
                 float4 info = SampleRipple(poolFlat, worldFlat, fade);
+                // The interactive solver is a rectangular WaterVolume heightfield. Until a river-
+                // space simulation owns an explicit mapping, sampling it on a winding ribbon makes
+                // an unrelated second wave layer that the river wind-wave controls cannot affect.
+                // Keep the shared analytic wind waves below; those are world-unit authored and are
+                // the technically valid reusable motion path for this mesh.
+                info *= 1.0 - riverWeight;
                 float3 worldPos = DisplaceSurfaceVertex(poolFlat, worldFlat, info, o.position,
                                                         o.largeWaveSourceXZ);
+                // The common shader expresses height along the WaterVolume up axis. A ribbon may
+                // turn through a waterfall, so carry that same scalar displacement along its
+                // transported surface normal instead of pulling every wave vertically upward.
+                float riverHeight = dot(worldPos - worldFlat, gridWorldNormal);
+                float3 riverWorldPos = worldFlat + o.worldNormal * riverHeight;
+                worldPos = lerp(worldPos, riverWorldPos, riverWeight);
                 o.worldPos = worldPos;
                 // Nudge the patch a fixed few centimetres toward the camera IN VIEW SPACE so it wins the
                 // depth test against the coplanar far plane at EVERY distance. The old bias was a constant

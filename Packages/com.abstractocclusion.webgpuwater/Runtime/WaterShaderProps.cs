@@ -45,6 +45,10 @@ namespace AbstractOcclusion.WebGpuWater
         internal static readonly int WaterFogEnabled = Shader.PropertyToID(WaterFogEnabledName);
         internal static readonly int WaterFogDensity = Shader.PropertyToID(WaterFogDensityName);
 
+        // ---- WaterUniformPublisher <-> WaterRiverSurface ----
+        internal const string PatchCoverActiveName = "_PatchCoverActive";
+        internal static readonly int PatchCoverActive = Shader.PropertyToID(PatchCoverActiveName);
+
         // ---- WaterShoreDepthField.cs <-> WaterSimulation.cs ----
         internal const string ShoreShoalDepthName = "_ShoreShoalDepth";
         internal const string ShoreGreenBandDepthName = "_ShoreGreenBandDepth";

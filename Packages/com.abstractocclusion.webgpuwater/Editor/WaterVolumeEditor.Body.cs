@@ -88,7 +88,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             _showBody = WaterEditorUI.Section("Water Body (multi-instance)", _showBody, () =>
             {
-                DrawFields("isPrimary", "autoLinkReceivers");
+                DrawFields("isPrimary", "autoLinkReceivers", "renderBuiltInGeometry");
                 // The renderers are wired by the wizard / scene builder and then never touched.
                 _showBodyAdvanced = WaterEditorUI.SubSection("Advanced", _showBodyAdvanced, () =>
                 {

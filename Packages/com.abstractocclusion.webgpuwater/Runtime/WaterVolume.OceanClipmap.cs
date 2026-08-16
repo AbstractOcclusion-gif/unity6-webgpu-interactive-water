@@ -181,7 +181,7 @@ namespace AbstractOcclusion.WebGpuWater
         // because without it the near-field ripple fade can't keep the far field clean.
         void CreateOceanClipmap()
         {
-            if (!Application.isPlaying) return;
+            if (!Application.isPlaying || !renderBuiltInGeometry) return;
             if (openWater && unboundedOcean && !_windowed)
             {
                 Debug.LogWarning("WaterVolume: Unbounded Ocean needs the large-body sim window " +

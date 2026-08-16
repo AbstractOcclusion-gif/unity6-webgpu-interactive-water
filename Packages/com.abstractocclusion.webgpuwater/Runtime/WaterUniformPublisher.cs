@@ -157,7 +157,6 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_SimSlopeToWorld = Shader.PropertyToID("_SimSlopeToWorld");
         // The near-field patch's footprint, published to EVERY renderer of the body: the patch reads it
         // to place its vertices, the base sheet reads it to cut its hole.
-        static readonly int ID_PatchCoverActive = Shader.PropertyToID("_PatchCoverActive");
         static readonly int ID_PatchCoverMargin = Shader.PropertyToID("_PatchCoverMargin");
         static readonly int ID_PatchCoverCenter = Shader.PropertyToID("_PatchPoolCenter");
         static readonly int ID_PatchCoverHalf = Shader.PropertyToID("_PatchPoolHalf");
@@ -739,7 +738,8 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetVector(ID_SimSlopeToWorld, _body.SimSlopeToWorld);
             // 0 whenever no patch is drawn (every bounded body, and windowed bodies in edit mode),
             // which leaves the base sheet whole exactly as before.
-            sink.SetFloat(ID_PatchCoverActive, _body.PatchCoverActive ? 1f : 0f);
+            sink.SetFloat(WaterShaderProps.PatchCoverActive,
+                          _body.PatchCoverActive ? 1f : 0f);
             sink.SetFloat(ID_PatchCoverMargin, _body.PatchCoverMargin);
             sink.SetVector(ID_PatchCoverCenter, _body.PatchPoolCenter);
             sink.SetVector(ID_PatchCoverHalf, _body.PatchPoolHalf);

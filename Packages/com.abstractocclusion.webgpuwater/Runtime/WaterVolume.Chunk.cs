@@ -315,7 +315,7 @@ namespace AbstractOcclusion.WebGpuWater
         // _ChunkShape is already on the block (SetChunkSurfaceProps - the surface needs it too).
         void ApplyChunkShellBlock(MaterialPropertyBlock bodyBlock)
         {
-            if (!IsChunk) { DisableChunkShell(); return; }
+            if (!IsChunk || !renderBuiltInGeometry) { DisableChunkShell(); return; }
             EnsureChunkShell();
             if (_chunkShellRenderer == null) return;
 

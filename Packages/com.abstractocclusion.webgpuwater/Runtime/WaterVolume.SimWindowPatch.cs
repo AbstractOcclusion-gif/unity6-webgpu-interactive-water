@@ -121,7 +121,7 @@ namespace AbstractOcclusion.WebGpuWater
         // only - it depends on the per-body material instance created in ApplyReflections.
         void CreateSimWindowPatch()
         {
-            if (!Application.isPlaying || !_windowed) return;
+            if (!Application.isPlaying || !_windowed || !renderBuiltInGeometry) return;
             if (_patchRenderer != null || surfaceAbove == null || surfaceAbove.sharedMaterial == null) return;
 
             _patchGrid = WaterMeshBuilder.BuildGrid(Mathf.Clamp(_simRes, 1, MaxPatchGridResolution));
