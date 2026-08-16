@@ -29,8 +29,11 @@ namespace AbstractOcclusion.WebGpuWater
         //   tangent   - bank-left to bank-right direction, w=-1 so the bitangent is downstream;
         //   UV0.x     - lateral coordinate (left bank 0, right bank 1);
         //   UV0.y     - cumulative centreline distance in world metres.
-        // UV1 and vertex colors are deliberately unused. UV0 is the only metadata later current-map
-        // and baked-foam consumers need to identify across-river and downstream position.
+        //   UV1.x     - signed lateral distance from the centreline in world metres;
+        //   UV1.y     - cumulative centreline distance in world metres;
+        //   UV1.z     - interpolated downstream current speed in world metres per second.
+        // UV0 remains the normalized bake coordinate for later current-map and foam consumers. UV1
+        // is the metric current coordinate used by the shared surface shader; vertex colors stay free.
         internal static void Populate(Mesh mesh, WaterRiverSpline spline, Transform meshTransform,
                                       int samplesPerSegment)
         {
@@ -43,6 +46,7 @@ namespace AbstractOcclusion.WebGpuWater
             var normals = new Vector3[vertexCount];
             var tangents = new Vector4[vertexCount];
             var uv = new Vector2[vertexCount];
+            var currentData = new Vector3[vertexCount];
             var indices = new int[indexCount];
             var worldPositions = new Vector3[vertexCount];
             var crossSectionUps = new Vector3[crossSectionCount];
@@ -100,6 +104,10 @@ namespace AbstractOcclusion.WebGpuWater
                 tangents[rightIndex] = tangents[leftIndex];
                 uv[leftIndex] = new Vector2(LeftBankUv, longitudinalDistance);
                 uv[rightIndex] = new Vector2(RightBankUv, longitudinalDistance);
+                currentData[leftIndex] = new Vector3(
+                    -halfWidth, longitudinalDistance, sample.Speed);
+                currentData[rightIndex] = new Vector3(
+                    halfWidth, longitudinalDistance, sample.Speed);
                 crossSectionUps[crossSection] = up;
 
                 previousRight = right;
@@ -117,6 +125,7 @@ namespace AbstractOcclusion.WebGpuWater
             mesh.normals = normals;
             mesh.tangents = tangents;
             mesh.uv = uv;
+            mesh.SetUVs(1, currentData);
             mesh.triangles = indices;
             mesh.bounds = bounds;
         }

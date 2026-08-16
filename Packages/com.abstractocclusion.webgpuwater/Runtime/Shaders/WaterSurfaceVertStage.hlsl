@@ -132,6 +132,8 @@
                 float4 vertex : POSITION;
                 float3 normal : NORMAL;
                 float4 tangent : TANGENT;
+                // River-only metric surface coordinate + physical speed. Pool meshes leave UV1 at 0.
+                float3 riverCurrentData : TEXCOORD1;
             };
             struct v2f
             {
@@ -145,6 +147,7 @@
                 UNITY_FOG_COORDS(4)
                 float3 worldNormal : TEXCOORD5; // base sheet normal; transported ribbon-up for rivers
                 float4 worldTangent : TEXCOORD6; // x-slope axis; w reconstructs the z-slope axis
+                float3 riverCurrentData : TEXCOORD7; // lateral/longitudinal metres, downstream m/s
             };
 
             #define RIVER_FRAME_MIN_LENGTH_SQ 1e-8
@@ -174,12 +177,16 @@
             }
 
             float3 DisplaceSurfaceVertex(float3 poolFlat, float3 worldFlat, float4 info,
+                                         float riverWeight, float3 riverCurrentData,
                                          out float3 poolDisplaced, out float2 largeWaveSourceXZ)
             {
                 float2 poolXZ = poolFlat.xz;
                 float3 position = poolFlat;
                 position.y += info.r;                  // interactive ripple heightfield (windowed: faded)
-                position.y += WaveHeight(WindWaveSampleXZ(poolXZ, worldFlat.xz)); // small wind-wave detail; open water
+                float2 gridWaveSample = WindWaveSampleXZ(poolXZ, worldFlat.xz);
+                float2 riverWaveSample = RiverCurrentWaveSampleXZ(riverCurrentData);
+                position.y += WaveHeight(lerp(gridWaveSample, riverWaveSample, riverWeight));
+                                                       // small wind-wave detail; open water
                                                        // layers the big swell on top in world space below
                 poolDisplaced = position;              // keep pool-space position for the tracer
                 float3 worldPos = PoolToWorld(position);
@@ -341,6 +348,7 @@
                 o.worldTangent.xyz = normalize(lerp(gridWorldTangent, riverWorldTangent,
                                                     riverWeight));
                 o.worldTangent.w = lerp(GRID_TANGENT_HANDEDNESS, v.tangent.w, riverWeight);
+                o.riverCurrentData = v.riverCurrentData * riverWeight;
                 // World position at the surface plane (height 0) picks the windowed UV; the
                 // xz mapping doesn't depend on ripple height, so this is exact.
                 float fade;
@@ -351,8 +359,9 @@
                 // Keep the shared analytic wind waves below; those are world-unit authored and are
                 // the technically valid reusable motion path for this mesh.
                 info *= 1.0 - riverWeight;
-                float3 worldPos = DisplaceSurfaceVertex(poolFlat, worldFlat, info, o.position,
-                                                        o.largeWaveSourceXZ);
+                float3 worldPos = DisplaceSurfaceVertex(
+                    poolFlat, worldFlat, info, riverWeight, o.riverCurrentData,
+                    o.position, o.largeWaveSourceXZ);
                 // The common shader expresses height along the WaterVolume up axis. A ribbon may
                 // turn through a waterfall, so carry that same scalar displacement along its
                 // transported surface normal instead of pulling every wave vertically upward.

@@ -23,8 +23,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const string CurrentFieldsPath = "currentFields";
         const string CurrentFieldsHelp =
             "Current fields add physical world-space velocity without changing the surface normal. " +
-            "Use a Constant Current Field for a whole-body stream; spline and baked fields can share " +
-            "the same list as they are added.";
+            "Use a Constant Current Field for a whole-body stream or a River Current Field for " +
+            "spline width, speed and waterfall direction. Sources in this list compose additively.";
 
         // Drawn before the first foldout: one knob that scales every motion source below it, so it
         // reads as the tab's master rather than as a section of its own.

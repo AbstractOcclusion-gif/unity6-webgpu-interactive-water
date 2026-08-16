@@ -15,7 +15,7 @@ Coverage is grouped by feature rather than by implementation file:
 - mesh builders, wind-wave determinism, and touch pinch tracking;
 - FFT ocean spectrum layout, directional swell, and gain normalisation;
 - foam profile material-property writes and particle flipbook safety;
-- analytic large-wave, surface-kinematics, current-composition, river-spline, and buoyancy maths;
+- analytic large-wave, surface-kinematics, current-composition, river-spline/current, and buoyancy maths;
 - volume-frame transforms, footprint bounds, and ray-to-surface picking.
 
 The visual and GPU-path validation remains a separate manual pass because it needs the project's

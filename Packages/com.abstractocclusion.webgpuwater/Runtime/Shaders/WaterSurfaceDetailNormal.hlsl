@@ -225,32 +225,14 @@ float2 DetailNormalOctave(float2 worldXZ, float2 scroll0, float2 scroll1, float 
 // world normal. All four taps always run - the distance fade is a multiply, not a
 // branch, because a per-pixel branch around texture derivatives is undefined on WGSL;
 // the caller's gate (strength knob + above-water) is uniform, which IS branch-safe. ----
-float2 DetailNormalTilt(float2 worldXZ, float viewDist)
+float2 DetailNormalTiltScrolled(float2 surfaceCoordinates, float2 scroll0, float2 scroll1,
+                                float nearSpeed, float farSpeed, float viewDist)
 {
-    // Rotate the two crossing directions INTO the wind frame (a complex multiply). They stay Crest's
-    // non-orthogonal pair: the ANGLE BETWEEN them is what stops the two scrolls reading as a grid,
-    // and a rotation preserves it exactly. Guarded so an unpublished uniform cannot collapse both
-    // directions to zero and freeze the scroll.
-    // No normalize: WindDirectionXZ publishes (cos, sin) and is already unit by construction. The
-    // guard stays, because an UNPUBLISHED uniform is the one way this can be non-unit - and that is
-    // exactly the case it was written for.
-    float2 wind = (dot(_WindDirection.xy, _WindDirection.xy) > 1e-6)
-                ? _WindDirection.xy : float2(1.0, 0.0);
-    float2 dir0 = float2(DETAIL_NORMAL_DIR0.x * wind.x - DETAIL_NORMAL_DIR0.y * wind.y,
-                         DETAIL_NORMAL_DIR0.x * wind.y + DETAIL_NORMAL_DIR0.y * wind.x);
-    float2 dir1 = float2(DETAIL_NORMAL_DIR1.x * wind.x - DETAIL_NORMAL_DIR1.y * wind.y,
-                         DETAIL_NORMAL_DIR1.x * wind.y + DETAIL_NORMAL_DIR1.y * wind.x);
-
-    // Directions only - the per-octave SPEED is applied inside DetailNormalOctave, so the scroll
-    // vectors carry time alone and each octave scales it by its own speed.
-    float2 scroll0 = dir0 * _WaveTime;
-    float2 scroll1 = dir1 * _WaveTime;
-
-    // World-space derivatives, taken ONCE on the continuous quantity. Every octave scales these by
+    // Surface-space derivatives, taken ONCE on the continuous quantity. Every octave scales these by
     // its own tile rather than letting the hardware difference a discontinuous uv (see the octave
     // helper). Valid because this is fragment-only - the single caller passes a varying.
-    float2 worldDdx = ddx(worldXZ);
-    float2 worldDdy = ddy(worldXZ);
+    float2 worldDdx = ddx(surfaceCoordinates);
+    float2 worldDdy = ddy(surfaceCoordinates);
 
     // THREE authored numbers describe the whole ladder: the near tile, the far tile, and the DISTANCE
     // at which the far tile is reached. The climb rate is then DERIVED rather than guessed - solving
@@ -285,15 +267,15 @@ float2 DetailNormalTilt(float2 worldXZ, float viewDist)
     // Speed climbs per octave too, on a ratio DERIVED from the authored near/far pair so that the
     // far speed lands exactly when the far tile does. Leaving it on a fixed multiplier would have
     // meant the one number that fights distance-induced sludge was the one number not exposed.
-    float speedRatio = max(_DetailNormalFarSpeed, DETAIL_NORMAL_MIN_SPEED)
-                     / max(_DetailNormalSpeed, DETAIL_NORMAL_MIN_SPEED);
+    float speedRatio = max(farSpeed, DETAIL_NORMAL_MIN_SPEED)
+                     / max(nearSpeed, DETAIL_NORMAL_MIN_SPEED);
     float speedPerOctave = (maxOctave > DETAIL_NORMAL_MIN_OCTAVE_SPAN)
                          ? pow(speedRatio, 1.0 / maxOctave) : 1.0;
-    float speedNear = _DetailNormalSpeed * pow(speedPerOctave, octaveIndex);
+    float speedNear = nearSpeed * pow(speedPerOctave, octaveIndex);
 
-    float2 tiltNear = DetailNormalOctave(worldXZ, scroll0, scroll1, speedNear,
+    float2 tiltNear = DetailNormalOctave(surfaceCoordinates, scroll0, scroll1, speedNear,
                                          tileNear, worldDdx, worldDdy);
-    float2 tiltFar = DetailNormalOctave(worldXZ, scroll0, scroll1,
+    float2 tiltFar = DetailNormalOctave(surfaceCoordinates, scroll0, scroll1,
                                         speedNear * speedPerOctave,
                                         tileNear * DETAIL_NORMAL_FAR_TILE_MULT,
                                         worldDdx, worldDdy);
@@ -317,6 +299,48 @@ float2 DetailNormalTilt(float2 worldXZ, float viewDist)
     float fade = 1.0 - saturate((viewDist - DETAIL_NORMAL_FADE_START)
                                 / DETAIL_NORMAL_FADE_RANGE);
     return tilt * fade;
+}
+
+float2 DetailNormalTilt(float2 worldXZ, float viewDist)
+{
+    // Rotate the two crossing directions INTO the wind frame (a complex multiply). They stay Crest's
+    // non-orthogonal pair: the ANGLE BETWEEN them is what stops the two scrolls reading as a grid,
+    // and a rotation preserves it exactly. Guarded so an unpublished uniform cannot collapse both
+    // directions to zero and freeze the scroll.
+    float2 wind = (dot(_WindDirection.xy, _WindDirection.xy) > 1e-6)
+                ? _WindDirection.xy : float2(1.0, 0.0);
+    float2 dir0 = float2(DETAIL_NORMAL_DIR0.x * wind.x - DETAIL_NORMAL_DIR0.y * wind.y,
+                         DETAIL_NORMAL_DIR0.x * wind.y + DETAIL_NORMAL_DIR0.y * wind.x);
+    float2 dir1 = float2(DETAIL_NORMAL_DIR1.x * wind.x - DETAIL_NORMAL_DIR1.y * wind.y,
+                         DETAIL_NORMAL_DIR1.x * wind.y + DETAIL_NORMAL_DIR1.y * wind.x);
+    return DetailNormalTiltScrolled(
+        worldXZ, dir0 * _WaveTime, dir1 * _WaveTime,
+        _DetailNormalSpeed, _DetailNormalFarSpeed, viewDist);
+}
+
+#define RIVER_DETAIL_CROSSING_X 0.18
+#define RIVER_DETAIL_DOWNSTREAM_Y -0.983666
+
+float2 RiverDetailNormalTilt(float3 currentData, float viewDist)
+{
+    // Sampling travels upstream in river UV space, which makes the visible pattern move downstream.
+    // The slight crossing angle keeps the two normal taps organic without letting wind steer flow
+    // across a bend. Speed comes directly from spline metadata, in the same metres/second contract
+    // used by WaterRiverCurrentField.
+    float2 riverDirection0 = float2(
+        RIVER_DETAIL_CROSSING_X, RIVER_DETAIL_DOWNSTREAM_Y);
+    float2 riverDirection1 = float2(
+        -RIVER_DETAIL_CROSSING_X, RIVER_DETAIL_DOWNSTREAM_Y);
+    float farSpeedRatio = max(_DetailNormalFarSpeed, DETAIL_NORMAL_MIN_SPEED)
+                        / max(_DetailNormalSpeed, DETAIL_NORMAL_MIN_SPEED);
+    float riverSpeed = max(currentData.z, 0.0);
+    return DetailNormalTiltScrolled(
+        currentData.xy,
+        riverDirection0 * _WaveTime,
+        riverDirection1 * _WaveTime,
+        riverSpeed,
+        riverSpeed * farSpeedRatio,
+        viewDist);
 }
 
 #endif // WATER_SURFACE_DETAIL_NORMAL_INCLUDED

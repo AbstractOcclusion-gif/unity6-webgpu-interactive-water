@@ -13,6 +13,8 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         const float MiddleWidth = 7f;
         const float EndWidth = 2f;
         const float Speed = 3f;
+        const float StartCurrentSpeed = 1f;
+        const float EndCurrentSpeed = 5f;
         const float MinimumTriangleDoubleArea = 1e-5f;
         const string SplineHostName = "River Ribbon Spline Test";
         const string MeshHostName = "River Ribbon Mesh Test";
@@ -91,6 +93,44 @@ namespace AbstractOcclusion.WebGpuWater.Tests
                     Is.EqualTo(uv[leftIndex + 1].y).Within(FloatTolerance));
                 Assert.That(uv[leftIndex].y, Is.GreaterThan(previousLongitudinal));
                 previousLongitudinal = uv[leftIndex].y;
+            }
+        }
+
+        [Test]
+        public void Populate_CurrentMetadataCarriesMetricRibbonCoordinatesAndSplineSpeed()
+        {
+            var knots = new List<WaterRiverKnot>
+            {
+                new WaterRiverKnot(
+                    Vector3.zero, StraightTangent, StartWidth, StartCurrentSpeed),
+                new WaterRiverKnot(
+                    StraightEnd, StraightTangent, EndWidth, EndCurrentSpeed),
+            };
+            using var context = CreateContext(knots, SamplesPerSegment);
+            Vector2[] normalizedUv = context.Mesh.uv;
+            var currentData = new List<Vector3>();
+            context.Mesh.GetUVs(1, currentData);
+
+            Assert.That(currentData.Count, Is.EqualTo(context.Mesh.vertexCount));
+            for (int crossSection = 0; crossSection <= SamplesPerSegment; crossSection++)
+            {
+                float normalizedT = crossSection / (float)SamplesPerSegment;
+                Assert.That(context.Spline.TryEvaluate(
+                    normalizedT, out WaterRiverSplineSample sample), Is.True);
+                int leftIndex = crossSection *
+                                WaterRiverRibbonMeshGenerator.VerticesPerCrossSection;
+                Vector3 left = currentData[leftIndex];
+                Vector3 right = currentData[leftIndex + 1];
+
+                AssertFinite(left);
+                AssertFinite(right);
+                Assert.That(left.x, Is.EqualTo(-sample.Width * 0.5f).Within(FloatTolerance));
+                Assert.That(right.x, Is.EqualTo(sample.Width * 0.5f).Within(FloatTolerance));
+                Assert.That(left.y,
+                    Is.EqualTo(normalizedUv[leftIndex].y).Within(FloatTolerance));
+                Assert.That(right.y, Is.EqualTo(left.y).Within(FloatTolerance));
+                Assert.That(left.z, Is.EqualTo(sample.Speed).Within(FloatTolerance));
+                Assert.That(right.z, Is.EqualTo(sample.Speed).Within(FloatTolerance));
             }
         }
 

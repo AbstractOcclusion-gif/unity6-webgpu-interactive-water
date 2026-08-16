@@ -49,6 +49,15 @@ float2 WindWaveSampleXZ(float2 poolXZ, float2 worldXZ)
     return poolXZ;
 }
 
+float2 RiverCurrentWaveSampleXZ(float3 currentData)
+{
+    // UV1.xy is metric ribbon space (lateral, downstream). Sampling upstream by speed*time
+    // transports the resulting height pattern downstream at the spline's physical current speed.
+    float downstreamOffset = max(currentData.z, 0.0) * _WaveTime;
+    float2 riverMetres = currentData.xy - float2(0.0, downstreamOffset);
+    return riverMetres / max(_WaveMetersPerUnit, WAVE_METERS_MIN);
+}
+
 // Envelope carriers: the group envelope is the MAGNITUDE of the complex sum of these four waves.
 // Random phases (below) make that magnitude Rayleigh-ish - the stochastic envelope of a real
 // narrow-banded sea (Longuet-Higgins 1984) - so chop arrives in APERIODIC sets and lulls instead of

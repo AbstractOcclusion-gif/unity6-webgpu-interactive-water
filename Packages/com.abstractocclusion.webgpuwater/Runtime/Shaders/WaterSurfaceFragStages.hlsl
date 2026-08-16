@@ -120,7 +120,11 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
     // Combine the ripple normal (info.ba = normal.xz) with the wind-wave
     // tilt. A height gradient g contributes normal.xz = -g, so the two
     // slopes simply add in the xz components before re-deriving y.
-    float2 windSlope = WaveSlope(WindWaveSampleXZ(i.position.xz, i.largeWaveSourceXZ)) * _WaveNormalStrength;
+    float riverWeight = saturate(_IsRiver);
+    float2 gridWaveSample = WindWaveSampleXZ(i.position.xz, i.largeWaveSourceXZ);
+    float2 riverWaveSample = RiverCurrentWaveSampleXZ(i.riverCurrentData);
+    float2 windSlope = WaveSlope(lerp(gridWaveSample, riverWaveSample, riverWeight))
+                     * _WaveNormalStrength;
     // POOL convention, kept as the foam flow / relief input (g.nxz) so foam is unchanged by this.
     float2 nxz = info.ba - windSlope;
 
@@ -166,7 +170,6 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
     float surfGeomFoam = 0.0;
     if (_LargeBody > 0.5)
     {
-        float riverWeight = saturate(_IsRiver);
         // Large-body waves are evaluated in world XZ. For a ribbon, ask the established wave
         // function for its world-XZ tilt relative to world-up, then express that same tilt in the
         // transported width/flow frame. The pool/lake/ocean input and result remain unchanged.
@@ -213,7 +216,14 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
         // and a slick wipes - scale the detail strength by the same local factor the FFT tilt uses,
         // so near-field micro-ripple and far-field cascade roughness tell one story.
         detailNormalStrength *= SeaStateMssScale(i.largeWaveSourceXZ);
-        float2 detailTilt = DetailNormalTilt(i.largeWaveSourceXZ, viewDistWorld);
+        float2 detailTilt;
+        // _IsRiver is per-renderer uniform, so derivatives inside either detail-normal path remain
+        // uniform across a WebGPU quad. Pools keep their exact wind/world-space path; ribbons use
+        // metric UV1 coordinates and interpolated spline speed to visibly travel downstream.
+        if (_IsRiver > 0.5)
+            detailTilt = RiverDetailNormalTilt(i.riverCurrentData, viewDistWorld);
+        else
+            detailTilt = DetailNormalTilt(i.largeWaveSourceXZ, viewDistWorld);
         float3 gridDetailTilt = float3(detailTilt.x, 0.0, detailTilt.y);
         float3 riverDetailTilt = slopeAxisX * detailTilt.x + slopeAxisZ * detailTilt.y;
         // Preserve the original unrotated-pool detail path byte-for-byte while orienting only

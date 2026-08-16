@@ -93,8 +93,9 @@ Shader "Hidden/AbstractOcclusion/WebGpuWater/WaterHeightRT"
                     ripple = SampleRipple(poolFlat, worldFlat, rippleFade);
                 float3 poolDisplaced;
                 float2 largeWaveSourceXZ;
-                float3 worldPos = DisplaceSurfaceVertex(poolFlat, worldFlat, ripple,
-                                                        poolDisplaced, largeWaveSourceXZ);
+                float3 worldPos = DisplaceSurfaceVertex(
+                    poolFlat, worldFlat, ripple, 0.0, (float3)0.0,
+                    poolDisplaced, largeWaveSourceXZ);
                 HeightVaryings o;
                 // Use a pass-owned matrix instead of replacing the command buffer's camera
                 // matrices. The fog, foam overlay and splash redraw execute immediately after
