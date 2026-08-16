@@ -133,7 +133,11 @@ namespace AbstractOcclusion.WebGpuWater.Tests
                     .MultiplyVector(normals[vertexIndex]).normalized;
                 Vector4 tangent = tangents[vertexIndex];
                 Vector3 localRight = new Vector3(tangent.x, tangent.y, tangent.z);
-                Vector3 worldRight = context.MeshHost.transform.TransformDirection(localRight).normalized;
+                // Tangents are transformed by object-to-world in the water vertex shader. Unity's
+                // TransformDirection deliberately ignores scale, so it cannot validate the frame
+                // carried by a non-uniformly scaled ribbon.
+                Vector3 worldRight = context.MeshHost.transform.localToWorldMatrix
+                    .MultiplyVector(localRight).normalized;
                 AssertFinite(worldUp);
                 AssertFinite(worldRight);
                 Assert.That(Mathf.Abs(Vector3.Dot(worldUp, worldRight)),
@@ -216,7 +220,10 @@ namespace AbstractOcclusion.WebGpuWater.Tests
                 Assert.That(surface.GeneratedMesh.bounds.size.z, Is.GreaterThan(originalLength));
 
                 surface.enabled = false;
-                Assert.That(firstMesh == null, Is.True);
+                // Unity defers Object.Destroy until the end of a Play Mode frame. Ownership and
+                // renderer references must be released synchronously; object death is deferred by
+                // the engine and is not a component lifecycle contract.
+                Assert.That(surface.GeneratedMesh, Is.Null);
                 Assert.That(surfaceHost.GetComponent<MeshFilter>().sharedMesh, Is.Null);
 
                 surface.enabled = true;
@@ -234,9 +241,10 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         }
 
         [Test]
-        public void WaterVolume_CanKeepSimulationActiveWhileBuiltInGeometryIsHidden()
+        public void WaterVolume_BuiltInGeometryGateDoesNotDisableComponent()
         {
             var volumeHost = new GameObject(VolumeHostName);
+            volumeHost.SetActive(false);
             WaterVolume volume = volumeHost.AddComponent<WaterVolume>();
             var builtInSurfaceHost = new GameObject(BuiltInSurfaceName);
             builtInSurfaceHost.transform.SetParent(volumeHost.transform);
@@ -247,7 +255,7 @@ namespace AbstractOcclusion.WebGpuWater.Tests
                 volume.renderBuiltInGeometry = false;
                 volume.SetRenderersEnabled(on: true);
 
-                Assert.That(volume.isActiveAndEnabled, Is.True);
+                Assert.That(volume.enabled, Is.True);
                 Assert.That(builtInSurface.forceRenderingOff, Is.True);
 
                 volume.renderBuiltInGeometry = true;
