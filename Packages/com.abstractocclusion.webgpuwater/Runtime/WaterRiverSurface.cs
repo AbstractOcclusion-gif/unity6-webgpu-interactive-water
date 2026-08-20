@@ -1,10 +1,16 @@
 // WebGpuWater - river ribbon mesh ownership and renderer wiring.
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 
 namespace AbstractOcclusion.WebGpuWater
 {
+    internal interface IWaterRiverRendererPropertySource
+    {
+        void WriteRendererProperties(MaterialPropertyBlock properties);
+    }
+
     [ExecuteAlways]
     [DisallowMultipleComponent]
     [RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
@@ -32,8 +38,13 @@ namespace AbstractOcclusion.WebGpuWater
         Mesh _generatedMesh;
         MaterialPropertyBlock _propertyBlock;
         WaterRiverSpline _subscribedSpline;
+        readonly List<IWaterRiverRendererPropertySource> _rendererPropertySources = new();
 
         internal Mesh GeneratedMesh => _generatedMesh;
+        internal WaterRiverSpline Spline => spline;
+        internal WaterVolume WaterVolume => waterVolume;
+        internal Renderer SurfaceRenderer => _meshRenderer;
+        internal event Action ConfigurationChanged;
 
         void OnEnable()
         {
@@ -59,6 +70,7 @@ namespace AbstractOcclusion.WebGpuWater
             ConfigureRenderer();
             RebindSplineEvents();
             if (isActiveAndEnabled) RequestRebuild();
+            ConfigurationChanged?.Invoke();
         }
 
         void OnTransformParentChanged() => RequestRebuild();
@@ -119,7 +131,24 @@ namespace AbstractOcclusion.WebGpuWater
             RebindSplineEvents();
             RequestRebuild();
             PublishRendererProperties();
+            ConfigurationChanged?.Invoke();
         }
+
+        internal void RegisterRendererPropertySource(IWaterRiverRendererPropertySource source)
+        {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+            if (_rendererPropertySources.Contains(source)) return;
+            _rendererPropertySources.Add(source);
+            PublishRendererProperties();
+        }
+
+        internal void UnregisterRendererPropertySource(IWaterRiverRendererPropertySource source)
+        {
+            if (source == null || !_rendererPropertySources.Remove(source)) return;
+            PublishRendererProperties();
+        }
+
+        internal void RequestRendererRefresh() => PublishRendererProperties();
 
         void CacheRendererComponents()
         {
@@ -170,6 +199,8 @@ namespace AbstractOcclusion.WebGpuWater
             else
                 _propertyBlock.Clear();
             ApplyRiverShaderOverrides();
+            for (int i = 0; i < _rendererPropertySources.Count; i++)
+                _rendererPropertySources[i].WriteRendererProperties(_propertyBlock);
             _meshRenderer.SetPropertyBlock(_propertyBlock);
             bool hasGeometry = _generatedMesh != null && _generatedMesh.vertexCount > 0 &&
                                _meshFilter != null && _meshFilter.sharedMesh == _generatedMesh;
@@ -188,6 +219,8 @@ namespace AbstractOcclusion.WebGpuWater
             _propertyBlock.SetFloat(WaterShaderProps.PatchCoverActive, DisabledFeature);
             _propertyBlock.SetFloat(WaterShaderProps.SurfActive, DisabledFeature);
             _propertyBlock.SetFloat(WaterShaderProps.UseBedDepth, DisabledFeature);
+            _propertyBlock.SetFloat(WaterShaderProps.RiverFoamActive, DisabledFeature);
+            _propertyBlock.SetFloat(WaterShaderProps.RiverFluidActive, DisabledFeature);
         }
 
         void ClearGeneratedGeometry()

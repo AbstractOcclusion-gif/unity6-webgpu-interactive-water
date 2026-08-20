@@ -133,6 +133,13 @@ float3 WhitecapOctaveBlend(float3 a, float3 b)
 // Foam: the _FoamMask sim buffer is declared in WaterFoamMask.hlsl (shared with the fog pass);
 // _FoamTex is an optional per-material pattern (defaults white = flat foam).
 sampler2D _FoamTex;
+// Static river coverage reuses _FoamMask on river renderers: those meshes never consume the
+// rectangular simulation field, and avoiding a new sampler is load-bearing for the pass budget.
+float _RiverFoamActive;
+float _RiverFoamStrength;
+float _RiverFluidActive;
+float _RiverFluidInvLength;
+float _RiverFluidMaxSpeed;
 // Dedicated ocean wave-foam (whitecap) slots: a single seamless TILING texture (not a flipbook
 // atlas) + its raw-RGB relief normal, sampled only by the FFT-ocean whitecap path. Defaults
 // (white / bump) keep the look unchanged when unassigned. Decoupled from _FoamTex so the ocean

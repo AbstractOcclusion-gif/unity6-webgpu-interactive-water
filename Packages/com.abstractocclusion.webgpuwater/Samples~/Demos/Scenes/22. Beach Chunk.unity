@@ -209,59 +209,6 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 135468904}
   m_Mesh: {fileID: 4300000, guid: 9c96c412df7a2564fb77e5eed80cb811, type: 2}
---- !u!1 &588369335
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 588369336}
-  - component: {fileID: 588369337}
-  m_Layer: 0
-  m_Name: Floor Collider
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &588369336
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 588369335}
-  serializedVersion: 2
-  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: -100.05, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 1221560714}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!65 &588369337
-BoxCollider:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 588369335}
-  m_Material: {fileID: 0}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_LayerOverridePriority: 0
-  m_IsTrigger: 0
-  m_ProvidesContacts: 0
-  m_Enabled: 1
-  serializedVersion: 3
-  m_Size: {x: 1000, y: 0.1, z: 1000}
-  m_Center: {x: 0, y: 0, z: 0}
 --- !u!1 &609064109
 GameObject:
   m_ObjectHideFlags: 0
@@ -355,7 +302,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 3f9c1d5a7b2e4c8d9a0f6b3e5c7d1a24, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterDemoOverlay
   title: Beach Chunk
   description: A bounded open-water shoreline staging scene for shoaling, shore waves,
@@ -462,7 +409,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2427031642822514521, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: profile
-      value:
+      value: 
       objectReference: {fileID: 11400000, guid: 3d77c10ba8f9dce4ca1221c52be53932, type: 2}
     - target: {fileID: 2439696289600386818, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: InitialModule.gravityModifier.scalar
@@ -478,7 +425,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2463587723445124726, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
-      value:
+      value: 
       objectReference: {fileID: 2100000, guid: f5659e7cd5035f046ac2f9b87ce008a3, type: 2}
     - target: {fileID: 3130769476850268295, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: m_Name
@@ -486,11 +433,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 3732076380331823914, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
-      value:
+      value: 
       objectReference: {fileID: 2100000, guid: f5659e7cd5035f046ac2f9b87ce008a3, type: 2}
     - target: {fileID: 3756076545826541038, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
-      value:
+      value: 
       objectReference: {fileID: 2100000, guid: d74a5100353b0c4498249ff69dc7f53d, type: 2}
     - target: {fileID: 6698408623575663652, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: InitialModule.gravityModifier.maxCurve.m_Curve.Array.data[0].value
@@ -547,8 +494,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: a79441f348de89743a2939f4d699eac1, type: 3}
-  m_Name:
-  m_EditorClassIdentifier:
+  m_Name: 
+  m_EditorClassIdentifier: 
   m_RenderShadows: 1
   m_RequiresDepthTextureOption: 2
   m_RequiresOpaqueTextureOption: 2
@@ -665,7 +612,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: cddd9544bc6aa3a4a952344b09c15c46, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.FlyCamera
   moveSpeed: 6
   boostMultiplier: 3
@@ -807,7 +754,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 7c2b6569e97b14744848833682c436b7, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterFoamParticles
   useParticles: 1
   volume: {fileID: 1080253303}
@@ -865,7 +812,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 5b7c69d58eef6734798f9cf5eba11a88, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterVolume
   chunkFootprint: 0
   chunkDensityBoost: 1
@@ -879,6 +826,7 @@ MonoBehaviour:
   chunkFillLevel: 0.5
   chunkBoundaryMode: 1
   chunkBoundaryWidth: 1
+  currentFields: []
   jerlovWaterType: 3
   bedDepthSettings:
     useBedDepth: 1
@@ -992,6 +940,7 @@ MonoBehaviour:
   oceanWhitecapFps: 0
   rippleQuality: 2
   bodyType: 2
+  renderBuiltInGeometry: 1
   volumeExtent: {x: 50, y: 5, z: 50}
   enableLargeBodyWindow: 1
   largeBodyThreshold: 100
@@ -1065,6 +1014,8 @@ MonoBehaviour:
     openWater: 1
     largeWaveAmplitude: 1
     largeWaveChoppiness: 0.2
+    currentHeadingDegrees: 0
+    currentSpeed: 0
     windDrivesAmbientSeaState: 0
     ambientWindReferenceSpeed: 3
     significantWaveHeight: 0.45000002
@@ -1195,7 +1146,7 @@ MonoBehaviour:
     refractionStrength: 1
   detailNormalSettings:
     texture: {fileID: 2800000, guid: 62664aadf524b76e2b375fdbd6c85003, type: 3}
-    strength: 0.22
+    strength: 0.8
     tileMeters: 10
     farTileMeters: 150
     farTileDistance: 200
@@ -1259,6 +1210,7 @@ MonoBehaviour:
   _legacyObstacleSmoothing: 0.65
   _legacyObstacleFlipY: 1
   waterFogSettings:
+    fullscreenVolumeFog: 1
     waterFog: 1
     fogColor: {r: 0.10484151, g: 0.4248844, b: 0.5849056, a: 1}
     fogExtinction: {r: 0.17735851, g: 0.074572936, b: 0.05588465, a: 1}
@@ -1351,7 +1303,6 @@ Transform:
   m_Children:
   - {fileID: 1271293923}
   - {fileID: 609064110}
-  - {fileID: 588369336}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1271293920
@@ -1447,7 +1398,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 474bcb49853aa07438625e644c072ee6, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Unity.RenderPipelines.Universal.Runtime::UnityEngine.Rendering.Universal.UniversalAdditionalLightData
   m_UsePipelineSettings: 1
   m_AdditionalLightsShadowResolutionTier: 2
@@ -1655,7 +1606,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: b55cb88d347492c4f95965747729bf4e, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterSplashEmitter
 --- !u!1660057539 &9223372036854775807
 SceneRoots:

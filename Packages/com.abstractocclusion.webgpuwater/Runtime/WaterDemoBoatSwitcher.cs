@@ -24,6 +24,7 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] bool cameraRelativeDrive = true;
 
         BoatController[] _boats = Array.Empty<BoatController>();
+        BoatRuntimeState[] _boatStates = Array.Empty<BoatRuntimeState>();
         int _activeIndex;
         BoatTouchDriver _touchDriver;
 
@@ -37,6 +38,7 @@ namespace AbstractOcclusion.WebGpuWater
                 return;
             }
 
+            _boatStates = CreateBoatStates(_boats);
             if (followCamera == null) followCamera = FindSceneFollowCamera();
             _activeIndex = FindInitialBoatIndex();
             // Touch drive for phone/tablet/browser builds: spawned here so every boat demo
@@ -101,11 +103,10 @@ namespace AbstractOcclusion.WebGpuWater
             BoatController selectedBoat = _boats[_activeIndex];
             Transform driveReference = cameraRelativeDrive && followCamera != null ? followCamera.transform : null;
 
-            foreach (BoatController boat in _boats)
+            foreach (BoatRuntimeState boatState in _boatStates)
             {
-                bool selected = boat == selectedBoat;
-                boat.SetDriveReference(selected ? driveReference : null);
-                boat.enabled = selected;
+                bool selected = boatState.Controller == selectedBoat;
+                boatState.SetSelected(selected, selected ? driveReference : null);
             }
 
             if (followCamera != null)
@@ -124,6 +125,14 @@ namespace AbstractOcclusion.WebGpuWater
             return hullLength * HullLengthCameraDistanceMultiplier;
         }
 
+        static BoatRuntimeState[] CreateBoatStates(BoatController[] boats)
+        {
+            var states = new BoatRuntimeState[boats.Length];
+            for (int index = 0; index < boats.Length; index++)
+                states[index] = new BoatRuntimeState(boats[index]);
+            return states;
+        }
+
         static int CompareBoatNames(BoatController left, BoatController right) =>
             StringComparer.OrdinalIgnoreCase.Compare(left.name, right.name);
 
@@ -136,6 +145,108 @@ namespace AbstractOcclusion.WebGpuWater
 #else
             return Input.GetKeyDown(KeyCode.Tab);
 #endif
+        }
+
+        sealed class BoatRuntimeState
+        {
+            readonly Rigidbody _rigidbody;
+            readonly bool _originalIsKinematic;
+            readonly BehaviourState[] _simulationBehaviours;
+            Vector3 _linearVelocity;
+            Vector3 _angularVelocity;
+            bool _simulationEnabled = true;
+
+            public BoatController Controller { get; }
+
+            public BoatRuntimeState(BoatController controller)
+            {
+                Controller = controller;
+                _rigidbody = controller.GetComponent<Rigidbody>();
+                _originalIsKinematic = _rigidbody != null && _rigidbody.isKinematic;
+                _simulationBehaviours = FindSimulationBehaviours(controller);
+            }
+
+            public void SetSelected(bool selected, Transform driveReference)
+            {
+                if (selected) EnableSimulation();
+                else DisableSimulation();
+
+                Controller.SetDriveReference(driveReference);
+                Controller.enabled = selected;
+            }
+
+            void EnableSimulation()
+            {
+                if (_simulationEnabled) return;
+
+                if (_rigidbody != null)
+                {
+                    _rigidbody.isKinematic = _originalIsKinematic;
+                    if (!_originalIsKinematic)
+                    {
+                        _rigidbody.linearVelocity = _linearVelocity;
+                        _rigidbody.angularVelocity = _angularVelocity;
+                        _rigidbody.WakeUp();
+                    }
+                }
+
+                SetSimulationBehavioursEnabled(true);
+                _simulationEnabled = true;
+            }
+
+            void DisableSimulation()
+            {
+                if (!_simulationEnabled) return;
+
+                SetSimulationBehavioursEnabled(false);
+                if (_rigidbody != null && !_rigidbody.isKinematic)
+                {
+                    _linearVelocity = _rigidbody.linearVelocity;
+                    _angularVelocity = _rigidbody.angularVelocity;
+                    _rigidbody.isKinematic = true;
+                }
+
+                _simulationEnabled = false;
+            }
+
+            void SetSimulationBehavioursEnabled(bool enabled)
+            {
+                foreach (BehaviourState behaviourState in _simulationBehaviours)
+                    behaviourState.Behaviour.enabled = enabled && behaviourState.OriginallyEnabled;
+            }
+
+            static BehaviourState[] FindSimulationBehaviours(BoatController controller)
+            {
+                var behaviours = new List<Behaviour>();
+                AddBehaviours(controller.GetComponentsInChildren<WaterBuoyancy>(true), behaviours);
+                AddBehaviours(controller.GetComponentsInChildren<WaterInteractable>(true), behaviours);
+                AddBehaviours(controller.GetComponentsInChildren<WaterSplash>(true), behaviours);
+                AddBehaviours(controller.GetComponentsInChildren<WaterSphereInteractor>(true), behaviours);
+                AddBehaviours(controller.GetComponentsInChildren<WaterSprayPump>(true), behaviours);
+
+                var states = new BehaviourState[behaviours.Count];
+                for (int index = 0; index < behaviours.Count; index++)
+                    states[index] = new BehaviourState(behaviours[index]);
+                return states;
+            }
+
+            static void AddBehaviours<T>(T[] source, List<Behaviour> destination) where T : Behaviour
+            {
+                foreach (T behaviour in source)
+                    destination.Add(behaviour);
+            }
+        }
+
+        readonly struct BehaviourState
+        {
+            public Behaviour Behaviour { get; }
+            public bool OriginallyEnabled { get; }
+
+            public BehaviourState(Behaviour behaviour)
+            {
+                Behaviour = behaviour;
+                OriginallyEnabled = behaviour.enabled;
+            }
         }
     }
 }

@@ -97,13 +97,13 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_ShorelineStrength = Shader.PropertyToID("_ShorelineStrength");
         static readonly int ID_DepthClarityRange = Shader.PropertyToID("_DepthClarityRange");
         static readonly int ID_DepthClarityStrength = Shader.PropertyToID("_DepthClarityStrength");
-        static readonly int ID_FoamMask = Shader.PropertyToID("_FoamMask");
+        static readonly int ID_FoamMask = WaterShaderProps.FoamMask;
         static readonly int ID_FoamColor = Shader.PropertyToID("_FoamColor");
-        static readonly int ID_FoamEnabled = Shader.PropertyToID("_FoamEnabled");
+        static readonly int ID_FoamEnabled = WaterShaderProps.FoamEnabled;
         static readonly int ID_WetMarkActive = Shader.PropertyToID("_WetMarkActive");
         static readonly int ID_WetDryTimeSeconds = Shader.PropertyToID("_WetDryTimeSeconds");
         static readonly int ID_FoamStrength = Shader.PropertyToID("_FoamStrength");
-        static readonly int ID_FoamTileSize = Shader.PropertyToID("_FoamTileSize");
+        static readonly int ID_FoamTileSize = WaterShaderProps.FoamTileSize;
         // Body-owned surface texture inputs (Textures section): bound only when assigned on the body.
         static readonly int ID_FoamTex = WaterShaderProps.FoamTex;
         static readonly int ID_FoamTexFrames = WaterShaderProps.FoamTexFrames;
@@ -114,8 +114,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_OceanWhitecapFPS = Shader.PropertyToID("_OceanWhitecapFPS");
         static readonly int ID_FoamBorder = Shader.PropertyToID("_FoamBorderWidth");
         static readonly int ID_FoamContact = Shader.PropertyToID("_FoamContactDepth");
-        static readonly int ID_FoamFeather = Shader.PropertyToID("_FoamFeather");
-        static readonly int ID_FoamCoreCut = Shader.PropertyToID("_FoamCoreCut");
+        static readonly int ID_FoamFeather = WaterShaderProps.FoamFeather;
+        static readonly int ID_FoamCoreCut = WaterShaderProps.FoamCoreCut;
         static readonly int ID_WaveA = Shader.PropertyToID("_WaveA");
         static readonly int ID_WaveB = Shader.PropertyToID("_WaveB");
         static readonly int ID_WaveCount = Shader.PropertyToID("_WaveCount");
@@ -239,6 +239,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_DetailNormalSpeed = Shader.PropertyToID("_DetailNormalSpeed");
         static readonly int ID_DetailNormalCrestBoost = Shader.PropertyToID("_DetailNormalCrestBoost");
         static readonly int ID_WindDirection = Shader.PropertyToID("_WindDirection");
+        static readonly int ID_OceanCurrentOffset = Shader.PropertyToID("_OceanCurrentOffset");
         static readonly int ID_UnderFresnelPhysical = Shader.PropertyToID("_UnderFresnelPhysical");
         static readonly int ID_UnderTirSoftness = Shader.PropertyToID("_UnderTirSoftness");
         static readonly int ID_UnderFresnelFloor = Shader.PropertyToID("_UnderFresnelFloor");
@@ -466,6 +467,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (material == null) throw new System.ArgumentNullException(nameof(material));
             material.SetFloat(ID_WaveTime, _body.WaveTime);
+            material.SetVector(ID_OceanCurrentOffset, _body.OceanCurrentOffsetXZ);
             material.SetVectorArray(ID_WaveA, _body.WaveBank.PackedA);
             material.SetVectorArray(ID_WaveB, _body.WaveBank.PackedB);
             material.SetFloat(ID_WaveCount, _body.WindWaves ? _body.WaveBank.Count : 0f);
@@ -490,6 +492,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (computeShader == null) throw new System.ArgumentNullException(nameof(computeShader));
             computeShader.SetFloat(ID_WaveTime, _body.WaveTime);
+            computeShader.SetVector(ID_OceanCurrentOffset, _body.OceanCurrentOffsetXZ);
             computeShader.SetVectorArray(ID_WaveA, _body.WaveBank.PackedA);
             computeShader.SetVectorArray(ID_WaveB, _body.WaveBank.PackedB);
             computeShader.SetFloat(ID_WaveCount, _body.WindWaves ? _body.WaveBank.Count : 0f);
@@ -870,6 +873,9 @@ namespace AbstractOcclusion.WebGpuWater
             // One wind for the surface. Published unconditionally (like the fog coefficients) so the
             // detail layer never reads a stale or zero heading on a body with Wind Waves switched off.
             sink.SetVector(ID_WindDirection, _body.WindDirectionXZ);
+            // Surface-current drift offset (metres, premultiplied with the body's wave clock on
+            // the CPU): one synchronized value for the surface and every wave-family consumer.
+            sink.SetVector(ID_OceanCurrentOffset, _body.OceanCurrentOffsetXZ);
 
             // Underside (seen-from-below) look: its own fresnel/mirror family (Underwater Surface
             // block), so the below-water view no longer rides the above-water constants.

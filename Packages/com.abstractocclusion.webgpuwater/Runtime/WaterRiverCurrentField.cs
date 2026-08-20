@@ -16,6 +16,9 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("River spline whose width bounds this field and whose tangent and speed define " +
                  "the physical world-space current.")]
         [SerializeField] internal WaterRiverSpline spline;
+        [Tooltip("Optional settled fluid bake. When valid, its obstacle-deflected velocity replaces " +
+                 "the uniform spline speed for gameplay sampling.")]
+        [SerializeField] internal WaterRiverFluid fluid;
 
         protected override bool TryEvaluateCurrent(Vector3 worldPoint, out Vector3 worldVelocity)
         {
@@ -34,8 +37,31 @@ namespace AbstractOcclusion.WebGpuWater
                 lateralDistance > halfWidth + DomainBoundaryTolerance)
                 return false;
 
+            float lateralU = Mathf.InverseLerp(-halfWidth, halfWidth,
+                Vector3.Dot(centreToPoint, sample.Right));
+            WaterRiverFluidBakeData bakeData = fluid != null && fluid.isActiveAndEnabled
+                ? fluid.BakeData
+                : null;
+            if (bakeData != null && bakeData.IsValid)
+            {
+                if (!bakeData.TrySample(
+                        lateralU, sample.NormalizedT,
+                        out Vector2 ribbonVelocity, out _, out _))
+                    return false;
+                worldVelocity = sample.Right * ribbonVelocity.x +
+                                sample.Tangent * ribbonVelocity.y;
+                return WaterSurfaceKinematics.IsFinite(worldVelocity);
+            }
+
             worldVelocity = sample.Tangent * sample.Speed;
             return true;
+        }
+
+        void OnEnable()
+        {
+            // Existing authored rivers predate the bake component. Resolve a sibling once at the
+            // lifecycle boundary so they adopt the shared field without a GetComponent per sample.
+            if (fluid == null) fluid = GetComponent<WaterRiverFluid>();
         }
 
         internal void Configure(WaterRiverSpline riverSpline)
@@ -45,7 +71,17 @@ namespace AbstractOcclusion.WebGpuWater
                 : throw new ArgumentNullException(nameof(riverSpline));
         }
 
-        void Reset() => spline = GetComponent<WaterRiverSpline>();
+        internal void Configure(WaterRiverSpline riverSpline, WaterRiverFluid riverFluid)
+        {
+            Configure(riverSpline);
+            fluid = riverFluid;
+        }
+
+        void Reset()
+        {
+            spline = GetComponent<WaterRiverSpline>();
+            fluid = GetComponent<WaterRiverFluid>();
+        }
 
         static bool IsValidSample(WaterRiverSplineSample sample)
         {

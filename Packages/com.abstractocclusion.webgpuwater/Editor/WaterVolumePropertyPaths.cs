@@ -45,6 +45,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string EdgeFeatherMeters = "ocean.edgeFeatherMeters";
         internal const string LargeWaveAmplitude = "ocean.largeWaveAmplitude";
         internal const string LargeWaveChoppiness = "ocean.largeWaveChoppiness";
+        internal const string CurrentHeadingDegrees = "ocean.currentHeadingDegrees";
+        internal const string CurrentSpeed = "ocean.currentSpeed";
         internal const string WindDrivesAmbientSeaState = "ocean.windDrivesAmbientSeaState";
         internal const string AmbientWindReferenceSpeed = "ocean.ambientWindReferenceSpeed";
         internal const string SignificantWaveHeight = "ocean.significantWaveHeight";

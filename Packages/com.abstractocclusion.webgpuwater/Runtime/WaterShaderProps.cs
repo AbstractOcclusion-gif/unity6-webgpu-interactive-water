@@ -49,6 +49,30 @@ namespace AbstractOcclusion.WebGpuWater
         internal const string PatchCoverActiveName = "_PatchCoverActive";
         internal static readonly int PatchCoverActive = Shader.PropertyToID(PatchCoverActiveName);
 
+        // ---- WaterUniformPublisher / WaterRiverFoam / WaterRiverSurface ----
+        internal const string FoamEnabledName = "_FoamEnabled";
+        internal const string FoamMaskName = "_FoamMask";
+        internal const string FoamTileSizeName = "_FoamTileSize";
+        internal const string FoamFeatherName = "_FoamFeather";
+        internal const string FoamCoreCutName = "_FoamCoreCut";
+        internal const string RiverFoamActiveName = "_RiverFoamActive";
+        internal const string RiverFoamStrengthName = "_RiverFoamStrength";
+        internal const string RiverFluidActiveName = "_RiverFluidActive";
+        internal const string RiverFluidInverseLengthName = "_RiverFluidInvLength";
+        internal const string RiverFluidMaximumSpeedName = "_RiverFluidMaxSpeed";
+        internal static readonly int FoamEnabled = Shader.PropertyToID(FoamEnabledName);
+        internal static readonly int FoamMask = Shader.PropertyToID(FoamMaskName);
+        internal static readonly int FoamTileSize = Shader.PropertyToID(FoamTileSizeName);
+        internal static readonly int FoamFeather = Shader.PropertyToID(FoamFeatherName);
+        internal static readonly int FoamCoreCut = Shader.PropertyToID(FoamCoreCutName);
+        internal static readonly int RiverFoamActive = Shader.PropertyToID(RiverFoamActiveName);
+        internal static readonly int RiverFoamStrength = Shader.PropertyToID(RiverFoamStrengthName);
+        internal static readonly int RiverFluidActive = Shader.PropertyToID(RiverFluidActiveName);
+        internal static readonly int RiverFluidInverseLength =
+            Shader.PropertyToID(RiverFluidInverseLengthName);
+        internal static readonly int RiverFluidMaximumSpeed =
+            Shader.PropertyToID(RiverFluidMaximumSpeedName);
+
         // ---- WaterShoreDepthField.cs <-> WaterSimulation.cs ----
         internal const string ShoreShoalDepthName = "_ShoreShoalDepth";
         internal const string ShoreGreenBandDepthName = "_ShoreGreenBandDepth";

@@ -1,63 +1,5 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
---- !u!1 &201493758330228264
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 8419153649207363690}
-  - component: {fileID: 8551099241585066375}
-  m_Layer: 0
-  m_Name: Dry Interior
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 0
---- !u!4 &8419153649207363690
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 201493758330228264}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: -0.7071068, z: 0, w: 0.7071068}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 5878543085488134011}
-  m_LocalEulerAnglesHint: {x: 0, y: -90, z: 0}
---- !u!114 &8551099241585066375
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 201493758330228264}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 915077c3dcbfd574299c2b79a0e61be4, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterExclusionVolume
-  shape: 0
-  carveMesh: {fileID: 4300000, guid: 997d8ca3f89667f4091abff77ae18521, type: 2}
-  meshProxy: 0
-  size: {x: 1, y: 1, z: 1}
-  drawWaterWalls: 0
-  wallScatterBoost: 1.2
-  wallShader: {fileID: 0}
-  edgeColor: {r: 0, g: 0, b: 0, a: 1}
-  edgeIntensity: 0.55
-  edgeSpread: 0.12
-  castsSunShadow: 1
-  affectParticles: 1
-  particleFadeBand: 0.06
-  particleDissolveSpeed: 1
 --- !u!1 &2322242826195635108
 GameObject:
   m_ObjectHideFlags: 0
@@ -103,7 +45,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterSphereInteractor
   centerOffset: {x: 0, y: 0, z: 3}
-  radius: 0.5
+  radius: 0.1
   strength: 0.2
   verticalForceCap: 0.5
   maxStepDistance: 5
@@ -145,7 +87,6 @@ Transform:
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 6892805304380219233}
-  - {fileID: 8419153649207363690}
   - {fileID: 6686901943061889227}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
@@ -168,8 +109,8 @@ BoxCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Size: {x: 1.69, y: 1.6029601, z: 6.68}
-  m_Center: {x: 0, y: 0, z: -0.29}
+  m_Size: {x: 2, y: 1, z: 5}
+  m_Center: {x: 0, y: 0, z: 0}
 --- !u!54 &6844850464069172496
 Rigidbody:
   m_ObjectHideFlags: 0
@@ -209,14 +150,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5ba7f08200b36e84d8c995dae6ad429c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterBuoyancy
-  buoyancy: 2.6
+  buoyancy: 2.5
   waterLinearDamping: 2
   waterAngularDamping: 1
   samplesPerAxis: 3
   floatRadiusScale: 1.5
   waveDriftStrength: 1
-  verticalSettleDamping: 1
-  surfaceGlueIntensity: 0
+  verticalSettleDamping: 3
+  surfaceGlueIntensity: 2
   objectWidth: 7.5000014
   maxBuoyancyForce: 0
   surfaceRelativeDrag: 1
@@ -277,7 +218,7 @@ MonoBehaviour:
   horizontalEmitSpacing: 0.02
   rippleRadiusScale: 1
   reflectsWaves: 0
-  rendererOverride: {fileID: 8246088861143881334}
+  rendererOverride: {fileID: 0}
 --- !u!114 &8604741591275250098
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -294,6 +235,118 @@ MonoBehaviour:
   minImpactSpeed: 0.4
   maxImpactSpeed: 3
   rippleStrength: 0.04
+--- !u!1 &6534132819926171078
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 6734651725437586868}
+  - component: {fileID: 3534426960924655858}
+  - component: {fileID: 3257127719008799768}
+  - component: {fileID: 1204275833718168905}
+  m_Layer: 0
+  m_Name: Cube
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &6734651725437586868
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6534132819926171078}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 5, y: 1, z: 2}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 6892805304380219233}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!33 &3534426960924655858
+MeshFilter:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6534132819926171078}
+  m_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
+--- !u!23 &3257127719008799768
+MeshRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6534132819926171078}
+  m_Enabled: 1
+  m_CastShadows: 1
+  m_ReceiveShadows: 1
+  m_DynamicOccludee: 1
+  m_StaticShadowCaster: 0
+  m_MotionVectors: 1
+  m_LightProbeUsage: 1
+  m_ReflectionProbeUsage: 1
+  m_RayTracingMode: 2
+  m_RayTraceProcedural: 0
+  m_RayTracingAccelStructBuildFlagsOverride: 0
+  m_RayTracingAccelStructBuildFlags: 1
+  m_SmallMeshCulling: 1
+  m_ForceMeshLod: -1
+  m_MeshLodSelectionBias: 0
+  m_RenderingLayerMask: 1
+  m_RendererPriority: 0
+  m_Materials:
+  - {fileID: 2100000, guid: 31321ba15b8f8eb4c954353edc038b1d, type: 2}
+  m_StaticBatchInfo:
+    firstSubMesh: 0
+    subMeshCount: 0
+  m_StaticBatchRoot: {fileID: 0}
+  m_ProbeAnchor: {fileID: 0}
+  m_LightProbeVolumeOverride: {fileID: 0}
+  m_ScaleInLightmap: 1
+  m_ReceiveGI: 1
+  m_PreserveUVs: 0
+  m_IgnoreNormalsForChartDetection: 0
+  m_ImportantGI: 0
+  m_StitchLightmapSeams: 1
+  m_SelectedEditorRenderState: 3
+  m_MinimumChartSize: 4
+  m_AutoUVMaxDistance: 0.5
+  m_AutoUVMaxAngle: 89
+  m_LightmapParameters: {fileID: 0}
+  m_GlobalIlluminationMeshLod: 0
+  m_SortingLayerID: 0
+  m_SortingLayer: 0
+  m_SortingOrder: 0
+  m_MaskInteraction: 0
+  m_AdditionalVertexStreams: {fileID: 0}
+--- !u!65 &1204275833718168905
+BoxCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6534132819926171078}
+  m_Material: {fileID: 0}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_LayerOverridePriority: 0
+  m_IsTrigger: 0
+  m_ProvidesContacts: 0
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Size: {x: 1, y: 1, z: 1}
+  m_Center: {x: 0, y: 0, z: 0}
 --- !u!1 &8532745156481118483
 GameObject:
   m_ObjectHideFlags: 0
@@ -338,10 +391,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 915077c3dcbfd574299c2b79a0e61be4, type: 3}
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterExclusionVolume
-  shape: 2
+  shape: 0
   carveMesh: {fileID: 4300000, guid: effd1c06645541c47b6b01d852275162, type: 2}
   meshProxy: 0
-  size: {x: 7.125002, y: 1.19, z: 2.377767}
+  size: {x: 5, y: 1, z: 2}
   drawWaterWalls: 0
   wallScatterBoost: 1.2
   wallShader: {fileID: 0}
@@ -405,11 +458,16 @@ PrefabInstance:
       value: Hull
       objectReference: {fileID: 0}
     m_RemovedComponents: []
-    m_RemovedGameObjects: []
+    m_RemovedGameObjects:
+    - {fileID: 2924506639797705843, guid: 168f5f7c5b0345549b2703bbd9e9e6d3, type: 3}
+    - {fileID: 2906642446309590165, guid: 168f5f7c5b0345549b2703bbd9e9e6d3, type: 3}
     m_AddedGameObjects:
     - targetCorrespondingSourceObject: {fileID: 4669045021829892525, guid: 168f5f7c5b0345549b2703bbd9e9e6d3, type: 3}
       insertIndex: -1
       addedObject: {fileID: 7542344197722664984}
+    - targetCorrespondingSourceObject: {fileID: 4669045021829892525, guid: 168f5f7c5b0345549b2703bbd9e9e6d3, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 6734651725437586868}
     m_AddedComponents:
     - targetCorrespondingSourceObject: {fileID: 4825750157810491912, guid: 168f5f7c5b0345549b2703bbd9e9e6d3, type: 3}
       insertIndex: -1
@@ -505,10 +563,5 @@ MonoBehaviour:
 --- !u!4 &6892805304380219233 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 4669045021829892525, guid: 168f5f7c5b0345549b2703bbd9e9e6d3, type: 3}
-  m_PrefabInstance: {fileID: 2261913474763904716}
-  m_PrefabAsset: {fileID: 0}
---- !u!23 &8246088861143881334 stripped
-MeshRenderer:
-  m_CorrespondingSourceObject: {fileID: 7857673536451739834, guid: 168f5f7c5b0345549b2703bbd9e9e6d3, type: 3}
   m_PrefabInstance: {fileID: 2261913474763904716}
   m_PrefabAsset: {fileID: 0}

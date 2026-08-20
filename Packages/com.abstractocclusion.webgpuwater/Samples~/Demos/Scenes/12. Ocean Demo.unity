@@ -212,7 +212,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 474bcb49853aa07438625e644c072ee6, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Unity.RenderPipelines.Universal.Runtime::UnityEngine.Rendering.Universal.UniversalAdditionalLightData
   m_UsePipelineSettings: 1
   m_AdditionalLightsShadowResolutionTier: 2
@@ -533,7 +533,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2427031642822514521, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: profile
-      value:
+      value: 
       objectReference: {fileID: 11400000, guid: 3d77c10ba8f9dce4ca1221c52be53932, type: 2}
     - target: {fileID: 2439696289600386818, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: InitialModule.gravityModifier.scalar
@@ -549,7 +549,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2463587723445124726, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
-      value:
+      value: 
       objectReference: {fileID: 2100000, guid: 39680bc5b3039464c8bae895c4622bc0, type: 2}
     - target: {fileID: 3130769476850268295, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: m_Name
@@ -557,11 +557,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 3732076380331823914, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
-      value:
+      value: 
       objectReference: {fileID: 2100000, guid: 39680bc5b3039464c8bae895c4622bc0, type: 2}
     - target: {fileID: 3756076545826541038, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
-      value:
+      value: 
       objectReference: {fileID: 2100000, guid: eef4a5a9f26b01645a31baa96d35bb61, type: 2}
     - target: {fileID: 6698408623575663652, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: InitialModule.gravityModifier.maxCurve.m_Curve.Array.data[0].value
@@ -616,7 +616,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 7eb9d5ff936dc3d4d8ed8d039315f50f, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterDebugView
   mode: 0
   logFogGates: 0
@@ -645,7 +645,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: e84a7a8b00051da429c4750bf9298136, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterCostProbe
   fogKey: 102
   godRayKey: 103
@@ -680,8 +680,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: a79441f348de89743a2939f4d699eac1, type: 3}
-  m_Name:
-  m_EditorClassIdentifier:
+  m_Name: 
+  m_EditorClassIdentifier: 
   m_RenderShadows: 1
   m_RequiresDepthTextureOption: 2
   m_RequiresOpaqueTextureOption: 2
@@ -798,7 +798,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: cddd9544bc6aa3a4a952344b09c15c46, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.FlyCamera
   moveSpeed: 6
   boostMultiplier: 3
@@ -850,7 +850,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 5b7c69d58eef6734798f9cf5eba11a88, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterVolume
   chunkFootprint: 0
   chunkDensityBoost: 1
@@ -864,6 +864,7 @@ MonoBehaviour:
   chunkFillLevel: 0.5
   chunkBoundaryMode: 1
   chunkBoundaryWidth: 1
+  currentFields: []
   jerlovWaterType: 9
   bedDepthSettings:
     useBedDepth: 0
@@ -977,6 +978,7 @@ MonoBehaviour:
   oceanWhitecapFps: 10
   rippleQuality: 2
   bodyType: 2
+  renderBuiltInGeometry: 1
   volumeExtent: {x: 500, y: 100, z: 500}
   enableLargeBodyWindow: 1
   largeBodyThreshold: 100
@@ -1050,6 +1052,8 @@ MonoBehaviour:
     openWater: 1
     largeWaveAmplitude: 1
     largeWaveChoppiness: 1.09
+    currentHeadingDegrees: 0
+    currentSpeed: 0
     windDrivesAmbientSeaState: 0
     ambientWindReferenceSpeed: 3
     significantWaveHeight: 15
@@ -1244,6 +1248,7 @@ MonoBehaviour:
   _legacyObstacleSmoothing: 0.65
   _legacyObstacleFlipY: 1
   waterFogSettings:
+    fullscreenVolumeFog: 1
     waterFog: 1
     fogColor: {r: 0.06773228, g: 0.16186923, b: 0.23773581, a: 1}
     fogExtinction: {r: 0.6627451, g: 0.4041608, b: 0.1764706, a: 1}
@@ -1315,7 +1320,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 7c2b6569e97b14744848833682c436b7, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterFoamParticles
   useParticles: 1
   volume: {fileID: 1579798799}
@@ -1377,7 +1382,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: b55cb88d347492c4f95965747729bf4e, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterSplashEmitter
 --- !u!1 &1734502736
 GameObject:
@@ -1454,7 +1459,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 3f9c1d5a7b2e4c8d9a0f6b3e5c7d1a24, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterDemoOverlay
   title: Ocean Demo
   description: 'The spectral FFT ocean drawn through a clipmap with a camera-following
@@ -1531,7 +1536,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 129599e4d0d1483093ca0b9d1b736e93, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterWaveGauge
   volume: {fileID: 1579798799}
   resolveContainingVolume: 1

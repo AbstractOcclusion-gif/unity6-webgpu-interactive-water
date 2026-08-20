@@ -1257,6 +1257,7 @@ MonoBehaviour:
   chunkFillLevel: 0.5
   chunkBoundaryMode: 1
   chunkBoundaryWidth: 1
+  currentFields: []
   jerlovWaterType: 9
   bedDepthSettings:
     useBedDepth: 0
@@ -1370,6 +1371,7 @@ MonoBehaviour:
   oceanWhitecapFps: 10
   rippleQuality: 2
   bodyType: 2
+  renderBuiltInGeometry: 1
   volumeExtent: {x: 500, y: 100, z: 500}
   enableLargeBodyWindow: 1
   largeBodyThreshold: 100
@@ -1443,6 +1445,8 @@ MonoBehaviour:
     openWater: 1
     largeWaveAmplitude: 1
     largeWaveChoppiness: 1.09
+    currentHeadingDegrees: 0
+    currentSpeed: 0
     windDrivesAmbientSeaState: 0
     ambientWindReferenceSpeed: 3
     significantWaveHeight: 15
@@ -1637,6 +1641,7 @@ MonoBehaviour:
   _legacyObstacleSmoothing: 0.65
   _legacyObstacleFlipY: 1
   waterFogSettings:
+    fullscreenVolumeFog: 1
     waterFog: 1
     fogColor: {r: 0.06773228, g: 0.16186923, b: 0.23773581, a: 1}
     fogExtinction: {r: 0.6627451, g: 0.4041608, b: 0.1764706, a: 1}
@@ -2764,8 +2769,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterDemoOverlay
   title: Deep Dive
-  description: Follow a sinking object from the FFT surface into the fogged depths.
-    R resets the descent. Replace the marked plane with the final seabed terrain.
+  description: 'Follow a sinking object from the FFT surface into the fogged depths.
+    R resets the descent. '
   corner: 2
   panelWidth: 460
   screenMargin: 14

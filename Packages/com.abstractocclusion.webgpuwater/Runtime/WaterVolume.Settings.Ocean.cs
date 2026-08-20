@@ -38,6 +38,16 @@ namespace AbstractOcclusion.WebGpuWater
                      "still ride the visible crest.")]
             [Range(0f, LargeWaveChoppinessMax)] public float largeWaveChoppiness = DefaultLargeWaveChoppiness;
 
+            [Header("Surface current (drifts the whole wave field)")]
+            [Tooltip("SURFACE CURRENT HEADING (degrees): world-XZ direction the water drifts TOWARD. " +
+                     "The entire sampled wave field - crests, whitecap deposits and the waterline - " +
+                     "slides together, the way waves ride a real current. Inert while Current Speed " +
+                     "is 0.")]
+            [Range(0f, 360f)] public float currentHeadingDegrees = 0f;
+            [Tooltip("SURFACE CURRENT SPEED (m/s). 0 = off (byte-identical). Typical values: 0.2 " +
+                     "(gentle drift) to 2 (strong tidal race).")]
+            [Min(0f)] public float currentSpeed = 0f;
+
             [Header("Ocean sea state (FFT spectrum)")]
             [Tooltip("Makes Wind Speed drive every ambient wind-made layer: the FFT wind sea, small wind " +
                      "waves and detail normals. At 0 m/s the local wind sea is flat; at Reference Wind " +
@@ -303,6 +313,22 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("Ceiling on how dense foam can pile up before accumulation stops. Higher = thicker, " +
                      "longer-lasting deposits (1 = the original ceiling).")]
             [Range(OceanFoamMaxBuildupMin, OceanFoamMaxBuildupMax)] public float oceanFoamMaxBuildup = DefaultOceanFoamMaxBuildup;
+        }
+
+        // Premultiplied surface-current drift offset in METRES (current velocity * the SAME clock
+        // published as _WaveTime), so the surface graph, the FFT reads and the caustic receiver
+        // subtract one synchronized offset with no per-chain time uniform (shader pair:
+        // OceanCurrentDrift, WaterWaves.hlsl).
+        internal Vector4 OceanCurrentOffsetXZ
+        {
+            get
+            {
+                if (ocean.currentSpeed <= 0f) return Vector4.zero;
+                float headingRadians = ocean.currentHeadingDegrees * Mathf.Deg2Rad;
+                float driftMetres = ocean.currentSpeed * WaveTime;
+                return new Vector4(Mathf.Cos(headingRadians) * driftMetres,
+                                   Mathf.Sin(headingRadians) * driftMetres, 0f, 0f);
+            }
         }
 
         // Same-named forwarding accessors so every reader (WaterUniformPublisher, the derived helpers

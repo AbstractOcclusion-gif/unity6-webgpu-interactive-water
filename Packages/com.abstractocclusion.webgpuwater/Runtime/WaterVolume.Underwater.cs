@@ -109,7 +109,8 @@ namespace AbstractOcclusion.WebGpuWater
         // Pass-0 state the overlay pass does not replicate, so their foam keeps the queue-time
         // path (PondFoamLayer's overlay-skip gate makes the same exception on the GPU).
         static bool QualifiesForFoamOverlay(WaterVolume body)
-            => body != null && body.isActiveAndEnabled && body.Foam && !body.IsChunk;
+            => body != null && body.isActiveAndEnabled &&
+               (body.Foam || body.HasLiveExternalFoamRenderer) && !body.IsChunk;
 
         /// <summary>True when at least one body needs the after-fog pond-foam overlay (the
         /// feature's cheap CPU gate before it enqueues the after-fog pass).</summary>
@@ -126,7 +127,12 @@ namespace AbstractOcclusion.WebGpuWater
         {
             into.Clear();
             for (int i = 0; i < Bodies.Count; i++)
-                if (QualifiesForFoamOverlay(Bodies[i])) Bodies[i].CollectAboveSurfaceRenderers(into);
+            {
+                WaterVolume body = Bodies[i];
+                if (!QualifiesForFoamOverlay(body)) continue;
+                if (body.Foam) body.CollectAboveSurfaceRenderers(into);
+                body.CollectExternalFoamRenderers(into);
+            }
         }
 
         // Refresh the underwater fog gate at the START of the target camera's render. WHY here and not

@@ -147,8 +147,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 474bcb49853aa07438625e644c072ee6, type: 3}
-  m_Name:
-  m_EditorClassIdentifier:
+  m_Name: 
+  m_EditorClassIdentifier: 
   m_UsePipelineSettings: 1
   m_AdditionalLightsShadowResolutionTier: 2
   m_CustomShadowLayers: 0
@@ -339,7 +339,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 474bcb49853aa07438625e644c072ee6, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Unity.RenderPipelines.Universal.Runtime::UnityEngine.Rendering.Universal.UniversalAdditionalLightData
   m_UsePipelineSettings: 1
   m_AdditionalLightsShadowResolutionTier: 2
@@ -480,11 +480,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2427031642822514521, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: profile
-      value:
+      value: 
       objectReference: {fileID: 11400000, guid: 3d77c10ba8f9dce4ca1221c52be53932, type: 2}
     - target: {fileID: 2463587723445124726, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
-      value:
+      value: 
       objectReference: {fileID: 2100000, guid: 26a1ebfd5ed5c484cb99413c0a7308a1, type: 2}
     - target: {fileID: 3130769476850268295, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: m_Name
@@ -492,11 +492,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 3732076380331823914, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
-      value:
+      value: 
       objectReference: {fileID: 2100000, guid: 909b276cc9362bf4e8526facffff30c2, type: 2}
     - target: {fileID: 3756076545826541038, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
-      value:
+      value: 
       objectReference: {fileID: 2100000, guid: ec5a3555e3c9e8d4992e94ea0d96fa07, type: 2}
     - target: {fileID: 7982323451005239612, guid: 19beeb894b6cad1489ae12f2f9b6740a, type: 3}
       propertyPath: m_LocalRotation.x
@@ -582,7 +582,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: b55cb88d347492c4f95965747729bf4e, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterSplashEmitter
 --- !u!1 &961739749
 GameObject:
@@ -615,8 +615,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: a79441f348de89743a2939f4d699eac1, type: 3}
-  m_Name:
-  m_EditorClassIdentifier:
+  m_Name: 
+  m_EditorClassIdentifier: 
   m_RenderShadows: 1
   m_RequiresDepthTextureOption: 2
   m_RequiresOpaqueTextureOption: 2
@@ -733,7 +733,7 @@ MonoBehaviour:
   m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: cddd9544bc6aa3a4a952344b09c15c46, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.FlyCamera
   moveSpeed: 6
   boostMultiplier: 3
@@ -751,7 +751,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: db95254d7fef3c3479d701adbd938abb, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.OrbitCamera
   pivot: {x: 0, y: 6, z: 0}
   pivotTarget: {fileID: 0}
@@ -933,7 +933,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 5b7c69d58eef6734798f9cf5eba11a88, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterVolume
   chunkFootprint: 0
   chunkDensityBoost: 1
@@ -947,6 +947,7 @@ MonoBehaviour:
   chunkFillLevel: 0.5
   chunkBoundaryMode: 1
   chunkBoundaryWidth: 1
+  currentFields: []
   jerlovWaterType: 3
   bedDepthSettings:
     useBedDepth: 0
@@ -1060,6 +1061,7 @@ MonoBehaviour:
   oceanWhitecapFps: 10
   rippleQuality: 3
   bodyType: 2
+  renderBuiltInGeometry: 1
   volumeExtent: {x: 500, y: 100, z: 500}
   enableLargeBodyWindow: 1
   largeBodyThreshold: 48
@@ -1133,6 +1135,8 @@ MonoBehaviour:
     openWater: 1
     largeWaveAmplitude: 1
     largeWaveChoppiness: 1.5
+    currentHeadingDegrees: 0
+    currentSpeed: 0
     windDrivesAmbientSeaState: 0
     ambientWindReferenceSpeed: 3
     significantWaveHeight: 1
@@ -1243,9 +1247,9 @@ MonoBehaviour:
     reflectionStrength: 0.3
     envReflectionIntensity: 1
     reflectSunlight: 1
-    sunReflectionIntensity: 1
-    fresnelFloor: 0
-    fresnelPower: 5
+    sunReflectionIntensity: 0.14
+    fresnelFloor: 0.195
+    fresnelPower: 3.93
     sunRoughness: 0.08
     roughnessFar: 0.35
     roughnessFarDistance: 1500
@@ -1327,10 +1331,11 @@ MonoBehaviour:
   _legacyObstacleSmoothing: 0.65
   _legacyObstacleFlipY: 1
   waterFogSettings:
+    fullscreenVolumeFog: 1
     waterFog: 1
     fogColor: {r: 0.02306156, g: 0.109676965, b: 0.15471691, a: 1}
     fogExtinction: {r: 0.17735851, g: 0.13231099, b: 0.118796736, a: 1}
-    fogDensity: 1.35
+    fogDensity: 1.6
     waterOpacity: 0
     lightScatter: 0
   _legacyWaterFog: 0
@@ -1340,8 +1345,8 @@ MonoBehaviour:
   _legacyWaterOpacity: 0
   volumeScatterSettings:
     volumeScatter: 1
-    scatterColor: {r: 0.016596653, g: 0.093265064, b: 0.13962269, a: 1}
-    scatterIntensity: 0.6
+    scatterColor: {r: 0.045688834, g: 0.09024649, b: 0.11698109, a: 1}
+    scatterIntensity: 4.52
     scatterAnisotropy: 0.5
     scatterAmbientTerm: 1
     scatterSunTerm: 1
@@ -1398,7 +1403,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 7c2b6569e97b14744848833682c436b7, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterFoamParticles
   useParticles: 1
   volume: {fileID: 1563693442}
@@ -1687,7 +1692,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 172515602e62fb746b5d573b38a5fe58, type: 3}
-  m_Name:
+  m_Name: 
   m_EditorClassIdentifier: Unity.RenderPipelines.Core.Runtime::UnityEngine.Rendering.Volume
   m_IsGlobal: 1
   priority: 0

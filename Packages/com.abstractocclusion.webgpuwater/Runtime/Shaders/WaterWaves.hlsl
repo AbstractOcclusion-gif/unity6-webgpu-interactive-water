@@ -38,6 +38,24 @@ float  _WaveMetersPerUnit;  // pool unit -> metres (waves are defined in metres)
 // pattern must not slide or rescale with the volume box); 0 = pool xz (bounded bodies).
 float _OceanWorldWaves;
 
+// Uniform surface-current drift in METRES, premultiplied on the CPU (current velocity * the
+// SAME wave clock published as _WaveTime), so every include chain - this surface graph, the
+// FFT cascade reads and the caustic receiver - subtracts ONE synchronized offset with no
+// per-chain time dependency. Applied at SAMPLE time: crests, the whitecap deposit and the
+// waterline drift together; offsetting only a foam read would slide foam off the crests that
+// made it (KWS1 precedent: its foam pattern UV is advected by the fluid velocity).
+// Guarded: WaterLargeWaves.hlsl and WaterLargeCausticWaves.hlsl carry the same block so each
+// include chain compiles standalone. Zero (Current Speed 0, the default) is bit-identical.
+#ifndef WEBGPUWATER_OCEAN_CURRENT_INCLUDED
+#define WEBGPUWATER_OCEAN_CURRENT_INCLUDED
+float4 _OceanCurrentOffset;
+
+float2 OceanCurrentDrift(float2 worldXZ)
+{
+    return worldXZ - _OceanCurrentOffset.xy;
+}
+#endif
+
 // Coordinate fed to the wind-wave layer (WaveHeight/WaveSlope). ONE definition for every consumer -
 // the surface vertex/fragment stages, the waterline field and the foam-particle surface glue. A
 // consumer that picks its own coordinate silently desyncs its wind waves from the rendered surface
@@ -45,16 +63,16 @@ float _OceanWorldWaves;
 // WaterSurfaceVertStage and WaterWaterline; moved here so it can never drift again.
 float2 WindWaveSampleXZ(float2 poolXZ, float2 worldXZ)
 {
-    if (_OceanWorldWaves > 0.5) return worldXZ / max(_WaveMetersPerUnit, WAVE_METERS_MIN);
+    if (_OceanWorldWaves > 0.5)
+        return OceanCurrentDrift(worldXZ) / max(_WaveMetersPerUnit, WAVE_METERS_MIN);
     return poolXZ;
 }
 
-float2 RiverCurrentWaveSampleXZ(float3 currentData)
+float2 RiverCurrentWaveSampleXZ(float4 currentData)
 {
-    // UV1.xy is metric ribbon space (lateral, downstream). Sampling upstream by speed*time
-    // transports the resulting height pattern downstream at the spline's physical current speed.
-    float downstreamOffset = max(currentData.z, 0.0) * _WaveTime;
-    float2 riverMetres = currentData.xy - float2(0.0, downstreamOffset);
+    // UV1.xy is metric ribbon space. ZW is the baked lateral/downstream velocity, so the same
+    // obstacle-deflected flow transports the visible wave pattern and the physical current.
+    float2 riverMetres = currentData.xy - currentData.zw * _WaveTime;
     return riverMetres / max(_WaveMetersPerUnit, WAVE_METERS_MIN);
 }
 

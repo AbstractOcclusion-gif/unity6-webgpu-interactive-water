@@ -50,6 +50,17 @@ namespace AbstractOcclusion.WebGpuWater
                 return;
             }
 
+            if (terrain.terrainData == null)
+            {
+                // A Terrain component can deserialize before its TerrainData asset is available.
+                // Sampling it throws every enable and can lock the editor while opening a scene.
+                Debug.LogWarning($"WaterVolume '{_body.name}': Use Bed Depth is on but Terrain " +
+                                 $"'{terrain.name}' has no valid TerrainData - bed-depth shading disabled.",
+                                 _body);
+                _baked = false;
+                return;
+            }
+
             int res = Mathf.Clamp(_body.bedResolution, MinResolution, MaxResolution);
             EnsureBedTexture(res);
 

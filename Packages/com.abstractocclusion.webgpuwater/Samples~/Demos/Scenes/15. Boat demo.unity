@@ -1092,6 +1092,7 @@ MonoBehaviour:
   chunkFillLevel: 0.5
   chunkBoundaryMode: 1
   chunkBoundaryWidth: 1
+  currentFields: []
   jerlovWaterType: 0
   bedDepthSettings:
     useBedDepth: 0
@@ -1205,6 +1206,7 @@ MonoBehaviour:
   oceanWhitecapFps: 10
   rippleQuality: 2
   bodyType: 2
+  renderBuiltInGeometry: 1
   volumeExtent: {x: 500, y: 100, z: 500}
   enableLargeBodyWindow: 1
   largeBodyThreshold: 300
@@ -1278,6 +1280,8 @@ MonoBehaviour:
     openWater: 1
     largeWaveAmplitude: 1
     largeWaveChoppiness: 1.2
+    currentHeadingDegrees: 0
+    currentSpeed: 0
     windDrivesAmbientSeaState: 1
     ambientWindReferenceSpeed: 6
     significantWaveHeight: 4
@@ -1472,6 +1476,7 @@ MonoBehaviour:
   _legacyObstacleSmoothing: 0.65
   _legacyObstacleFlipY: 1
   waterFogSettings:
+    fullscreenVolumeFog: 1
     waterFog: 1
     fogColor: {r: 0, g: 0.0323, b: 0.1223, a: 1}
     fogExtinction: {r: 0.6189, g: 0.0582, b: 0.0331, a: 1}
@@ -1632,13 +1637,9 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 0}
     m_Modifications:
-    - target: {fileID: 488345726427136654, guid: 18a1ad2f7be5db34a9642983a0c66631, type: 3}
-      propertyPath: radius
-      value: 0.1
-      objectReference: {fileID: 0}
-    - target: {fileID: 2322242826195635108, guid: 18a1ad2f7be5db34a9642983a0c66631, type: 3}
-      propertyPath: m_IsActive
-      value: 1
+    - target: {fileID: 612963759612769154, guid: 18a1ad2f7be5db34a9642983a0c66631, type: 3}
+      propertyPath: rendererOverride
+      value: 
       objectReference: {fileID: 0}
     - target: {fileID: 4187848027983741927, guid: 18a1ad2f7be5db34a9642983a0c66631, type: 3}
       propertyPath: m_Name
@@ -1683,18 +1684,6 @@ PrefabInstance:
     - target: {fileID: 5878543085488134011, guid: 18a1ad2f7be5db34a9642983a0c66631, type: 3}
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 6857504321106279692, guid: 18a1ad2f7be5db34a9642983a0c66631, type: 3}
-      propertyPath: buoyancy
-      value: 2.5
-      objectReference: {fileID: 0}
-    - target: {fileID: 6857504321106279692, guid: 18a1ad2f7be5db34a9642983a0c66631, type: 3}
-      propertyPath: surfaceGlueIntensity
-      value: 2
-      objectReference: {fileID: 0}
-    - target: {fileID: 6857504321106279692, guid: 18a1ad2f7be5db34a9642983a0c66631, type: 3}
-      propertyPath: verticalSettleDamping
-      value: 3
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []

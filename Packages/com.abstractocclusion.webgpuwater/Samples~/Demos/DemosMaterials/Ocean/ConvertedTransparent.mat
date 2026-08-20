@@ -7,7 +7,7 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: New Material 2_WaterTransparent
+  m_Name: ConvertedTransparent
   m_Shader: {fileID: 4800000, guid: c89c88fd3359b3149967c37c15e04c31, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0

@@ -321,19 +321,19 @@ float2 DetailNormalTilt(float2 worldXZ, float viewDist)
 #define RIVER_DETAIL_CROSSING_X 0.18
 #define RIVER_DETAIL_DOWNSTREAM_Y -0.983666
 
-float2 RiverDetailNormalTilt(float3 currentData, float viewDist)
+float2 RiverDetailNormalTilt(float4 currentData, float viewDist)
 {
     // Sampling travels upstream in river UV space, which makes the visible pattern move downstream.
     // The slight crossing angle keeps the two normal taps organic without letting wind steer flow
-    // across a bend. Speed comes directly from spline metadata, in the same metres/second contract
-    // used by WaterRiverCurrentField.
+    // across a bend. Velocity comes from the settled bake (or spline speed before a bake exists),
+    // in the same metres/second contract used by WaterRiverCurrentField.
     float2 riverDirection0 = float2(
         RIVER_DETAIL_CROSSING_X, RIVER_DETAIL_DOWNSTREAM_Y);
     float2 riverDirection1 = float2(
         -RIVER_DETAIL_CROSSING_X, RIVER_DETAIL_DOWNSTREAM_Y);
     float farSpeedRatio = max(_DetailNormalFarSpeed, DETAIL_NORMAL_MIN_SPEED)
                         / max(_DetailNormalSpeed, DETAIL_NORMAL_MIN_SPEED);
-    float riverSpeed = max(currentData.z, 0.0);
+    float riverSpeed = length(currentData.zw);
     return DetailNormalTiltScrolled(
         currentData.xy,
         riverDirection0 * _WaveTime,

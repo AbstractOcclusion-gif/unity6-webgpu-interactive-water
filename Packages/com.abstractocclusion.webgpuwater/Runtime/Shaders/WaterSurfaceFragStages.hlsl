@@ -121,8 +121,11 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
     // tilt. A height gradient g contributes normal.xz = -g, so the two
     // slopes simply add in the xz components before re-deriving y.
     float riverWeight = saturate(_IsRiver);
+    float2 sampledRiverVelocity = SampleRiverFluidVelocity(
+        i.riverBakeUv, i.riverCurrentData.w);
+    float4 riverCurrentData = float4(i.riverCurrentData.xy, sampledRiverVelocity);
     float2 gridWaveSample = WindWaveSampleXZ(i.position.xz, i.largeWaveSourceXZ);
-    float2 riverWaveSample = RiverCurrentWaveSampleXZ(i.riverCurrentData);
+    float2 riverWaveSample = RiverCurrentWaveSampleXZ(riverCurrentData);
     float2 windSlope = WaveSlope(lerp(gridWaveSample, riverWaveSample, riverWeight))
                      * _WaveNormalStrength;
     // POOL convention, kept as the foam flow / relief input (g.nxz) so foam is unchanged by this.
@@ -221,7 +224,7 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
         // uniform across a WebGPU quad. Pools keep their exact wind/world-space path; ribbons use
         // metric UV1 coordinates and interpolated spline speed to visibly travel downstream.
         if (_IsRiver > 0.5)
-            detailTilt = RiverDetailNormalTilt(i.riverCurrentData, viewDistWorld);
+            detailTilt = RiverDetailNormalTilt(riverCurrentData, viewDistWorld);
         else
             detailTilt = DetailNormalTilt(i.largeWaveSourceXZ, viewDistWorld);
         float3 gridDetailTilt = float3(detailTilt.x, 0.0, detailTilt.y);
@@ -432,6 +435,47 @@ float SurfWhitewashCoverage(v2f i, WaterGeomStage g, float2 foamWorldDdx, float2
     return surfFoam;
 }
 
+float RiverFoamCoverage(v2f i)
+{
+    if (_IsRiver < 0.5 || _RiverFoamActive < 0.5) return 0.0;
+    float2 uv = saturate(float2(i.riverBakeUv.x,
+                                i.riverBakeUv.y * _RiverFluidInvLength));
+    float bakedCoverage = tex2Dlod(_FoamMask, float4(uv, 0.0, 0.0)).b;
+    return saturate(bakedCoverage * _RiverFoamStrength * _FoamStrength);
+}
+
+float2 PondFoamPatternUv(v2f i, float3 normal, float2 localTilt)
+{
+    float riverWeight = saturate(_IsRiver);
+    float2 riverVelocity = SampleRiverFluidVelocity(
+        i.riverBakeUv, i.riverCurrentData.w);
+    float2 riverMetres = i.riverCurrentData.xy - riverVelocity * _WaveTime;
+    float2 patternMetres = lerp(i.worldPos.xz, riverMetres, riverWeight);
+    float2 normalNudge = lerp(normal.xz, localTilt, riverWeight);
+    return patternMetres / max(_FoamTileSize, 1e-3)
+         + normalNudge * FOAM_NORMAL_NUDGE;
+}
+
+float2 PondFoamPatternFlow(float2 localTilt)
+{
+    // River pattern UV already carries physical speed*time advection. The classic two-phase flow
+    // offset remains for simulation foam only, otherwise it would drift the baked foam twice.
+    return localTilt * (1.0 - saturate(_IsRiver));
+}
+
+float3 ApplyPondFoamTiltToNormal(v2f i, float3 normal, float2 tilt)
+{
+    float3 gridFoamNormal = ApplyFoamTiltToNormal(normal, tilt);
+    float3 riverRight = i.worldTangent.xyz
+                      - normal * dot(i.worldTangent.xyz, normal);
+    riverRight *= rsqrt(max(dot(riverRight, riverRight), RIVER_FRAME_MIN_LENGTH_SQ));
+    float3 riverDownstream = normalize(cross(normal, riverRight) * i.worldTangent.w);
+    float3 riverFoamNormal = normalize(normal
+                                     + riverRight * tilt.x
+                                     + riverDownstream * tilt.y);
+    return normalize(lerp(gridFoamNormal, riverFoamNormal, saturate(_IsRiver)));
+}
+
 // The whole seen-from-below path; returns the final pixel colour.
 float4 UnderwaterStage(v2f i, WaterGeomStage g, float waterClarity)
 {
@@ -520,13 +564,16 @@ float4 UnderwaterStage(v2f i, WaterGeomStage g, float waterClarity)
         float2 fcoord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
                                              : (WorldToSim(foamSourcePos).xz * 0.5 + 0.5);
         // No contact foam on this side (see above), so nothing extra to add.
-        float mask = SimFoamCoverage(i.position.xz, fcoord, 0.0);
+        // Same river guard as PondFoamCoverage: rivers either read the baked coverage or
+        // show nothing - SimFoamCoverage on a river reads the packed fluid RG as foam.
+        float mask = (_IsRiver > 0.5)
+                   ? ((_RiverFoamActive > 0.5) ? RiverFoamCoverage(i) : 0.0)
+                   : SimFoamCoverage(i.position.xz, fcoord, 0.0);
 
         // Same world-space pattern UV as the above-water side. Computed (with its
         // screen derivatives) BEFORE the mask branch: WGSL requires derivatives in
         // uniform control flow, and the branch below is per-fragment.
-        float2 fuv = i.worldPos.xz / max(_FoamTileSize, 1e-3)
-                   + normal.xz * FOAM_NORMAL_NUDGE;
+        float2 fuv = PondFoamPatternUv(i, normal, nxz);
         float2 fuvDdx = ddx(fuv);
         float2 fuvDdy = ddy(fuv);
 
@@ -534,7 +581,8 @@ float4 UnderwaterStage(v2f i, WaterGeomStage g, float waterClarity)
         {
             float foamDist = distance(i.worldPos.xz, _WorldSpaceCameraPos.xz);
             float3 pattern; float core, lace, foamAlpha; float2 tilt;
-            EvaluateFoam(fuv, fuvDdx, fuvDdy, nxz, mask, foamDist, pattern, core, lace, foamAlpha, tilt);
+            EvaluateFoam(fuv, fuvDdx, fuvDdy, PondFoamPatternFlow(nxz), mask,
+                         foamDist, pattern, core, lace, foamAlpha, tilt);
 
             undersideFoam = max(undersideFoam, foamAlpha);
             undersideGlow += _FoamColor.rgb * pattern * (lace * mask);
@@ -973,6 +1021,12 @@ FoamLayer OceanWhitecapLayer(v2f i, WaterGeomStage g, float2 foamWorldDdx,
 // Every tap here is explicit-LOD, so it is legal in any control flow.
 float PondFoamCoverage(v2f i)
 {
+    // Rivers never consume the rectangular sim field (WaterSurfaceFoamSampling.hlsl), and a
+    // river with the packed fluid bake bound has REBOUND _FoamMask (RG = encoded velocity,
+    // B = foam): falling through to SimFoamCoverage read that RG as foam + wet mark -
+    // encoded rest velocity is 0.5, so the whole river grew a half-strength foam haze.
+    if (_IsRiver > 0.5) return (_RiverFoamActive > 0.5) ? RiverFoamCoverage(i) : 0.0;
+
     // Windowed bodies read the foam buffer in the window frame too - at the
     // SOURCE xz (undisplaced), like the whitecap path. Sampling at the displaced
     // worldPos misses foam under horizontally-displaced geometry: the hero wave's
@@ -1061,8 +1115,7 @@ FoamLayer PondFoamLayer(v2f i, WaterGeomStage g)
         // Computed (with its screen derivatives) BEFORE the mask branch: WGSL
         // requires derivatives in uniform control flow, and the branch below
         // is per-fragment.
-        float2 fuv = i.worldPos.xz / max(_FoamTileSize, 1e-3)
-                   + normal.xz * FOAM_NORMAL_NUDGE;
+        float2 fuv = PondFoamPatternUv(i, normal, nxz);
         float2 fuvDdx = ddx(fuv);
         float2 fuvDdy = ddy(fuv);
 
@@ -1070,11 +1123,12 @@ FoamLayer PondFoamLayer(v2f i, WaterGeomStage g)
         {
             float foamDist = distance(i.worldPos.xz, _WorldSpaceCameraPos.xz);
             float3 pattern; float core, lace, foamAlpha; float2 tilt;
-            EvaluateFoam(fuv, fuvDdx, fuvDdy, nxz, mask, foamDist, pattern, core, lace, foamAlpha, tilt);
+            EvaluateFoam(fuv, fuvDdx, fuvDdy, PondFoamPatternFlow(nxz), mask,
+                         foamDist, pattern, core, lace, foamAlpha, tilt);
 
             // ---- Foam relief: tilt the lighting normal by the foam's own
             // normal map so the lace shades three-dimensionally. ----
-            float3 foamNormal = ApplyFoamTiltToNormal(normal, tilt);
+            float3 foamNormal = ApplyPondFoamTiltToNormal(i, normal, tilt);
 
             // ---- Lit foam: wrapped diffuse from the sun over an ambient
             // floor, so foam shades with the waves instead of flat white. ----

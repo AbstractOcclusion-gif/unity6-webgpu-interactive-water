@@ -159,6 +159,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                             WaterVolumePropertyPaths.SwellHeight,
                             WaterVolumePropertyPaths.SwellWavelength,
                             WaterVolumePropertyPaths.SwellHeadingOffset));
+                    // Uniform surface current: drifts the whole sampled wave field (crests,
+                    // whitecaps, waterline, caustics together) - shader pair OceanCurrentDrift,
+                    // WaterWaves.hlsl. Speed 0 (default) is inert.
+                    _showSurfaceCurrent = WaterEditorUI.SubSection("Surface Current",
+                        _showSurfaceCurrent, () =>
+                        DrawFields(
+                            WaterVolumePropertyPaths.CurrentHeadingDegrees,
+                            WaterVolumePropertyPaths.CurrentSpeed));
                     // Shading-only spatial variation (gusts/slicks) - see _SeaStateParams in
                     // WaterLargeWaves.hlsl for what each slider drives.
                     _showSeaState = WaterEditorUI.SubSection("Sea State Variation", _showSeaState, () =>

@@ -54,6 +54,18 @@ float _LargeWaveEdgeFeather;  // metres of edge feather on a BOUNDED body: the w
 // Every public composition point below multiplies by this ONE weight - height, chop, normal tilt
 // and whitecap foam all flatten together, and the CPU mirror applies the same weight at its own
 // composition points (WaterVolume.SampleLargeWaveField et al) so buoyancy agrees with the render.
+// Surface-current drift (full rationale: WaterWaves.hlsl). Guarded: whichever include lands
+// first in a chain defines it; zero offset is bit-identical.
+#ifndef WEBGPUWATER_OCEAN_CURRENT_INCLUDED
+#define WEBGPUWATER_OCEAN_CURRENT_INCLUDED
+float4 _OceanCurrentOffset;
+
+float2 OceanCurrentDrift(float2 worldXZ)
+{
+    return worldXZ - _OceanCurrentOffset.xy;
+}
+#endif
+
 float LbwEdgeWeight(float2 worldXZ)
 {
     if (_LargeWaveEdgeFeather <= 0.0) return 1.0;
@@ -256,7 +268,9 @@ void LbwAccumulateBand(float2 worldXZ, int count, float baseWavelength, float wa
         float omega = sqrt(LBW_GRAVITY * k);            // deep-water dispersion
         // Phase compression: the shared shore-distance warp adds extra phase where waves slow in
         // the shallows, scaled by how much this component feels the bottom - crests bunch.
-        float phase = dot(dirR, worldXZ) * k - omega * _WaveTime + phaseOffset
+        // Current drift: the PHASE coordinate drifts (OceanCurrentDrift); the fetch weight
+        // below stays on the geographic xz - fetch is anchored to the shore, not to the water.
+        float phase = dot(dirR, OceanCurrentDrift(worldXZ)) * k - omega * _WaveTime + phaseOffset
                     + k * warpExtra * feel;
         float sinP = sin(phase);
         float cosP = cos(phase);
@@ -481,13 +495,15 @@ float4 OceanAperiodicNormal(float2 worldXZ, float domain, float slice, float lod
 float3 OceanFftDisplacementShore(float2 worldXZ, ShoreData shore)
 {
     float camDist = distance(worldXZ, _WorldSpaceCameraPos.xz);
+    // Wave-space coordinate drifts with the current; fetch/fade stay on the geographic xz.
+    float2 waveXZ = OceanCurrentDrift(worldXZ);
     float3 sum = float3(0.0, 0.0, 0.0);
     for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
     {
         float active = (c < (int)_OceanFftCascadeCount) ? 1.0 : 0.0;
         float slice = min((float)c, _OceanFftCascadeCount - 1.0);   // never index past the array depth
         float domain = max(_OceanFftDomainSizes[c], 1e-3);
-        float2 uv = worldXZ / domain;
+        float2 uv = waveXZ / domain;
         float fade = OceanCascadeDistanceFade(camDist, _OceanFftVisibleAreas[c]);
         float fetch = SeaStateFetchWeight(worldXZ,
             max(_OceanFftDomainSizes[c], 1e-3) * OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION);
@@ -496,7 +512,7 @@ float3 OceanFftDisplacementShore(float2 worldXZ, ShoreData shore)
             sampler_OceanFftDisplacement, float3(uv, slice), 0).xyz;
 #else
         float3 tap = _OceanAperiodicParams.x > 0.5
-            ? OceanAperiodicDisplacement(worldXZ, domain, slice)
+            ? OceanAperiodicDisplacement(waveXZ, domain, slice)
             : _OceanFftDisplacement.SampleLevel(sampler_OceanFftDisplacement, float3(uv, slice), 0).xyz;
 #endif
         sum += (active * fade * OceanCascadeShoalWeight(c, shore) * fetch) * tap;
@@ -535,6 +551,8 @@ struct OceanFftCascadeSum
 OceanFftCascadeSum OceanFftNormalSumShore(float2 worldXZ, ShoreData shore)
 {
     float camDist = distance(worldXZ, _WorldSpaceCameraPos.xz);
+    // Wave-space coordinate drifts with the current; fetch/fade stay on the geographic xz.
+    float2 waveXZ = OceanCurrentDrift(worldXZ);
     OceanFftCascadeSum sum;
     sum.tilt = float2(0.0, 0.0);
     sum.pinch = 0.0;
@@ -544,7 +562,7 @@ OceanFftCascadeSum OceanFftNormalSumShore(float2 worldXZ, ShoreData shore)
         float active = (c < (int)_OceanFftCascadeCount) ? 1.0 : 0.0;
         float slice = min((float)c, _OceanFftCascadeCount - 1.0);
         float domain = max(_OceanFftDomainSizes[c], 1e-3);
-        float2 uv = worldXZ / domain;
+        float2 uv = waveXZ / domain;
         float fade = OceanCascadeDistanceFade(camDist, _OceanFftVisibleAreas[c]);
         float lod = log2(1.0 + camDist / domain); // farther -> coarser mip (distance anti-aliasing)
         float fetch = SeaStateFetchWeight(worldXZ,
@@ -554,7 +572,7 @@ OceanFftCascadeSum OceanFftNormalSumShore(float2 worldXZ, ShoreData shore)
         float4 tap = _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod);
 #else
         float4 tap = _OceanAperiodicParams.x > 0.5
-            ? OceanAperiodicNormal(worldXZ, domain, slice, lod)
+            ? OceanAperiodicNormal(waveXZ, domain, slice, lod)
             : _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod);
 #endif
         sum.tilt  += (shoal * max(fade, OceanFftFarSlopeFloor[c])) * tap.xz;

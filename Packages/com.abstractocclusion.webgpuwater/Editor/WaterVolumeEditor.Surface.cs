@@ -362,6 +362,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // shades is generated there - the title needs no qualifier at that depth.
         void DrawFoamShadingBlock()
         {
+            bool externalFoamUsesLook = target is WaterVolume volume &&
+                                        volume.HasLiveExternalFoamRenderer;
             _showFoamShading = WaterEditorUI.SubSection("Shading", _showFoamShading, () =>
             {
                 DrawFields(
@@ -375,7 +377,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "foamSettings.foamBorderWidth",
                     "foamSettings.foamContactDepth");
             },
-            contentEnabled: Prop("foamSettings.foam").boolValue);
+            contentEnabled: Prop("foamSettings.foam").boolValue || externalFoamUsesLook);
         }
 
         const string TilesHelp =

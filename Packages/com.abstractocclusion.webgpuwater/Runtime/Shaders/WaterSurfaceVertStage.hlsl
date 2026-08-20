@@ -132,6 +132,8 @@
                 float4 vertex : POSITION;
                 float3 normal : NORMAL;
                 float4 tangent : TANGENT;
+                // River normalized lateral bake coordinate + longitudinal metres.
+                float2 riverBakeUv : TEXCOORD0;
                 // River-only metric surface coordinate + physical speed. Pool meshes leave UV1 at 0.
                 float3 riverCurrentData : TEXCOORD1;
             };
@@ -147,11 +149,21 @@
                 UNITY_FOG_COORDS(4)
                 float3 worldNormal : TEXCOORD5; // base sheet normal; transported ribbon-up for rivers
                 float4 worldTangent : TEXCOORD6; // x-slope axis; w reconstructs the z-slope axis
-                float3 riverCurrentData : TEXCOORD7; // lateral/longitudinal metres, downstream m/s
+                float4 riverCurrentData : TEXCOORD7; // metric position xy, baked velocity zw
+                float2 riverBakeUv : TEXCOORD8; // lateral 0..1, longitudinal world metres
             };
 
             #define RIVER_FRAME_MIN_LENGTH_SQ 1e-8
             #define GRID_TANGENT_HANDEDNESS -1.0
+
+            float2 SampleRiverFluidVelocity(float2 bakeCoordinate, float fallbackSpeed)
+            {
+                if (_RiverFluidActive < 0.5) return float2(0.0, max(fallbackSpeed, 0.0));
+                float2 uv = saturate(float2(
+                    bakeCoordinate.x, bakeCoordinate.y * _RiverFluidInvLength));
+                float2 encoded = tex2Dlod(_FoamMask, float4(uv, 0.0, 0.0)).rg;
+                return (encoded * 2.0 - 1.0) * _RiverFluidMaxSpeed;
+            }
 
             // WindWaveSampleXZ + _OceanWorldWaves moved to WaterWaves.hlsl (2026-08-10): the foam
             // glue and the waterline must pick the SAME wind-wave coordinate as this vertex path.
@@ -177,7 +189,7 @@
             }
 
             float3 DisplaceSurfaceVertex(float3 poolFlat, float3 worldFlat, float4 info,
-                                         float riverWeight, float3 riverCurrentData,
+                                         float riverWeight, float4 riverCurrentData,
                                          out float3 poolDisplaced, out float2 largeWaveSourceXZ)
             {
                 float2 poolXZ = poolFlat.xz;
@@ -348,7 +360,10 @@
                 o.worldTangent.xyz = normalize(lerp(gridWorldTangent, riverWorldTangent,
                                                     riverWeight));
                 o.worldTangent.w = lerp(GRID_TANGENT_HANDEDNESS, v.tangent.w, riverWeight);
-                o.riverCurrentData = v.riverCurrentData * riverWeight;
+                o.riverBakeUv = v.riverBakeUv * riverWeight;
+                float2 riverVelocity = SampleRiverFluidVelocity(
+                    v.riverBakeUv, v.riverCurrentData.z);
+                o.riverCurrentData = float4(v.riverCurrentData.xy, riverVelocity) * riverWeight;
                 // World position at the surface plane (height 0) picks the windowed UV; the
                 // xz mapping doesn't depend on ripple height, so this is exact.
                 float fade;
