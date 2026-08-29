@@ -325,8 +325,11 @@ namespace AbstractOcclusion.WebGpuWater
         {
             Vector3 position = droplet.position;
             // Resolve the body under THIS droplet so a splash in lake B drifts on lake B's
-            // surface, not the primary's. Outside every footprint TryGetSurface returns false.
-            WaterVolume body = WaterVolume.BodyContaining(position);
+            // surface, not the primary's. Domain-resolved (2026-08-29): stateless per droplet
+            // (no hysteresis id), exclusion-aware - droplets stay ballistic over dry space.
+            int noHint = 0;
+            WaterVolume body = WaterDomainResolver.GameplayBodyAt(
+                position, WaterQueryIntent.BuoyancySurface, ref noHint);
             if (body == null ||
                 !body.TryGetSurface(position.x, position.z, out float surfaceY, out Vector2 waveDrift))
                 return; // outside the pool or no readback yet: stay ballistic
@@ -391,7 +394,11 @@ namespace AbstractOcclusion.WebGpuWater
             float arcHalfRadians = 0.5f * arcDegrees * Mathf.Deg2Rad;
             float elevationRadians = elevationDegrees * Mathf.Deg2Rad;
 
-            WaterVolume body = WaterVolume.BodyContaining(surfacePos);
+            // Domain-resolved (2026-08-29): a burst requested inside an exclusion volume (dry
+            // space) resolves to no body and emits nothing - splash spawning obeys the carve.
+            int burstHint = 0;
+            WaterVolume body = WaterDomainResolver.GameplayBodyAt(
+                surfacePos, WaterQueryIntent.RayInteraction, ref burstHint);
             WaterFoamParticles gpuSpray = body != null ? body.GetComponent<WaterFoamParticles>() : null;
             // Body-wide particle master (WaterFoamParticles "Use Particles"): off = this body emits NO splash
             // at all - GPU droplets AND the Shuriken crown - matching the ambient foam the same switch silences.

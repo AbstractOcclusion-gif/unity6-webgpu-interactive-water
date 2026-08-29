@@ -37,10 +37,17 @@ namespace AbstractOcclusion.WebGpuWater
         /// water. Use <see cref="IsSubmerged"/> for whether the point is actually under water.</summary>
         public WaterVolume Body { get; private set; }
 
+        int _domainBodyId; // hysteresis hint for the domain resolver (0 = none)
+
         void Update()
         {
             Vector3 point = transform.TransformPoint(probePoint);
-            Body = WaterVolume.BodyContaining(point);
+            // Domain-resolved (2026-08-29) with the EXPLICIT Primary fallback this component
+            // documents ("else the nearest/primary body") - the one caller class that really
+            // wants "some water, always" now requests it instead of inheriting it.
+            Body = WaterDomainResolver.GameplayBodyAt(
+                point, WaterQueryIntent.NearestWithinVerticalLimits,
+                WaterFallbackPolicy.PrimaryBody, ref _domainBodyId);
 
             bool nowSubmerged = Body != null && Body.IsSubmerged(point);
             if (nowSubmerged == IsSubmerged) return;

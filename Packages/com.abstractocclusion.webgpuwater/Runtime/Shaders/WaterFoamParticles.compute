@@ -10,7 +10,8 @@
 //     filterable on WebGPU),
 //   - fixed-capacity pool; dead slots are skipped by the vertex shader.
 //
-// Four particle kinds share one pool:
+// Four visual particle kinds share one pool. Crest rollers add an orthogonal motion state in a
+// companion buffer: visual representation and physical state are deliberately not the same enum.
 //   KIND_SURFACE: floats on the water, dragged by the local flow + wind.
 //   KIND_SPRAY:   ballistic droplets thrown off strong turbulence; on landing they
 //                 convert to KIND_SURFACE and keep drifting as foam.
@@ -57,6 +58,25 @@ static const float KIND_SPRAY   = 1.0;
 static const float KIND_BUBBLE  = 2.0; // MUST match KIND_BUBBLE in FoamParticles.shader
 static const float KIND_RIPPLE_CREST = 3.0;
 
+static const uint CREST_ROLLER_STATE_RIDING = 0u;
+static const uint CREST_ROLLER_STATE_FREE = 1u;
+static const uint CREST_ROLLER_STATE_DEPOSITED = 2u;
+static const uint CREST_ROLLER_FLAG_ANALYTIC_SURF = 1u;
+static const uint CREST_ROLLER_FLAG_HISTORY_VALID = 2u;
+
+// A roller inherits the collapsing face's vertical separation speed. This cap is a numerical
+// guard for a discontinuous shore field or a frame hitch, not an authored launch-speed control.
+static const float CREST_ROLLER_MAX_VERTICAL_SPEED = 6.0;
+static const float CREST_ROLLER_SURFACE_EPSILON = 0.005;
+static const float CREST_ROLLER_LANDING_KEEP = 0.45;
+static const float CREST_ROLLER_LATERAL_JITTER_TEXELS = 0.45;
+static const float CREST_ROLLER_BEHIND_JITTER_TEXELS = 0.25;
+static const uint CREST_ROLLER_SOURCE_SALT = 0xA511E9B3u;
+static const uint CREST_ROLLER_LATERAL_SALT = 0x63D83595u;
+static const uint CREST_ROLLER_BEHIND_SALT = 0xB5297A4Du;
+static const uint CREST_ROLLER_SIZE_SALT = 0x68E31DA4u;
+static const uint CREST_ROLLER_LIFE_SALT = 0x1B56C4E9u;
+
 // ---- KIND_BUBBLE tuning (physics-anchored; see docs/PLAN_bubbles_v1.md) ----
 // Injection: the plume enters just under the surface moving DOWN at a fraction of the
 // burst's up-throw; buoyancy then turns it around, so plume depth EMERGES from the two.
@@ -80,6 +100,7 @@ static const uint COUNTER_RING_CURSOR = 0; // ever-increasing spawn cursor (ring
 static const uint COUNTER_FRAME_SPAWNS = 1; // turbulence spawns this frame (budget check)
 static const uint COUNTER_BURST_SPAWNS = 2; // burst droplets this frame (own budget below)
 static const uint COUNTER_CREST_FLECK_SPAWNS = 3; // ripple-crest flecks this frame (own budget)
+static const uint COUNTER_SURF_ROLLER_SPAWNS = 4; // analytic shore-wave rollers (own budget)
 
 // Burst droplets get their OWN per-frame budget = capacity / this (they are event-driven
 // and must not starve behind the turbulence budget, but 16 requests x 64 droplets could
@@ -136,6 +157,11 @@ static const float SPAWN_LOD_KEEP_ALIVE = 0.02;
 // travelled with the camera - especially as the connected screen-space density veil,
 // where the gradient is one visible shape instead of scattered sprites.
 static const float SPAWN_LOD_PLATEAU = 0.6;
+// Analytic breakers are one-dimensional crest lines. Equal particles per WORLD metre compress into
+// progressively more particles per screen pixel with depth, so the quad path looked denser at the
+// horizon than under the camera. Six metres is the full-density reference; beyond it the 1/depth
+// factor preserves approximately constant screen-space line density.
+static const float CREST_ROLLER_SCREEN_REFERENCE_DEPTH = 6.0;
 
 // One particle = 52 bytes. MUST match FoamParticle in FoamParticles.shader and
 // the stride in WaterFoamParticles.cs.
@@ -152,10 +178,22 @@ struct FoamParticle
     float  opacity;  // per-particle visual opacity; impact bursts can differ from ambient spray
 };
 
+// Motion history that the base particle record cannot infer for analytic surf. previousSurfaceY
+// preserves absolute altitude while the surface collapses; previousCarrierHeight supplies the
+// KWS-style detach event; state/flags keep physics independent from the visual KIND.
+struct CrestRollerState
+{
+    float previousSurfaceY;
+    float previousCarrierHeight;
+    uint motionState;
+    uint flags;
+};
+
 RWStructuredBuffer<FoamParticle> Particles;
 // Crest flecks alone need motion history for their KWS-style trail rendering. Kept separate from
 // FoamParticle so generic foam, spray and bubbles retain their established buffer layout.
 RWStructuredBuffer<float3> CrestFleckPreviousPositions;
+RWStructuredBuffer<CrestRollerState> CrestRollerStates;
 RWStructuredBuffer<uint> Counters;
 
 // Sim inputs (same textures the Foam kernel reads).
@@ -177,12 +215,23 @@ float _SpawnRate;         // expected spawns / second / world-unit^2 at foam = 1
 uint  _MaxSpawnPerFrame;  // hard budget per frame
 float _SprayChance;       // 0..1 fraction of spawns thrown as ballistic spray
 float _SprayLaunchSpeed;  // world units/sec initial upward speed of spray
+float _SimulationDrivenSpawning;
 float _RippleCrestFlecksEnabled;
 float _RippleCrestFleckAmount;
 uint _RippleCrestFleckMaxPerFrame;
 float _RippleCrestFleckLifeMin, _RippleCrestFleckLifeMax;
 float _RippleCrestFleckSizeMin, _RippleCrestFleckSizeMax;
 float _RippleCrestFleckMotion;
+float _SurfCrestRollersEnabled;
+float _SurfCrestRollerSpawnRate;
+uint _SurfCrestRollerMaxPerFrame;
+float _SurfCrestRollerLifeMin, _SurfCrestRollerLifeMax;
+float _SurfCrestRollerSizeMin, _SurfCrestRollerSizeMax;
+float _SurfCrestRollerTransport;
+float _SurfCrestRollerBreakerThreshold;
+float _SurfCrestRollerDetachDrop;
+float _SurfCrestRollerMinimumRideTime;
+float _SurfCrestRollerVerticalCarry;
 float _LifeMin, _LifeMax; // seconds
 float _SizeMin, _SizeMax; // world units
 float _SizeHeroPower;     // >= 1; KWS pow-distribution: most particles small, rare heroes
@@ -461,9 +510,14 @@ float  _OceanFftCascadeCount;  // active cascades (<= 4)
 #endif
 
 #ifdef OCEAN_FFT_GLUE
+static const uint OCEAN_DIRECTION_MAP_FALLBACK_DIMENSION = 1u;
+
 float2 OceanParticleDirectionMapBilinear(float2 uv)
 {
-    uint width, height;
+    // Explicit initialization keeps FXC's definite-assignment analysis stable after this sampler
+    // is inlined through multiple SurfaceWorldY calls in the crest-roller update path.
+    uint width = OCEAN_DIRECTION_MAP_FALLBACK_DIMENSION;
+    uint height = OCEAN_DIRECTION_MAP_FALLBACK_DIMENSION;
     _OceanDirectionMap.GetDimensions(width, height);
     float2 texel = saturate(uv) * float2(max((int)width - 1, 0), max((int)height - 1, 0));
     int2 p0 = (int2)floor(texel);
@@ -527,6 +581,30 @@ bool ClaimPoolSlot(out uint slot)
     }
     slot = 0u;
     return false;
+}
+
+// WebGPU's HLSL front-end resolves functions in declaration order. Keep this source-specific
+// budget helper above TrySpawnSurfCrestRoller instead of relying on DXC's forward resolution.
+bool TryClaimSurfCrestRollerSlot(out uint slot)
+{
+    uint rollerSpawns;
+    InterlockedAdd(Counters[COUNTER_SURF_ROLLER_SPAWNS], 1, rollerSpawns);
+    if (rollerSpawns >= _SurfCrestRollerMaxPerFrame)
+    {
+        slot = 0u;
+        return false;
+    }
+    return ClaimPoolSlot(slot);
+}
+
+void ResetCrestRollerState(uint slot)
+{
+    CrestRollerState state;
+    state.previousSurfaceY = 0.0;
+    state.previousCarrierHeight = 0.0;
+    state.motionState = CREST_ROLLER_STATE_DEPOSITED;
+    state.flags = 0u;
+    CrestRollerStates[slot] = state;
 }
 
 // Pcg/Rand01 come from WaterParticleCommon.hlsl.
@@ -633,14 +711,30 @@ bool ProjectToScreen(float3 world, out float2 uv, out float eyeDepth)
 // influence, zero surf) off-field or while the shore layer is off - callers can use the outputs
 // unconditionally. Built on the shared fail-fast fetch: a degenerate SDF direction is now inert
 // here too, matching the roller (the old local copy pressed on with toShore = 0).
+bool TrySurfCarrierSample(float2 worldXZ, out SurfWaveSample surf, out float shoreDepth,
+                          out float shoreInfluence, out float shoreDistance, out float2 toShore)
+{
+    float tanBeta;
+    surf = SurfWaveSampleInert();
+    shoreDepth = 0.0;
+    shoreInfluence = 0.0;
+    shoreDistance = 0.0;
+    toShore = 0.0;
+    if (!ParticleSampleShoreField(worldXZ, shoreDepth, shoreDistance, toShore, tanBeta,
+                                  shoreInfluence))
+        return false;
+    surf = EvaluateSurfWaves(worldXZ, shoreDepth, shoreDistance, toShore, tanBeta, shoreInfluence,
+                             _ShoreFoamTime);
+    return surf.mask > SURF_MIN_INFLUENCE;
+}
+
 SurfWaveSample SurfSampleAt(float2 worldXZ, out float shoreDepth, out float shoreInfluence,
                             out float2 toShore)
 {
-    float sdfDist, tanBeta;
-    if (!ParticleSampleShoreField(worldXZ, shoreDepth, sdfDist, toShore, tanBeta, shoreInfluence))
-        return SurfWaveSampleInert();
-    return EvaluateSurfWaves(worldXZ, shoreDepth, sdfDist, toShore, tanBeta, shoreInfluence,
-                             _ShoreFoamTime);
+    SurfWaveSample surf;
+    float shoreDistance;
+    TrySurfCarrierSample(worldXZ, surf, shoreDepth, shoreInfluence, shoreDistance, toShore);
+    return surf;
 }
 
 // World-space surface height under a floating particle: the same "glue to the animated
@@ -740,6 +834,117 @@ float SurfaceWorldY(float3 worldPos, float2 simNorm)
     return surfaceY + WindWaveGlueWorldHeight(worldPos.xz);
 }
 
+float SpawnDistanceAcceptance(float2 worldXZ)
+{
+    if (_SpawnMaxDistance <= 0.0) return 1.0;
+    float distanceNorm = saturate(distance(worldXZ, _SpawnCameraXZ) / _SpawnMaxDistance);
+    float distanceThinning = smoothstep(SPAWN_LOD_PLATEAU, 1.0, distanceNorm);
+    return saturate(1.0 - distanceThinning + SPAWN_LOD_KEEP_ALIVE);
+}
+
+float SurfRollerScreenAcceptance(float3 worldPosition)
+{
+    float distanceAcceptance = SpawnDistanceAcceptance(worldPosition.xz);
+    if (_TileBudgetEnabled <= 0.5) return distanceAcceptance;
+
+    float2 screenUv;
+    float eyeDepth;
+    if (!ProjectToScreen(worldPosition, screenUv, eyeDepth))
+        return distanceAcceptance * SPAWN_LOD_KEEP_ALIVE;
+
+    bool onScreen = all(screenUv >= 0.0) && all(screenUv <= 1.0);
+    if (!onScreen) return distanceAcceptance * SPAWN_LOD_KEEP_ALIVE;
+
+    float screenLineAcceptance = saturate(CREST_ROLLER_SCREEN_REFERENCE_DEPTH
+                                          / max(eyeDepth, CREST_ROLLER_SCREEN_REFERENCE_DEPTH));
+    return distanceAcceptance * max(screenLineAcceptance, SPAWN_LOD_KEEP_ALIVE);
+}
+
+// Emits a particle ON the analytic surf lip. Spawn calls this after the shared water-driven gate
+// but before OCEAN_FFT_GLUE's ambient early-out: shore geometry is analytic on those bodies, so
+// this remains available for ocean coastlines while the master source is enabled.
+bool TrySpawnSurfCrestRoller(int2 texel, float3 texelWorld, uint2 spawnKey)
+{
+    if (_SurfCrestRollersEnabled <= 0.5 || _SurfCrestRollerSpawnRate <= 0.0) return false;
+
+    SurfWaveSample surf;
+    float shoreDepth;
+    float shoreInfluence;
+    float shoreDistance;
+    float2 toShore;
+    if (!TrySurfCarrierSample(texelWorld.xz, surf, shoreDepth, shoreInfluence, shoreDistance,
+                              toShore))
+        return false;
+
+    float sourceStrength = saturate((surf.breaker - _SurfCrestRollerBreakerThreshold)
+                                   / max(1.0 - _SurfCrestRollerBreakerThreshold,
+                                         SURF_MIN_INFLUENCE));
+    if (sourceStrength <= 0.0) return false;
+
+    // The breaker is a LINE source, not a two-dimensional foam patch. Texel area made births fall
+    // as resolution increased and left the near crest sparse. Length normalization is invariant for
+    // a one-texel-wide lip; the screen factor prevents uniform world density piling up at distance.
+    float texelWorldSize = sqrt(max(_TexelWorldArea, SURF_MIN_INFLUENCE));
+    float probability = sourceStrength * _SurfCrestRollerSpawnRate * texelWorldSize
+                       * _DeltaTime * SurfRollerScreenAcceptance(texelWorld);
+    if (Rand01(spawnKey, _FrameSeed ^ CREST_ROLLER_SOURCE_SALT) >= probability) return false;
+    if (_ExclusionCount > 0.5 && InsideParticleExclusion(texelWorld)) return false;
+
+    float lateralRoll = Rand01(spawnKey, _FrameSeed ^ CREST_ROLLER_LATERAL_SALT) * 2.0 - 1.0;
+    float behindRoll = Rand01(spawnKey, _FrameSeed ^ CREST_ROLLER_BEHIND_SALT);
+    float sizeRoll = Rand01(spawnKey, _FrameSeed ^ CREST_ROLLER_SIZE_SALT);
+    float lifeRoll = Rand01(spawnKey, _FrameSeed ^ CREST_ROLLER_LIFE_SALT);
+    float2 lateral = float2(-toShore.y, toShore.x);
+    float2 spawnXZ = texelWorld.xz
+                   + lateral * lateralRoll * texelWorldSize
+                   * CREST_ROLLER_LATERAL_JITTER_TEXELS
+                   - toShore * behindRoll * texelWorldSize
+                   * CREST_ROLLER_BEHIND_JITTER_TEXELS;
+
+    // Jitter changes both phase and carrier altitude. Re-sample at the final position BEFORE
+    // claiming a pool slot, otherwise the first update compares two different wave points and can
+    // manufacture an immediate collapse/detach event that never happened on the rendered face.
+    SurfWaveSample spawnSurf;
+    float spawnShoreDepth;
+    float spawnShoreInfluence;
+    float spawnShoreDistance;
+    float2 spawnToShore;
+    if (!TrySurfCarrierSample(spawnXZ, spawnSurf, spawnShoreDepth, spawnShoreInfluence,
+                              spawnShoreDistance, spawnToShore))
+        return false;
+    sourceStrength = saturate((spawnSurf.breaker - _SurfCrestRollerBreakerThreshold)
+                            / max(1.0 - _SurfCrestRollerBreakerThreshold,
+                                  SURF_MIN_INFLUENCE));
+    if (sourceStrength <= 0.0) return false;
+
+    uint slot;
+    if (!TryClaimSurfCrestRollerSlot(slot)) return false;
+
+    FoamParticle particle;
+    particle.worldPos = texelWorld;
+    particle.worldPos.xz = spawnXZ;
+    particle.worldPos.y = 0.0;
+    float phaseSpeed = SurfFrontPhaseSpeed(spawnShoreDistance) * _SurfCrestRollerTransport;
+    particle.velocity = float3(spawnToShore.x * phaseSpeed, 0.0, spawnToShore.y * phaseSpeed);
+    particle.age = 0.0;
+    particle.life = lerp(_SurfCrestRollerLifeMin, _SurfCrestRollerLifeMax, lifeRoll);
+    particle.size = lerp(_SurfCrestRollerSizeMin, _SurfCrestRollerSizeMax, sizeRoll);
+    particle.seed = sizeRoll;
+    particle.kind = KIND_RIPPLE_CREST;
+    particle.strength = sourceStrength;
+    particle.opacity = 1.0;
+    Particles[slot] = particle;
+    CrestFleckPreviousPositions[slot] = particle.worldPos;
+
+    CrestRollerState state;
+    state.previousSurfaceY = SurfaceWorldY(particle.worldPos, WorldToSimNorm(particle.worldPos));
+    state.previousCarrierHeight = spawnSurf.height;
+    state.motionState = CREST_ROLLER_STATE_RIDING;
+    state.flags = CREST_ROLLER_FLAG_ANALYTIC_SURF | CREST_ROLLER_FLAG_HISTORY_VALID;
+    CrestRollerStates[slot] = state;
+    return true;
+}
+
 // ---------------------------------------------------------------- kernels
 // Clears the spray tile budget; thread 0 also resets the per-frame spawn counter. The group size is
 // the shared UPDATE_THREAD_GROUP_SIZE because the C# side divides by that same constant
@@ -753,6 +958,7 @@ void BeginFrame(uint3 id : SV_DispatchThreadID)
         Counters[COUNTER_FRAME_SPAWNS] = 0;
         Counters[COUNTER_BURST_SPAWNS] = 0;
         Counters[COUNTER_CREST_FLECK_SPAWNS] = 0;
+        Counters[COUNTER_SURF_ROLLER_SPAWNS] = 0;
     }
     if (id.x < TILE_GRID * TILE_GRID) TileCounts[id.x] = 0;
 }
@@ -959,6 +1165,7 @@ bool TrySpawnRippleCrestFlecks(int2 texel, float3 texelWorld, float crestStrengt
         particle.opacity = 1.0;
         Particles[slot] = particle;
         CrestFleckPreviousPositions[slot] = particle.worldPos;
+        ResetCrestRollerState(slot);
         spawned = true;
     }
     return spawned;
@@ -973,6 +1180,13 @@ void Spawn(uint3 id : SV_DispatchThreadID)
     int2 texel = int2(id.xy);
     float3 texelWorld = TexelToWorld(texel);
     uint2 spawnKey = WorldSpawnKey(texelWorld.xz);
+
+    if (_SimulationDrivenSpawning <= 0.5) return;
+
+    // Analytic surf is a water-driven source even though its carrier is procedural rather than a
+    // ripple-sim texel. Keep it behind the same authored master gate, but before OCEAN_FFT_GLUE
+    // suppresses open-sea ambient sprites so shore breakers remain available on ocean bodies.
+    TrySpawnSurfCrestRoller(texel, texelWorld, spawnKey);
 
     // Ripple-crest flecks spawn on EVERY body kind. The OCEAN_FFT_GLUE variant used to compile
     // this block out along with the ambient gate, which silently meant "no wake flecks on any
@@ -1086,6 +1300,7 @@ void Spawn(uint3 id : SV_DispatchThreadID)
     particle.strength = saturate(foam);
     particle.opacity = 1.0;
     Particles[slot] = particle;
+    ResetCrestRollerState(slot);
 }
 
 // Turns a droplet's outward/up speed pair into a velocity, lifted by the burst's elevation.
@@ -1174,6 +1389,7 @@ void SpawnBurst(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID)
     particle.strength = saturate(burst.strength);
     particle.opacity = saturate(burst.dropletOpacity);
     Particles[slot] = particle;
+    ResetCrestRollerState(slot);
 
     // ---- Bubble plume (KIND_BUBBLE): the same impact that throws droplets UP drives air
     // DOWN. The first _BubbleAmount fraction of the droplet threads also injects a bubble
@@ -1200,6 +1416,7 @@ void SpawnBurst(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID)
     bubble.strength = saturate(burst.strength);
     bubble.opacity = 1.0;
     Particles[bubbleSlot] = bubble;
+    ResetCrestRollerState(bubbleSlot);
 }
 
 
@@ -1217,6 +1434,105 @@ void DepositFrom(inout FoamParticle particle, uint slot)
     particle.size = lerp(_DepositSizeMin, _DepositSizeMax,
                          Rand01(depositKey, _FrameSeed ^ 0x9E3779B9u));
     particle.opacity = 1.0;
+}
+
+void UpdateSurfCrestRoller(inout FoamParticle particle, uint slot,
+                           inout CrestRollerState state)
+{
+    if (state.motionState == CREST_ROLLER_STATE_RIDING)
+    {
+        SurfWaveSample surf;
+        float shoreDepth;
+        float shoreInfluence;
+        float shoreDistance;
+        float2 toShore;
+        bool carrierAvailable = TrySurfCarrierSample(particle.worldPos.xz, surf, shoreDepth,
+                                                      shoreInfluence, shoreDistance, toShore);
+        float phaseSpeed = carrierAvailable
+            ? SurfFrontPhaseSpeed(shoreDistance) * _SurfCrestRollerTransport
+            : 0.0;
+        float3 carrierVelocity = float3(toShore.x * phaseSpeed, 0.0, toShore.y * phaseSpeed);
+
+        CrestFleckPreviousPositions[slot] = lerp(CrestFleckPreviousPositions[slot],
+                                                  particle.worldPos,
+                                                  saturate(_DeltaTime
+                                                           * CREST_FLECK_HISTORY_HERTZ));
+
+        float3 nextPosition = particle.worldPos + carrierVelocity * _DeltaTime;
+        SurfWaveSample nextSurf;
+        float nextShoreDepth;
+        float nextShoreInfluence;
+        float nextShoreDistance;
+        float2 nextToShore;
+        bool nextCarrierAvailable = TrySurfCarrierSample(nextPosition.xz, nextSurf, nextShoreDepth,
+                                                          nextShoreInfluence, nextShoreDistance,
+                                                          nextToShore);
+        float nextSurfaceY = SurfaceWorldY(nextPosition, WorldToSimNorm(nextPosition));
+        float carrierDropSpeed = max(0.0, state.previousCarrierHeight - nextSurf.height)
+                               / max(_DeltaTime, SURF_MIN_INFLUENCE);
+        float naturalVerticalSpeed = max(abs(_SurfAmplitude)
+                                         / max(_SurfPeriod, SURF_MIN_PERIOD),
+                                         SURF_MIN_INFLUENCE);
+        float normalizedDrop = carrierDropSpeed / naturalVerticalSpeed;
+        bool canDetach = particle.age >= _SurfCrestRollerMinimumRideTime;
+        bool detached = canDetach && normalizedDrop >= _SurfCrestRollerDetachDrop;
+
+        particle.worldPos = nextPosition;
+        particle.velocity = carrierVelocity;
+        if (detached)
+        {
+            // The particle keeps the altitude and vertical momentum the collapsing face had one
+            // frame ago. That is the missing KWS event: the surface falls away, so gravity now
+            // owns a genuinely free particle until it meets the recomposed surface again.
+            particle.worldPos.y = max(0.0, state.previousSurfaceY - nextSurfaceY);
+            particle.velocity.y = min(carrierDropSpeed * _SurfCrestRollerVerticalCarry,
+                                      CREST_ROLLER_MAX_VERTICAL_SPEED);
+            state.motionState = CREST_ROLLER_STATE_FREE;
+        }
+        else if (!carrierAvailable || !nextCarrierAvailable)
+        {
+            particle.worldPos.y = 0.0;
+            particle.velocity = 0.0;
+            DepositFrom(particle, slot);
+            state.motionState = CREST_ROLLER_STATE_DEPOSITED;
+        }
+        else
+        {
+            particle.worldPos.y = 0.0;
+        }
+
+        state.previousSurfaceY = nextSurfaceY;
+        state.previousCarrierHeight = nextSurf.height;
+        CrestRollerStates[slot] = state;
+        return;
+    }
+
+    if (state.motionState == CREST_ROLLER_STATE_FREE)
+    {
+        float absoluteY = state.previousSurfaceY + particle.worldPos.y;
+        CrestFleckPreviousPositions[slot] = lerp(CrestFleckPreviousPositions[slot],
+                                                  particle.worldPos,
+                                                  saturate(_DeltaTime
+                                                           * CREST_FLECK_HISTORY_HERTZ));
+        particle.velocity.y -= _Gravity * _DeltaTime;
+        particle.worldPos.xz += particle.velocity.xz * _DeltaTime;
+        absoluteY += particle.velocity.y * _DeltaTime;
+
+        float2 nextSimNorm = WorldToSimNorm(particle.worldPos);
+        float nextSurfaceY = SurfaceWorldY(particle.worldPos, nextSimNorm);
+        particle.worldPos.y = absoluteY - nextSurfaceY;
+        if (particle.worldPos.y <= CREST_ROLLER_SURFACE_EPSILON && particle.velocity.y < 0.0)
+        {
+            particle.worldPos.y = 0.0;
+            particle.velocity = float3(particle.velocity.x, 0.0, particle.velocity.z)
+                              * CREST_ROLLER_LANDING_KEEP;
+            DepositFrom(particle, slot);
+            state.motionState = CREST_ROLLER_STATE_DEPOSITED;
+        }
+
+        state.previousSurfaceY = nextSurfaceY;
+        CrestRollerStates[slot] = state;
+    }
 }
 
 // One thread per pool slot: integrate, convert landed spray (or a surfaced bubble) to
@@ -1280,6 +1596,16 @@ void Update(uint3 id : SV_DispatchThreadID)
                 return;
             }
         }
+    }
+
+    CrestRollerState rollerState = CrestRollerStates[slot];
+    bool isAnalyticSurfRoller = particle.kind == KIND_RIPPLE_CREST
+                             && (rollerState.flags & CREST_ROLLER_FLAG_ANALYTIC_SURF) != 0u;
+    if (isAnalyticSurfRoller)
+    {
+        UpdateSurfCrestRoller(particle, slot, rollerState);
+        Particles[slot] = particle;
+        return;
     }
 
     if (particle.kind == KIND_SPRAY)
@@ -1444,6 +1770,12 @@ void RasterizeDensity(uint3 id : SV_DispatchThreadID)
     FoamParticle particle = Particles[slot];
     if (particle.life <= 0.0 || particle.age >= particle.life) return;
     if (particle.kind != KIND_SURFACE && particle.kind != KIND_RIPPLE_CREST) return;
+    // Analytic rollers keep their authored temporal silhouette as quads, including in density
+    // mode. The shared veil still owns ordinary ripple flecks and deposited surface foam.
+    CrestRollerState rollerState = CrestRollerStates[slot];
+    if ((rollerState.flags & CREST_ROLLER_FLAG_ANALYTIC_SURF) != 0u
+        && particle.kind == KIND_RIPPLE_CREST)
+        return;
 
     float2 simNorm = WorldToSimNorm(particle.worldPos);
     float3 world = particle.worldPos;

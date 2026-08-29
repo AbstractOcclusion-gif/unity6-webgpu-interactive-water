@@ -390,6 +390,26 @@ namespace AbstractOcclusion.WebGpuWater
             rt = null;
         }
 
+        // SetData source for the reset below; read-only by contract (SetData copies).
+        static readonly float[] ZeroResultSeed = new float[1];
+
+        /// <summary>Return this context to its just-constructed observable state so a pooled
+        /// reuse cannot leak the previous body's ripples, foam, wet marks, flow or wake latch
+        /// (see WaterSimLeasePool). Clears the state RTs and the reduction results, empties the
+        /// queued injections and re-arms the sleep latch; the injection generation bumps so an
+        /// in-flight activity readback from the previous owner is discarded when it lands.</summary>
+        internal void ResetSimulationState()
+        {
+            Clear(_a); Clear(_b); Clear(_foamA); Clear(_foamB);
+            Clear(_horizontalFlowA); Clear(_horizontalFlowB);
+            _meanResult?.SetData(ZeroResultSeed);
+            _activityResult?.SetData(ZeroResultSeed);
+            _dropCount = 0;
+            _sphereCount = 0;
+            _hasReceivedInjection = false;
+            unchecked { _injectionGeneration++; }
+        }
+
         // Grid size + texel step, shared by every kernel dispatch.
         void SetGridUniforms()
         {

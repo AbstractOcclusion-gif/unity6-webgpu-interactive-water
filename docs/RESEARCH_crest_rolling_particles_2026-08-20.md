@@ -1,332 +1,771 @@
-# Wave-Crest & Shore-Breaking "Rolling" Foam Particles — Deep Research + Design
+# Crest-rolling foam particles: source audit, KWS1/KWS2 comparison, and architecture
 
-**ThreeJSWaterPort · `com.abstractocclusion.webgpuwater` · 2026-08-20**
-**Scope (per Bert):** shore breaking-wave *rolling* foam particles + wave-crest foam particles. Ocean whitecaps and shore breakers are the priority; treat them as *separable* systems that share one pool + one renderer. Ignore persistent/deposited foam for now. Splash bursts are **out of scope and untouched**. A full refactor of the auto-generated foam/crest particle path is on the table.
-**Status:** research + design only. No code changed. Nothing here ships without your explicit go-ahead (project rule: *ask before touching code*).
+Date: 2026-08-20
 
----
+Status: research and architecture only; no runtime implementation is authorized by this document
 
-## 0. TL;DR — the one thing that has been wrong
+Target: `com.abstractocclusion.webgpuwater` on Unity/WebGPU
 
-You have been trying to grow crest-rolling foam out of `KIND_RIPPLE_CREST`, which reads your **interactive ripple sim**. But your **shore breaking waves do not live in that sim** — they are *analytic geometry* (`WaterSurfWaves.hlsl`: a closed-form height field + a foam texture). And on ocean/shore bodies the particle `Spawn` kernel **early-returns and emits nothing** (`#ifdef OCEAN_FFT_GLUE return;`, line 1044). So there is literally no particle riding a shore wave face today — which is exactly why every crest-rolling test "goes wrong": you are tuning a mechanism that is never fed the wave it is supposed to roll off of.
+Primary comparison sources: local KWS1 and KWS2 source trees supplied by the project owner
 
-KWS gets rolling crest foam almost for free, and the reason is a single architectural fact: **KWS's shore waves and its foam particles share one field.** Its shore breakers *are* a shallow-water velocity+height field (injected from a baked shoreline SDF), so a foam particle that sits on the wave face literally feels the face collapse beneath it and gets thrown. The whole "rolling" look is one line in KWS's update kernel:
+## Executive verdict
 
-```
-particle.isFreeMoving = previousDeltaHeight > 2.0;   // the surface dropped fast under me → I detach and fly
-```
+The crest tests are failing for an architectural reason, not primarily a tuning reason.
 
-Everything else (gravity, air drag, tumble, re-land, drift) hangs off that trigger.
+The current `KIND_RIPPLE_CREST` path is a good renderer and a good carrier for **interactive ripple crests**. It is not a carrier for the breaking shoreline waves drawn by `WaterSurfWaves.hlsl`. Those waves are a separate analytic height field. No particle source currently reads `SurfWaveSample.breaker` and places a crest particle on that analytic face.
 
-**The good news:** your analytic surf model already exposes a *richer* crest signal than KWS's crude `divergence > 0.1` — it hands you the lip line, the throw direction, the breaker type (spill/plunge/surge), and a lifecycle clock. And your ballistic-spray + deposit + density-render machinery is already the exact skeleton a crest-rolling particle needs. You are missing *one bridge*, not a new engine. This doc lays out that bridge two ways (a light architecture-honoring path, and the full KWS-style unification), ranks them, and gives you a small-increment plan so the next test does **not** go wrong.
+There is a second mismatch. The port currently uses `kind` as both visual identity and motion model:
 
----
+- `KIND_RIPPLE_CREST` means crest-looking and surface-bound.
+- `KIND_SPRAY` means droplet-looking and ballistic.
 
-## 1. The three-surfaces problem (root-cause architecture)
+KWS2 does not make that coupling. A foam particle keeps its foam identity while `isFreeMoving` changes its motion. That separation is what lets foam ride a face, lose support, fall forward, meet the surface again, and continue as foam.
 
-Your water renders three independent surface-shape systems. Only one of them contains a velocity field, and it is not the one your shore waves live in:
+The minimum architecture-correct solution is therefore:
 
-```
-                         ┌──────────────────────────────────────────────────────────┐
-                         │                YOUR CURRENT ARCHITECTURE                   │
-                         └──────────────────────────────────────────────────────────┘
+1. Add an **analytic surf-front source** before the ocean ambient early return.
+2. Give crest foam a **motion state independent of render kind**.
+3. Drive the riding state with the analytic front's own phase velocity.
+4. Detect loss of support from the particle's sampled surface-height history.
+5. Convert between absolute height and the port's local surface-offset representation during free flight.
+6. Keep the existing crest visual path; improve density smearing only after the motion is proven.
 
-  (1) FFT OCEAN            (2) ANALYTIC SURF / SHORE          (3) INTERACTIVE RIPPLE SIM
-      cascades                  WaterSurfWaves.hlsl                WaterSim.compute
-  ─────────────           ───────────────────────────        ────────────────────────
-  height (swell)          height (breaking front geom)        height + velocity(!) 
-  Jacobian whitecaps      breaker / whitewash / overCap       SimHorizontalFlow(!)
-  NO velocity field       lipShape / toShore / trailAge       FoamTex (mask)
-  NO particles            breakType (spill/plunge/surge)       ← boat wakes, mouse
-                          NO velocity field                    ← THE ONLY REAL FLOW
-                          NO particles (shades a texture)
-        │                          │                                    │
-        │                          │                                    │
-        └──────────┐               │            ┌───────────────────────┘
-                   ▼               ▼            ▼
-             ┌───────────────────────────────────────────┐
-             │        WaterFoamParticles.compute          │
-             │  KIND_SURFACE / SPRAY / BUBBLE / RIPPLE_CREST │
-             │                                             │
-             │  reads:  Sim, SimHorizontalFlow, FoamTex    │  ← only sees system (3)
-             │  Spawn(): #ifdef OCEAN_FFT_GLUE return;     │  ← systems (1)(2) emit NOTHING
-             │  SurfSampleAt(): used ONLY for height glue  │  ← breaker signal wasted
-             └───────────────────────────────────────────┘
-```
-
-Consequences, precisely:
-
-- **Shore breakers spawn zero particles.** The `Spawn` kernel bails on any `OCEAN_FFT_GLUE` body before the ambient/surf path. The surf-lip spray the comments describe (lines 368, 1067) is *vestigial* — the wiring exists, the emission is short-circuited.
-- **`KIND_RIPPLE_CREST` is doing crest-detection the hard way** because it has no real crest signal to read. It reconstructs "is this a breaking front?" from the ripple sim's height curvature via a *peakness stencil*, a *front-coherence* gate (13-tap signed/abs velocity sum), and a *foam-mask feedback* path, then routes flecks through 3 LOD density tiers. That is a very clever pile of compensation for a missing input. It is fragile because curvature-on-a-ripple-field is an intrinsically noisy crest proxy — you have been fighting the grid chop, not authoring foam.
-- **Your best crest signal is thrown away.** `SurfSampleAt()` already computes `breaker`, `whitewash`, `overCap`, `lipShape`, `toShore` inside the compute — and uses none of it to spawn. This is the single highest-leverage fact in this document.
+This does **not** require a full shallow-water solver for v1. The analytic surf already contains a coherent height, breaker signal, shoreline direction, period, wavelength, and spatial phase warp. It is enough to build an analytic carrier adapter.
 
 ---
 
-## 2. How KWS actually does it (decoded from KWS2 source)
+## 1. What is actually in the project today
 
-KWS's rolling crest foam rests on **three pillars**. Pillars 1–2 are the mechanism you want; pillar 3 you have already ported.
+### 1.1 There are three different water descriptions
 
-### Pillar 1 — one unified shallow-water field that *includes* the shore
+| Water description | Where it lives | What it contains | Current crest-particle use |
+|---|---|---|---|
+| Interactive ripple simulation | `Sim` and horizontal-flow textures | Local height/velocity response to interactions | Fully used by `KIND_RIPPLE_CREST` |
+| Analytic shoreline fronts | `WaterSurfWaves.hlsl` | Height, slope, breaker, whitewash, phase/lifecycle data | Evaluated for surface placement, but not used as a particle source or carrier |
+| Ocean FFT | FFT cascade textures | Spectral displacement and accumulated crest foam | Used in composed surface placement; ambient particle spawning is deliberately disabled on the ocean variant |
 
-KWS runs a single SWE-ish dynamic-waves sim (`KWS_DynamicWaves.shader`) on a grid: `RGBA16 = (velX, velZ, heightOffset, terrainHeight)`. The **shore is inside this sim**: a baked top-down depth camera → jump-flood **shoreline SDF** (`KWS_JumpFloodSDF.shader`) gives a signed distance + inward `shoreDir`, and incoming ocean/FFT waves are injected at that shoreline band. So a breaking shore wave is a real moving mound of water with a real velocity vector — the same field the foam particle reads. **This is the thing your architecture doesn't have**: your shore wave is analytic geometry, not sim state.
+These representations are composited for rendering, but they do not automatically share dynamics. A particle reading the ripple simulation cannot infer the motion of an analytic surf front merely because both are visible in the final water surface.
 
-Alongside it KWS maintains a second RT, `DynamicWavesAdditionalData = (wetMap, shorelineMask, foamMask, wetDepth)`:
+### 1.2 Exact spawn order in `WaterFoamParticles.compute`
 
-- **`shorelineMask`** — a static distance-to-shore ramp (`smoothstep(1,25, sdfDist)`), from the baked SDF. Marks "this is the surf band," extends particle life, biases direction.
-- **`foamMask`** — the *feedback* channel, and a big part of why KWS foam trails and rolls. Each frame it is **advected backward along the flow and blended 95%**, decayed slowly, and re-fed by physically-motivated sources:
+The current `Spawn` kernel does this:
 
-```
-foamAdvectionVel   = vC*1.5 + turbulenceNoise*1.5
-oldFoam            = lerp(additional.z, sample(uv - foamAdvectionVel*dt).z, 0.95)   // memory that drifts
-newFoam            = crestFoam + turbulenceFoam + shorelineFoam + compressionFoam
-foamMask           = saturate(oldFoam - slowDecay + newFoam)
+1. Converts the simulation texel to a world position.
+2. Evaluates `TryGetRippleCrestFleckCandidate`.
+3. May call `TrySpawnRippleCrestFlecks`.
+4. Reads `FoamTex` and executes ambient probability/LOD/slot logic.
+5. Under `OCEAN_FFT_GLUE`, returns before writing an ambient particle.
 
-crestFoam    = max( smoothstep(..,hC-avgH)*smoothstep(..,curvature),      // wave peak
-                    smoothstep(..,slope)*smoothstep(0.04,0.35,-div)*0.5 )  // breaking front = CONVERGENCE (-div)
-               * smoothstep(0.15,0.65, froude)                            // only fast (supercritical) water
-               * pow2(saturate(dot(flowDir, shoreDir)))                   // only water heading AT the shore
-```
+Evidence: `WaterFoamParticles.compute:967-1045`.
 
-Note what the crest source really is: **negative divergence (convergence/compression) of a fast, shoreward-moving surface** — a pile-up front. That is the physical definition of a breaking wave face, and it is cheap.
+The precise conclusion is:
 
-### Pillar 2 — the particle that rides the field and detaches when the face collapses
+- Ripple-crest flecks **can** spawn on ocean bodies because their branch is before the return.
+- CPU/GPU event bursts still have their separate spawn path.
+- The ocean variant emits **no ambient FoamTex particles and no old procedural surf-lip droplets** from this branch.
+- There is no spawn path whose source is the analytic `SurfWaveSample.breaker` signal.
 
-This is the crest-rolling mechanism. KWS's foam particle (`KWS_DynamicWavesFoamParticlesCompute.compute`):
+Therefore, “shore breakers spawn zero particles” is too broad. The accurate statement is: **shore breakers have no particle source tied to their analytic geometry**.
 
-**Spawn** (per sim texel, 8×8): gate `height>0.05 && waveSpeed>0.05 && divergence>0.1`, then accept foam if `(foamMask > thr) OR (divergence > thr)` and a random roll passes. Emit a **cluster** offset along `-flowDir` and `±perpDir` (a little fan behind the crest). Life = `FoamParticleLifetime ± 40%`. Carry `shorelineMask` per particle (shore foam lives longer). If `waveSpeed > 7`, spawn already `isFreeMoving`.
+### 1.3 What `KIND_RIPPLE_CREST` really does
 
-**Update** — the whole "rolling" behavior is a two-state machine:
+The source detector is not trivial. It combines a ripple height peak/curvature stencil, signed and absolute flow coherence, a foam/source condition, flow gates, deterministic world-keyed randomness, and clustered offsets behind/across the local ripple flow. Spawned particles receive:
 
-```
-deltaHeight       = (surfaceHeight - particle.y) / dt
-previousDeltaHeight = particle.prevY - particle.y
-isFreeMoving      = previousDeltaHeight > 2.0        // the surface fell >2 m/s beneath me
+- `kind = KIND_RIPPLE_CREST`;
+- `worldPos.y = 0`, meaning zero offset above the local surface;
+- horizontal velocity from the interactive ripple flow;
+- a separate previous-position entry for the quad ribbon.
 
-IF isFreeMoving (THROWN / TUMBLING):
-    velocity += (0,-9.8,0)*dt_sliced + airDrag(-velocity*dt*(1+rand))
-    position += velocity*dt
-    y = lerp(max(surfaceHeight, y), y, rand)          // some ride the surface up, some fly free
-ELSE (RIDING / ADVECTING on the surface):
-    flow  = NormalizeDynamicWavesVelocity(waves.xy) * groundDrag
-    curl  = SampleCurlNoiseArray(pos)                  // divergence-free swirl
-    velocity = lerp(velocity, lerp(flow, curl, 0.1), forceMul)
-    position.xz += velocity * dt_sliced
-    position.xz += clumpAttraction(perlin) * FoamClumping
-                   * sin(life·π)·slowness              // gather AFTER the crest passes
-    y = surfaceHeight                                   // glued to the surface
-```
+Evidence: `WaterFoamParticles.compute:893-964`.
 
-Read the trigger physically: while the foam sits on the *back* of an advancing wave the surface under it is rising, `previousDeltaHeight < 0`, it stays glued and advects. The instant the crest passes and the **front face drops out from under it** (`previousDeltaHeight > 2`), it detaches, gravity + air drag take over, it arcs forward and **tumbles down the collapsing face**, then re-lands (`max(surfaceHeight, y)`) and resumes advecting. That is rolling crest foam. No breaker classification, no lip geometry — it *emerges* from a particle on a real collapsing surface.
+During update, that kind always stays in the surface-bound branch. It samples `SampleHorizontalFlow`, follows the live ripple flow, adds bounded authored drift, updates its ribbon history, and fades rapidly when the interactive flow disappears. It never becomes ballistic. Evidence: `WaterFoamParticles.compute:1326-1370`.
 
-### Pillar 3 — screen-space density render (you already have this)
+This is appropriate for wake flecks. It cannot create a shore roller because the required source and carrier are elsewhere.
 
-Not lit billboards. Each live particle `InterlockedAdd`s `1` into one of **3 LOD count buffers** (bigger on-screen → coarser buffer), then a shading pass turns counts into foam: `foamLow = density·0.2` (linear, thin spray) `+ foamHigh = density²·0.5` (quadratic, bright cores), tinted by surface volumetric light `×(0.75,0.85,1)`, dilated 1px, composited **additively**. Your `RasterizeDensity` + `FoamDensityComposite` + tier buffers are a faithful port of this already. **The one KWS render trick you're missing:** the particle billboard is *stretched up to 7× along its screen-space motion vector* (`stretch = lerp(2,7, speed)`), which is what makes fast crest foam read as forward-smeared streaks instead of round dots.
+### 1.4 The analytic surf data already available to the particle compute
 
----
+`SurfSampleAt` calls the same `EvaluateSurfWaves` used by the surface. The returned `SurfWaveSample` contains:
 
-## 3. What the literature says (the mechanism map)
+- `height`;
+- `slopeXZ`;
+- `whitewash`;
+- `breaker`;
+- `mask`;
+- `overCap`;
+- `lipShape`;
+- `trailAge`.
 
-The academic + production landscape converges on a small set of reusable ideas. Full source list in §10.
+Evidence: `WaterSurfWaves.hlsl:533-544` and `WaterFoamParticles.compute:632-644`.
 
-**Ihmsen et al. 2012, "Unified Spray, Foam and Bubbles"** — the canonical foam-spawn criterion everything (Houdini Whitewater, Bifrost, most engines) descends from. Foam is born from three scalar potentials: **wave-crest** = surface curvature summed over *convex* neighbours, gated by an outward-velocity flag `v̂·n̂ ≥ 0.6` (an *advancing* crest, not a trough); **trapped-air** = relative-velocity convergence (your `-div`); **kinetic energy** as a multiplier (no energy → no foam). Motion is classified by neighbour count → *spray (ballistic) / foam (advected, velocity discarded) / bubble (buoyant)*, and — crucially — **a foam particle thrown above the surface loses neighbours and reclassifies to ballistic spray automatically.** That reclassification *is* the advected↔ballistic switch; KWS's `deltaHeight` trigger is the height-field-cheap version of it.
+The internal `SurfFrontTerms` also computes `breakType` as spilling/plunging/surging weights, but `SurfWaveSample` does **not** expose it. Evidence: `WaterSurfWaves.hlsl:363-420`. Any design that consumes breaker type must explicitly extend the sample or reconstruct it; it is not available today.
 
-**Thürey & Müller-Fischer 2007, "Real-time Breaking Waves for Shallow Water"** — the paper most directly on your target, and it models the overturning lip explicitly in real time. Break where `|∇H| > p_H·g·Δt/Δx AND ∇H·u < 0` (a steep front *opposing* the flow). Then emit an overturning sheet whose **crest moves faster than its base**: `u_s = (1 + p_v·g·(H − H_base))·u`. That single term is what curls the lip forward — steal it verbatim as the initial throw velocity for a thrown crest particle. On surface re-impact it spawns secondary spray. The one GPU-hostile part is its serial flood-fill to build the wave *line*; you don't need it (emit per steep texel / per lip sample and let the density buffer merge coverage).
+`SurfaceWorldY` already composes the correct animated surface for particles. On the ocean it sums FFT displacement, analytic surf height, and ripple glue; on other bodies it combines the body level, surf height, and ripple/wind glue. Evidence: `WaterFoamParticles.compute:701-740`.
 
-**FFT Jacobian fold (Tessendorf lineage)** — the deep-water whitecap trigger you already use in spirit on the surface shader: `J = det(I + ∂(horizontal displacement))`; `J < bias` ⇒ the surface is folding/pinching ⇒ whitecap. This is your **ocean-crest** emitter's spawn field (offshore, where there is no shore breaker signal).
+### 1.5 Two suspected missing features are already present
 
-**Bridson curl-noise** — a divergence-free swirl to perturb *settled* foam advection without a flow sim. You already do this (`FoamNoiseGrad` rotated 90°); KWS does the same (`SampleCurlNoiseArray`). Keep it.
+#### Landing
 
-**Crest (Unity asset) / "mass-preserving" foam** — for the *settled* phase, foam is a scalar deposited into a texture that multiplicatively decays and advects with the flow. This is KWS's `foamMask` feedback in texture form. You have `FoamTex`; whether to advect it is a §7 decision.
+`FoamParticle.worldPos.y` is stored as a height offset above the local animated surface. Spray lands when that offset crosses `SPRAY_LANDING_EPSILON` while descending, then `DepositFrom` turns it into surface foam. Evidence: `WaterFoamParticles.compute:1285-1294`.
 
-**Ranked ideas worth stealing** (synthesised): (1) Thürey `crest-faster-than-base` throw + `∇H·u<0` front test; (2) Ihmsen/KWS **advected↔ballistic state switch** as the core update; (3) Jacobian fold as the offshore ocean-crest gate; (4) advected+decaying foam feedback for the settled trail; (5) density-accumulation render (done) + motion-stretch (to add). WebGPU caveats: no geometry shaders (emit instanced/indirect, not extruded sheets), only 32-bit **integer** atomics (your fixed-point `InterlockedAdd` density path is already the correct workaround), no SPH neighbour search (use height-field curvature `∇²η` and divergence `∇·u` instead — cheaper *and* atomics-free).
+The collision test therefore does not need to be replaced with a raw comparison against `SurfaceWorldY`. The surface is already the coordinate frame. A new surf roller does, however, need explicit surface-history compensation while airborne; otherwise a rapidly falling surface continues to move the supposedly free particle's absolute world height.
 
----
+#### Motion stretching
 
-## 4. The crest-rolling mechanism (the heart) — one state machine for all three sources
+The quad renderer already stretches spray along velocity and stretches `KIND_RIPPLE_CREST` from `worldPos - CrestFleckPreviousPositions`. Evidence: `FoamParticles.shader:512-581`.
 
-Whatever architecture you pick (§6), the particle behaviour is the same four-state life. This is the design you should hold in your head; the three emitters differ only in *how state SPAWN is triggered and the initial throw*.
+The screen-space density path does not use that history. It writes a compact footprint into one of three projected-size tiers. Evidence: `WaterFoamParticles.compute:1439-1485`.
 
-```
-                    ┌──────────────────────────────────────────────────────────────┐
-                    │            CREST-ROLLING PARTICLE — STATE MACHINE             │
-                    └──────────────────────────────────────────────────────────────┘
+So the rendering diagnosis is specific: **quad crest ribbons exist; density-mode directional splats do not**. Rendering polish is not the cause of missing shore-face motion.
 
-  ┌──────────┐  spawn on crest signal            ┌──────────────┐
-  │  SPAWN   │  (breaker / Jacobian / -div)       │   (dead)     │
-  │  on lip  │  initial v = throw (see below)     └──────────────┘
-  └────┬─────┘                                            ▲ age ≥ life
-       │ born already thrown for a PLUNGE lip             │ or off-frame
-       ▼                                                  │
-  ┌──────────────────┐   surface fell away?    ┌──────────────────────────┐
-  │  THROWN / TUMBLE │◄────── yes ─────────────│  RIDING / ADVECT (foam)  │
-  │  (ballistic)     │   deltaHeight > Vdrop   │  glued to surface        │
-  │  v += g·dt       │                         │  v ← flow (+curl +clump) │
-  │  v += airDrag    │────── landed? ─────────►│  y  = surfaceHeight      │
-  │  x += v·dt       │   y ≤ surfaceHeight &    │  drift shoreward         │
-  │  tumbles forward │   v.y < 0  → convert     │  (this is the "roll")    │
-  └──────────────────┘                         └───────────┬──────────────┘
-       ▲ plunge lip re-throw                               │ fade
-       └───────────────────────────────────────────────────┘
-                                                            ▼
-                                                    density splat → render
-```
+### 1.6 The architectural failure in one sentence
 
-**The two transitions that make or break the look:**
-
-1. **RIDING → THROWN.** The KWS trigger `previousDeltaHeight > V_drop` (≈2 m/s). This needs a *surface height the particle can compare against frame to frame*. You already compute exactly that: `SurfaceWorldY(worldPos, simNorm)` sums FFT swell + surf fronts + ripple. So even for analytic shore waves you can detect "the face collapsed under me" by carrying `prevSurfaceY` on the particle and testing `(surfaceY - prevSurfaceY)/dt < -V_drop`. **This is the key realization: you don't need a numeric velocity field to detect collapse — you need the surface height's time derivative, which you can already sample.**
-
-2. **THROWN → RIDING (land).** Your `KIND_SPRAY` already does this: ballistic integrate, and when `worldPos.y ≤ landingEpsilon && v.y < 0` → `DepositFrom()` → `KIND_SURFACE`. The only change for crest foam is landing against `SurfaceWorldY` instead of `y=0`, and converting to an advecting foam that drifts *shoreward* (`toShore`) rather than a static deposit.
-
-**The initial throw (Thürey `crest-faster-than-base`), classified by breaker type:**
-
-```
-throwSpeed  = (1 + k_v · g · (H − H_base)) · |u_shore|        // crest overruns its base
-throwDir    = normalize(toShore + upBias·(0,1,0))
-             ── PLUNGE (breakType.y): high upBias, born THROWN, lands ~faceLen ahead (violent barrel)
-             ── SPILL  (breakType.x): low upBias, stays RIDING longer, gentle forward roll/tumble on the face
-             ── SURGE  (breakType.z): suppressed — no airborne foam (throw ≈ 0)
-```
-
-Your surf model already computes the plunge **landing lobe** (`~faceLen` shoreward of the crest) and the `breakType` weights — so the thrown particle even knows *where it should land*.
+The system has a ripple source plus a ripple carrier, and it has an analytic shore surface plus a breaker mask, but it has no adapter that turns the analytic surface into a particle source/carrier and no foam motion state that can detach from either carrier.
 
 ---
 
-## 5. Inventory — what you already have (reuse, don't rebuild)
+## 2. KWS1: why its shoreline foam looks coherent
 
-Before proposing anything new, here is what is already in the codebase and directly reusable. This matters because your pain is "each test goes wrong" — the way to stop that is to reuse proven machinery and change *one* thing per test.
+Source tree inspected read-only: `C:\Users\bebx\Documents\UnityProjects\KWS1`.
 
-**Reusable as-is (the skeleton is already there):**
+KWS1 and KWS2 must not be treated as one architecture.
 
-- **Ballistic → land → deposit path.** `KIND_SPRAY` integrate + `DepositFrom` is the THROWN→RIDING half of the state machine. Crest foam is a spray that (a) is born on the lip and (b) lands as *advecting* foam.
-- **Density render.** `RasterizeDensity` + tier buffers + `FoamDensityComposite` = KWS pillar 3, done. Crest foam should splat through the exact same path (it already accepts `KIND_RIPPLE_CREST`).
-- **WebGPU-safe pool.** `ClaimPoolSlot` (dead-slot probe, never stomps live foam), world-anchored spawn keys, stochastic distance LOD, frame budgets. Keep all of it.
-- **The shore field is already bound into the compute.** `ShoreFoamState.BindTo` is called for `_kSpawn`, `_kUpdate`, `_kRasterizeDensity`. `SurfSampleAt(worldXZ, out depth, out influence, out toShore)` works *inside the compute today*. The breaker signal is one function call away in the exact kernel that needs it.
-- **`SurfaceWorldY`** — the analytic surface height for collapse-detection and landing.
+### 2.1 KWS1 shoreline waves are authored clips
 
-**The goldmine — signals your analytic surf model already exposes** (`EvaluateSurfWaves` → `SurfWaveSample`):
+`KWS_ShorelineWaves.shader` samples an animated displacement/normal/alpha atlas. The source uses a 14 by 15 atlas at 18 FPS and interpolates adjacent frames. Each shoreline-wave instance applies its own position, scale, angle, time offset, and amplitude.
 
-| field | meaning | use in the particle system |
+Evidence:
+
+- `KWS_ShorelineWaves.shader:12,21-23,74-75,128-136`.
+
+This is not a live shallow-water breaker. It is a replayed, authored wave animation.
+
+### 2.2 KWS1 shoreline foam is baked particle trajectory data
+
+`KWS_ShorelineFoam_Common.cginc` reads packed `uint2` particle data and count/offset tables, interpolates particle position/alpha between clip frames, transforms the result with the same wave instance, adds the water displacement, and atomically accumulates foam into screen-space buffers.
+
+Evidence:
+
+- packed buffers: `KWS_ShorelineFoam_Common.cginc:25,115-130`;
+- frame interpolation and particle lookup: `:186-219`;
+- screen-space atomics: `:208-209,282-307`;
+- binary buffers loaded by `ShorelineFoamPass.cs:92-102,346-347`.
+
+There is no live crest spawn, no per-frame surface-collapse detector, and no `isFreeMoving` transition in this shoreline path.
+
+### 2.3 What KWS1 gets “for free”
+
+KWS1 gets coherence because wave geometry and foam trajectories come from the same authored event and play with the same instance transform/time. A particle cannot accidentally follow the wrong wave representation: its path was baked for that clip.
+
+This is a legitimate production solution, especially for hero beaches and repeatable set pieces. Its tradeoffs are:
+
+- excellent art direction and predictable rolling silhouettes;
+- stable cost and no runtime coastal solver;
+- limited response to arbitrary bathymetry and interactions;
+- asset production/storage and clip repetition;
+- harder continuity between differently placed wave instances.
+
+KWS1's lesson for this port is **shared provenance**: the geometry and secondary effect must be generated from the same wave event. It is not evidence that a ripple simulation can drive an unrelated analytic shore wave.
+
+### 2.4 KWS1's interactive waves do not change that conclusion
+
+KWS1 also contains `KWS_DynamicWaves.shader`, but the inspected path is a separate scalar previous/current height update. It evaluates neighboring heights and a previous frame (`KWS_DynamicWaves.shader:171-202`); it is not the velocity-carrying coastal field that drives the baked shoreline foam. Its existence must not be used to reinterpret KWS1's shoreline roller as a live shallow-water particle simulation.
+
+---
+
+## 3. KWS2: the live field that makes the one-line transition work
+
+Source tree inspected read-only: `C:\Users\bebx\Documents\UnityProjects\KWSWater\Assets\KriptoFX\WaterSystem2`.
+
+The online Asset Store listed KWS2 `1.1.0d`, released 26 June 2026, at this research date. The local source tree is the authority for every code claim below; its exact package version was not independently matched to that store release. [Asset Store release data](https://marketplace.unity.com/packages/tools/particles-effects/kws2-dynamic-water-system-323662).
+
+### 3.1 One coastal state contains both surface and transport
+
+KWS2's dynamic-wave cell stores a `float4` whose relevant channels are:
+
+- `.xy`: horizontal velocity;
+- `.z`: water/free-surface height;
+- `.w`: terrain/bottom height.
+
+Its solver updates mass/height and velocity, handles drag/advection/vorticity, and carries wet/dry and shoreline information in an additional target. The shoreline direction comes from a signed-distance field built with jump flooding.
+
+For the ocean path, `AddFFTWaves` injects FFT crest displacement into this coastal dynamic field and also adds shore-directed velocity:
+
+```hlsl
+center.z  += crestWave * shorelineMask;
+center.xy += shorelineMask * shoreDir * crestWave * lerp(2, 0.5, windIncoming);
+```
+
+Evidence: `KWS_DynamicWavesHelpers.cginc:294-310`.
+
+That is the crucial difference from this port: the KWS2 particle samples a surface and a velocity that belong to the same evolving coastal representation.
+
+### 3.2 KWS2's foam source is richer than its particle gate
+
+`GetFoamMask` advects and decays the previous foam field, then derives sources from:
+
+- height peak and curvature;
+- signed velocity divergence/compression;
+- slope;
+- curl and shear;
+- a Froude-number gate;
+- direction of flow relative to shore;
+- shallow shoreline and obstacle terms.
+
+The crest source is approximately:
+
+```text
+crestPeak     = heightPeak * curvatureGate
+compression  = gate(-divergence)
+breakingFront = slopeGate * compression
+crestFoam     = max(crestPeak, 0.5 * breakingFront)
+                * fastFlowFroudeGate
+                * incomingToShore
+```
+
+Evidence: `KWS_DynamicWavesHelpers.cginc:327-445`.
+
+One source-reading trap matters: the variable named `foamAdvectionScale` is currently computed but not applied to `foamAdvectionOffset`. It must not be credited with depth-scaled advection.
+
+### 3.3 KWS2's particle-spawn “divergence” is not signed divergence
+
+The particle kernel computes:
+
+```hlsl
+float divergence = length(right.xy - center.xy)
+                 + length(top.xy - center.xy);
+```
+
+Evidence: `KWS_DynamicWavesFoamParticlesCompute.compute:302-305`.
+
+This is a local velocity-variation magnitude. It is always non-negative. It is not the signed mathematical divergence used for compression in `GetFoamMask`. The particle gate combines this variation with the persistent foam mask, water height, speed, visibility/distance LOD, and randomized budget. It then emits a compact cluster across and behind the flow direction. Evidence: `:327-391`.
+
+This distinction matters when porting the algorithm. Replacing the analytic breaker signal with an unsigned derivative named “divergence” would not recreate KWS2's physics; it would only recreate one spawn heuristic.
+
+### 3.4 What the famous line actually measures
+
+The exact KWS2 line is:
+
+```hlsl
+float previousDeltaHeight = particle.prevPosition.y - particle.position.y;
+particle.isFreeMoving = previousDeltaHeight > 2.0;
+```
+
+Evidence: `KWS_DynamicWavesFoamParticlesCompute.compute:563-575`.
+
+In the riding branch, KWS2 snaps `particle.position.y = currentHeight` after horizontal advection. Before that update it stores the particle's pre-update position in `prevPosition`. On a later sliced update, `previousDeltaHeight` is therefore the downward displacement of the particle's recently snapped surface trajectory, with the implementation's one-step history lag. It is not a direct comparison to the newly sampled `currentHeight`, and the separately computed `deltaHeight` is unused here.
+
+Why the simple test works visually:
+
+1. The particle was born in a cell with a real dynamic-wave height and velocity.
+2. While attached, it moves with that field and is snapped to its height.
+3. A collapsing/advected face makes the stored particle trajectory drop.
+4. The threshold changes the motion branch while the particle remains foam.
+5. The free branch applies gravity/drag and advances the absolute particle position.
+6. Surface clamping and the next state evaluation can bring it back to the field.
+
+The line is not a universal breaking-wave detector. It is the final switch on top of a coherent field architecture.
+
+Two more exact details prevent mythology from replacing source truth:
+
+- `isFreeMoving` is overwritten on every foam update; it is not a permanently sticky state.
+- A high `waveSpeed` can mark a particle free at spawn, but the later update still recomputes the flag.
+
+### 3.5 KWS2's screen-space foam is accumulation, not active motion ribbons
+
+KWS2 projects one particle into one of three resolution tiers and uses integer atomics to accumulate foam. Its foam motion-smear block is commented out in the inspected source. KWS2's apparent rolling is therefore primarily produced by coherent particle trajectories and dense accumulation, not by a mandatory seven-times motion stretch.
+
+This port already has a stronger individual crest-quad ribbon than the inspected KWS2 foam shader. The missing motion cannot be fixed by copying rendering constants.
+
+### 3.6 KWS2 splash art is not a rolling-wave flipbook
+
+KWS2's separate airborne splash renderer samples `KWS_SplashTex0` from one of four horizontal cells. Spawn selects a static cell with `uvOffset = 0.25 * floor(random * 4)`; the splash shader scales `uv.x` by `0.25` and adds that offset. There is no age-driven frame advance in this path.
+
+The texture channels are packed data for one splash variant: red carries the main mass, green the shine contribution, blue dissolve noise, and alpha depth/soft-fade support. Particle rotation, speed/lifetime size shaping, descent stretch, lighting, fog, and scene-depth fade provide the motion and integration.
+
+Therefore the reusable KWS2 split is:
+
+- wave, ripple, and river foam: shared dynamic-wave particles accumulated into screen-space buffers;
+- airborne impact splashes: a separate billboard renderer using four static packed variants;
+- no shipped temporal "rolling crest" flipbook to copy.
+
+This port deliberately adds a cyclic 4x4 roller sheet only for the analytic-surf adapter, where no shallow-water carrier exists to create the whole appearance from dense accumulation alone.
+
+---
+
+## 4. KWS1, KWS2, and the current port side by side
+
+| Question | KWS1 | KWS2 | Current port |
+|---|---|---|---|
+| Shore wave representation | Baked displacement clip | Live shallow-water height/velocity field with FFT injection | Analytic height field in `WaterSurfWaves.hlsl` |
+| Foam provenance | Baked trajectories paired with the clip | Generated from the same dynamic field | Ripple crest particles come from a different simulation |
+| Crest transport | Baked into trajectory | Dynamic field velocity | Interactive ripple velocity only |
+| Detachment | Baked into trajectory | `isFreeMoving` from prior vertical path drop | No crest detachment state |
+| Foam identity while free | Encoded by clip/render | Preserved | Ballistic behavior currently implies `KIND_SPRAY` |
+| Surface accumulation | Integer atomic screen-space buffers | Three integer-atomic LOD tiers | Three density tiers for ripple crest particles |
+| Arbitrary live shoreline response | Limited | Strongest of the three | Analytic geometry responds to shore field, particles do not yet follow it |
+
+The current port sits between KWS1 and KWS2: its wave is procedural like neither KWS1's baked clip nor KWS2's solver, but its analytic phase gives enough kinematic information to build a coherent adapter.
+
+---
+
+## 5. Research that is actually useful
+
+There is no 2024-2026 paper that can be dropped into this WebGPU compute pool and directly produce a KWS2 roller. The recent work improves phase-coherent procedural foam, lifecycle models, and validation. The foundational real-time detachment/secondary-particle mechanics are older and remain relevant.
+
+### 5.1 2026 — phase-native procedural foam
+
+Fournier et al., **Dynamic Wave Trains: A Procedural Approach to Spatially Varying Ocean Synthesis** (Computer Graphics Forum, first published 19 May 2026) uses phase information from spatially controlled procedural wave trains to generate and advect foam at low cost. It explicitly separates active spray near breaking from persistent foam behind the crest.
+
+Use here: treat analytic phase as first-class carrier data. `WaterSurfWaves.hlsl` already has phase `SurfWarpDistance(s) / L + time / T`; the particle source and transport should consume that same phase rather than infer motion from the ripple texture.
+
+Limit: the paper's secondary effect is phase-correlated foam, not the KWS2 ride/free/reland state machine.
+
+Source: [Fournier et al. 2026](https://doi.org/10.1111/cgf.70495).
+
+### 5.2 2025 — useful validation and high-end state ideas
+
+- Bjørnestad et al., **Whitecaps, Bubbles and Advection** distinguishes a short-lived near-surface large-bubble layer closely connected to active breaking from smaller, deeper, longer-lived bubbles advected by currents. Use here: keep active roller particles separate from residual surface foam and bubble-plume systems. [Paper](https://doi.org/10.1029/2025GL117684).
+- Callaghan et al., **A Vision-Based Method for Spatial and Temporal Tracking of Individual Whitecaps** measures foam area, breaking speed/direction, and split/merge evolution. Use here: validation metrics for a deterministic capture, not a runtime simulation algorithm. [Paper](https://doi.org/10.1109/TGRS.2025.3555851).
+- Stevenson-Regla et al., **Implicit Field-Based Stylization of 2D and 3D Liquid Animations** uses visual-particle states and particle history to create crest, droplet, bubble, and foam shapes. Use here only as support for keeping motion history/state separate from the fluid representation; its implicit reconstruction is too expensive and stylized for this v1. [Paper](https://diglib.eg.org/items/ab0ac9e9-eb7a-43d3-928a-bfc76b5080da).
+
+### 5.3 2024 — foam as a transported layer with a lifecycle
+
+- Malej and Shi, **Modeling the optical signature induced by surfzone bubbles using the Boussinesq-type wave model FUNWAVE-TVD**, adds a bubble/foam thickness variable with breaking-driven growth, advection, and decay rather than resolving a full multiphase flow. Use here: active roller particles should feed a passive residual foam layer; not every mature whitewash element should remain an expensive ballistic particle. [Paper](https://doi.org/10.1016/j.oceaneng.2024.118160).
+- Callaghan et al., **A Comparison of Laboratory and Field Measurements of Whitecap Foam Evolution From Breaking Waves**, finds rapid foam-area growth during active breaking followed by decay, with similar normalized early evolution across laboratory and field scales. Use here: validate a growth/peak/decay coverage envelope instead of assigning unrelated random lifetimes. [Paper](https://doi.org/10.1029/2023JC020193).
+
+### 5.4 2022 — physically rich whitewater, not a real-time target
+
+Wretborn, Flynn, and Stomakhin, **Guided Bubbles and Wet Foam for Realistic Whitewater Simulation**, uses discrete bubbles coupled to a sparse volumetric flow and surface-manifold-constrained SPH foam. Use here: conceptual separation of bubbles, wet foam, and carrier constraints. Do not transplant the solver into the WebGPU path. [Paper](https://alexey.stomakhin.com/research/siggraph2022_whitewater.pdf).
+
+### 5.5 2020 — procedural surface kinematics can drive particles
+
+Jeschke et al., **Making Procedural Water Waves Boundary-aware**, drives spray/foam from procedural surface geometry, velocity, and acceleration. Its supplemental particle model allows particles to escape a wave with their initial velocity, then converts spray to foam on collision; foam slides on the surface with high friction.
+
+Use here: a procedural height field does not need a full fluid solver to support secondary particles, provided coherent kinematics are derived from the same field.
+
+Sources: [paper](https://doi.org/10.1111/cgf.14100), [supplemental particle system](https://diglib.eg.org/bitstreams/892cde4c-c10c-4003-bb0d-a384b3a86fa9/download).
+
+### 5.6 2012 — source terms and classification
+
+Ihmsen et al., **Unified Spray, Foam and Air Bubbles for Particle-Based Fluids**, generates secondary particles from wave-crest curvature and trapped-air measures, scaled by kinetic energy, and classifies spray/foam/bubbles from local fluid support. Use here: source strength should combine geometric breaking evidence and energy/transport, and visual phase should be a state rather than an unrelated emitter family.
+
+Limit: its SPH neighbor-density classification is not a good fit for a fixed WebGPU surface pool.
+
+Source: [Ihmsen et al. 2012](https://cg.informatik.uni-freiburg.de/publications/2012_CGI_sprayFoamBubbles.pdf).
+
+### 5.7 2010 and 2007 — the expensive north stars
+
+- Chentanez and Müller, **Real-time Simulation of Large Bodies of Water with Small Scale Details**, converts height-field regions that cannot represent breaking/waterfalls/splashes into particles and exchanges mass/momentum. It is the principled hybrid endpoint, but much larger than the required adapter. [Paper](https://diglib.eg.org/items/d0320015-4b07-416b-8f41-047485c9f7f3).
+- Thürey et al., **Animation of Open Water Phenomena with Coupled Shallow Water and Free Surface Simulations** / breaking-wave work detects steep fronts, builds a connected particle sheet, accelerates its crest/top, detaches it under gravity, and creates particles on tip/impact. Use a connected sheet only if the actual water silhouette must overturn. Whitewater rolling alone does not justify the connectivity/flood-fill cost. [Breaking-wave paper](https://matthias-research.github.io/pages/publications/breakingWaves.pdf).
+
+### 5.8 Production contrast: Crest
+
+Crest's production approach generates a persistent scalar foam field from pinched/choppy crests and shallow water and decays it over time. It is excellent for coverage and trails, but it is not a crest-rolling particle mechanism. It supports the same division recommended here: sparse active particles plus a persistent scalar deposit.
+
+Sources: [Crest documentation PDF](https://crest.readthedocs.io/_/downloads/en/stable/pdf/), [shoreline documentation](https://crest.readthedocs.io/en/4.21.2/user/shallows-and-shorelines.html).
+
+---
+
+## 6. Recommended architecture: an analytic surf carrier adapter
+
+### 6.1 Preserve the systems that already work
+
+Keep:
+
+- the fixed pool and dead-slot probing;
+- world-keyed spawn randomness and distance LOD;
+- the separate crest spawn budget;
+- `SurfaceWorldY` as the composed surface evaluator;
+- crest quad history/ribbon rendering;
+- three-tier integer-atomic density accumulation;
+- `DepositFrom` as the final transition to ordinary surface foam;
+- the existing ripple-crest source for interactive wakes.
+
+Do not reopen ocean ambient spawning. The new surf source should run before that branch's `OCEAN_FFT_GLUE` return, just as ripple-crest spawning already does.
+
+### 6.2 Separate source, motion state, and visual identity
+
+Conceptually, a particle needs three independent labels:
+
+```text
+source:       INTERACTIVE_RIPPLE | ANALYTIC_SURF | future FFT crest
+motion state: RIDING | FREE | DEPOSIT
+visual kind:  CREST_FOAM | SPRAY_DROPLET | BUBBLE | SURFACE_FOAM
+```
+
+A surf roller remains `CREST_FOAM` in both `RIDING` and `FREE`. That is the KWS2 property the current kind switch cannot express.
+
+The cleanest storage is a companion buffer rather than widening the shared 52-byte particle record:
+
+```hlsl
+struct CrestRollerState
+{
+    float previousSurfaceY;
+    float previousCarrierHeight;
+    uint motionState;
+    uint flags;
+};
+```
+
+This is a 16-byte per-slot buffer, cross-platform-friendly and isolated from all existing draw layouts. At 65,536 particles it costs 1 MiB; at 500,000 it costs about 7.63 MiB. The existing `CrestFleckPreviousPositions` remains dedicated to render history.
+
+Do not encode motion state into the sign of opacity, lifetime, seed, or `kind`. Those shortcuts make rendering, state transitions, and future source adapters brittle.
+
+### 6.3 Analytic surf source
+
+For each existing spawn texel:
+
+1. Call `SurfSampleAt(texelWorld.xz, ...)`.
+2. Use `surf.breaker` as the active crest/lip source.
+3. Gate with `surf.mask`, valid wet depth, and a named minimum source threshold.
+4. Scale stochastic emission by source strength, texel world area, and `DeltaTime`.
+5. Place a compact cluster across/behind the front using `toShore` and its perpendicular.
+6. Initialize `previousSurfaceY` from the fully composed `SurfaceWorldY`, `previousCarrierHeight` from the analytic surf component, and `motionState = RIDING`.
+
+`lipShape` is timing-free and `whitewash` includes mature bore/trail content, so neither is as clean as `breaker` for the first source. `overCap`, `lipShape`, and `trailAge` become useful later for lifecycle styling and breaker-type variants.
+
+Continuous stochastic emission along an active roller is valid: active breaking continuously entrains air. Use a rate, not a one-time binary event. World-keyed LOD/randomness is required so a moving simulation window does not make the crest sparkle relative to the camera.
+
+### 6.4 Derive the carrier velocity from the exact analytic phase
+
+The surf phase in `SurfComputeFrontTerms` is:
+
+```text
+phase(s, t) = SurfWarpDistance(s) / L + t / T
+```
+
+An iso-phase crest satisfies `d phase / dt = 0`. Therefore its shore-directed speed is:
+
+```text
+c_front(s) = (L / T) / d(SurfWarpDistance)/ds
+u_front    = toShore * c_front(s)
+```
+
+The existing warp is:
+
+```text
+W(s) = s * (1 + compression * exp(-s / reach))
+```
+
+so its derivative can be evaluated analytically:
+
+```text
+W'(s) = 1 + compression * exp(-s / reach) * (1 - s / reach)
+```
+
+This is better than guessing `sqrt(g * depth)` because it exactly follows the phase law that renders the current crest, including the project's near-shore compression. Put this calculation in a shared named helper so geometry, particles, and any CPU mirror cannot drift.
+
+The riding carrier can begin as:
+
+```text
+u_carrier = u_front * crestRideTransport
+```
+
+`crestRideTransport` is an artist/physics calibration factor because foam transport velocity need not equal phase velocity. Start at phase lock for the architecture test; tune only after source/ride/detach are visible independently.
+
+### 6.5 Detect collapse as a discrete material surface drop
+
+An Eulerian test at a fixed texel is insufficient: the particle is moving along the front. The quantity that mirrors KWS2 is the surface change **along the particle path**.
+
+Keep two related quantities separate:
+
+- `surfaceY` is the fully composed `SurfaceWorldY`; it owns placement, free-flight coordinate conversion, and collision.
+- `carrierHeight` is the analytic surf component returned by the surf adapter; it owns the analytic collapse decision.
+
+This prevents an unrelated FFT oscillation or interactive ripple from falsely detaching an analytic shore roller.
+
+For a riding particle with stored analytic carrier height `carrierHeightPrevious`:
+
+```text
+xNext            = xCurrent + uCarrier * dt
+carrierHeightNext = current SurfSampleAt(xNext).height
+surfaceYNext      = current SurfaceWorldY(xNext)
+dropRate          = (carrierHeightPrevious - carrierHeightNext) / dt
+```
+
+This is a discrete material derivative along the chosen carrier. Detach only when:
+
+- the particle has ridden for a named minimum support time;
+- the analytic breaker/source is or was active;
+- `dropRate` exceeds a named threshold with hysteresis/debounce.
+
+On detachment:
+
+```text
+localHeightOffset = max(0, previousSurfaceY - surfaceYNext)
+horizontalVelocity = uCarrier
+verticalVelocity = initial value derived from surface history, initially zero for the KWS2-like ledge drop
+motionState = FREE
+```
+
+The positive local offset is the gap created because the face fell away beneath the foam. Gravity and forward carrier momentum then create the rolling arc. An arbitrary upward launch should not be added until this support-loss mechanism has been observed in isolation.
+
+Whether the particle stays riding or detaches, commit `previousSurfaceY = surfaceYNext` and `previousCarrierHeight = carrierHeightNext` after the decision. A riding particle keeps `localHeightOffset = 0`; a free particle preserves the gap shown above.
+
+KWS2's literal `2.0` threshold is in its own simulation scale and time-slicing regime. A robust project parameter should be normalized against the wave's vertical scale, for example:
+
+```text
+normalizedDrop = dropRate / max(localCrestHeight / surfPeriod, minimumVerticalScale)
+```
+
+If local crest height is not exposed, `_SurfAmplitude / _SurfPeriod` is a usable first scale. The threshold must be a named setting, not copied as a magic number.
+
+### 6.6 Free flight in a surface-relative coordinate system
+
+The port stores vertical position relative to the surface, but a free particle must preserve an absolute ballistic trajectory while the surface beneath it moves. With `previousSurfaceY` in the companion state:
+
+```text
+absoluteY = previousSurfaceY + localHeightOffset
+velocityY -= gravity * dt
+absoluteY += velocityY * dt
+xNext = xCurrent + horizontalVelocity * dt
+surfaceYNext = current SurfaceWorldY(xNext)
+localHeightOffset = absoluteY - surfaceYNext
+previousSurfaceY = surfaceYNext
+```
+
+Land when the local offset crosses the named landing epsilon while the particle is descending relative to the surface. Then call `DepositFrom` for v1.
+
+This conversion is the part that a normal spray arc can approximate away but a crest-collapse test cannot: the support surface is intentionally moving fast.
+
+### 6.7 State transition policy
+
+Recommended v1 state machine:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Riding: analytic breaker emits crest foam
+    Riding --> Free: material surface drop exceeds threshold
+    Riding --> Deposit: source expires without detachment
+    Free --> Deposit: crosses animated surface while descending
+    Deposit --> [*]: existing surface-foam lifecycle
+```
+
+Keep `FREE` sticky until collision in v1. KWS2 recomputes it every update, but its dynamic field and surface clamp absorb that behavior. Explicit hysteresis is easier to test in this analytic adapter and avoids ride/free flicker. A later experiment can allow reattachment on an active bore if video evidence shows it improves the roller.
+
+After landing, `DepositFrom` gives the correct visual handoff but its ordinary surface motion does not contain an analytic shoreward whitewash carrier. If the deposited foam looks stationary, add an `ANALYTIC_WASH` carrier as a later increment; do not block the first ride/free proof on it.
+
+### 6.8 Rendering policy
+
+For the first proof:
+
+- render riding and free roller particles through the existing crest visual path;
+- color-code motion state only in a debug variant;
+- test quad mode first because its motion ribbon already exists;
+- test density mode second;
+- add a directional density splat from the same history vector only if the motion is correct but accumulation still looks like round dots.
+
+The density renderer should not decide physics. A particle must follow the same state trajectory in quad and density modes.
+
+---
+
+## 7. Alternatives and when they are justified
+
+### A. Analytic carrier adapter — recommended first
+
+Best fit for the current code. It reuses the exact rendered surf and current pool, has a bounded memory/cost increase, and directly fixes the missing provenance/state architecture.
+
+Risk: analytic phase velocity is not a real water velocity. It can produce a convincing roller but not full undertow, refraction-driven currents, or interaction feedback.
+
+### B. KWS1-style authored clip
+
+Best for one or several hero breaker assets where art direction and repeatability matter more than arbitrary coastline response. Bake particle trajectories and geometry from the same offline event and replay them in lockstep.
+
+Risk: asset pipeline, repetition, and poor response to procedural bathymetry/interactors.
+
+### C. KWS2-style coastal shallow-water field
+
+Best long-term physical architecture if live coastline flow, swash, obstacles, wakes, and rolling foam must all share one carrier. FFT/analytic energy would be injected into a coastal height/velocity field, and particles would sample that field.
+
+Risk: largest implementation and reconciliation cost. The rendered analytic front and solver surface must not double or diverge. KWS2's own documentation does not list WebGPU as an officially supported/tested target, so its buffer/dispatch strategy cannot be copied blindly. [KWS2 documentation](https://kripto289.gitbook.io/kripto289-docs), [Unity Asset Store listing](https://marketplace.unity.com/packages/tools/particles-effects/kws2-dynamic-water-system-323662).
+
+### D. Connected overturning sheet
+
+Use a Thürey-style connected sheet only when the actual silhouette must curl/overhang and the height field's topology is visibly insufficient. It solves a different, larger problem than whitewater rolling.
+
+Risk: connectivity, flood fill, collisions, mass exchange, and geometry generation are unfriendly to the current fixed WebGPU particle path.
+
+---
+
+## 8. Test plan: prove architecture before tuning art
+
+### 8.1 Deterministic test scene
+
+Create one controlled capture configuration:
+
+- flat, constant-slope beach and valid shore SDF;
+- one analytic front set with no crest variation;
+- fixed camera and resolution;
+- deterministic frame seed and fixed simulation timestep;
+- interactive ripple crest emission disabled for the capture;
+- event bursts disabled;
+- ocean whitecap/ambient particle contribution disabled as it is now;
+- one render mode at a time.
+
+The goal is observability, not beauty.
+
+### 8.2 Required debug views
+
+Add temporary/debug-only views for:
+
+- analytic `surf.breaker` source mask;
+- `toShore` and analytic phase-velocity arrows;
+- sampled analytic carrier-height history, composed surface-height history, and normalized drop rate;
+- particle state colors: riding, free, deposited;
+- per-frame counts: source candidates, successful spawns, riding-to-free transitions, landings, slot-claim failures;
+- optional trails of current and prior absolute particle positions.
+
+Without these views, another failed test will still be ambiguous between source, carrier, state, pool, and renderer.
+
+### 8.3 Acceptance gates
+
+Pass them in order; do not tune a later gate while an earlier one fails.
+
+#### Gate 1 — source provenance
+
+- Every analytic roller spawn lies inside the breaker/lip band.
+- Disabling interactive ripples does not remove analytic roller spawns.
+- Disabling analytic surf removes all analytic roller spawns.
+- Moving the camera does not move or reseed the source in world space.
+
+#### Gate 2 — phase lock
+
+- Riding particles travel shoreward with the same front that emitted them.
+- Normalized distance from each riding particle to the breaker ridge stays bounded by a named fraction of `faceLen` or wavelength.
+- Changing `_SurfCompression`, wavelength, or period changes particle speed coherently with the rendered phase.
+
+#### Gate 3 — loss of support
+
+- No particle is born free unless a deliberately named born-free rule is enabled.
+- Riding-to-free transitions occur after the sampled face begins falling along the particle path.
+- A non-collapsing translated test wave produces no false detachments.
+- The transition remains stable across supported fixed timesteps.
+
+#### Gate 4 — ballistic consistency and landing
+
+- During `FREE`, reconstructed absolute height follows gravity independent of the underlying surf-height change.
+- Horizontal momentum remains shoreward-biased.
+- The particle crosses to `DEPOSIT` at the animated surface without hovering, tunneling, or popping below it.
+
+#### Gate 5 — visual accumulation
+
+- The same motion passes in quad and density modes.
+- Density coverage forms a moving broken band, not a camera-centred cloud or static round stipple.
+- Foam-area history has active growth, a peak, and decay; it does not remain at a constant saturated coverage.
+
+### 8.4 Quantitative capture metrics
+
+Record these for A/B comparisons:
+
+- source precision: fraction of births above the breaker-source threshold;
+- ridge error: distance from riding particle to analytic breaker ridge divided by wavelength;
+- transition delay: time from positive normalized drop to `FREE`;
+- free-flight duration and shoreward travel divided by period/wavelength;
+- landing error: absolute local surface offset at transition;
+- peak active-particle count and slot-claim failure rate;
+- projected foam area versus normalized event time;
+- frame time for spawn, update, and density kernels separately.
+
+Recent whitecap tracking/lifecycle papers make coverage, translation speed, growth time, and decay time better validation targets than subjective “looks more foamy.”
+
+---
+
+## 9. Implementation increments and current status
+
+Implementation was explicitly authorized after this research pass. The increments remain independently testable:
+
+1. **R0 — instrumentation:** source mask, carrier arrows, state colors, and counters.
+2. **R1 — analytic source only:** spawn surface-bound crest particles from `surf.breaker`; no detachment.
+3. **R2 — exact analytic carrier:** add shared phase-speed helper and prove phase lock.
+4. **R3 — state/history buffer:** add `RIDING/FREE`, material-drop detector, absolute-height conversion, and landing.
+5. **R4 — lifecycle handoff:** tune deposit transition and, only if required, add analytic wash transport.
+6. **R5 — rendering polish:** directional density splats, clumping, state-dependent size/opacity.
+7. **R6 — richer breaker behavior:** optionally expose `breakType`; spilling mostly rides/sheds, plunging gets stronger detachment, surging is suppressed or routed to swash.
+8. **R7 — future ocean source:** phase/Jacobian-driven FFT crest particles, independently budgeted from shoreline rollers.
+
+The decisive demo is R3, not R5.
+
+Implemented in the first authorized pass:
+
+- R1: analytic `surf.breaker` source with its own counter and per-frame budget;
+- R2: `SurfFrontPhaseSpeed`, derived from the derivative of the exact shore-distance warp;
+- R3: companion `CrestRollerState` buffer with `RIDING`, `FREE`, and `DEPOSITED`, collapse-history detachment, absolute-height free flight, and animated-surface landing;
+- R4: landing reuses the existing `DepositFrom` lifecycle handoff;
+- R5 (partial): analytic rollers keep temporal flipbook quads in both render modes while ordinary ripple flecks remain KWS-style points/density tiers; state-color debug is available.
+
+Still intentionally deferred: directional density stamps, GPU readback counters, breaker-type-specific behavior, and FFT whitecap sourcing.
+
+---
+
+## 10. Failure matrix for the next test
+
+| Symptom | Most likely cause | Evidence to inspect |
 |---|---|---|
-| `breaker` | 0..1 cresting-lip line (plunge-amplified, surge-killed) | **spawn gate** for shore-crest particles |
-| `overCap` | `H/(γ·d)` lifecycle clock (<1 unbroken, ~1 breaking, >1 broken) | when to throw / fade timing |
-| `lipShape` | timing-free lip footprint | spawn density along the lip |
-| `toShore` | unit vector toward the waterline | **ballistic throw direction** |
-| `breakType` | (spill, plunge, surge) partition | throw strength + up-bias classification |
-| `whitewash` | broken-bore + trail coverage | settled foam carpet (already shaded) |
-| `trailAge` | seconds since crest passed | fade the rolled foam behind the crest |
-
-This is strictly *more* information than KWS's spawn path has. KWS reverse-engineers "is this a breaking front?" from `-divergence`; you get it handed to you, pre-classified by breaker type, with a throw direction attached.
-
-**What to cut (the compensation machinery):** once a real crest signal feeds spawning, the `KIND_RIPPLE_CREST` front-coherence gate (13-tap signed/abs sum), the peakness stencil, and the foam-mask re-emission path are all solving a problem you no longer have. They exist to extract a crest from a noisy ripple field; both paths in §6 give you a clean crest instead. Retire them — that alone removes most of the fragility.
-
----
-
-## 6. Two architectures (ranked)
-
-### ▶ Option A — Analytic-driven crest particles (RECOMMENDED first)
-
-Keep your three surface systems. **Bridge the analytic surf model into the particle spawner** and let the state machine of §4 run against `SurfaceWorldY`. No new sim.
-
-```
-   WaterSurfWaves (analytic)                 WaterFoamParticles.compute
-   ─────────────────────────                 ──────────────────────────
-   SurfSampleAt(xz) ──breaker──►  SPAWN shore-crest particle on the lip
-                    ──toShore──►  throw shoreward, up-biased by breakType
-                    ──overCap──►  timing / fade
-        FFT Jacobian ──J<bias──►  SPAWN ocean-crest particle offshore
-                                     │
-                                     ▼
-                        §4 state machine vs SurfaceWorldY()
-                        (RIDE ⇄ THROW via d/dt SurfaceWorldY)
-                                     │
-                                     ▼
-                        RasterizeDensity → composite  (unchanged)
-```
-
-- **Shore-crest emitter:** in `Spawn`, *before* the `OCEAN_FFT_GLUE return`, add a surf branch: sample `SurfSampleAt`; if `breaker > thr`, roll a cluster on the lip, born THROWN for plunge (up-biased ballistic) or RIDING for spill, throw dir = `toShore`.
-- **Ocean-crest emitter:** offshore (low `shoreInfluence`), gate on the FFT Jacobian fold `J < bias` (needs the cascade displacement, which `OCEAN_FFT_GLUE` already binds). Born RIDING; the `d/dt SurfaceWorldY` trigger throws them when a steep swell crest passes.
-- **Collapse trigger without a sim:** carry `prevSurfaceY`; `throw when (SurfaceWorldY - prevSurfaceY)/dt < -V_drop`. Reuses your existing spray integrate for the airborne arc.
-- **Render:** unchanged. Add motion-vector stretch to the crest splat for the streak look.
-
-**Pros:** reuses everything proven; smallest diff; testable in tiny increments; the surf model's signals are *better* than KWS's; naturally separable (three emitters, one pool, one render — exactly your "separate things"); no second sim, no WebGPU SWE cost. **Cons:** the throw is *scripted* off analytic signals rather than *emergent* from a real fluid, so violent barrel interiors won't self-organize the way a true overturning sim would; ocean-crest foam relies on `d/dt` of a summed analytic height (fine, but it's a derivative of an approximation).
-
-### ▶ Option B — KWS-style unified SWE shore field (the full refactor)
-
-Put shore breakers into an actual shallow-water velocity field (extend your ripple sim to inject shore waves from the SDF, KWS-style, or add a dedicated coastal SWE band), then port KWS's spawn/advect/`isFreeMoving` verbatim. One particle path for ocean + shore + ripple crest.
-
-**Pros:** the rolling motion becomes *emergent* and physically coherent; unifies all crest sources; `foamMask` advected-feedback gives free trailing foam; it is the closest to KWS's actual result. **Cons:** a second sim (or a major sim extension) on a WebGPU budget; you must reconcile the *numeric* sim height with your *analytic* surf render (today the surface draws analytic surf fronts — the sim would have to agree or you'd get double waves); this is the biggest, highest-risk change, and your history says big changes are where tests go wrong.
-
-### Recommendation
-
-**Do Option A now, keep Option B as the north star.** Option A delivers rolling crest foam by *connecting things you already built*, in increments small enough that a failed test tells you exactly which knob was wrong. It also de-risks Option B: the state machine, the throw model, the render, and the emitter separation you build in A are exactly what B reuses — if you later decide the analytic throw isn't emergent enough, you swap the *spawn/collapse source* from analytic signals to a real SWE field and keep the whole particle life intact.
+| No particles on shore wave | Analytic source absent/gated after ocean return | breaker debug mask and source-candidate counter |
+| Particles appear only around wakes | Ripple source is still the only active crest source | source label/state color |
+| Particles spawn on lip but stay behind or pass through | Carrier speed/direction does not match analytic phase | phase arrows and ridge error |
+| Particles ride forever | Carrier-height history not initialized/updated, threshold scale wrong, or carrier samples the same phase forever | previous/current carrier height and normalized drop |
+| Particles detach immediately | History invalid at birth, timestep spike, or source test confused with detach test | valid-history flag and minimum support time |
+| Free particles still follow the collapsing surface | Local offset integrated without absolute-height compensation | reconstructed absolute-height trail |
+| Particle turns into a droplet visually | Motion state encoded as `KIND_SPRAY` | visual kind versus motion-state debug |
+| Motion is correct in quads but density looks static | Density splat lacks directional history footprint | compare render modes with identical state buffer |
+| Foam looks good only after extreme profile values | Architectural source/state signal still missing | complete Gates 1-4 before profile tuning |
+| Camera movement changes the breaker cloud | camera-relative/random spawn key or moving-window history invalidation | fixed world key and world-space capture |
 
 ---
 
-## 7. Separation of the three emitters (your "separate things")
+## 11. Final recommendation
 
-One pool, one renderer, one state machine — three spawn sources with different signals and throws:
+Build neither “more `KIND_RIPPLE_CREST` tuning” nor a full KWS2 solver first.
 
-```
- EMITTER          SPAWN SIGNAL                     BORN           THROW                 LIVES ON
- ───────────      ─────────────────────────        ──────         ──────────────        ────────────
- SHORE-CREST      surf.breaker > thr               THROWN(plunge) toShore, up=breakType  surf band
-  (priority)      (lip line, pre-classified)       RIDING (spill) crest-faster-than-base near waterline
- OCEAN-CREST      FFT Jacobian J < bias            RIDING         thrown by d/dt surfaceY open sea
-  (priority)      (offshore whitecaps)             → THROWN when crest passes             swell crests
- RIPPLE-CREST     sim -divergence + foamMask       RIDING         mild (wake compression) interactive
-  (keep, SIMPLIFY)(replace coherence machinery)    → THROWN rare                          boat/mouse
-```
+Build one narrow bridge: **analytic breaker source → analytic phase carrier → history-based support loss → crest-foam free motion → existing surface deposit**.
 
-They differ *only* in the spawn block. Give each a profile section (you already audit UX as an Asset Store product — this maps cleanly to per-emitter foldouts) and let all three share the pool budget, the density tiers, and the fade envelope. This is also the honest answer to "all of them but separate": **one system, three switchable sources.**
+That bridge copies the transferable principle from both KWS generations:
 
-A note on the settled trail: KWS's advected-decaying `foamMask` is what makes rolled foam *stay and drift* after the crest. For **shore**, your analytic `whitewash` + `trailAge` already give that carpet — you likely don't need a new feedback field there. For **ripple/ocean**, if the rolled foam looks too transient, the cheapest fix is advecting `FoamTex` backward along the flow (KWS's 95% lerp), not more per-particle logic.
+- From KWS1: geometry and foam must share the same event/provenance.
+- From KWS2: render identity and motion state must be independent, and detachment only works when the particle has ridden a coherent moving surface.
+
+The port already owns most of the difficult infrastructure. The missing part is not more foam gain. It is a particle that actually exists on the analytic shore face, knows how that exact face moves, and is allowed to stop being supported without ceasing to be foam.
 
 ---
 
-## 8. Proposed increments (nothing ships without your OK)
+## 12. Source index
 
-Small, independently testable, each with a clear pass/fail. This directly targets "each test gone wrong": one variable per step.
+### Local project source
 
-1. **Wire the signal (no behaviour change yet).** In `Spawn`, compute `SurfSampleAt` on shore bodies and *visualize* `breaker`/`toShore` (debug splat where `breaker>thr`). **Test:** the debug dots trace the moving lip line. If they don't, the problem is signal/plumbing, isolated before any particle physics.
-2. **Spawn RIDING shore-crest foam on the lip** (no throw yet), advecting shoreward along `toShore`, density-rendered. **Test:** a band of foam sits on the breaking line and drifts to the beach. This alone will already look like KWS's spilling foam.
-3. **Add the collapse trigger + ballistic throw** (`d/dt SurfaceWorldY`, reuse spray integrate; land → advect). **Test:** foam detaches at the crest and tumbles forward — the rolling look. Tune `V_drop` and the throw `k_v` here, in isolation.
-4. **Breaker-type classification** (plunge = born thrown/high up-bias; surge = suppressed). **Test:** steep beach barrels throw hard, flat shelf spills gently, cliffs throw nothing.
-5. **Ocean-crest emitter** (Jacobian offshore). **Test:** whitecaps roll off open-sea swell crests.
-6. **Simplify `KIND_RIPPLE_CREST`** — retire the coherence/peakness/foam-mask machinery, respawn it from `-divergence` like KWS. **Test:** wakes still fleck, with far less code.
-7. **Render polish** — motion-vector stretch on the crest splat. **Test:** fast crest foam reads as forward streaks.
+- `Packages/com.abstractocclusion.webgpuwater/Runtime/Shaders/WaterFoamParticles.compute`
+- `Packages/com.abstractocclusion.webgpuwater/Runtime/Shaders/WaterSurfWaves.hlsl`
+- `Packages/com.abstractocclusion.webgpuwater/Runtime/Shaders/FoamParticles.shader`
+- `Packages/com.abstractocclusion.webgpuwater/Runtime/WaterFoamParticles.cs`
+- `Packages/com.abstractocclusion.webgpuwater/Runtime/WaterFoamProfile.cs`
 
-Steps 1–3 are the whole "rolling crest" win; 4–7 are refinement. Each is a byte-scoped diff you can revert cleanly.
+### Local KWS1 source
 
----
+- `C:\Users\bebx\Documents\UnityProjects\KWS1\Assets\KriptoFX\WaterSystem\WaterResources\Shaders\Resources\Common\CommandPass\KWS_ShorelineWaves.shader`
+- `C:\Users\bebx\Documents\UnityProjects\KWS1\Assets\KriptoFX\WaterSystem\WaterResources\Shaders\Resources\Common\CommandPass\KWS_ShorelineFoam_Common.cginc`
+- `C:\Users\bebx\Documents\UnityProjects\KWS1\Assets\KriptoFX\WaterSystem\WaterResources\Scripts\Core\CommandPass\ShorelineFoamPass.cs`
 
-## 9. Failure-mode checklist (why past tests "went wrong", pre-empted)
+### Local KWS2 source
 
-- **Nothing spawns on shore.** The `OCEAN_FFT_GLUE return` gate — the surf branch must sit *before* it, or be explicitly exempted.
-- **Foam glued to the camera.** World-anchored spawn keys + the window-edge age band already fix this for the ambient path; the crest emitters must use the *same* world-lattice keys, not window-texel ids.
-- **Crest foam floats below the rendered wave / gets depth-culled.** Land and ride against `SurfaceWorldY` (which includes the surf fronts), never `y=0` — your bug-comment at line ~655 is exactly this class.
-- **Throw looks like a fountain, not a roll.** Up-bias too high for spilling; `V_drop` too low (everything detaches). Plunge should throw up; spill should mostly tumble forward on the face.
-- **Strobing / popping under load.** Keep `ClaimPoolSlot` (dead-slot probe) and the per-frame budgets; never a raw ring stomp.
-- **Grid chop read as crests.** Only a risk if you keep deriving crests from ripple curvature. The analytic `breaker` and the FFT Jacobian don't have this failure — which is the point of §5's "cut the machinery."
-- **CPU/GPU surf mismatch.** Always evaluate the surf model on `_ShoreFoamTime` (the wrapped surf beat), never raw `_WaveTime` — the CPU mirror (`LargeWaveField.SurfFrontHeight`) agrees only on that clock.
+- `C:\Users\bebx\Documents\UnityProjects\KWSWater\Assets\KriptoFX\WaterSystem2\WaterResources\Shaders\Resources\Common\CommandPass\KWS_DynamicWaves.shader`
+- `C:\Users\bebx\Documents\UnityProjects\KWSWater\Assets\KriptoFX\WaterSystem2\WaterResources\Shaders\Resources\Common\KWS_DynamicWavesHelpers.cginc`
+- `C:\Users\bebx\Documents\UnityProjects\KWSWater\Assets\KriptoFX\WaterSystem2\WaterResources\Shaders\Resources\Common\CommandPass\KWS_DynamicWavesFoamParticlesCompute.compute`
+- `C:\Users\bebx\Documents\UnityProjects\KWSWater\Assets\KriptoFX\WaterSystem2\WaterResources\Shaders\Resources\Common\CommandPass\KWS_DynamicWavesFoamParticlesShading.shader`
+- `C:\Users\bebx\Documents\UnityProjects\KWSWater\Assets\KriptoFX\WaterSystem2\WaterResources\Shaders\Resources\Common\CommandPass\KWS_JumpFloodSDF.shader`
 
----
+### External references
 
-## 10. Sources
-
-Academic / technique:
-- Ihmsen et al. 2012, *Unified Spray, Foam and Bubbles for Particle-Based Fluids* — https://cg.informatik.uni-freiburg.de/publications/2012_CGI_sprayFoamBubbles.pdf
-- Thürey & Müller-Fischer 2007, *Real-time Breaking Waves for Shallow Water Simulations* — https://matthias-research.github.io/pages/publications/breakingWaves.pdf
-- Jeschke & Wojtan, *Water Wave Packets* (2017) / *Water Surface Wavelets* (2018) — https://research-explorer.ista.ac.at/download/470/7359/wavepackets_final.pdf · https://dl.acm.org/doi/10.1145/3197517.3201336
-- Yuksel, *Wave Particles* (2007) — https://www.cemyuksel.com/research/waveparticles/
-- Wretborn, Flynn & Stomakhin 2022 (Wētā), *Guided Bubbles and Wet Foam* — https://www.physicsbasedanimation.com/2022/08/12/guided-bubbles-and-wet-foam-for-realistic-whitewater-simulation/ · https://dl.acm.org/doi/10.1145/3528223.3530059
-- Bridson, Hourihan & Nordenstam, *Curl-Noise for Procedural Fluid Flow* — https://history.siggraph.org/learning/curl-noise-for-procedural-fluid-flow-by-bridson-houriham-and-nordenstam/
-- SideFX Houdini Whitewater (production Ihmsen) — https://www.sidefx.com/docs/houdini/fluid/whitewater.html
-
-Production / real-time:
-- FFT Jacobian foam derivation — https://rtryan98.github.io/2025/10/04/ocean-rendering-part-1.html
-- Crest ocean foam + shoreline sim — https://crest.readthedocs.io/en/4.12/user/ocean-simulation.html
-- Assassin's Creed IV: Black Flag ocean breakdown — https://simonschreibt.de/gat/black-flag-waterplane/
-- Halftone / density-accumulation whitewater render — https://ianparberry.com/pubs/GAMEON-NA_GRAPH_04.pdf
-- KWS2 Dynamic Water System — https://assetstore.unity.com/packages/tools/particles-effects/kws2-dynamic-water-system-323662
-
-Primary source read directly this session: your `WaterFoamParticles.compute` / `WaterSim.compute` / `WaterSurfWaves.hlsl`, and KWS2 `KWS_DynamicWavesFoamParticlesCompute.compute` / `KWS_DynamicWaves.shader` / `KWS_DynamicWavesFoamParticlesShading.shader` / `KWS_DynamicWavesHelpers.cginc` / `KWS_DynamicWavesSimulationZone.cs`.
+- [Fournier et al. 2026 — Dynamic Wave Trains](https://doi.org/10.1111/cgf.70495)
+- [Bjørnestad et al. 2025 — Whitecaps, Bubbles and Advection](https://doi.org/10.1029/2025GL117684)
+- [Callaghan et al. 2025 — Vision-Based Whitecap Tracking](https://doi.org/10.1109/TGRS.2025.3555851)
+- [Stevenson-Regla et al. 2025 — Implicit Field-Based Stylization](https://diglib.eg.org/items/ab0ac9e9-eb7a-43d3-928a-bfc76b5080da)
+- [Malej and Shi 2024 — FUNWAVE-TVD bubble/foam optical signature](https://doi.org/10.1016/j.oceaneng.2024.118160)
+- [Callaghan et al. 2024 — Whitecap foam evolution](https://doi.org/10.1029/2023JC020193)
+- [Wretborn et al. 2022 — Guided Bubbles and Wet Foam](https://alexey.stomakhin.com/research/siggraph2022_whitewater.pdf)
+- [Jeschke et al. 2020 — Making Procedural Water Waves Boundary-aware](https://doi.org/10.1111/cgf.14100)
+- [Ihmsen et al. 2012 — Unified Spray, Foam and Air Bubbles](https://cg.informatik.uni-freiburg.de/publications/2012_CGI_sprayFoamBubbles.pdf)
+- [Chentanez and Müller 2010 — Real-time large bodies of water with small-scale details](https://diglib.eg.org/items/d0320015-4b07-416b-8f41-047485c9f7f3)
+- [Thürey et al. 2007 — Breaking Waves](https://matthias-research.github.io/pages/publications/breakingWaves.pdf)
+- [Crest stable documentation](https://crest.readthedocs.io/_/downloads/en/stable/pdf/)
+- [KWS2 documentation](https://kripto289.gitbook.io/kripto289-docs)
+- [KWS2 Unity Asset Store listing](https://marketplace.unity.com/packages/tools/particles-effects/kws2-dynamic-water-system-323662)

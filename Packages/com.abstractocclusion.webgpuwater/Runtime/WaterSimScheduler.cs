@@ -9,7 +9,18 @@ namespace AbstractOcclusion.WebGpuWater
 {
     internal static class WaterSimScheduler
     {
-        const int ActiveSimBudget = 4; // nearest bodies allowed to simulate at once
+        // The original hardcoded budget, now only the fallback for the instant before any body
+        // has applied its tier (ApplyQuality copies WaterQuality.Tier.MaxSimulatedBodies onto
+        // the body; the primary body's value governs, matching how it owns the other pipeline
+        // knobs).
+        const int FallbackActiveSimBudget = 4;
+
+        static int ResolveActiveSimBudget()
+        {
+            if (WaterVolume.Primary != null) return WaterVolume.Primary.MaxSimulatedBodies;
+            var bodies = WaterVolume.Bodies;
+            return bodies.Count > 0 ? bodies[0].MaxSimulatedBodies : FallbackActiveSimBudget;
+        }
 
         static readonly Plane[] _frustumPlanes = new Plane[6];
         static int _scheduleFrame = -1;
@@ -82,11 +93,12 @@ namespace AbstractOcclusion.WebGpuWater
             if (cam == null) return;
             Vector3 camPos = cam.transform.position;
             var bodies = WaterVolume.Bodies;
+            int budget = ResolveActiveSimBudget();
 
             int eligible = 0;
             for (int i = 0; i < bodies.Count; i++)
                 if (IsSimEligible(bodies[i], camPos)) eligible++;
-            if (eligible <= ActiveSimBudget) return;
+            if (eligible <= budget) return;
 
             for (int i = 0; i < bodies.Count; i++)
             {
@@ -102,7 +114,7 @@ namespace AbstractOcclusion.WebGpuWater
                     float od = (other.VolumeCenter - camPos).sqrMagnitude;
                     if (od < d || (od == d && j < i)) nearer++; // stable tiebreak by registry index
                 }
-                if (nearer >= ActiveSimBudget) body._simulate = false;
+                if (nearer >= budget) body._simulate = false;
             }
         }
 

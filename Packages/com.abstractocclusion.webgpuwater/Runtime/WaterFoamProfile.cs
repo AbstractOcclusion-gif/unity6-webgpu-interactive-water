@@ -38,7 +38,7 @@ namespace AbstractOcclusion.WebGpuWater
             public bool drive = true;
             public Color tint = new Color(0.95f, 0.98f, 1f, 1f);
             [Range(0f, 1f)] public float opacity = 0.85f;
-            [Tooltip("Sprite atlas for foam + roller quads. None = keep each material's own.")]
+            [Tooltip("Sprite atlas for floating and deposited foam quads. Surf rollers have their own atlas entry.")]
             public Texture2D particleAtlas;
             public Vector2Int flipbookGrid = new Vector2Int(2, 2);
             // Defaults MATCH WaterFoamParticles' own field defaults, so assigning a fresh
@@ -82,6 +82,37 @@ namespace AbstractOcclusion.WebGpuWater
             public Vector2 depositLifeRange = new Vector2(0.5f, 1f);
             [Tooltip("World half-size range of the deposited foam patch.")]
             public Vector2 depositSizeRange = new Vector2(0.02f, 0.05f);
+        }
+
+        [System.Serializable]
+        public sealed class SurfRollerSection
+        {
+            [Tooltip("Drive analytic shore-wave particle controls on WaterFoamParticles from this profile.")]
+            public bool drive = true;
+            [Tooltip("Emit particles from the actual analytic breaking-wave lip. The component's Simulation Driven Spawning remains the master gate.")]
+            public bool enabled = true;
+            [Tooltip("Expected roller births per second per world metre of fully active breaker lip.")]
+            [Range(0f, 200f)] public float spawnRate = 18f;
+            [Range(16, 4096)] public int maxPerFrame = 256;
+            public Vector2 lifetimeRange = new Vector2(1.2f, 2f);
+            public Vector2 sizeRange = new Vector2(0.08f, 0.18f);
+            [Tooltip("Multiplier on the exact analytic crest phase speed. One locks particles to the wave.")]
+            [Range(0f, 1.5f)] public float phaseTransport = 1f;
+            [Tooltip("Minimum analytic breaker signal required to emit a roller.")]
+            [Range(0f, 0.95f)] public float breakerThreshold = 0.15f;
+            [Tooltip("Normalized face-collapse speed required to release a riding particle.")]
+            [Range(0.05f, 4f)] public float collapseThreshold = 0.75f;
+            [Range(0f, 1f)] public float minimumRideTime = 0.08f;
+            [Tooltip("Fraction of the face-collapse separation speed retained as upward launch speed.")]
+            [Range(0f, 2f)] public float verticalCarry = 0.65f;
+            [Tooltip("Optional rolling-splash atlas override. None keeps SurfCrestRoller Material's texture.")]
+            public Texture2D flipbookAtlas;
+            public Vector2Int flipbookGrid = new Vector2Int(4, 4);
+            [Range(0f, 30f)] public float flipbookFps = 12f;
+            [Tooltip("Opacity multiplier applied only to analytic surf crest rollers.")]
+            [Range(0f, 1f)] public float opacity = 1f;
+            [Tooltip("Green = riding; orange = free flight.")]
+            public bool stateDebug;
         }
 
         // Motion was the ONE WaterFoamParticles block the profile could not reach (gravity /
@@ -206,6 +237,8 @@ namespace AbstractOcclusion.WebGpuWater
         public SharedLook look = new SharedLook();
         [Tooltip("Ambient floating foam + ballistic spray (WaterFoamParticles).")]
         public AmbientSection ambient = new AmbientSection();
+        [Tooltip("Analytic shore-wave particles: source, ride/release physics and flipbook playback.")]
+        public SurfRollerSection surfRollers = new SurfRollerSection();
         [Tooltip("Foam/spray motion on WaterFoamParticles: gravity, flow drift, wind drift, drag.")]
         public MotionSection motion = new MotionSection();
         [Tooltip("Screen-space density veil (FoamDensityComposite material values).")]
@@ -242,6 +275,23 @@ namespace AbstractOcclusion.WebGpuWater
                 foam.spraySizeRange = ambient.spraySizeRange;
                 foam.depositLifeRange = ambient.depositLifeRange;
                 foam.depositSizeRange = ambient.depositSizeRange;
+            }
+            if (surfRollers != null && surfRollers.drive)
+            {
+                foam.surfCrestRollersEnabled = surfRollers.enabled;
+                foam.surfCrestRollerSpawnRate = surfRollers.spawnRate;
+                foam.surfCrestRollerMaxPerFrame = surfRollers.maxPerFrame;
+                foam.surfCrestRollerLifetimeRange = surfRollers.lifetimeRange;
+                foam.surfCrestRollerSizeRange = surfRollers.sizeRange;
+                foam.surfCrestRollerTransport = surfRollers.phaseTransport;
+                foam.surfCrestRollerBreakerThreshold = surfRollers.breakerThreshold;
+                foam.surfCrestRollerDetachDrop = surfRollers.collapseThreshold;
+                foam.surfCrestRollerMinimumRideTime = surfRollers.minimumRideTime;
+                foam.surfCrestRollerVerticalCarry = surfRollers.verticalCarry;
+                foam.surfCrestRollerFlipbookGrid = surfRollers.flipbookGrid;
+                foam.surfCrestRollerFlipbookFps = surfRollers.flipbookFps;
+                foam.surfCrestRollerOpacity = surfRollers.opacity;
+                foam.surfCrestRollerDebug = surfRollers.stateDebug;
             }
             if (motion.drive)
             {
@@ -316,6 +366,19 @@ namespace AbstractOcclusion.WebGpuWater
             if (!look.drive) return;
             mpb.SetColor(ID_Tint, look.tint);
             mpb.SetFloat(ID_ParticleOpacity, look.opacity * Mathf.Clamp01(layerOpacity));
+        }
+
+        /// <summary>Shared look for the crest draw. Analytic rollers keep their dedicated opacity
+        /// and material atlas; this only supplies the common tint and the pass's non-roller opacity.</summary>
+        internal void WriteCrestPassLook(MaterialPropertyBlock mpb, float layerOpacity = 1f)
+        {
+            if (look.drive)
+            {
+                mpb.SetColor(ID_Tint, look.tint);
+                mpb.SetFloat(ID_ParticleOpacity, look.opacity * Mathf.Clamp01(layerOpacity));
+            }
+            if (surfRollers != null && surfRollers.drive && surfRollers.flipbookAtlas != null)
+                mpb.SetTexture(ID_ParticleTex, surfRollers.flipbookAtlas);
         }
 
         /// <summary>Veil values over the density composite draw.</summary>

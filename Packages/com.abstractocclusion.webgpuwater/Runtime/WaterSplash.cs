@@ -30,6 +30,7 @@ namespace AbstractOcclusion.WebGpuWater
         Rigidbody _rb;
         Collider _col;
         bool _wasUnder;
+        int _domainBodyId; // hysteresis hint for the domain resolver (0 = none)
 
         void Awake()
         {
@@ -41,7 +42,11 @@ namespace AbstractOcclusion.WebGpuWater
         {
             Vector3 center = _rb.worldCenterOfMass;
             // Resolve from the object's position so a splash fires into the lake it enters.
-            WaterVolume body = WaterVolume.BodyContaining(center);
+            // Domain-resolved (2026-08-29): nearest surface in vertical reach, exclusion-aware -
+            // a crate falling through a carved (dry) interior must NOT splash - and never the
+            // Primary fallback, which used to splash objects that were nowhere near water.
+            WaterVolume body = WaterDomainResolver.GameplayBodyAt(
+                center, WaterQueryIntent.NearestWithinVerticalLimits, ref _domainBodyId);
             if (body == null) { _wasUnder = false; return; }
 
             // ANALYTIC waterline only (rest plane + wind waves + ocean swell), valid from

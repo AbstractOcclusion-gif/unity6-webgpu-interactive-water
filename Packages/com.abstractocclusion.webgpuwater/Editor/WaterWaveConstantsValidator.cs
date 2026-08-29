@@ -323,15 +323,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             ("OCEAN_GRAVITY",                 "Gravity"),
         };
 
-        // FFT_SIZE pairs with FftSize, NOT DefaultResolution: the RESOLUTION is already checked at
-        // runtime (WaterOceanFft warns and disables the FFT ocean when they disagree), while FftSize
-        // is the compile-time copy nothing checks. FFT_STAGES is log2(FFT_SIZE) - changing the size
-        // without the stage count silently truncates the butterfly.
-        static readonly (string Hlsl, string CSharp)[] OceanFftSizeConstantPairs =
-        {
-            ("FFT_SIZE",   "FftSize"),
-            ("FFT_STAGES", "FftStages"),
-        };
+        // The FFT kernels are STAMPED one pair per supported resolution (OCEAN_FFT_KERNELS in
+        // OceanFft.compute) and WaterOceanFft selects a pair by NAME, so the old FFT_SIZE/FFT_STAGES
+        // literal pair no longer exists. What can drift now is the LIST - see
+        // CollectOceanFftKernelProblems below.
 
         // The compute declares these in [numthreads(...)]; the C# side divides its dispatch count by
         // them. A drift launches too few threads (work silently skipped) or too many (writes past the
@@ -421,8 +416,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                             WaveBankAssetName, waveBankSource, WaveBankConstantPairs);
             CollectProblems(problems, SharedHlslAssetName, HlslExtension, sharedHlslSource,
                             OceanFftAssetName, oceanFftSource, OceanFftCascadeConstantPairs);
-            CollectProblems(problems, OceanFftComputeAssetName, ComputeExtension, oceanFftComputeSource,
-                            OceanFftAssetName, oceanFftSource, OceanFftSizeConstantPairs);
+            CollectOceanFftKernelProblems(problems, oceanFftComputeSource, oceanFftSource);
             CollectProblems(problems, OceanFftComputeAssetName, ComputeExtension, oceanFftComputeSource,
                             OceanSpectrumAssetName, oceanSpectrumSource, OceanSpectrumConstantPairs);
             CollectProblems(problems, SeaStateFetchHlslAssetName, HlslExtension, seaStateFetchHlslSource,
@@ -483,6 +477,37 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 {
                     problems.Add($"{hlslName} = {Format(hlslValue)} (hlsl) vs {cSharpName} = {Format(cSharpValue)} (c#)");
                 }
+            }
+        }
+
+        // One FFT kernel pair per supported resolution: every entry of
+        // WaterOceanFft.SupportedFftResolutions must have its OCEAN_FFT_KERNELS(size, log2(size))
+        // instantiation and both #pragma kernel lines in OceanFft.compute. A missing instantiation
+        // or pragma only surfaces at runtime as a quietly disabled FFT ocean (HasAllKernels); a
+        // wrong stage count is worse - a silently truncated butterfly.
+        static void CollectOceanFftKernelProblems(List<string> problems, string computeSource,
+                                                  string oceanFftSource)
+        {
+            Match listMatch = Regex.Match(oceanFftSource,
+                @"SupportedFftResolutions\s*=\s*\{\s*([^}]*)\}");
+            if (!listMatch.Success)
+            {
+                problems.Add($"SupportedFftResolutions: not found in {OceanFftAssetName}{CSharpExtension} " +
+                             "(renamed or removed?)");
+                return;
+            }
+            foreach (string entry in listMatch.Groups[1].Value.Split(','))
+            {
+                if (!int.TryParse(entry.Trim(), out int size)) continue;
+                int stages = Mathf.RoundToInt(Mathf.Log(size, 2f));
+                string instantiation = $"OCEAN_FFT_KERNELS({size}, {stages})";
+                if (!computeSource.Contains(instantiation))
+                    problems.Add($"{instantiation}: not instantiated in " +
+                                 $"{OceanFftComputeAssetName}{ComputeExtension} for supported resolution {size}");
+                if (!computeSource.Contains($"#pragma kernel FftHorizontal{size}")
+                    || !computeSource.Contains($"#pragma kernel FftVertical{size}"))
+                    problems.Add($"#pragma kernel FftHorizontal{size}/FftVertical{size}: missing in " +
+                                 $"{OceanFftComputeAssetName}{ComputeExtension}");
             }
         }
 

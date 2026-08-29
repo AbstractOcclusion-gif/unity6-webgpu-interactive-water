@@ -274,6 +274,7 @@ namespace AbstractOcclusion.WebGpuWater
         ProbeState[] _states;
         Vector3 _previousForward;
         bool _hasForwardHistory;
+        int _domainBodyId; // hysteresis hint for the domain resolver (0 = none)
 
 #if UNITY_EDITOR
         // Editor diagnostics (compiles to nothing in a build). This counts EMITS, not droplets: it is
@@ -339,7 +340,9 @@ namespace AbstractOcclusion.WebGpuWater
 
             // One body for the whole cluster: a pump belongs to a single object floating on a single body.
             // Any probe outside that body's footprint comes back Valid=false and is skipped below.
-            WaterVolume body = WaterVolume.BodyContaining(transform.position);
+            // Domain-resolved (2026-08-29): exclusion-aware, no Primary fallback.
+            WaterVolume body = WaterDomainResolver.GameplayBodyAt(
+                transform.position, WaterQueryIntent.BuoyancySurface, ref _domainBodyId);
             if (body == null)
             {
                 InvalidateAll();

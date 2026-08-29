@@ -41,8 +41,19 @@ namespace AbstractOcclusion.WebGpuWater
         const int DefaultCausticInterval = 1;       // render caustics every simulated frame
         const int DefaultReadbackInterval = 1;      // request the height readback every frame
         const int DefaultOceanFftInterval = 1;      // refresh the FFT ocean cascades every frame
+        // The shipped FFT grid side. Only WaterOceanFft.SupportedFftResolutions (64/128/256) have
+        // stamped compute kernels; Tier snaps anything else to the nearest supported size.
+        const int DefaultOceanFftResolution = WaterOceanFft.DefaultResolution;
         const int DefaultMaxFoamParticles = 65536;  // effectively "no cap" (the component max)
         const UnderwaterMode DefaultUnderwaterMode = UnderwaterMode.Full; // the original wavy-waterline fog
+        // Underwater fog solve resolution fraction (the C1 half-res increment): 1 = the original
+        // full-res solve, bit-identical. Floor shared with WaterVolume.FogSolveScale's clamp.
+        const float DefaultFogSolveScale = 1f;
+        internal const float MinFogSolveScale = 0.25f;
+        // Scheduler budget: bodies allowed to run the interactive GPU sim at once. 4 is the
+        // budget WaterSimScheduler shipped hardcoded; per-tier it becomes a platform knob.
+        const int DefaultMaxSimulatedBodies = 4;
+        internal const int MaxSimulatedBodiesCap = 16;
 
         // Sanitisation bounds for the low-end knobs.
         const float MinRenderScale = 0.25f;
@@ -70,14 +81,18 @@ namespace AbstractOcclusion.WebGpuWater
             public readonly int CausticInterval;   // render caustics every Nth simulated frame
             public readonly int ReadbackInterval;  // request the buoyancy height readback every Nth frame
             public readonly int OceanFftInterval;  // refresh the FFT ocean cascades every Nth frame
+            public readonly int OceanFftResolution; // FFT ocean cascade grid side (stamped kernel sizes only)
             public readonly int MaxFoamParticles;  // cap on the GPU foam-particle pool
             public readonly UnderwaterMode UnderwaterFog; // fullscreen underwater fog cost mode
+            public readonly float FogSolveScale;   // fog solve target resolution fraction (1 = full res)
+            public readonly int MaxSimulatedBodies; // scheduler budget: bodies running the GPU sim at once
 
             public Tier(int simResolution, int causticResolution, int godRaySteps, bool godRays,
                         bool richReflections, int maxWaveCount, int refineSteps,
                         float renderScale, bool realRefraction, int meshDetail,
                         int causticInterval, int readbackInterval, int oceanFftInterval,
-                        int maxFoamParticles, UnderwaterMode underwaterFog)
+                        int oceanFftResolution, int maxFoamParticles, UnderwaterMode underwaterFog,
+                        float fogSolveScale, int maxSimulatedBodies)
             {
                 SimResolution = SanitizeResolution(simResolution);
                 CausticResolution = Mathf.Max(MinCausticResolution, causticResolution);
@@ -92,8 +107,11 @@ namespace AbstractOcclusion.WebGpuWater
                 CausticInterval = Mathf.Clamp(causticInterval, 1, MaxUpdateInterval);
                 ReadbackInterval = Mathf.Clamp(readbackInterval, 1, MaxUpdateInterval);
                 OceanFftInterval = Mathf.Clamp(oceanFftInterval, 1, MaxOceanFftInterval);
+                OceanFftResolution = SanitizeOceanFftResolution(oceanFftResolution);
                 MaxFoamParticles = Mathf.Max(MinFoamParticleCap, maxFoamParticles);
                 UnderwaterFog = underwaterFog;
+                FogSolveScale = Mathf.Clamp(fogSolveScale, MinFogSolveScale, 1f);
+                MaxSimulatedBodies = Mathf.Clamp(maxSimulatedBodies, 0, MaxSimulatedBodiesCap);
             }
 
             // Round to the nearest valid grid size rather than fail, keeping a floor of one group.
@@ -101,6 +119,16 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 int rounded = Mathf.RoundToInt(resolution / (float)ThreadGroupSize) * ThreadGroupSize;
                 return Mathf.Max(ThreadGroupSize, rounded);
+            }
+
+            // Snap to the nearest STAMPED FFT kernel size rather than fail: WaterOceanFft would
+            // otherwise disable the FFT ocean outright on a mistyped inspector value.
+            static int SanitizeOceanFftResolution(int resolution)
+            {
+                int best = WaterOceanFft.SupportedFftResolutions[0];
+                foreach (int size in WaterOceanFft.SupportedFftResolutions)
+                    if (Mathf.Abs(size - resolution) < Mathf.Abs(best - resolution)) best = size;
+                return best;
             }
         }
 
@@ -110,8 +138,9 @@ namespace AbstractOcclusion.WebGpuWater
                                                DefaultMaxWaveCount, DefaultRefineSteps,
                                                DefaultRenderScale, true, DefaultMeshDetail,
                                                DefaultCausticInterval, DefaultReadbackInterval,
-                                               DefaultOceanFftInterval, DefaultMaxFoamParticles,
-                                               DefaultUnderwaterMode);
+                                               DefaultOceanFftInterval, DefaultOceanFftResolution,
+                                               DefaultMaxFoamParticles, DefaultUnderwaterMode,
+                                               DefaultFogSolveScale, DefaultMaxSimulatedBodies);
 
         /// <summary>The asset a body uses when none is assigned. A default-constructed instance
         /// carries this class's serialized defaults, and every high* default IS the matching
@@ -167,11 +196,22 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("Refresh the FFT ocean cascades every Nth frame (unbounded-ocean bodies only). The " +
                  "surface holds its last cascades in between, so this trades motion smoothness for GPU time.")]
         [Range(1, MaxOceanFftInterval)] [SerializeField] int highOceanFftInterval = DefaultOceanFftInterval;
+        [Tooltip("FFT ocean cascade grid side (unbounded-ocean bodies only). Only 64/128/256 have " +
+                 "compiled kernels - other values snap to the nearest. 256 halves the shortest " +
+                 "resolved ripple wavelength (crisper detail) at ~4x the FFT cost; 64 quarters the " +
+                 "FFT texels for constrained devices.")]
+        [SerializeField] int highOceanFftResolution = DefaultOceanFftResolution;
         [Tooltip("Cap on the GPU foam-particle pool (all capacity is drawn every frame).")]
         [SerializeField] int highMaxFoamParticles = DefaultMaxFoamParticles;
         [Tooltip("Underwater fog: Full = wavy waterline (per-pixel surface march), Simple = flat " +
                  "waterline (closed form, near-free), Off = no fullscreen fog pass.")]
         [SerializeField] UnderwaterMode highUnderwaterFog = UnderwaterMode.Full;
+        [Tooltip("Resolution fraction of the underwater fog solve (1 = full). The heavy per-pixel " +
+                 "solve runs at this fraction of screen resolution and is upsampled depth-aware; " +
+                 "0.5 quarters its pixel count. The waterline/meniscus stays full-res either way.")]
+        [Range(MinFogSolveScale, 1f)] [SerializeField] float highFogSolveScale = DefaultFogSolveScale;
+        [Tooltip("Bodies allowed to run the interactive GPU ripple sim at once - the nearest ones win, the rest pause and keep their last surface. 4 = the original budget.")]
+        [Range(0, MaxSimulatedBodiesCap)] [SerializeField] int highMaxSimulatedBodies = DefaultMaxSimulatedBodies;
 
         [Header("Tier: Medium")]
         [Min(ThreadGroupSize)] [SerializeField] int mediumSimResolution = 128;
@@ -196,11 +236,17 @@ namespace AbstractOcclusion.WebGpuWater
         [Range(1, MaxUpdateInterval)] [SerializeField] int mediumReadbackInterval = DefaultReadbackInterval;
         [Tooltip("Refresh the FFT ocean cascades every Nth frame (unbounded-ocean bodies only).")]
         [Range(1, MaxOceanFftInterval)] [SerializeField] int mediumOceanFftInterval = DefaultOceanFftInterval;
+        [Tooltip("FFT ocean cascade grid side (only 64/128/256 have compiled kernels; snaps to nearest).")]
+        [SerializeField] int mediumOceanFftResolution = DefaultOceanFftResolution;
         [Tooltip("Cap on the GPU foam-particle pool.")]
         [SerializeField] int mediumMaxFoamParticles = DefaultMaxFoamParticles;
         [Tooltip("Underwater fog: Full = wavy waterline (per-pixel surface march), Simple = flat " +
                  "waterline (closed form, near-free), Off = no fullscreen fog pass.")]
         [SerializeField] UnderwaterMode mediumUnderwaterFog = UnderwaterMode.Full;
+        [Tooltip("Resolution fraction of the underwater fog solve (1 = full; 0.5 quarters its pixels).")]
+        [Range(MinFogSolveScale, 1f)] [SerializeField] float mediumFogSolveScale = DefaultFogSolveScale;
+        [Tooltip("Bodies allowed to run the interactive GPU ripple sim at once - the nearest ones win, the rest pause and keep their last surface. 4 = the original budget.")]
+        [Range(0, MaxSimulatedBodiesCap)] [SerializeField] int mediumMaxSimulatedBodies = DefaultMaxSimulatedBodies;
 
         [Header("Tier: Low (WebGPU / mobile)")]
         [Min(ThreadGroupSize)] [SerializeField] int lowSimResolution = 128;
@@ -236,6 +282,11 @@ namespace AbstractOcclusion.WebGpuWater
                  "FFT chain is the only per-frame compute with no other tier knob, so 2 is the cheapest " +
                  "win available here; 3+ starts to read as a stutter on a moving ocean.")]
         [Range(1, MaxOceanFftInterval)] [SerializeField] int lowOceanFftInterval = 2;
+        // 128 kept as the shipped default (bit-identical look). 64 is this knob's whole point on the
+        // constrained tier - a quarter of the FFT texels - but dropping visible ripple detail is an
+        // authored call, not a default.
+        [Tooltip("FFT ocean cascade grid side (only 64/128/256 have compiled kernels; snaps to nearest).")]
+        [SerializeField] int lowOceanFftResolution = DefaultOceanFftResolution;
         [Tooltip("Cap on the GPU foam-particle pool (all capacity is drawn every frame).")]
         [SerializeField] int lowMaxFoamParticles = 1024;
         // Simple by default: the Full mode's per-pixel waterline march (up to 40 surface evaluations
@@ -244,6 +295,47 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("Underwater fog: Full = wavy waterline (per-pixel surface march), Simple = flat " +
                  "waterline (closed form, near-free), Off = no fullscreen fog pass.")]
         [SerializeField] UnderwaterMode lowUnderwaterFog = UnderwaterMode.Simple;
+        // 1 kept as the shipped default (bit-identical); Low's Simple solve is already near-free,
+        // so the scale only matters if a Low asset is authored back to Full.
+        [Tooltip("Resolution fraction of the underwater fog solve (1 = full; 0.5 quarters its pixels).")]
+        [Range(MinFogSolveScale, 1f)] [SerializeField] float lowFogSolveScale = DefaultFogSolveScale;
+        [Tooltip("Bodies allowed to run the interactive GPU ripple sim at once - the nearest ones win, the rest pause and keep their last surface. 4 = the original budget.")]
+        [Range(0, MaxSimulatedBodiesCap)] [SerializeField] int lowMaxSimulatedBodies = DefaultMaxSimulatedBodies;
+
+        /// <summary>Where a body's underwater fog quality comes from. FollowTier = the resolved
+        /// tier's fog fields (the original behaviour, bit-identical default). Override = the two
+        /// fields below on EVERY tier, so fog is chosen independently of the FFT, ripple,
+        /// reflection, foam and mesh budgets - correct waterline crossings are worth their cost
+        /// exactly when large waves can cross the camera (research doc, section 3.7).</summary>
+        public enum FogQualitySource { FollowTier, Override }
+
+        [Header("Underwater Fog (independent of tier)")]
+        [Tooltip("FollowTier uses each tier's own fog fields above. Override applies the two " +
+                 "fields below regardless of the resolved tier.")]
+        [SerializeField] internal FogQualitySource fogQualitySource = FogQualitySource.FollowTier;
+        [Tooltip("Override only: the underwater fog mode every tier resolves to.")]
+        [SerializeField] internal UnderwaterMode fogOverrideMode = DefaultUnderwaterMode;
+        [Tooltip("Override only: the fog solve resolution fraction every tier resolves to.")]
+        [Range(MinFogSolveScale, 1f)]
+        [SerializeField] internal float fogOverrideSolveScale = DefaultFogSolveScale;
+
+        /// <summary>The fog mode a body should apply under the resolved tier (override-aware).</summary>
+        internal UnderwaterMode ResolveFogMode(in Tier tier)
+            => fogQualitySource == FogQualitySource.Override ? fogOverrideMode : tier.UnderwaterFog;
+
+        /// <summary>The fog solve scale a body should apply under the resolved tier (override-aware).</summary>
+        internal float ResolveFogSolveScale(in Tier tier)
+            => fogQualitySource == FogQualitySource.Override
+                ? Mathf.Clamp(fogOverrideSolveScale, MinFogSolveScale, 1f)
+                : tier.FogSolveScale;
+
+        // Code/test seam for the override (the fields are serialized-private by design).
+        internal void ConfigureFogOverride(FogQualitySource source, UnderwaterMode mode, float solveScale)
+        {
+            fogQualitySource = source;
+            fogOverrideMode = mode;
+            fogOverrideSolveScale = solveScale;
+        }
 
         /// <summary>The active tier: the forced one, or the capability-probed one under Auto.</summary>
         public Tier Resolve()
@@ -261,17 +353,20 @@ namespace AbstractOcclusion.WebGpuWater
                               highRichReflections, highMaxWaveCount, highRefineSteps,
                               highRenderScale, highRealRefraction, highMeshDetail,
                               highCausticInterval, highReadbackInterval, highOceanFftInterval,
-                              highMaxFoamParticles, highUnderwaterFog);
+                              highOceanFftResolution, highMaxFoamParticles, highUnderwaterFog,
+                              highFogSolveScale, highMaxSimulatedBodies);
         Tier Medium => new Tier(mediumSimResolution, mediumCausticResolution, mediumGodRaySteps, mediumGodRays,
                                 mediumRichReflections, mediumMaxWaveCount, mediumRefineSteps,
                                 mediumRenderScale, mediumRealRefraction, mediumMeshDetail,
                                 mediumCausticInterval, mediumReadbackInterval, mediumOceanFftInterval,
-                                mediumMaxFoamParticles, mediumUnderwaterFog);
+                                mediumOceanFftResolution, mediumMaxFoamParticles, mediumUnderwaterFog,
+                                mediumFogSolveScale, mediumMaxSimulatedBodies);
         Tier Low => new Tier(lowSimResolution, lowCausticResolution, lowGodRaySteps, lowGodRays,
                              lowRichReflections, lowMaxWaveCount, lowRefineSteps,
                              lowRenderScale, lowRealRefraction, lowMeshDetail,
                              lowCausticInterval, lowReadbackInterval, lowOceanFftInterval,
-                             lowMaxFoamParticles, lowUnderwaterFog);
+                             lowOceanFftResolution, lowMaxFoamParticles, lowUnderwaterFog,
+                             lowFogSolveScale, lowMaxSimulatedBodies);
 
         // Pick a tier from the running hardware. The web player is how Unity ships WebGPU
         // builds, and async readback (buoyancy) is often unavailable there - both force Low.

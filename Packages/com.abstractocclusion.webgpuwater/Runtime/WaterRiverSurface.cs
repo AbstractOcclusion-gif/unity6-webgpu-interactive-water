@@ -18,6 +18,11 @@ namespace AbstractOcclusion.WebGpuWater
     public sealed class WaterRiverSurface : MonoBehaviour
     {
         internal const int DefaultSamplesPerSegment = 16;
+        // Gameplay water column below the ribbon surface. Rivers have no volumetric extent of
+        // their own (the ribbon is a surface), so the domain resolver needs an authored depth to
+        // answer full-XYZ containment; 2 m reads as a wadeable default.
+        internal const float DefaultGameplayDepthMeters = 2f;
+        const float MinGameplayDepthMeters = 0.1f;
 
         const string GeneratedMeshName = "Water River Ribbon (generated)";
         const string RiverModePropertyName = "_IsRiver";
@@ -32,6 +37,10 @@ namespace AbstractOcclusion.WebGpuWater
         [Min(WaterRiverRibbonMeshGenerator.MinimumSamplesPerSegment)]
         [Tooltip("Cross-section intervals generated for each cubic spline segment.")]
         [SerializeField] internal int samplesPerSegment = DefaultSamplesPerSegment;
+        [Min(MinGameplayDepthMeters)]
+        [Tooltip("Depth of the gameplay water column below the ribbon surface, metres. Domain " +
+                 "queries (buoyancy, casting, fish) treat the river as water down to this depth.")]
+        [SerializeField] internal float gameplayDepthMeters = DefaultGameplayDepthMeters;
 
         MeshFilter _meshFilter;
         MeshRenderer _meshRenderer;
@@ -40,10 +49,19 @@ namespace AbstractOcclusion.WebGpuWater
         WaterRiverSpline _subscribedSpline;
         readonly List<IWaterRiverRendererPropertySource> _rendererPropertySources = new();
 
+        WaterRiverSurfaceProvider _provider;
+        WaterRiverCurrentField _currentField;
+
         internal Mesh GeneratedMesh => _generatedMesh;
         internal WaterRiverSpline Spline => spline;
         internal WaterVolume WaterVolume => waterVolume;
         internal Renderer SurfaceRenderer => _meshRenderer;
+        internal float GameplayDepthMeters => gameplayDepthMeters;
+        /// <summary>This ribbon's domain-query face (registered while the surface is enabled).</summary>
+        internal WaterRiverSurfaceProvider SurfaceProvider => _provider;
+        /// <summary>Authored current field the provider prefers over the uniform spline speed;
+        /// resolved from this object, then the spline's (where the field usually lives).</summary>
+        internal WaterRiverCurrentField CurrentField => _currentField;
         internal event Action ConfigurationChanged;
 
         void OnEnable()
@@ -53,10 +71,14 @@ namespace AbstractOcclusion.WebGpuWater
             RebindSplineEvents();
             RequestRebuild();
             PublishRendererProperties();
+            ResolveCurrentField();
+            _provider ??= new WaterRiverSurfaceProvider(this);
+            WaterSurfaceProviders.Register(_provider);
         }
 
         void OnDisable()
         {
+            if (_provider != null) WaterSurfaceProviders.Unregister(_provider);
             UnsubscribeSplineEvents();
             ClearRendererState();
             DestroyGeneratedMesh();
@@ -149,6 +171,16 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         internal void RequestRendererRefresh() => PublishRendererProperties();
+
+        // The current field usually sits beside the spline (WaterRiverCurrentField.Reset), but a
+        // surface-local one wins so a ribbon can carry its own. Re-run by OnValidate through
+        // RequestRebuild's callers when the spline reference changes.
+        void ResolveCurrentField()
+        {
+            _currentField = GetComponent<WaterRiverCurrentField>();
+            if (_currentField == null && spline != null)
+                _currentField = spline.GetComponent<WaterRiverCurrentField>();
+        }
 
         void CacheRendererComponents()
         {

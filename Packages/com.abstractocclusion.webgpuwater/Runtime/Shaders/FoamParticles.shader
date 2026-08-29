@@ -79,6 +79,11 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             static const float KIND_SPRAY  = 1.0;
             static const float KIND_BUBBLE = 2.0; // MUST match WaterFoamParticles.compute
             static const float KIND_RIPPLE_CREST = 3.0; // MUST match WaterFoamParticles.compute
+            static const uint CREST_ROLLER_STATE_RIDING = 0u;
+            static const uint CREST_ROLLER_STATE_FREE = 1u;
+            static const uint CREST_ROLLER_FLAG_ANALYTIC_SURF = 1u;
+            static const float3 CREST_ROLLER_DEBUG_RIDING = float3(0.15, 1.0, 0.25);
+            static const float3 CREST_ROLLER_DEBUG_FREE = float3(1.0, 0.35, 0.05);
             // Bubble look: analytic rim circle (no texture) - KWS ships bubbles as ONE static
             // sprite; generating the same look in-shader needs no asset at all.
             static const float BUBBLE_RIM_START = 0.45;      // uv radius where rim brightening begins
@@ -129,15 +134,23 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 float  strength;
                 float  opacity;
             };
+            struct CrestRollerState
+            {
+                float previousSurfaceY;
+                float previousCarrierHeight;
+                uint motionState;
+                uint flags;
+            };
             StructuredBuffer<FoamParticle> _Particles;
             // A crest-only companion buffer retains a short motion history without changing the
             // shared particle record used by generic foam, spray and bubbles.
             StructuredBuffer<float3> _CrestFleckPreviousPositions;
+            StructuredBuffer<CrestRollerState> _CrestRollerStates;
 
             sampler2D _ParticleTex;
             // Which kinds this draw renders: 0 = foam + spray, 1 = floating foam only
             // (KIND_SURFACE), 2 = spray only (KIND_SPRAY), 3 = bubbles only (KIND_BUBBLE),
-            // 4 = ripple crest flecks only (KIND_RIPPLE_CREST).
+            // 4 = every ripple-crest visual kind, 5 = analytic surf rollers only.
             // Lets the kinds draw in separate passes with their own materials/looks. Set per
             // draw by WaterFoamParticles.cs, never a material slider.
             float _DrawKind;
@@ -151,6 +164,8 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             float _SoftFadeDistance;
             float2 _ParticleFlipbookGrid; // atlas (cols, rows); (1,1) = plain texture, no flipbook
             float _ParticleFlipbookFps;   // 0 = static per-seed variant; >0 animates the atlas over age
+            float _CrestRollerOpacity;
+            float _CrestRollerDebug;
             sampler2D _CameraDepthTexture;
 
             // ---- Interactive-ripple glue (file-local BY DESIGN).
@@ -383,6 +398,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 float3 fogMul    : TEXCOORD5; // camera->sprite fog transmittance (1 when fog is off)
                 float3 fogAdd    : TEXCOORD6; // camera->sprite fog in-scatter (0 when fog is off)
                 float sceneFogFactor : TEXCOORD7;
+                float2 crestRollerData : TEXCOORD8; // x = analytic roller, y = motion state
             };
 
             float SceneFogFactor(float eyeDepth)
@@ -407,22 +423,31 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 o.uv = 0; o.screenPos = 0; o.litColor = 0; o.fade = 0; o.worldPos = 0;
                 o.fogMul = 1; o.fogAdd = 0;
                 o.sceneFogFactor = 1;
+                o.crestRollerData = 0;
                 return o;
             }
 
             v2f vert(uint vid : SV_VertexID)
             {
-                FoamParticle particle = _Particles[vid / 6];
+                uint slot = vid / 6;
+                FoamParticle particle = _Particles[slot];
                 if (particle.life <= 0.0 || particle.age >= particle.life) return Dead();
                 // Kind filter (two-pass split): a foam-only pass drops spray, a spray-only pass
                 // drops foam, so each can be drawn with its own material. 0 = draw both.
                 bool isSpray = (particle.kind == KIND_SPRAY);
                 bool isBubble = (particle.kind == KIND_BUBBLE);
                 bool isRippleCrest = (particle.kind == KIND_RIPPLE_CREST);
+                CrestRollerState rollerState = _CrestRollerStates[slot];
+                bool isAnalyticSurfRoller = isRippleCrest
+                    && (rollerState.flags & CREST_ROLLER_FLAG_ANALYTIC_SURF) != 0u;
+                bool isRidingSurfRoller = isAnalyticSurfRoller
+                    && rollerState.motionState == CREST_ROLLER_STATE_RIDING;
                 bool bubblePass = (_DrawKind > 2.5 && _DrawKind < 3.5);
                 bool rippleCrestPass = (_DrawKind > 3.5);
+                bool surfRollerOnlyPass = (_DrawKind > 4.5);
                 if (bubblePass != isBubble) return Dead(); // bubbles draw ONLY in their own pass
                 if (rippleCrestPass != isRippleCrest) return Dead();
+                if (surfRollerOnlyPass && !isAnalyticSurfRoller) return Dead();
                 if (!bubblePass && !rippleCrestPass)
                 {
                     if (_DrawKind > 1.5 && !isSpray) return Dead();                  // spray-only pass
@@ -507,9 +532,33 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                         axisY = UNITY_MATRIX_V[1].xyz;
                     }
                 }
-                else if (particle.kind == KIND_SPRAY)
+                else if (isAnalyticSurfRoller)
                 {
-                    // camera-facing, stretched along the screen-projected velocity
+                    // KWS foam is camera-facing but not camera-upright: its quad rotates inside the
+                    // billboard plane from projected motion. The roller sheet is authored with its
+                    // forward axis opposite KWS' local Y, hence the deliberate 180-degree reversal.
+                    float3 motion = particle.worldPos - _CrestFleckPreviousPositions[slot];
+                    float3 camRight = UNITY_MATRIX_V[0].xyz;
+                    float3 camUp = UNITY_MATRIX_V[1].xyz;
+                    float2 motionScreen = float2(dot(motion, camRight), dot(motion, camUp));
+                    float motionScreenLength = length(motionScreen);
+                    if (motionScreenLength > DEGENERATE_DIR_EPSILON)
+                    {
+                        float2 reversedMotionDirection = -motionScreen / motionScreenLength;
+                        axisY = camRight * reversedMotionDirection.x
+                              + camUp * reversedMotionDirection.y;
+                        axisX = camRight * (-reversedMotionDirection.y)
+                              + camUp * reversedMotionDirection.x;
+                    }
+                    else
+                    {
+                        axisX = camRight;
+                        axisY = camUp;
+                    }
+                }
+                else if (isSpray)
+                {
+                    // Airborne spray is camera-facing and stretched along projected velocity.
                     float3 camRight = UNITY_MATRIX_V[0].xyz;
                     float3 camUp = UNITY_MATRIX_V[1].xyz;
                     float2 vScreen = float2(dot(particle.velocity, camRight),
@@ -539,7 +588,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                     // KWS renders dynamic-wave foam as a camera-facing motion ribbon. Position
                     // history is intentionally used instead of an instantaneous velocity axis so
                     // a few advected flecks connect into a trail at normal frame rates.
-                    float3 motion = particle.worldPos - _CrestFleckPreviousPositions[vid / 6];
+                    float3 motion = particle.worldPos - _CrestFleckPreviousPositions[slot];
                     float3 camRight = UNITY_MATRIX_V[0].xyz;
                     float3 camUp = UNITY_MATRIX_V[1].xyz;
                     float2 motionScreen = float2(dot(motion, camRight), dot(motion, camUp));
@@ -577,9 +626,14 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 }
 
                 float sizeWorld = particle.size * bubbleSizeScale; // 1 for foam/spray
+                // A riding roller is rooted at the waterline, not centred across it. Centring a
+                // camera-facing quad on the depth-writing surface Z-killed its lower half most
+                // aggressively in the foreground, creating the false "more particles far away"
+                // distribution. Once airborne it returns to a centred billboard.
+                float verticalCorner = isRidingSurfRoller ? corner.y + 1.0 : corner.y;
                 float3 worldVertex = center
                                    + axisX * (corner.x * sizeWorld * stretch)
-                                   + axisY * (corner.y * sizeWorld);
+                                   + axisY * (verticalCorner * sizeWorld);
                 if (!isSpray && !isBubble && !isRippleCrest && _LargeBody > 0.5)
                 {
                     // The centre tangent already predicts the linear part of ripple + wind tilt.
@@ -609,10 +663,13 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 // ---- sprite cell from the atlas: a fixed per-seed variant, or an animated flipbook
                 // (foam churn) when _ParticleFlipbookFps > 0 (shared math, WaterParticleCommon.hlsl) ----
                 // Bubbles skip the atlas: the frag draws them analytically from the raw corner.
+                // Foam sheets use a random phase so neighbouring clumps do not animate in lockstep.
+                // A roller is a temporal event: it must be born at frame zero, then play forward.
+                float flipbookSeed = isAnalyticSurfRoller ? 0.0 : particle.seed;
                 float2 uv = isBubble
                     ? corner * 0.5 + 0.5
                     : ParticleFlipbookUv(corner, _ParticleFlipbookGrid.xy,
-                                         particle.seed, particle.age, _ParticleFlipbookFps);
+                                         flipbookSeed, particle.age, _ParticleFlipbookFps);
 
                 // ---- lighting, matched to the surface foam ----
                 float wrapped = FoamWrappedDiffuse(surfaceNormal, _LightDir);
@@ -624,6 +681,8 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 o.litColor = FoamLitColor(_Tint.rgb, _SunColor, wrapped);
                 float eyeDepth = -mul(UNITY_MATRIX_V, float4(worldVertex, 1.0)).z;
                 o.fade = float2(envelope, eyeDepth);
+                o.crestRollerData = float2(isAnalyticSurfRoller ? 1.0 : 0.0,
+                                            (float)rollerState.motionState);
                 o.sceneFogFactor = SceneFogFactor(eyeDepth);
                 o.worldPos = worldVertex;
                 // After-fog reroute frames (WaterParticleFog.hlsl): the fullscreen fog no longer
@@ -679,12 +738,27 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 }
                 else if (_DrawKind > 3.5)
                 {
-                    float radialAlpha = saturate(1.0 - length(i.uv - CREST_FLECK_UV_CENTER)
-                                                 * CREST_FLECK_RADIUS_TO_UV_SCALE);
-                    sprite = float4(1.0, 1.0, 1.0, 1.0);
-                    alpha = saturate(pow(radialAlpha, CREST_FLECK_FALLOFF_POWER)
-                                     * CREST_FLECK_ALPHA_GAIN)
-                          * CREST_FLECK_ALPHA_MULTIPLIER * envelope * _ParticleOpacity;
+                    if (i.crestRollerData.x > 0.5)
+                    {
+                        // Analytic surf rollers carry a real temporal splash silhouette. Ordinary
+                        // ripple flecks below remain KWS-style points; sharing the visual KIND no
+                        // longer forces both physical sources through the same renderer.
+                        sprite = tex2Dbias(_ParticleTex,
+                                           float4(i.uv, 0.0, FOAM_SPRITE_MIP_BIAS));
+                        // Roller opacity is authoritative for this physical source. In particular,
+                        // it must not inherit the surface-foam layer intensity in _ParticleOpacity.
+                        alpha = FoamErosionLace(sprite.a, envelope)
+                              * envelope * _CrestRollerOpacity;
+                    }
+                    else
+                    {
+                        float radialAlpha = saturate(1.0 - length(i.uv - CREST_FLECK_UV_CENTER)
+                                                     * CREST_FLECK_RADIUS_TO_UV_SCALE);
+                        sprite = float4(1.0, 1.0, 1.0, 1.0);
+                        alpha = saturate(pow(radialAlpha, CREST_FLECK_FALLOFF_POWER)
+                                         * CREST_FLECK_ALPHA_GAIN)
+                              * CREST_FLECK_ALPHA_MULTIPLIER * envelope * _ParticleOpacity;
+                    }
                 }
                 else
                 {
@@ -713,6 +787,10 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 // Per-sprite underwater fog (identity on fog-off frames): applied after the
                 // texture multiply, exact because the fog lerp is linear in the color.
                 float3 rgb = i.litColor * sprite.rgb * i.fogMul + i.fogAdd;
+                if (_CrestRollerDebug > 0.5 && i.crestRollerData.x > 0.5)
+                    rgb = i.crestRollerData.y < (float)CREST_ROLLER_STATE_FREE
+                        ? CREST_ROLLER_DEBUG_RIDING
+                        : CREST_ROLLER_DEBUG_FREE;
                 if (_CameraUnderwater < 0.5)
                     rgb = lerp(unity_FogColor.rgb, rgb, i.sceneFogFactor);
 

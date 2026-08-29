@@ -215,7 +215,11 @@ namespace AbstractOcclusion.WebGpuWater
         WaterSplashEmitter ResolveEmitter(Vector3 surfacePos)
         {
             if (splashEmitter != null) return splashEmitter;
-            WaterVolume body = WaterVolume.BodyContaining(surfacePos);
+            // Domain-resolved (2026-08-29): exclusion-aware, no Primary fallback - a breach in
+            // carved-dry space resolves no emitter and stays silent.
+            int noHint = 0;
+            WaterVolume body = WaterDomainResolver.GameplayBodyAt(
+                surfacePos, WaterQueryIntent.RayInteraction, ref noHint);
             if (body == null) return null;
             // Cache the auto-resolved emitter: bodies do not swap emitters at runtime.
             splashEmitter = body.GetComponent<WaterSplashEmitter>();

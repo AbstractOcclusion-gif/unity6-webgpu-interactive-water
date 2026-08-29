@@ -82,9 +82,17 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
 #endif
         // C1 single-solve intermediates (2026-08-13): written by the "WaterFogSolve" MRT pass,
         // loaded by the absorb/inscatter blend passes. Alpha carries the debug-view flag (1 = a
-        // fog debug view owns this pixel: absorb wipes, inscatter writes the false colour).
+        // fog debug view owns this pixel: absorb wipes, inscatter writes the false colour) at
+        // full res; on a SCALED solve the absorb alpha carries scene eye depth instead. The two
+        // meanings can never collide: debug views force the solve to full res (see the pass).
         TEXTURE2D(_WaterFogSolveAbsorb);
         TEXTURE2D(_WaterFogSolveInscatter);
+        // Half-res fog solve (the C1 unlock, 2026-08-29): fraction of camera resolution the solve
+        // targets were allocated at (1 = full res, the shipped default). Published by
+        // WaterUnderwaterFogPass from the scale ACTUALLY applied - the _OceanSurfacePrepassScale
+        // doctrine, so the tap math below can never disagree with the allocated targets. At 1 the
+        // blend passes keep their exact single-pixel LOADs: the default path is bit-identical.
+        float _WaterFogSolveScale;
         // Camera-local displaced height used only while producing the shared classification RT.
         // Unlike the 512 m / 2 m-texel march authority, this covers four metres at centimetre
         // texels and includes interactive ripples. G is raster coverage; an uncovered texel falls
@@ -1253,6 +1261,52 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             float n = frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
             return ((n - 0.5) / 255.0).xxx;
         }
+
+        // ---- Scaled-solve upsample (nearest-depth 4-tap) -------------------------------------
+        // Fog amount is a function of scene depth, so a plain bilinear read of a low-res solve
+        // halos every object silhouette (a background texel's long fog path bleeds onto the
+        // foreground rim). Standard remedy: bilinear BETWEEN the solve texels whose stored eye
+        // depth agrees with this full-res pixel's own scene depth; where none agrees - exactly
+        // the silhouette case - the single best-matching texel wins outright. Solve depth lives
+        // in the absorb target's alpha (written only on scaled frames; debug views force full
+        // res, so the alpha's debug-flag meaning never collides). ONE weight computation shared
+        // by both blend passes, so absorb and inscatter can never pick different texels and
+        // split the fog across an edge. Tap indices are constant, so no dynamic array indexing.
+        #define FOG_UPSAMPLE_DEPTH_TOLERANCE 0.1 // relative eye-depth agreement for a tap to count
+
+        void SolveUpsampleTaps(float2 uv, out int2 taps[4], out float4 weights)
+        {
+            float2 solveSizeF = max(_ScaledScreenParams.xy * _WaterFogSolveScale,
+                                    float2(1.0, 1.0));
+            int2 solveMax = int2(solveSizeF) - int2(1, 1);
+            float2 texel = uv * solveSizeF - 0.5;
+            float2 baseF = floor(texel);
+            float2 f = texel - baseF;
+            int2 basePixel = int2(baseF);
+            taps[0] = clamp(basePixel,               int2(0, 0), solveMax);
+            taps[1] = clamp(basePixel + int2(1, 0),  int2(0, 0), solveMax);
+            taps[2] = clamp(basePixel + int2(0, 1),  int2(0, 0), solveMax);
+            taps[3] = clamp(basePixel + int2(1, 1),  int2(0, 0), solveMax);
+            float4 bilinear = float4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y),
+                                     (1.0 - f.x) * f.y,         f.x * f.y);
+            float4 solveDepth = float4(LOAD_TEXTURE2D(_WaterFogSolveAbsorb, taps[0]).a,
+                                       LOAD_TEXTURE2D(_WaterFogSolveAbsorb, taps[1]).a,
+                                       LOAD_TEXTURE2D(_WaterFogSolveAbsorb, taps[2]).a,
+                                       LOAD_TEXTURE2D(_WaterFogSolveAbsorb, taps[3]).a);
+            float sceneEye = LinearEyeDepth(SampleSceneDepth(uv), _ZBufferParams);
+            float4 relDiff = abs(solveDepth - sceneEye.xxxx) / max(sceneEye, 1e-3);
+            float4 agrees = step(relDiff, FOG_UPSAMPLE_DEPTH_TOLERANCE);
+            float4 w = bilinear * agrees;
+            float wSum = dot(w, float4(1.0, 1.0, 1.0, 1.0));
+            if (wSum < 1e-4)
+            {
+                // Silhouette: no tap agrees - take the closest depth match (exact ties share).
+                float best = min(min(relDiff.x, relDiff.y), min(relDiff.z, relDiff.w));
+                w = step(relDiff, best.xxxx);
+                wSum = dot(w, float4(1.0, 1.0, 1.0, 1.0));
+            }
+            weights = w / wSum;
+        }
         ENDHLSL
 
         // ---- Pass 0: absorption + depth darkening (dst *= pathTrans * depthAtten) ----
@@ -1273,6 +1327,21 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
 
             half4 FragAbsorb(Varyings input) : SV_Target
             {
+                // Scaled solve: depth-aware upsample (see SolveUpsampleTaps). A uniform branch,
+                // not a keyword - both sides of this tiny pass are a handful of loads, so there
+                // is no dead heavy path for the register allocator to size against (the fps-cliff
+                // rule concerns big fenced modules, not this). Debug views force full res, so the
+                // scaled side never has to test the alpha flag.
+                if (_WaterFogSolveScale < 0.999)
+                {
+                    int2 taps[4]; float4 w;
+                    SolveUpsampleTaps(input.uv, taps, w);
+                    float3 rgb = LOAD_TEXTURE2D(_WaterFogSolveAbsorb, taps[0]).rgb * w.x
+                               + LOAD_TEXTURE2D(_WaterFogSolveAbsorb, taps[1]).rgb * w.y
+                               + LOAD_TEXTURE2D(_WaterFogSolveAbsorb, taps[2]).rgb * w.z
+                               + LOAD_TEXTURE2D(_WaterFogSolveAbsorb, taps[3]).rgb * w.w;
+                    return half4(rgb + FogDither(input.positionCS.xy), 1.0);
+                }
                 float4 solved = LOAD_TEXTURE2D(_WaterFogSolveAbsorb, int2(input.positionCS.xy));
                 // Debug view: WIPE the frame. This pass blends Zero SrcColor (dst *= src), so
                 // returning 0 clears the target and the in-scatter pass immediately after - Blend
@@ -1300,6 +1369,18 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
 
             half4 FragInscatter(Varyings input) : SV_Target
             {
+                // Scaled solve: SAME weights as the absorb pass (SolveUpsampleTaps reads the
+                // absorb alpha depths), so the two blend terms can never split across an edge.
+                if (_WaterFogSolveScale < 0.999)
+                {
+                    int2 taps[4]; float4 w;
+                    SolveUpsampleTaps(input.uv, taps, w);
+                    float3 rgb = LOAD_TEXTURE2D(_WaterFogSolveInscatter, taps[0]).rgb * w.x
+                               + LOAD_TEXTURE2D(_WaterFogSolveInscatter, taps[1]).rgb * w.y
+                               + LOAD_TEXTURE2D(_WaterFogSolveInscatter, taps[2]).rgb * w.z
+                               + LOAD_TEXTURE2D(_WaterFogSolveInscatter, taps[3]).rgb * w.w;
+                    return half4(rgb + FogDither(input.positionCS.xy), 1.0);
+                }
                 float4 solved = LOAD_TEXTURE2D(_WaterFogSolveInscatter, int2(input.positionCS.xy));
                 // Additive onto the target the absorb pass just cleared: this IS the view. No
                 // dither on a debug false colour - the views are read by exact colour purity.
@@ -1360,7 +1441,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
 
             struct SolveOutputs
             {
-                // rgb = lerp(1, pathTransmittance * depthAttenuation, armWeight); a = debug flag.
+                // rgb = lerp(1, pathTransmittance * depthAttenuation, armWeight);
+                // a = debug flag at full res, scene eye depth on a scaled solve (see below).
                 half4 absorb : SV_Target0;
                 // rgb = armed inscatter total (or the debug false colour); a = debug flag.
                 half4 inscatter : SV_Target1;
@@ -1434,7 +1516,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 // frame-debugger jitter. Never fires on healthy pixels.
                 if (any(isnan(total)) || any(isinf(total)))
                     total = float3(1.0, 0.0, 1.0);
-                output.absorb = half4(absorb, 0.0);
+                // Scaled solve: store this pixel's scene eye depth in the absorb alpha for the
+                // blend passes' depth-aware upsample. Full res keeps the alpha at 0 - the
+                // debug-flag lane the single-pixel loads test with > 0.5 (half precision holds
+                // metre-scale depth well enough for a RELATIVE-tolerance compare).
+                float upsampleDepth = _WaterFogSolveScale < 0.999
+                    ? LinearEyeDepth(SampleSceneDepth(input.uv), _ZBufferParams)
+                    : 0.0;
+                output.absorb = half4(absorb, upsampleDepth);
                 output.inscatter = half4(total, 0.0);
                 return output;
             }

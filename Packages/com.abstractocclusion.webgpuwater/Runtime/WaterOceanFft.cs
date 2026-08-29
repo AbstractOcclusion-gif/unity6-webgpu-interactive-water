@@ -138,9 +138,14 @@ namespace AbstractOcclusion.WebGpuWater
                 PeakWavelength, PeakSharpness, SeaDepth, Choppiness);
         }
 
-        // Per-cascade FFT grid side. Fixed at 128: the compute sizes its groupshared butterfly buffers at
-        // this compile-time constant (FFT_SIZE) and stays well under the WebGPU threadgroup limits.
+        // Per-cascade FFT grid side when no quality tier overrides it. The compute sizes its
+        // groupshared butterfly buffers at compile time, so it STAMPS one kernel pair per entry of
+        // SupportedFftResolutions (OCEAN_FFT_KERNELS in OceanFft.compute) and the constructor picks
+        // a pair by name - any other resolution disables the FFT ocean. 512 is not stampable: the
+        // one-threadgroup-per-line design would need 512 threads/group against WebGPU's baseline
+        // limit of 256 (and 24 KB groupshared against the 16 KB baseline).
         internal const int DefaultResolution = 128;
+        internal static readonly int[] SupportedFftResolutions = { 64, 128, 256 };
         internal const int DefaultCascadeCount = 4;
         // THE FFT TILE IS NOT THE BAND. A cascade whose tile equals its band top can only hold ONE period
         // of its longest wave, and a decaying spectrum puts most of the band's energy exactly there - so
@@ -156,9 +161,6 @@ namespace AbstractOcclusion.WebGpuWater
         // change one without the other and shore attenuation silently retunes.
         internal const float CascadeTileOversample = 4f;
 
-        // HLSL pair: FFT_SIZE / FFT_STAGES in OceanFft.compute, both validator-guarded.
-        const int FftSize = 128;
-        const int FftStages = 7;   // log2(FftSize)
         const int ThreadGroupSize = 8;
         const int MaxCascades = 4; // HLSL pair: OCEAN_FFT_MAX_CASCADES (validator-guarded)
         const int SpectrumSeed = 1337;
@@ -174,8 +176,9 @@ namespace AbstractOcclusion.WebGpuWater
 
         const string KernelSpectrumInit = "SpectrumInit";
         const string KernelSpectrumUpdate = "SpectrumUpdate";
-        const string KernelFftHorizontal = "FftHorizontal";
-        const string KernelFftVertical = "FftVertical";
+        // Stamped per supported resolution (OCEAN_FFT_KERNELS): the grid side is appended to the name.
+        const string KernelFftHorizontalPrefix = "FftHorizontal";
+        const string KernelFftVerticalPrefix = "FftVertical";
         const string KernelComputeNormal = "ComputeNormal";
         const string KernelBakeHeightField = "BakeHeightField";
         const string KernelVisualizePreview = "VisualizePreview";
@@ -189,6 +192,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_Preview = Shader.PropertyToID("OceanPreview");
         static readonly int ID_Butterfly = Shader.PropertyToID("OceanButterfly");
         static readonly int ID_Resolution = Shader.PropertyToID("OceanFftResolution");
+        static readonly int ID_TileMask = Shader.PropertyToID("OceanFftTileMask");
         static readonly int ID_Cascades = Shader.PropertyToID("OceanFftCascades");
         static readonly int ID_DomainSizes = Shader.PropertyToID("OceanDomainSizes");
         static readonly int ID_BandMin = Shader.PropertyToID("OceanBandMin");
@@ -334,23 +338,25 @@ namespace AbstractOcclusion.WebGpuWater
             _domainSizes = _bandMax = _visibleAreas = Vector4.one;
 
             // Fail cleanly (not by throwing) on wrong/old compute or a size mismatch: disable only the FFT
-            // and keep the ocean body on the analytic large-wave path.
+            // and keep the ocean body on the analytic large-wave path. The size check comes first
+            // because the FFT kernel NAMES carry the size (one stamped pair per supported resolution).
+            if (System.Array.IndexOf(SupportedFftResolutions, _resolution) < 0)
+            {
+                Debug.LogWarning($"WaterOceanFft: resolution {_resolution} has no stamped FFT kernel pair " +
+                                 $"(supported: {string.Join("/", SupportedFftResolutions)}); FFT ocean disabled.");
+                return;
+            }
             if (!HasAllKernels())
             {
                 Debug.LogWarning($"WaterOceanFft: compute '{_cs.name}' is missing FFT kernels - assign the OceanFft " +
                                  "compute. FFT ocean disabled.");
                 return;
             }
-            if (_resolution != FftSize)
-            {
-                Debug.LogWarning($"WaterOceanFft: resolution {_resolution} must equal the compute's FFT_SIZE ({FftSize}); FFT ocean disabled.");
-                return;
-            }
 
             _kInit = _cs.FindKernel(KernelSpectrumInit);
             _kUpdate = _cs.FindKernel(KernelSpectrumUpdate);
-            _kFftH = _cs.FindKernel(KernelFftHorizontal);
-            _kFftV = _cs.FindKernel(KernelFftVertical);
+            _kFftH = _cs.FindKernel(KernelFftHorizontalPrefix + _resolution);
+            _kFftV = _cs.FindKernel(KernelFftVerticalPrefix + _resolution);
             _kNormal = _cs.FindKernel(KernelComputeNormal);
             _kBake = _cs.FindKernel(KernelBakeHeightField);
             _kPreview = _cs.FindKernel(KernelVisualizePreview);
@@ -364,7 +370,8 @@ namespace AbstractOcclusion.WebGpuWater
 
         bool HasAllKernels() =>
             _cs.HasKernel(KernelSpectrumInit) && _cs.HasKernel(KernelSpectrumUpdate)
-            && _cs.HasKernel(KernelFftHorizontal) && _cs.HasKernel(KernelFftVertical)
+            && _cs.HasKernel(KernelFftHorizontalPrefix + _resolution)
+            && _cs.HasKernel(KernelFftVerticalPrefix + _resolution)
             && _cs.HasKernel(KernelComputeNormal) && _cs.HasKernel(KernelBakeHeightField)
             && _cs.HasKernel(KernelVisualizePreview);
 
@@ -413,7 +420,7 @@ namespace AbstractOcclusion.WebGpuWater
                 return false;
             }
 
-            _butterfly = BuildButterfly(FftSize, FftStages);
+            _butterfly = BuildButterfly(_resolution, FftStagesFor(_resolution));
             return true;
         }
 
@@ -537,6 +544,9 @@ namespace AbstractOcclusion.WebGpuWater
             return null;
         }
 
+        // log2 of a validated power-of-two resolution (the constructor refuses any other size).
+        static int FftStagesFor(int resolution) => Mathf.RoundToInt(Mathf.Log(resolution, 2f));
+
         static int BitReverse(int x, int bits)
         {
             int r = 0;
@@ -595,7 +605,7 @@ namespace AbstractOcclusion.WebGpuWater
             BindSpectra(_kUpdate, bindH0: true);
             _cs.Dispatch(_kUpdate, _groups, _groups, _cascades);
 
-            // Row FFT then column FFT (one threadgroup per row / per column of length FftSize).
+            // Row FFT then column FFT (one threadgroup per row / per column of the cascade side).
             BindFft(_kFftH);
             _cs.Dispatch(_kFftH, 1, _resolution, _cascades);
             BindFft(_kFftV);
@@ -896,6 +906,9 @@ namespace AbstractOcclusion.WebGpuWater
         void SetSharedUniforms(in SeaParams sea)
         {
             _cs.SetInt(ID_Resolution, _resolution);
+            // Power-of-two wrap mask for the compute's manual bilinear/neighbour fetches - paired
+            // with the resolution here so the two can never desync.
+            _cs.SetInt(ID_TileMask, _resolution - 1);
             _cs.SetInt(ID_Cascades, _cascades);
             _cs.SetInt(ID_Seed, SpectrumSeed);
             _cs.SetVector(ID_DomainSizes, _domainSizes);

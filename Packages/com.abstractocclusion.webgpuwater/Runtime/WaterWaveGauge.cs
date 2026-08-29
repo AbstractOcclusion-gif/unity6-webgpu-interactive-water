@@ -88,6 +88,7 @@ namespace AbstractOcclusion.WebGpuWater
         int _waveCount;
 
         bool _sampleReady;
+        int _domainBodyId; // hysteresis hint for the domain resolver (0 = none)
         bool _rising;
         bool _haveLeadingTrough;
         float _previousElevation;
@@ -156,7 +157,11 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (volume != null && volume.isActiveAndEnabled) return volume;
             if (!resolveContainingVolume) return null;
-            volume = WaterVolume.BodyContaining(transform.position);
+            // Domain-resolved (2026-08-29): the gauge rides a surface, so resolve the nearest
+            // surface in vertical reach - exclusion-aware, and no Primary fallback (a gauge in
+            // a dry scene measures nothing).
+            volume = WaterDomainResolver.GameplayBodyAt(
+                transform.position, WaterQueryIntent.NearestWithinVerticalLimits, ref _domainBodyId);
             return volume;
         }
 

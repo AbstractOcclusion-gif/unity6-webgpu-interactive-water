@@ -59,6 +59,7 @@ namespace AbstractOcclusion.WebGpuWater
         Vector3 _lastDropPosition;
         float _prevRelDepth;
         bool _tracking;
+        int _domainBodyId; // hysteresis hint for the domain resolver (0 = none)
 
         [Tooltip("Which renderer defines this object's water footprint (bounds for submersion, " +
                  "wake emission, refract-shadow silhouette). Leave empty to auto-resolve: a " +
@@ -107,7 +108,10 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (Renderer == null) return;
             Bounds bounds = Renderer.bounds;
-            WaterVolume body = WaterVolume.BodyContaining(bounds.center);
+            // Domain-resolved (2026-08-29): full-XYZ, exclusion-aware - no ripple input from an
+            // object inside a carved-dry region - and no Primary fallback.
+            WaterVolume body = WaterDomainResolver.GameplayBodyAt(
+                bounds.center, WaterQueryIntent.BuoyancySurface, ref _domainBodyId);
             if (body == null || body.objectInteraction != WaterVolume.ObjectInteraction.MouseLikeDrops)
             {
                 _tracking = false;
@@ -179,8 +183,11 @@ namespace AbstractOcclusion.WebGpuWater
             if (Renderer == null) return restY;
             Bounds b = Renderer.bounds;
             // Resolve the body under the object each call so the waterline follows the lake
-            // it is actually in, not a single body cached at startup.
-            WaterVolume body = WaterVolume.BodyContaining(b.center);
+            // it is actually in, not a single body cached at startup. Stateless resolve: this
+            // is a read-only helper, so it carries no hysteresis id of its own.
+            int noHint = 0;
+            WaterVolume body = WaterDomainResolver.GameplayBodyAt(
+                b.center, WaterQueryIntent.NearestWithinVerticalLimits, ref noHint);
             if (body != null && body.TryGetAnalyticWaterline(b.center.x, b.center.z, out float surfaceY))
                 return surfaceY;
             return restY;

@@ -192,6 +192,37 @@ namespace AbstractOcclusion.WebGpuWater
             return poolX >= -1f && poolX <= 1f && poolZ >= -1f && poolZ <= 1f;
         }
 
+        // Full-XYZ domain containment for the 3D resolver (WaterDomainResolver). The vertical
+        // band is the REST water column: pool y in [-1, 0] (surface at rest = 0, floor = -1).
+        // Wave crests above rest level are deliberately not part of the box - the buoyancy
+        // intent's above-point surface search owns that case - so two bodies stacked at the
+        // same XZ (a pond over a sewer) resolve by elevation alone. An unbounded ocean has no
+        // horizontal footprint; its column spans everywhere between bed extent and rest level.
+        internal bool ContainsPointXYZ(Vector3 world)
+        {
+            Vector3 p = WorldToPool(world);
+            bool insideColumn = p.y >= -1f && p.y <= 0f;
+            if (IsOceanClipmap) return insideColumn;
+            return insideColumn && p.x >= -1f && p.x <= 1f && p.z >= -1f && p.z <= 1f;
+        }
+
+        // ContainsPointXYZ widened by a world-space boundary margin - the resolver's hysteresis
+        // band. Metres convert to pool units per axis (extent-normalised), so the band is a true
+        // world distance on every side of a non-uniform box.
+        internal bool ContainsPointWithinMargin(Vector3 world, float boundaryMarginMeters)
+        {
+            Vector3 e = VolumeExtentSafe;
+            Vector3 margin = new Vector3(boundaryMarginMeters / e.x,
+                                         boundaryMarginMeters / e.y,
+                                         boundaryMarginMeters / e.z);
+            Vector3 p = WorldToPool(world);
+            bool insideColumn = p.y >= -1f - margin.y && p.y <= margin.y;
+            if (IsOceanClipmap) return insideColumn;
+            return insideColumn &&
+                   p.x >= -1f - margin.x && p.x <= 1f + margin.x &&
+                   p.z >= -1f - margin.z && p.z <= 1f + margin.z;
+        }
+
         // World point -> pool for the surface QUERIES (height/submersion/flow). Same as WorldToPoolXZ, except
         // an unbounded ocean has no footprint edge - its surface spans everywhere (clipmap to the horizon) -
         // so points beyond the bounded extent are accepted. Without this a floater (or the boat's propulsion,

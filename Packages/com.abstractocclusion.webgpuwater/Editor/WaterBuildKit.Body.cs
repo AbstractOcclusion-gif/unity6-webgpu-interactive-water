@@ -201,6 +201,15 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 particles.sprayMaterial = LoadOrCreateMaterial(materialFolder + "/FoamDroplet.mat", shader);
             AssignPackagedSpriteIfEmpty(particles.sprayMaterial, PropParticleTex, FoamDropletTexFile);
 
+            // Analytic shore rollers have a temporal silhouette, unlike KWS2's four static splash
+            // variants. Keep it on a dedicated material so the rolling sheet never replaces the
+            // atlas used by deposited foam or the droplet used by event spray.
+            if (particles.surfCrestRollerMaterial == null)
+                particles.surfCrestRollerMaterial = LoadOrCreateMaterial(
+                    materialFolder + "/SurfCrestRoller.mat", shader);
+            AssignPackagedSpriteIfEmpty(particles.surfCrestRollerMaterial, PropParticleTex,
+                                        SurfRollerFlipbookFile);
+
             EditorUtility.SetDirty(particles);
         }
 

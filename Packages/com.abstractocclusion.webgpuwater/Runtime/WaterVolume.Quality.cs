@@ -156,8 +156,13 @@ namespace AbstractOcclusion.WebGpuWater
             _causticInterval = tier.CausticInterval;
             _readbackInterval = tier.ReadbackInterval;
             _oceanFftInterval = tier.OceanFftInterval;
+            _oceanFftResolution = tier.OceanFftResolution;
             _maxFoamParticles = tier.MaxFoamParticles;
-            _underwaterFogMode = tier.UnderwaterFog;
+            // Override-aware: the asset may pin fog quality independently of the tier (the
+            // FollowTier default resolves to exactly the tier fields - bit-identical).
+            _underwaterFogMode = source.ResolveFogMode(in tier);
+            _fogSolveScale = source.ResolveFogSolveScale(in tier);
+            _maxSimulatedBodies = tier.MaxSimulatedBodies;
 
             // One line per enable so a DEVELOPMENT build's console shows exactly which knobs landed -
             // tier mismatches (stale build cache, wrong asset, missing serialized fields) are
@@ -169,7 +174,8 @@ namespace AbstractOcclusion.WebGpuWater
                       $"mesh {(_meshDetail > 0 ? _meshDetail.ToString() : "authored")}, renderScale {_renderScale:0.##}, " +
                       $"realRefraction {_realRefractionAllowed}, godRays {_godRaysAllowed} ({_godRaySteps} steps), " +
                       $"waves {_maxWaveCount}, refine {_peakedRefineSteps}, foamCap {_maxFoamParticles}, " +
-                      $"underwaterFog {_underwaterFogMode}", this);
+                      $"oceanFft {_oceanFftResolution}, " +
+                      $"underwaterFog {_underwaterFogMode} (solve x{_fogSolveScale:0.##})", this);
 #endif
         }
 
@@ -187,6 +193,36 @@ namespace AbstractOcclusion.WebGpuWater
         {
             get => _underwaterFogMode;
             set => _underwaterFogMode = value;
+        }
+
+        /// <summary>Resolution fraction of the underwater fog solve targets (1 = full res). Same
+        /// contract as <see cref="UnderwaterFogMode"/>: a tier-owned runtime field nothing
+        /// serialises, probe-writable, read per frame by WaterUnderwaterFogPass.</summary>
+        internal float FogSolveScale
+        {
+            get => _fogSolveScale;
+            set => _fogSolveScale = Mathf.Clamp(value, WaterQuality.MinFogSolveScale, 1f);
+        }
+
+        /// <summary>Promote (or demote) this body's underwater fog quality at runtime,
+        /// independently of the global tier - the game calls this when correct waterline
+        /// crossings matter (large waves over the camera, a visible exclusion boundary, stacked
+        /// water elevations on screen). Lands next frame; nothing is serialized - the same
+        /// runtime-field contract as the WaterCostProbe toggles.</summary>
+        public void SetFogQuality(WaterQuality.UnderwaterMode mode, float solveScale)
+        {
+            UnderwaterFogMode = mode;
+            FogSolveScale = solveScale;
+        }
+
+        /// <summary>Return fog quality to what the assigned quality asset resolves (its tier, or
+        /// its authored override).</summary>
+        public void ResetFogQualityToTier()
+        {
+            WaterQuality fogSource = quality != null ? quality : WaterQuality.Fallback;
+            WaterQuality.Tier tier = fogSource.Resolve();
+            UnderwaterFogMode = fogSource.ResolveFogMode(in tier);
+            FogSolveScale = fogSource.ResolveFogSolveScale(in tier);
         }
 
         /// <summary>Whether the tier permits god-ray shafts on this body - pool box AND ocean

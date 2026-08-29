@@ -24,13 +24,13 @@ namespace AbstractOcclusion.WebGpuWater
         const string KernelUpdate = "Update";
         const string KernelClearDensity = "ClearDensity";
         const string KernelRasterizeDensity = "RasterizeDensity";
-
         // Thread-group sizes. MUST equal the [numthreads] in WaterFoamParticles.compute.
         const int SpawnThreadGroupSize = 8;
         const int UpdateThreadGroupSize = 64;
 
         const int VerticesPerParticle = 6;
-        const int CounterCount = 4; // ring cursor + ambient, burst and crest-fleck frame counts
+        const int RequiredVertexStructuredBuffers = 3;
+        const int CounterCount = 5; // ring cursor + ambient, burst, ripple-crest and surf-roller counts
                                     // (MUST match the COUNTER_* layout in the compute)
         const int CrestFleckHistoryPositionStrideBytes = sizeof(float) * 3;
 
@@ -154,6 +154,17 @@ namespace AbstractOcclusion.WebGpuWater
         // crosses the boundary.
         internal static readonly int ParticleStrideBytes = Marshal.SizeOf<FoamParticle>();
 
+        [StructLayout(LayoutKind.Sequential)]
+        struct CrestRollerState
+        {
+            public float previousSurfaceY;
+            public float previousCarrierHeight;
+            public uint motionState;
+            public uint flags;
+        }
+
+        static readonly int CrestRollerStateStrideBytes = Marshal.SizeOf<CrestRollerState>();
+
         // Compute/shader property ids.
         static readonly int ID_Particles = Shader.PropertyToID("Particles");
         static readonly int ID_ParticlesShader = WaterShaderProps.Particles;
@@ -165,6 +176,8 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.PropertyToID("CrestFleckPreviousPositions");
         static readonly int ID_CrestFleckPreviousPositionsShader =
             Shader.PropertyToID("_CrestFleckPreviousPositions");
+        static readonly int ID_CrestRollerStates = Shader.PropertyToID("CrestRollerStates");
+        static readonly int ID_CrestRollerStatesShader = Shader.PropertyToID("_CrestRollerStates");
         static readonly int ID_FoamTex = Shader.PropertyToID("FoamTex");
         static readonly int ID_Size = WaterShaderProps.Size;
         static readonly int ID_SimEdgeFadeTexels = Shader.PropertyToID("_SimEdgeFadeTexels");
@@ -189,6 +202,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_MaxSpawnPerFrame = Shader.PropertyToID("_MaxSpawnPerFrame");
         static readonly int ID_SprayChance = Shader.PropertyToID("_SprayChance");
         static readonly int ID_SprayLaunchSpeed = Shader.PropertyToID("_SprayLaunchSpeed");
+        static readonly int ID_SimulationDrivenSpawning = Shader.PropertyToID("_SimulationDrivenSpawning");
         static readonly int ID_RippleCrestFlecksEnabled = Shader.PropertyToID("_RippleCrestFlecksEnabled");
         static readonly int ID_RippleCrestFleckAmount = Shader.PropertyToID("_RippleCrestFleckAmount");
         static readonly int ID_RippleCrestFleckLifeMin = Shader.PropertyToID("_RippleCrestFleckLifeMin");
@@ -197,6 +211,23 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_RippleCrestFleckSizeMax = Shader.PropertyToID("_RippleCrestFleckSizeMax");
         static readonly int ID_RippleCrestFleckMotion = Shader.PropertyToID("_RippleCrestFleckMotion");
         static readonly int ID_RippleCrestFleckMaxPerFrame = Shader.PropertyToID("_RippleCrestFleckMaxPerFrame");
+        static readonly int ID_SurfCrestRollersEnabled = Shader.PropertyToID("_SurfCrestRollersEnabled");
+        static readonly int ID_SurfCrestRollerSpawnRate = Shader.PropertyToID("_SurfCrestRollerSpawnRate");
+        static readonly int ID_SurfCrestRollerMaxPerFrame = Shader.PropertyToID("_SurfCrestRollerMaxPerFrame");
+        static readonly int ID_SurfCrestRollerLifeMin = Shader.PropertyToID("_SurfCrestRollerLifeMin");
+        static readonly int ID_SurfCrestRollerLifeMax = Shader.PropertyToID("_SurfCrestRollerLifeMax");
+        static readonly int ID_SurfCrestRollerSizeMin = Shader.PropertyToID("_SurfCrestRollerSizeMin");
+        static readonly int ID_SurfCrestRollerSizeMax = Shader.PropertyToID("_SurfCrestRollerSizeMax");
+        static readonly int ID_SurfCrestRollerTransport = Shader.PropertyToID("_SurfCrestRollerTransport");
+        static readonly int ID_SurfCrestRollerBreakerThreshold =
+            Shader.PropertyToID("_SurfCrestRollerBreakerThreshold");
+        static readonly int ID_SurfCrestRollerDetachDrop = Shader.PropertyToID("_SurfCrestRollerDetachDrop");
+        static readonly int ID_SurfCrestRollerMinimumRideTime =
+            Shader.PropertyToID("_SurfCrestRollerMinimumRideTime");
+        static readonly int ID_SurfCrestRollerVerticalCarry =
+            Shader.PropertyToID("_SurfCrestRollerVerticalCarry");
+        static readonly int ID_CrestRollerOpacity = Shader.PropertyToID("_CrestRollerOpacity");
+        static readonly int ID_CrestRollerDebug = Shader.PropertyToID("_CrestRollerDebug");
         static readonly int ID_LifeMin = Shader.PropertyToID("_LifeMin");
         static readonly int ID_LifeMax = Shader.PropertyToID("_LifeMax");
         static readonly int ID_SizeMin = Shader.PropertyToID("_SizeMin");
@@ -229,6 +260,7 @@ namespace AbstractOcclusion.WebGpuWater
         const float DrawKindSpray = 2f;
         const float DrawKindBubble = 3f;
         const float DrawKindCrestFleck = 4f;
+        const float DrawKindSurfRoller = 5f;
         internal const float MinimumDensitySurfaceSizeScale = 0.05f;
         internal const float MaximumDensitySurfaceSizeScale = 4f;
         internal const float DefaultDensitySurfaceSizeScale = 1f;
@@ -297,6 +329,9 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("Material using the AbstractOcclusion/WebGpuWater/FoamDensityComposite shader. Required " +
                  "for Screen Space Density mode; the Water Wizard creates and assigns it.")]
         [SerializeField] internal Material densityMaterial;
+        [Tooltip("Optional dedicated material for analytic shore-wave rollers. The Water Wizard wires " +
+                 "the packaged rolling-splash flipbook here. None falls back to Particle Material.")]
+        [SerializeField] internal Material surfCrestRollerMaterial;
         [Tooltip("Optional master foam profile: when assigned, its driven sections override the " +
                  "fields below every frame and push the shared look (tint/opacity/atlas, veil " +
                  "values) over the materials via the property block - ONE asset to tune a body's " +
@@ -335,6 +370,37 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] internal Vector2 rippleCrestFleckSizeRange = new Vector2(0.01f, 0.025f);
         [Tooltip("How strongly crest flecks keep their outward ripple-propagation motion.")]
         [Range(0f, 1f)] [SerializeField] internal float rippleCrestFleckMotion = 0.6f;
+
+        [Header("Analytic surf crest rollers")]
+        [Tooltip("Emit particles from the actual analytic breaking-wave lip. This water-driven source " +
+                 "is disabled when Simulation Driven Spawning is off.")]
+        [SerializeField] internal bool surfCrestRollersEnabled = true;
+        [Tooltip("Expected roller births per second per world metre of fully active breaker lip.")]
+        [Range(0f, 200f)] [SerializeField] internal float surfCrestRollerSpawnRate = 18f;
+        [Tooltip("Hard per-frame cap for analytic surf rollers. This budget is independent of ambient foam and ripple flecks.")]
+        [Range(16, 4096)] [SerializeField] internal int surfCrestRollerMaxPerFrame = 256;
+        [Tooltip("Total lifetime range, including riding, free flight and any fade before landing.")]
+        [SerializeField] internal Vector2 surfCrestRollerLifetimeRange = new Vector2(1.2f, 2f);
+        [Tooltip("World half-size range of the rolling splash sprite.")]
+        [SerializeField] internal Vector2 surfCrestRollerSizeRange = new Vector2(0.08f, 0.18f);
+        [Tooltip("Multiplier on the exact analytic crest phase speed. One locks the carrier to the wave.")]
+        [Range(0f, 1.5f)] [SerializeField] internal float surfCrestRollerTransport = 1f;
+        [Tooltip("Minimum analytic breaker signal required to emit a roller.")]
+        [Range(0f, 0.95f)] [SerializeField] internal float surfCrestRollerBreakerThreshold = 0.15f;
+        [Tooltip("Normalized collapse speed required to leave the face. Lower detaches earlier; higher rides longer.")]
+        [Range(0.05f, 4f)] [SerializeField] internal float surfCrestRollerDetachDrop = 0.75f;
+        [Tooltip("Minimum seconds spent riding before collapse may release the particle.")]
+        [Range(0f, 1f)] [SerializeField] internal float surfCrestRollerMinimumRideTime = 0.08f;
+        [Tooltip("Fraction of the face-collapse separation speed retained as upward launch speed.")]
+        [Range(0f, 2f)] [SerializeField] internal float surfCrestRollerVerticalCarry = 0.65f;
+        [Tooltip("Rolling splash flipbook atlas layout (columns, rows).")]
+        [SerializeField] internal Vector2Int surfCrestRollerFlipbookGrid = new Vector2Int(4, 4);
+        [Tooltip("Cyclic rolling splash animation speed in frames per second.")]
+        [Range(0f, 30f)] [SerializeField] internal float surfCrestRollerFlipbookFps = 12f;
+        [Tooltip("Opacity multiplier applied only to analytic surf crest rollers.")]
+        [Range(0f, 1f)] [SerializeField] internal float surfCrestRollerOpacity = 1f;
+        [Tooltip("Tint analytic rollers by physical state: green riding, orange free flight.")]
+        [SerializeField] internal bool surfCrestRollerDebug;
 
         [Header("Look & life")]
         [Tooltip("Particle lifetime range (seconds).")]
@@ -418,6 +484,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         GraphicsBuffer _particles;
         GraphicsBuffer _crestFleckPreviousPositions;
+        GraphicsBuffer _crestRollerStates;
         GraphicsBuffer _counters;
         GraphicsBuffer _tileCounts;
         GraphicsBuffer _density;
@@ -448,7 +515,6 @@ namespace AbstractOcclusion.WebGpuWater
         MaterialPropertyBlock _crestFleckMpb;
         MaterialPropertyBlock _bubbleMpb;
         MaterialPropertyBlock _densityMpb;
-
         bool DensityModeActive => renderMode == FoamRenderMode.ScreenSpaceDensity
                                   && _densitySupported && densityMaterial != null;
 
@@ -500,10 +566,10 @@ namespace AbstractOcclusion.WebGpuWater
             // compatibility mode (older Android GPUs / constrained browsers) allows zero
             // vertex-stage storage buffers, so drawing there is a validation error. Degrade
             // to "no foam particles" instead of a broken build; surface foam still renders.
-            if (SystemInfo.maxComputeBufferInputsVertex < 1)
+            if (SystemInfo.maxComputeBufferInputsVertex < RequiredVertexStructuredBuffers)
             {
                 Debug.LogWarning("WaterFoamParticles: this device does not support structured " +
-                                 "buffers in the vertex stage (WebGPU compatibility mode?); " +
+                                 "buffers required by the particle vertex stage (WebGPU compatibility mode?); " +
                                  "foam particles disabled on this body.", this);
                 enabled = false;
                 return;
@@ -534,6 +600,9 @@ namespace AbstractOcclusion.WebGpuWater
             _crestFleckPreviousPositions = new GraphicsBuffer(GraphicsBuffer.Target.Structured,
                 _capacityPow2, CrestFleckHistoryPositionStrideBytes);
             _crestFleckPreviousPositions.SetData(new Vector3[_capacityPow2]);
+            _crestRollerStates = new GraphicsBuffer(GraphicsBuffer.Target.Structured,
+                _capacityPow2, CrestRollerStateStrideBytes);
+            _crestRollerStates.SetData(new CrestRollerState[_capacityPow2]);
             _tileCounts = new GraphicsBuffer(GraphicsBuffer.Target.Structured, TileCount, sizeof(uint));
             _tileCounts.SetData(new uint[TileCount]);
             _burstRequests = new GraphicsBuffer(GraphicsBuffer.Target.Structured, MaxBurstsPerFrame, BurstStride);
@@ -562,6 +631,7 @@ namespace AbstractOcclusion.WebGpuWater
             _densityPending = false;
             _particles?.Dispose(); _particles = null;
             _crestFleckPreviousPositions?.Dispose(); _crestFleckPreviousPositions = null;
+            _crestRollerStates?.Dispose(); _crestRollerStates = null;
             _counters?.Dispose(); _counters = null;
             _tileCounts?.Dispose(); _tileCounts = null;
             _density?.Dispose(); _density = null;
@@ -620,15 +690,17 @@ namespace AbstractOcclusion.WebGpuWater
             // Defensive: OnEnable can bail before allocating (compute/material assigned later in
             // the inspector, then the component re-enabled mid-setup) - never dispatch or draw
             // with a dead pool.
-            if (_particles == null || _crestFleckPreviousPositions == null || _counters == null ||
-                particleCompute == null) return;
+            if (_particles == null || _crestFleckPreviousPositions == null ||
+                _crestRollerStates == null || _counters == null || particleCompute == null) return;
             if (volume.SimStateTexture == null || volume.SimHorizontalFlowTexture == null ||
                 volume.FoamMaskTexture == null) return;
             // Ambient spawning needs the 2D foam sim ON or an ocean (FFT crests as source).
             // Event bursts do NOT: with both ambient sources off, keep dispatching through
             // the burst window so pump/impact splashes still spray (the Spawn kernel is
             // harmless then - the foam mask is black, so it early-outs per texel).
-            bool ambientFoamActive = volume.Foam || volume.OceanFftActive;
+            bool analyticSurfActive = simulationDrivenSpawning && surfCrestRollersEnabled
+                                   && volume.BuildShoreFoamState().Active;
+            bool ambientFoamActive = volume.Foam || volume.OceanFftActive || analyticSurfActive;
             if (!ambientFoamActive && Time.time >= _burstSimActiveUntil) return;
 
             // The density splat + spawn-quality projections follow the body's target camera when
@@ -654,7 +726,10 @@ namespace AbstractOcclusion.WebGpuWater
             // the particles' front evaluation can never drift from the injected whitewash their
             // spawns ride on. Inactive (no shore/surf) = inert.
             WaterSimulation.ShoreFoamState shoreFoam = volume.BuildShoreFoamState();
-            if (simulationDrivenSpawning) shoreFoam.BindTo(cs, _kSpawn);
+            bool surfRollerSourceActive = simulationDrivenSpawning && surfCrestRollersEnabled
+                                       && shoreFoam.Active;
+            bool spawnKernelActive = simulationDrivenSpawning;
+            if (spawnKernelActive) shoreFoam.BindTo(cs, _kSpawn);
             shoreFoam.BindTo(cs, _kRasterizeDensity);
             // The Update kernel ALSO evaluates the surf front (the foam "glue", SurfSampleAt), so it
             // needs the same shore/surf textures bound - BindTo always binds a black fallback when there
@@ -675,6 +750,7 @@ namespace AbstractOcclusion.WebGpuWater
             cs.SetInt(ID_MaxSpawnPerFrame, maxSpawnPerFrame);
             cs.SetFloat(ID_SprayChance, sprayChance);
             cs.SetFloat(ID_SprayLaunchSpeed, sprayLaunchSpeed);
+            cs.SetFloat(ID_SimulationDrivenSpawning, simulationDrivenSpawning ? 1f : 0f);
             cs.SetFloat(ID_RippleCrestFlecksEnabled, rippleCrestFlecksEnabled ? 1f : 0f);
             cs.SetFloat(ID_RippleCrestFleckAmount, rippleCrestFleckAmount);
             cs.SetInt(ID_RippleCrestFleckMaxPerFrame, rippleCrestFleckMaxPerFrame);
@@ -685,6 +761,20 @@ namespace AbstractOcclusion.WebGpuWater
             cs.SetFloat(ID_RippleCrestFleckSizeMax,
                 Mathf.Max(rippleCrestFleckSizeRange.x, rippleCrestFleckSizeRange.y));
             cs.SetFloat(ID_RippleCrestFleckMotion, rippleCrestFleckMotion);
+            cs.SetFloat(ID_SurfCrestRollersEnabled, surfRollerSourceActive ? 1f : 0f);
+            cs.SetFloat(ID_SurfCrestRollerSpawnRate, surfCrestRollerSpawnRate);
+            cs.SetInt(ID_SurfCrestRollerMaxPerFrame, surfCrestRollerMaxPerFrame);
+            cs.SetFloat(ID_SurfCrestRollerLifeMin, surfCrestRollerLifetimeRange.x);
+            cs.SetFloat(ID_SurfCrestRollerLifeMax,
+                Mathf.Max(surfCrestRollerLifetimeRange.x, surfCrestRollerLifetimeRange.y));
+            cs.SetFloat(ID_SurfCrestRollerSizeMin, surfCrestRollerSizeRange.x);
+            cs.SetFloat(ID_SurfCrestRollerSizeMax,
+                Mathf.Max(surfCrestRollerSizeRange.x, surfCrestRollerSizeRange.y));
+            cs.SetFloat(ID_SurfCrestRollerTransport, surfCrestRollerTransport);
+            cs.SetFloat(ID_SurfCrestRollerBreakerThreshold, surfCrestRollerBreakerThreshold);
+            cs.SetFloat(ID_SurfCrestRollerDetachDrop, surfCrestRollerDetachDrop);
+            cs.SetFloat(ID_SurfCrestRollerMinimumRideTime, surfCrestRollerMinimumRideTime);
+            cs.SetFloat(ID_SurfCrestRollerVerticalCarry, surfCrestRollerVerticalCarry);
             cs.SetFloat(ID_LifeMin, lifeRange.x);
             cs.SetFloat(ID_LifeMax, Mathf.Max(lifeRange.x, lifeRange.y));
             cs.SetFloat(ID_SizeMin, sizeRange.x);
@@ -773,15 +863,26 @@ namespace AbstractOcclusion.WebGpuWater
                 cs.DisableKeyword(KeywordOceanFftGlue);
             }
 
-            if (simulationDrivenSpawning)
+            if (spawnKernelActive)
             {
                 cs.SetBuffer(_kSpawn, ID_Particles, _particles);
                 cs.SetBuffer(_kSpawn, ID_CrestFleckPreviousPositions, _crestFleckPreviousPositions);
+                cs.SetBuffer(_kSpawn, ID_CrestRollerStates, _crestRollerStates);
                 cs.SetBuffer(_kSpawn, ID_Counters, _counters);
                 cs.SetBuffer(_kSpawn, ID_TileCounts, _tileCounts);
                 cs.SetTexture(_kSpawn, ID_Sim, volume.SimStateTexture);
                 cs.SetTexture(_kSpawn, ID_SimHorizontalFlow, volume.SimHorizontalFlowTexture);
                 cs.SetTexture(_kSpawn, ID_FoamTex, volume.FoamMaskTexture);
+                if (oceanFftGlue)
+                {
+                    // Surf rollers now evaluate SurfaceWorldY in Spawn so their collapse history
+                    // starts at the real FFT-backed surface. The ocean variant therefore needs the
+                    // complete sampling set here, not only in Update/RasterizeDensity.
+                    cs.SetTexture(_kSpawn, ID_OceanFftSpatial, volume.OceanFftSpatialTexture);
+                    cs.SetFloat(ID_OceanFftAmplitude, volume.LargeWaveAmplitudeEffective);
+                    BindOceanAperiodic(cs, _kSpawn);
+                    volume.SeaStateFetch.BindTo(cs, _kSpawn);
+                }
 
                 int spawnGroups = volume.SimResolution / SpawnThreadGroupSize;
                 cs.Dispatch(_kSpawn, spawnGroups, spawnGroups, 1);
@@ -801,6 +902,7 @@ namespace AbstractOcclusion.WebGpuWater
                 _burstRequests.SetData(_burstUpload, 0, 0, burstCount);
                 cs.SetInt(ID_BurstRequestCount, burstCount);
                 cs.SetBuffer(_kSpawnBurst, ID_Particles, _particles);
+                cs.SetBuffer(_kSpawnBurst, ID_CrestRollerStates, _crestRollerStates);
                 cs.SetBuffer(_kSpawnBurst, ID_Counters, _counters);
                 cs.SetBuffer(_kSpawnBurst, ID_BurstRequests, _burstRequests);
                 cs.Dispatch(_kSpawnBurst, burstCount, 1, 1);
@@ -810,6 +912,7 @@ namespace AbstractOcclusion.WebGpuWater
             // slot is a hard error on some backends.
             cs.SetBuffer(_kUpdate, ID_Particles, _particles);
             cs.SetBuffer(_kUpdate, ID_CrestFleckPreviousPositions, _crestFleckPreviousPositions);
+            cs.SetBuffer(_kUpdate, ID_CrestRollerStates, _crestRollerStates);
             cs.SetTexture(_kUpdate, ID_Sim, volume.SimStateTexture);
             cs.SetTexture(_kUpdate, ID_SimHorizontalFlow, volume.SimHorizontalFlowTexture);
             // Update places floating foam on the FFT swell (SurfaceWorldY), so the OCEAN_FFT_GLUE
@@ -848,7 +951,8 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (!useParticles) return; // master gate: never dispatch the deferred density splat while off
             if (!_densityPending || cam != _densityCamera) return;
-            if (_particles == null || _density == null || _densityDepth == null ||
+            if (_particles == null || _crestRollerStates == null ||
+                _density == null || _densityDepth == null ||
                 _densityTier1 == null || _densityTier2 == null) return;
 
             ComputeShader cs = particleCompute;
@@ -878,6 +982,7 @@ namespace AbstractOcclusion.WebGpuWater
             // Rebind this body's wind-wave bank immediately before its deferred surface query.
             volume.WriteWaveUniforms(cs);
             cs.SetBuffer(_kRasterizeDensity, ID_Particles, _particles);
+            cs.SetBuffer(_kRasterizeDensity, ID_CrestRollerStates, _crestRollerStates);
             cs.SetBuffer(_kRasterizeDensity, ID_DensityBuffer, _density);
             cs.SetBuffer(_kRasterizeDensity, ID_DensityDepth, _densityDepth);
             cs.SetBuffer(_kRasterizeDensity, ID_DensityBufferTier1, _densityTier1);
@@ -1017,6 +1122,7 @@ namespace AbstractOcclusion.WebGpuWater
                 volume.WriteBodyProps(_mpb);
                 _mpb.SetBuffer(ID_ParticlesShader, _particles);
                 _mpb.SetBuffer(ID_CrestFleckPreviousPositionsShader, _crestFleckPreviousPositions);
+                _mpb.SetBuffer(ID_CrestRollerStatesShader, _crestRollerStates);
                 WaterParticlePool.WriteFlipbook(_mpb, flipbookGrid, flipbookFps);
                 if (profile != null && profile.look.drive) profile.WriteLook(_mpb, surfaceFoamOpacity);
                 else WriteLayerOpacity(_mpb, particleMaterial, surfaceFoamOpacity);
@@ -1046,6 +1152,7 @@ namespace AbstractOcclusion.WebGpuWater
             volume.WriteBodyProps(_sprayMpb);
             _sprayMpb.SetBuffer(ID_ParticlesShader, _particles);
             _sprayMpb.SetBuffer(ID_CrestFleckPreviousPositionsShader, _crestFleckPreviousPositions);
+            _sprayMpb.SetBuffer(ID_CrestRollerStatesShader, _crestRollerStates);
             WaterParticlePool.WriteFlipbook(_sprayMpb, sprayFlipbookGrid, sprayFlipbookFps);
             if (profile != null && profile.look.drive) profile.WriteSprayLook(_sprayMpb, sprayOpacity);
             else WriteLayerOpacity(_sprayMpb, sprayDrawMaterial, sprayOpacity);
@@ -1061,21 +1168,32 @@ namespace AbstractOcclusion.WebGpuWater
                 Graphics.RenderPrimitives(sprayRp, MeshTopology.Triangles, vertexCount);
             }
 
-            // Crest flecks stay surface-bound and use FoamParticles.shader's analytic KWS-style
-            // dot branch. Their simulation kind remains KIND_RIPPLE_CREST, so they never inherit
-            // ballistic spray motion or depend on a droplet texture. In DENSITY mode the veil
-            // owns them (RasterizeDensity splats the same particles into the LOD tiers), so the
-            // quad pass is skipped - drawing both was a double representation of every fleck.
+            // Ordinary ripple flecks use the analytic point branch. Analytic surf rollers share
+            // the crest visual kind but carry an independent state flag, so this material supplies
+            // their temporal rolling-splash flipbook. In density mode DrawKindSurfRoller filters
+            // the pass to rollers only; the density veil continues to own ordinary ripple flecks.
+            Material crestDrawMaterial = surfCrestRollerMaterial != null
+                ? surfCrestRollerMaterial
+                : particleMaterial;
             volume.WriteBodyProps(_crestFleckMpb);
             _crestFleckMpb.SetBuffer(ID_ParticlesShader, _particles);
             _crestFleckMpb.SetBuffer(ID_CrestFleckPreviousPositionsShader, _crestFleckPreviousPositions);
-            if (profile != null && profile.look.drive) profile.WriteSprayLook(_crestFleckMpb, surfaceFoamOpacity);
-            else WriteLayerOpacity(_crestFleckMpb, particleMaterial, surfaceFoamOpacity);
-            _crestFleckMpb.SetFloat(ID_DrawKind, DrawKindCrestFleck);
+            _crestFleckMpb.SetBuffer(ID_CrestRollerStatesShader, _crestRollerStates);
+            Texture rollerAtlas = ResolveSurfCrestRollerAtlas(crestDrawMaterial);
+            if (rollerAtlas != null)
+                _crestFleckMpb.SetTexture(WaterShaderProps.ParticleTex, rollerAtlas);
+            WaterParticlePool.WriteFlipbook(_crestFleckMpb, surfCrestRollerFlipbookGrid,
+                                                surfCrestRollerFlipbookFps);
+            WriteLayerOpacity(_crestFleckMpb, crestDrawMaterial, surfaceFoamOpacity);
+            if (profile != null) profile.WriteCrestPassLook(_crestFleckMpb, surfaceFoamOpacity);
+            _crestFleckMpb.SetFloat(ID_CrestRollerOpacity, surfCrestRollerOpacity);
+            _crestFleckMpb.SetFloat(ID_CrestRollerDebug, surfCrestRollerDebug ? 1f : 0f);
+            _crestFleckMpb.SetFloat(ID_DrawKind,
+                _densityPending ? DrawKindSurfRoller : DrawKindCrestFleck);
 
-            if (!reroute && !_densityPending)
+            if (!reroute)
             {
-                var crestFleckRp = new RenderParams(particleMaterial)
+                var crestFleckRp = new RenderParams(crestDrawMaterial)
                 {
                     worldBounds = volume.SimWorldBounds,
                     matProps = _crestFleckMpb
@@ -1091,6 +1209,7 @@ namespace AbstractOcclusion.WebGpuWater
                 volume.WriteBodyProps(_bubbleMpb);
                 _bubbleMpb.SetBuffer(ID_ParticlesShader, _particles);
                 _bubbleMpb.SetBuffer(ID_CrestFleckPreviousPositionsShader, _crestFleckPreviousPositions);
+                _bubbleMpb.SetBuffer(ID_CrestRollerStatesShader, _crestRollerStates);
                 if (profile != null && profile.look.drive) profile.WriteLook(_bubbleMpb, bubbleOpacity);
                 else WriteLayerOpacity(_bubbleMpb, particleMaterial, bubbleOpacity);
                 _bubbleMpb.SetFloat(ID_DrawKind, DrawKindBubble);
@@ -1120,8 +1239,8 @@ namespace AbstractOcclusion.WebGpuWater
         internal void RenderAfterFog(RasterCommandBuffer cmd, Camera camera)
         {
             if (!_afterFogArmed || !isActiveAndEnabled) return;
-            if (_particles == null || _crestFleckPreviousPositions == null || volume == null ||
-                particleMaterial == null) return;
+            if (_particles == null || _crestFleckPreviousPositions == null ||
+                _crestRollerStates == null || volume == null || particleMaterial == null) return;
 
             int vertexCount = _capacityPow2 * VerticesPerParticle;
             if (!_rerouteDensity)
@@ -1141,11 +1260,11 @@ namespace AbstractOcclusion.WebGpuWater
             Material sprayDrawMaterial = sprayMaterial != null ? sprayMaterial : particleMaterial;
             cmd.DrawProcedural(Matrix4x4.identity, sprayDrawMaterial, 0,
                                MeshTopology.Triangles, vertexCount, 1, _sprayMpb);
-            // Density mode owns the crest flecks (they are splatted into the LOD tiers the
-            // composite above just drew) - the quad pass on top was a double representation.
-            if (!_rerouteDensity)
-                cmd.DrawProcedural(Matrix4x4.identity, particleMaterial, 0,
-                                   MeshTopology.Triangles, vertexCount, 1, _crestFleckMpb);
+            Material crestDrawMaterial = surfCrestRollerMaterial != null
+                ? surfCrestRollerMaterial
+                : particleMaterial;
+            cmd.DrawProcedural(Matrix4x4.identity, crestDrawMaterial, 0,
+                               MeshTopology.Triangles, vertexCount, 1, _crestFleckMpb);
 
             // Bubble pass rides the reroute like the others; its block was filled in Draw().
             if (bubbleAmount > 0f)
@@ -1212,6 +1331,17 @@ namespace AbstractOcclusion.WebGpuWater
                 ? particleMaterial.GetTexture(WaterShaderProps.ParticleTex)
                 : null;
             return texture != null ? texture : Texture2D.whiteTexture;
+        }
+
+        Texture ResolveSurfCrestRollerAtlas(Material crestDrawMaterial)
+        {
+            if (profile != null && profile.surfRollers != null && profile.surfRollers.drive
+                && profile.surfRollers.flipbookAtlas != null)
+                return profile.surfRollers.flipbookAtlas;
+
+            return crestDrawMaterial != null
+                ? crestDrawMaterial.GetTexture(WaterShaderProps.ParticleTex)
+                : null;
         }
 
         Vector2Int ResolveDensityStampGrid()

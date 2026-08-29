@@ -10,9 +10,12 @@
 //   VisualizePreview  - remap displacement to a readable grey/colour image for the debug view
 //                       (dispatched by C# only in editor/development builds).
 //
-// The butterfly (twiddle + index pairs) is precomputed CPU-side into OceanButterfly. Grid is fixed at
-// FFT_SIZE so the groupshared buffers are compile-time sized; the C# side asserts resolution == FFT_SIZE.
-// WebGPU-safe: FFT_SIZE=128 -> 128 threads/group (<256) and 6 KB groupshared (<16 KB); half-float targets.
+// The butterfly (twiddle + index pairs) is precomputed CPU-side into OceanButterfly. Grids are
+// compile-time sized: one FFT kernel pair is STAMPED per supported resolution (OCEAN_FFT_KERNELS
+// below) and the C# side picks the pair by name, refusing any other size
+// (WaterOceanFft.SupportedFftResolutions, validator-guarded).
+// WebGPU-safe at every stamped size: 256 -> 256 threads/group (= the baseline invocation limit)
+// and 12 KB groupshared (< the 16 KB baseline); half-float targets.
 #include "WaterShared.hlsl"     // OCEAN_FFT_MAX_CASCADES (shared cascade layout)
 #include "WaterSeaStateFetch.hlsl"
 #include "WaterFoamCommon.hlsl" // FoamDecayBlend: split decay shared with WaterSim.compute
@@ -20,8 +23,12 @@
 
 #pragma kernel SpectrumInit
 #pragma kernel SpectrumUpdate
-#pragma kernel FftHorizontal
-#pragma kernel FftVertical
+#pragma kernel FftHorizontal64
+#pragma kernel FftVertical64
+#pragma kernel FftHorizontal128
+#pragma kernel FftVertical128
+#pragma kernel FftHorizontal256
+#pragma kernel FftVertical256
 #pragma kernel ComputeNormal
 #pragma kernel BakeHeightField
 #pragma kernel VisualizePreview
@@ -48,6 +55,7 @@ float4 _OceanAperiodicParams;    // x = enabled, y = tile scale, z = direction s
 float4 _OceanDirectionMapFrame; // xy = world centre, z = inverse world size
 
 uint   OceanFftResolution;
+uint   OceanFftTileMask;     // OceanFftResolution - 1: power-of-two wrap mask (see the tile-wrap note)
 uint   OceanFftCascades;
 float4 OceanDomainSizes;     // metres per cascade (lane = slice)
 float4 OceanBandMin;         // per-cascade shortest kept wavelength (metres) - disjoint cascade bands
@@ -105,17 +113,16 @@ float  OceanFieldAmplitude;          // matches the surface shader's _LargeWaveA
 
 #define OCEAN_FFT_TG        8
 // OCEAN_FFT_MAX_CASCADES comes from WaterShared.hlsl (shared with the sampling/foam sides).
-// C# pair: WaterOceanFft.FftSize / FftStages (WaterWaveConstantsValidator guards both). The
-// RESOLUTION a body asks for is a separate check - WaterOceanFft warns and disables the FFT ocean
-// when it does not equal FftSize.
-#define FFT_SIZE            128
-#define FFT_STAGES          7     // log2(FFT_SIZE)
-// Tile wrap for the two manual bilinear fetches below. FFT_SIZE is a power of two and WaterOceanFft
-// refuses to run at any other resolution (it warns and disables the FFT ocean), so a bitmask is an
+// No FFT_SIZE define any more: the FFT kernels are STAMPED per supported resolution (see
+// OCEAN_FFT_KERNELS below) and WaterOceanFft selects a pair by name, so the resolution reaching
+// the other kernels is the runtime uniform OceanFftResolution - always one of the stamped sizes.
+// Tile wrap for the manual bilinear/neighbour fetches below: OceanFftTileMask = resolution - 1, set
+// by C# alongside the resolution (which it validates to a stamped power of two), so a bitmask is an
 // exact substitute for the modulus - and on two's-complement ints it wraps NEGATIVE indices correctly
 // on its own, which is what lets the ((x % N) + N) % N dance go away entirely. fxc warns that signed
-// integer modulus is "much slower", and these run per texel per cascade every frame.
-#define OCEAN_TILE_WRAP     (FFT_SIZE - 1)
+// integer modulus is "much slower", and these run per texel per cascade every frame. The mask being
+// a runtime uniform (the FFT size is per quality tier now) keeps the AND an AND - only the
+// compile-time folding is lost, not the division-free wrap.
 #define OCEAN_TWO_PI        6.28318530718
 #define OCEAN_GRAVITY       9.81
 #define OCEAN_KMIN          1e-4
@@ -344,86 +351,97 @@ void SpectrumUpdate(uint3 id : SV_DispatchThreadID)
 
 // ---- Butterfly FFT ---------------------------------------------------------------------------------
 // Three complex signals transformed together in groupshared, ping-ponged across the stages. One
-// threadgroup handles one row (horizontal) or one column (vertical) of length FFT_SIZE.
-groupshared float2 gX[2][FFT_SIZE];
-groupshared float2 gY[2][FFT_SIZE];
-groupshared float2 gZ[2][FFT_SIZE];
-
-// One butterfly stage for output element 'e': out = in[a] + twiddle * in[b], for all three signals.
-void OceanButterflyStage(uint stage, uint e, int src)
-{
-    float4 bf = OceanButterfly[uint2(stage, e)];
-    uint a = (uint)(bf.z + 0.5);
-    uint b = (uint)(bf.w + 0.5);
-    float2 w = bf.xy;
-    gX[1 - src][e] = gX[src][a] + OceanCMul(w, gX[src][b]);
-    gY[1 - src][e] = gY[src][a] + OceanCMul(w, gY[src][b]);
-    gZ[1 - src][e] = gZ[src][a] + OceanCMul(w, gZ[src][b]);
+// threadgroup handles one row (horizontal) or one column (vertical) of the cascade's side length.
+//
+// STAMPED PER SUPPORTED SIZE (OCEAN_FFT_KERNELS below, instantiated at the end of this section).
+// The groupshared buffers and [numthreads] need compile-time sizes, and the stage loop must stay a
+// constant-trip [unroll] - WebGPU/Naga rejects barriers reachable through a loop whose analysis
+// touches the invocation id - so a RUNTIME resolution is impossible here; each supported size gets
+// its own kernel pair and WaterOceanFft selects one by name (SupportedFftResolutions, checked by
+// WaterWaveConstantsValidator against these instantiations). 512 cannot be stamped with this
+// one-threadgroup-per-line design: 512 threads exceeds WebGPU's baseline 256-invocation limit.
+//
+// Notes kept OUTSIDE the macro (a // comment inside would eat the continuation backslashes):
+// - Butterfly stage for output element 'e': out = in[a] + twiddle * in[b], all three signals.
+//   Stage 0 reads bit-reversed inputs; the twiddle exponent per element encodes the wing sign, so
+//   the same code runs every stage (see WaterOceanFft.BuildButterfly).
+// - FftVertical's trailing spectra write-back is FUNCTIONALLY REDUNDANT (the spectra are scratch
+//   after it, overwritten by next frame's SpectrumUpdate) but REQUIRED for WebGPU: a RWTexture
+//   read-only in a kernel is compiled to a SAMPLED texture, whose Uint sample type then mismatches
+//   the r32uint STORAGE binding (FftHorizontal reads AND writes them, so it stays a storage texture
+//   and validates). Writing keeps that pass read-write too, so both kernels agree on binding type.
+// - Centred spectrum -> multiply the spatial result by (-1)^(x+y) to undo the N/2 shift.
+// - NO per-cascade height scale. It used to carry KWS's 0.5/0.5/0.6/0.9 fudge, which was a way of
+//   shaping the spectrum through the back door on a spectrum that had no shape knobs. It is now
+//   actively wrong: JONSWAP already decides how energy splits across the bands, and re-weighting
+//   the bands afterwards both distorts that shape and breaks the significant-height normalisation
+//   (which integrates the spectrum, not the spectrum-times-a-per-band-fudge).
+#define OCEAN_FFT_KERNELS(SIZE, STAGES) \
+groupshared float2 gX##SIZE[2][SIZE]; \
+groupshared float2 gY##SIZE[2][SIZE]; \
+groupshared float2 gZ##SIZE[2][SIZE]; \
+void OceanButterflyStage##SIZE(uint stage, uint e, int src) \
+{ \
+    float4 bf = OceanButterfly[uint2(stage, e)]; \
+    uint a = (uint)(bf.z + 0.5); \
+    uint b = (uint)(bf.w + 0.5); \
+    float2 w = bf.xy; \
+    gX##SIZE[1 - src][e] = gX##SIZE[src][a] + OceanCMul(w, gX##SIZE[src][b]); \
+    gY##SIZE[1 - src][e] = gY##SIZE[src][a] + OceanCMul(w, gY##SIZE[src][b]); \
+    gZ##SIZE[1 - src][e] = gZ##SIZE[src][a] + OceanCMul(w, gZ##SIZE[src][b]); \
+} \
+[numthreads(SIZE, 1, 1)] \
+void FftHorizontal##SIZE(uint3 id : SV_DispatchThreadID) \
+{ \
+    uint col = id.x, row = id.y, slice = id.z; \
+    uint3 p = uint3(col, row, slice); \
+    gX##SIZE[0][col] = OceanUnpackC(OceanSpecX[p]); \
+    gY##SIZE[0][col] = OceanUnpackC(OceanSpecY[p]); \
+    gZ##SIZE[0][col] = OceanUnpackC(OceanSpecZ[p]); \
+    GroupMemoryBarrierWithGroupSync(); \
+    int src = 0; \
+    [unroll] \
+    for (uint stage = 0; stage < STAGES; stage++) \
+    { \
+        OceanButterflyStage##SIZE(stage, col, src); \
+        GroupMemoryBarrierWithGroupSync(); \
+        src = 1 - src; \
+    } \
+    OceanSpecX[p] = OceanPackC(gX##SIZE[src][col]); \
+    OceanSpecY[p] = OceanPackC(gY##SIZE[src][col]); \
+    OceanSpecZ[p] = OceanPackC(gZ##SIZE[src][col]); \
+} \
+[numthreads(1, SIZE, 1)] \
+void FftVertical##SIZE(uint3 id : SV_DispatchThreadID) \
+{ \
+    uint col = id.x, row = id.y, slice = id.z; \
+    uint3 p = uint3(col, row, slice); \
+    gX##SIZE[0][row] = OceanUnpackC(OceanSpecX[p]); \
+    gY##SIZE[0][row] = OceanUnpackC(OceanSpecY[p]); \
+    gZ##SIZE[0][row] = OceanUnpackC(OceanSpecZ[p]); \
+    GroupMemoryBarrierWithGroupSync(); \
+    int src = 0; \
+    [unroll] \
+    for (uint stage = 0; stage < STAGES; stage++) \
+    { \
+        OceanButterflyStage##SIZE(stage, row, src); \
+        GroupMemoryBarrierWithGroupSync(); \
+        src = 1 - src; \
+    } \
+    OceanSpecX[p] = OceanPackC(gX##SIZE[src][row]); \
+    OceanSpecY[p] = OceanPackC(gY##SIZE[src][row]); \
+    OceanSpecZ[p] = OceanPackC(gZ##SIZE[src][row]); \
+    float sign = ((col + row) & 1u) ? -1.0 : 1.0; \
+    float3 disp = float3(gX##SIZE[src][row].x, gY##SIZE[src][row].x, gZ##SIZE[src][row].x) * sign; \
+    OceanDisplacement[p] = float4(disp, 0.0); \
 }
 
-[numthreads(FFT_SIZE, 1, 1)]
-void FftHorizontal(uint3 id : SV_DispatchThreadID)
-{
-    uint col = id.x, row = id.y, slice = id.z;
-    uint3 p = uint3(col, row, slice);
-    gX[0][col] = OceanUnpackC(OceanSpecX[p]);
-    gY[0][col] = OceanUnpackC(OceanSpecY[p]);
-    gZ[0][col] = OceanUnpackC(OceanSpecZ[p]);
-    GroupMemoryBarrierWithGroupSync();
-
-    int src = 0;
-    // Unrolled: a constant-trip loop makes the group barriers provably uniform control flow (WebGPU/Naga
-    // rejects barriers reachable through a loop whose analysis touches the invocation id).
-    [unroll]
-    for (uint stage = 0; stage < FFT_STAGES; stage++)
-    {
-        OceanButterflyStage(stage, col, src);
-        GroupMemoryBarrierWithGroupSync();
-        src = 1 - src;
-    }
-    OceanSpecX[p] = OceanPackC(gX[src][col]);
-    OceanSpecY[p] = OceanPackC(gY[src][col]);
-    OceanSpecZ[p] = OceanPackC(gZ[src][col]);
-}
-
-[numthreads(1, FFT_SIZE, 1)]
-void FftVertical(uint3 id : SV_DispatchThreadID)
-{
-    uint col = id.x, row = id.y, slice = id.z;
-    uint3 p = uint3(col, row, slice);
-    gX[0][row] = OceanUnpackC(OceanSpecX[p]);
-    gY[0][row] = OceanUnpackC(OceanSpecY[p]);
-    gZ[0][row] = OceanUnpackC(OceanSpecZ[p]);
-    GroupMemoryBarrierWithGroupSync();
-
-    int src = 0;
-    [unroll]
-    for (uint stage = 0; stage < FFT_STAGES; stage++)
-    {
-        OceanButterflyStage(stage, row, src);
-        GroupMemoryBarrierWithGroupSync();
-        src = 1 - src;
-    }
-    // Write the transformed spectra back. FUNCTIONALLY REDUNDANT (the spectra are scratch after this pass,
-    // overwritten by next frame's SpectrumUpdate) but REQUIRED for WebGPU: a RWTexture read-only in a kernel
-    // is compiled to a SAMPLED texture, whose Uint sample type then mismatches the r32uint STORAGE binding
-    // (FftHorizontal reads AND writes them, so it stays a storage texture and validates). Writing here keeps
-    // this pass read-write too, so both kernels agree on the binding type.
-    OceanSpecX[p] = OceanPackC(gX[src][row]);
-    OceanSpecY[p] = OceanPackC(gY[src][row]);
-    OceanSpecZ[p] = OceanPackC(gZ[src][row]);
-
-    // Centred spectrum -> multiply the spatial result by (-1)^(x+y) to undo the N/2 shift.
-    //
-    // NO per-cascade height scale any more. It used to carry KWS's 0.5/0.5/0.6/0.9 fudge, which was a
-    // way of shaping the spectrum through the back door on a spectrum that had no shape knobs. It is
-    // now actively wrong: JONSWAP already decides how energy splits across the bands, and re-weighting
-    // the bands afterwards both distorts that shape and breaks the significant-height normalisation
-    // (which integrates the spectrum, not the spectrum-times-a-per-band-fudge).
-    float sign = ((col + row) & 1u) ? -1.0 : 1.0;
-    float3 disp = float3(gX[src][row].x, gY[src][row].x, gZ[src][row].x) * sign;
-    OceanDisplacement[p] = float4(disp, 0.0);
-}
+// C# pair: WaterOceanFft.SupportedFftResolutions - one instantiation per supported size, stage
+// count = log2(size). WaterWaveConstantsValidator checks that list, these instantiations and the
+// #pragma kernel lines all agree.
+OCEAN_FFT_KERNELS(64, 6)
+OCEAN_FFT_KERNELS(128, 7)
+OCEAN_FFT_KERNELS(256, 8)
 
 // Manual bilinear read of the persistent foam history at a fractional tile-texel position, wrapping at
 // the cascade edge. The cascade tiles (periodic FFT), so the foam field is periodic and the back-trace
@@ -433,10 +451,11 @@ float OceanFoamHistoryBilinear(float2 texelPos, uint slice, int N)
 {
     float2 baseF = floor(texelPos);
     float2 frac2 = texelPos - baseF;
-    int x0 = (int)baseF.x & OCEAN_TILE_WRAP;
-    int y0 = (int)baseF.y & OCEAN_TILE_WRAP;
-    int x1 = (x0 + 1) & OCEAN_TILE_WRAP;
-    int y1 = (y0 + 1) & OCEAN_TILE_WRAP;
+    int wrap = (int)OceanFftTileMask;
+    int x0 = (int)baseF.x & wrap;
+    int y0 = (int)baseF.y & wrap;
+    int x1 = (x0 + 1) & wrap;
+    int y1 = (y0 + 1) & wrap;
     float c00 = OceanFoamPrev[uint3(x0, y0, slice)];
     float c10 = OceanFoamPrev[uint3(x1, y0, slice)];
     float c01 = OceanFoamPrev[uint3(x0, y1, slice)];
@@ -454,11 +473,11 @@ void ComputeNormal(uint3 id : SV_DispatchThreadID)
     uint slice = id.z;
     uint N = OceanFftResolution;
     float step = max(OceanDomainSizes[slice], 1e-3) / N;    // metres per texel
-    // Same power-of-two wrap as the bilinear helpers (see OCEAN_TILE_WRAP). These are unsigned, so
-    // fxc does not warn about them, but N is a runtime uniform and therefore not foldable - the mask
-    // turns four integer divisions per texel per cascade into four ANDs.
-    uint xr = (id.x + 1u) & OCEAN_TILE_WRAP, xl = (id.x + FFT_SIZE - 1u) & OCEAN_TILE_WRAP;
-    uint yu = (id.y + 1u) & OCEAN_TILE_WRAP, yd = (id.y + FFT_SIZE - 1u) & OCEAN_TILE_WRAP;
+    // Same power-of-two wrap as the bilinear helpers (see the OceanFftTileMask note). These are
+    // unsigned, so fxc does not warn about them, but N is a runtime uniform and therefore not
+    // foldable - the mask turns four integer divisions per texel per cascade into four ANDs.
+    uint xr = (id.x + 1u) & OceanFftTileMask, xl = (id.x + N - 1u) & OceanFftTileMask;
+    uint yu = (id.y + 1u) & OceanFftTileMask, yd = (id.y + N - 1u) & OceanFftTileMask;
 
     float3 dr = OceanDisplacement[uint3(xr, id.y, slice)].xyz;
     float3 dl = OceanDisplacement[uint3(xl, id.y, slice)].xyz;
@@ -598,8 +617,9 @@ float3 OceanCascadeDisplacementBilinear(float2 worldXZ, uint c)
     float2 texel = frac(worldXZ / max(OceanDomainSizes[c], 1e-3)) * N; // tile-local texel coordinate
     int x0 = (int)floor(texel.x); int y0 = (int)floor(texel.y);
     float fx = texel.x - x0; float fy = texel.y - y0;
-    x0 &= OCEAN_TILE_WRAP; y0 &= OCEAN_TILE_WRAP;
-    int x1 = (x0 + 1) & OCEAN_TILE_WRAP; int y1 = (y0 + 1) & OCEAN_TILE_WRAP;
+    int wrap = (int)OceanFftTileMask;
+    x0 &= wrap; y0 &= wrap;
+    int x1 = (x0 + 1) & wrap; int y1 = (y0 + 1) & wrap;
     float3 h00 = OceanDisplacement[uint3(x0, y0, c)].xyz;
     float3 h10 = OceanDisplacement[uint3(x1, y0, c)].xyz;
     float3 h01 = OceanDisplacement[uint3(x0, y1, c)].xyz;

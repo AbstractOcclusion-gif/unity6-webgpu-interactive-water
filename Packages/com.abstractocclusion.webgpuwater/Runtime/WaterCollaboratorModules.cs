@@ -20,12 +20,16 @@ namespace AbstractOcclusion.WebGpuWater
 
         public bool Enabled => true;
 
+        // Pooled since the 2026-08-29 simulation-pooling round: streaming zones enable/disable
+        // bodies constantly, and every cycle used to allocate + destroy a full RT set. The pool
+        // state-clears a reused context before handing it over, so no ripples/foam leak between
+        // bodies (see WaterSimLeasePool).
         public void Initialize(WaterContext context)
-            => Simulation = new WaterSimulation(_owner.simCompute, _owner.SimResolution);
+            => Simulation = WaterSimLeasePool.Acquire(_owner.simCompute, _owner.SimResolution, _owner);
 
         public void Dispose()
         {
-            Simulation?.Dispose();
+            WaterSimLeasePool.Release(Simulation, _owner.simCompute);
             Simulation = null;
         }
     }
@@ -113,7 +117,7 @@ namespace AbstractOcclusion.WebGpuWater
         // every sea-state change (WaterOceanFft.RebuildSpectrumInputs), so a fixed set handed over once
         // at construction could only ever describe one size of ocean.
         public void Initialize(WaterContext context)
-            => OceanFft = new WaterOceanFft(_owner.oceanFftCompute, WaterOceanFft.DefaultResolution,
+            => OceanFft = new WaterOceanFft(_owner.oceanFftCompute, _owner.OceanFftResolution,
                                             WaterOceanFft.DefaultCascadeCount);
 
         public void Dispose()

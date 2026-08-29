@@ -1,7 +1,7 @@
 // WebGpuWater - inspector for WaterFoamProfile: the ONE friendly config surface for a body's foam.
 //
-// The profile is a plain ScriptableObject with four serializable sections (shared look, ambient
-// foam/spray, density veil, splash), each gated by its own 'drive' bool. This editor renders those
+// The profile is a plain ScriptableObject with focused serializable sections, each gated by its
+// own 'drive' bool. This editor renders those
 // sections as the package's blue toggle-boxes (WaterEditorUI), adds a small preset row that scales
 // the whole thing Small -> Big in one click, and an "Apply to selected body" button that points a
 // body's WaterFoamParticles AND WaterSplashEmitter at this profile. Everything is written through
@@ -18,6 +18,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // Section field names on WaterFoamProfile (top-level serialized members).
         const string LookField = "look";
         const string AmbientField = "ambient";
+        const string SurfRollerField = "surfRollers";
         const string MotionField = "motion";
         const string VeilField = "veil";
         const string SplashField = "splash";
@@ -34,6 +35,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             "- Shared Look: appearance shared by foam particles (tint, opacity, sprite, flipbook and size bias).\n" +
             "- Floating Foam: surface clumps spawned from the simulated foam mask. Ripples can feed that mask.\n" +
             "- Ripple Crest Flecks: separate small dots emitted directly from moving ripple crests.\n" +
+            "- Wave Particles (Surf Rollers): rolling splashes emitted from the analytic shore-wave face.\n" +
             "- Ambient Airborne Droplets: the Spray Chance fraction of foam-mask spawns launched into the air.\n" +
             "- Splash & Pump Bursts: impact/pump droplets and crowns; these are not mist or crest flecks.\n" +
             "- Landed Foam: the surface patches left when airborne droplets land.\n" +
@@ -83,6 +85,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // Section expanded state (editor-session only). Open by default so every knob is discoverable.
         bool _lookExpanded = true;
         bool _ambientExpanded = true;
+        bool _surfRollerExpanded = true;
         bool _motionExpanded = true;
         bool _veilExpanded = true;
         bool _splashExpanded = true;
@@ -100,6 +103,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             serializedObject.Update();
             SerializedProperty look = serializedObject.FindProperty(LookField);
             SerializedProperty ambient = serializedObject.FindProperty(AmbientField);
+            SerializedProperty surfRollers = serializedObject.FindProperty(SurfRollerField);
             SerializedProperty motion = serializedObject.FindProperty(MotionField);
             SerializedProperty veil = serializedObject.FindProperty(VeilField);
             SerializedProperty splash = serializedObject.FindProperty(SplashField);
@@ -109,6 +113,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 look.FindPropertyRelative(DriveField), () => DrawSectionFields(look));
             _ambientExpanded = WaterEditorUI.SectionWithToggle("Ambient Source & Foam Ranges", _ambientExpanded,
                 ambient.FindPropertyRelative(DriveField), () => DrawAmbientSection(ambient));
+            _surfRollerExpanded = WaterEditorUI.SectionWithToggle("Wave Particles (Surf Rollers)",
+                _surfRollerExpanded, surfRollers.FindPropertyRelative(DriveField),
+                () => DrawSectionFields(surfRollers));
             _motionExpanded = WaterEditorUI.SectionWithToggle("Motion", _motionExpanded,
                 motion.FindPropertyRelative(DriveField), () => DrawSectionFields(motion));
             _veilExpanded = WaterEditorUI.SectionWithToggle("Density Veil", _veilExpanded,

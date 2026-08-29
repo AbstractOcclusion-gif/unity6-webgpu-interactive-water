@@ -87,6 +87,7 @@ namespace AbstractOcclusion.WebGpuWater
         Rigidbody _rb;
         Collider _col;
         WaterVolume _body;
+        int _domainBodyId; // hysteresis hint for the domain resolver (0 = none)
 
         // Float points in the body's local space, plus the world-space sphere radius
         // used for the per-point submerged-volume (sphere-cap) calculation.
@@ -191,9 +192,13 @@ namespace AbstractOcclusion.WebGpuWater
 
         void FixedUpdate()
         {
-            // Re-resolve every step so an object that drifts between lakes floats on the one it is
-            // currently in (cheap: a handful of bodies).
-            _body = WaterVolume.BodyContaining(transform.position);
+            // Re-resolve every step so an object that drifts between lakes floats on the one it
+            // is currently in. Domain-resolved (2026-08-29): full-XYZ - stacked bodies pick by
+            // elevation; exclusion volumes read as dry (no lift inside a carved hull interior);
+            // no Primary fallback - out of water means out of water. The stored id is the
+            // hysteresis hint that stops edge chatter.
+            _body = WaterDomainResolver.GameplayBodyAt(
+                transform.position, WaterQueryIntent.BuoyancySurface, ref _domainBodyId);
             if (_body == null || _localPoints == null || _localPoints.Length == 0) return;
 
             BuildWorldPoints();

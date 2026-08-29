@@ -36,12 +36,14 @@ namespace AbstractOcclusion.WebGpuWater
         const int FontSize = 18;
         const int MarginPixels = 12;
         const int PanelWidth = 470;
-        const int PanelHeight = 142; // 5 readout lines at FontSize, with slack - GUI.Label CLIPS to its rect
+        const int PanelHeight = 168; // 6 readout lines at FontSize, with slack - GUI.Label CLIPS to its rect
 
         [Tooltip("Cycle the underwater fog mode: Off -> Simple -> Full.")]
         [SerializeField] KeyCode fogKey = KeyCode.F;
         [Tooltip("Toggle the ocean god-ray shafts (through the tier gate, so it also tests it).")]
         [SerializeField] KeyCode godRayKey = KeyCode.G;
+        [Tooltip("Cycle the underwater fog solve resolution: full -> half -> quarter.")]
+        [SerializeField] KeyCode fogScaleKey = KeyCode.R;
         [Tooltip("Show or hide the readout.")]
         [SerializeField] KeyCode visibilityKey = KeyCode.H;
         float _smoothedMs;
@@ -84,6 +86,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (primary == null) return;
             if (Pressed(fogKey)) primary.UnderwaterFogMode = NextFogMode(primary.UnderwaterFogMode);
             if (Pressed(godRayKey)) primary.GodRaysAllowed = !primary.GodRaysAllowed;
+            if (Pressed(fogScaleKey)) primary.FogSolveScale = NextFogSolveScale(primary.FogSolveScale);
         }
 
         // Off -> Simple -> Full -> Off. Ordered by cost so repeated presses walk the budget upward.
@@ -92,6 +95,15 @@ namespace AbstractOcclusion.WebGpuWater
             if (current == WaterQuality.UnderwaterMode.Off) return WaterQuality.UnderwaterMode.Simple;
             if (current == WaterQuality.UnderwaterMode.Simple) return WaterQuality.UnderwaterMode.Full;
             return WaterQuality.UnderwaterMode.Off;
+        }
+
+        // Full -> half -> quarter -> full. Compared with a margin: the value round-trips through
+        // a clamp, and an equality on floats is exactly the kind of latch that sticks.
+        static float NextFogSolveScale(float current)
+        {
+            if (current > 0.75f) return 0.5f;
+            if (current > 0.375f) return 0.25f;
+            return 1f;
         }
 
         static bool Pressed(KeyCode key)
@@ -131,6 +143,7 @@ namespace AbstractOcclusion.WebGpuWater
                 $"{_smoothedMs:0.0} ms  ({fps:0} fps)   worst {_worstMs:0.0} ms\n" +
                 $"[{fogKey}] underwater fog : {fog}\n" +
                 $"[{godRayKey}] ocean god rays : {godRays}\n" +
+                $"[{fogScaleKey}] fog solve res : {(primary != null ? $"x{primary.FogSolveScale:0.##}" : "-")}\n" +
                 $"fog pass armed {WaterVolume.UnderwaterFogActive}   submerged {WaterVolume.CameraSubmerged}\n" +
                 $"[{visibilityKey}] hide";
         }

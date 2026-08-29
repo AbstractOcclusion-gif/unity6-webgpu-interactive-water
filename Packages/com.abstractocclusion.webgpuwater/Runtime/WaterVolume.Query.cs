@@ -15,7 +15,7 @@ using UnityEngine;
 
 namespace AbstractOcclusion.WebGpuWater
 {
-    public partial class WaterVolume : IWaterHeightSampler, IWaterCurrentSampler
+    public partial class WaterVolume : IWaterHeightSampler, IWaterCurrentSampler, IWaterSurfaceProvider
     {
         // Explicit Scripts category so a ProfilerRecorder (WaterMetricsOverlay) can match it by
         // (category, name). The name is a shared const: the overlay reads the SAME string, so a
@@ -139,5 +139,44 @@ namespace AbstractOcclusion.WebGpuWater
             return WaterSurfaceKinematics.ComposeVelocity(
                 waveDriftVelocity, currentVelocity, worldRate);
         }
+
+        // ---- IWaterSurfaceProvider: this body's pool plane / ocean clipmap as a provider ----
+        // Explicit implementations keep the public component API small; only BodyId is public
+        // because gameplay callers key their hysteresis hint on it.
+
+        int _domainBodyId;
+
+        /// <summary>Session-stable domain identity (see IWaterSurfaceProvider.BodyId). Lazily
+        /// assigned so no lifecycle hook is needed; the counter never resets mid-session, so an
+        /// id is never reissued while anything could still hold it.</summary>
+        public int BodyId
+            => _domainBodyId != 0 ? _domainBodyId : _domainBodyId = WaterSurfaceProviders.NextBodyId();
+
+        WaterVolume IWaterSurfaceProvider.Body => this;
+
+        int IWaterSurfaceProvider.Specificity => WaterSurfaceProviders.VolumeSpecificity;
+
+        bool IWaterSurfaceProvider.ContainsXZ(Vector3 worldPoint)
+            => WorldToPoolXZ(worldPoint, out _, out _);
+
+        bool IWaterSurfaceProvider.ContainsPoint(Vector3 worldPoint) => ContainsPointXYZ(worldPoint);
+
+        bool IWaterSurfaceProvider.ContainsPointWithin(Vector3 worldPoint, float boundaryMarginMeters)
+            => ContainsPointWithinMargin(worldPoint, boundaryMarginMeters);
+
+        bool IWaterSurfaceProvider.TrySampleSurface(Vector3 worldPoint, WaterQueryFields fields,
+                                                    float minimumWaveLength,
+                                                    bool excludeInteractiveRipples,
+                                                    out WaterSample sample)
+            => TrySampleWorld(worldPoint, fields, minimumWaveLength, excludeInteractiveRipples,
+                              out sample);
+
+        // Rotation is ignored on purpose: these bounds only rank overlapping domains by size,
+        // and a conservative axis-aligned box ranks identically for that. The ocean reports
+        // infinite size so any bounded body beats it (resolver rule 3).
+        Bounds IWaterSurfaceProvider.DomainBounds
+            => IsOceanClipmap
+                ? new Bounds(VolumeCenter, Vector3.positiveInfinity)
+                : new Bounds(VolumeCenter, 2f * VolumeExtentSafe);
     }
 }

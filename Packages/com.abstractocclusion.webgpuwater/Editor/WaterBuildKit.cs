@@ -130,6 +130,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string FoamParticleAtlasFile = "FoamParticleAtlas_2x2.png";
         // Round soft droplet sprite for the airborne spray pass (its own look, separate from foam).
         internal const string FoamDropletTexFile = "Droplet.png";
+        internal const string SurfRollerFlipbookFile = "RollingSplashFlipbook_4x4.png";
         // Foam pattern flipbook (frames laid out in a grid; the surface shader cross-fades frames
         // over time so the foam churns internally). Relief is procedural (finite differences of the
         // pattern), so no normal-map asset.

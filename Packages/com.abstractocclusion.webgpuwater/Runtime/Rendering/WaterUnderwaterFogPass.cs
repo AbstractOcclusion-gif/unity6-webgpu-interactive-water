@@ -41,6 +41,7 @@ namespace AbstractOcclusion.WebGpuWater
         const string SolveShaderPassName = "WaterFogSolve";
         const string SolveAbsorbTextureName = "_WaterFogSolveAbsorb";
         const string SolveInscatterTextureName = "_WaterFogSolveInscatter";
+        const string SolveScalePropertyName = "_WaterFogSolveScale";
         const GraphicsFormat SolveRtFormat = GraphicsFormat.R16G16B16A16_SFloat;
         // "WaterRestoreOpaqueDepth": rewrites the depth attachment from the opaque-only
         // _CameraDepthTexture so user transparents drawn after the water stack stop
@@ -111,6 +112,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_WaterFogSolveAbsorb = Shader.PropertyToID(SolveAbsorbTextureName);
         static readonly int ID_WaterFogSolveInscatter =
             Shader.PropertyToID(SolveInscatterTextureName);
+        static readonly int ID_WaterFogSolveScale = Shader.PropertyToID(SolveScalePropertyName);
 
         readonly Material _material;
         readonly Material _heightRtMaterial;
@@ -283,8 +285,14 @@ namespace AbstractOcclusion.WebGpuWater
             // independently (a straddling near plane arms the line before the eye submerges).
             if (WaterVolume.UnderwaterFogActive)
             {
+                // Half-res solve (the C1 unlock): the scale is the fog source's tier knob, probe-
+                // writable like the fog mode. Debug views force full res - they ride the solve
+                // alpha flags, which the scaled path repurposes for eye depth, and a view is read
+                // by exact colour purity that no upsample filter may touch.
+                float solveScale = (fogSource != null && !WaterDebugView.FogViewActive)
+                    ? fogSource.FogSolveScale : 1f;
                 RecordFogPass(renderGraph, resources, cameraColor, "WaterUnderwaterFog",
-                              classifyRt);
+                              classifyRt, solveScale);
             }
             // The meniscus darkens the finished frame along the crossing - the exact band a fog
             // debug view exists to show - so it stands down while one is selected. The absorb and
@@ -808,28 +816,34 @@ namespace AbstractOcclusion.WebGpuWater
             });
         }
 
-        // Shrink a camera-sized desc to the prepass resolution, whatever size mode the source desc
-        // carries (URP's camera color is usually Explicit; Scale covers dynamic-resolution setups).
-        // Returns the scale ACTUALLY applied, so the published uniform can never disagree with
-        // the RT that was allocated (Functor mode cannot be composed and stays full res).
-        static float ApplyPrepassScale(ref TextureDesc desc)
+        static float ApplyPrepassScale(ref TextureDesc desc) =>
+            ApplyScale(ref desc, PrepassResolutionScale);
+
+        // ONE shrink-a-camera-sized-desc implementation for the ocean prepass AND the C1 solve
+        // targets, whatever size mode the source desc carries (URP's camera color is usually
+        // Explicit; Scale covers dynamic-resolution setups). Returns the scale ACTUALLY applied,
+        // so the published uniform can never disagree with the RT that was allocated (Functor
+        // mode cannot be composed and stays full res - and the uniform must say so).
+        static float ApplyScale(ref TextureDesc desc, float scale)
         {
+            if (scale >= 1f) return 1f; // full res requested: the camera-sized desc is right
             if (desc.sizeMode == TextureSizeMode.Explicit)
             {
-                desc.width = Mathf.Max(1, (int)(desc.width * PrepassResolutionScale));
-                desc.height = Mathf.Max(1, (int)(desc.height * PrepassResolutionScale));
-                return PrepassResolutionScale;
+                desc.width = Mathf.Max(1, (int)(desc.width * scale));
+                desc.height = Mathf.Max(1, (int)(desc.height * scale));
+                return scale;
             }
             if (desc.sizeMode == TextureSizeMode.Scale)
             {
-                desc.scale *= PrepassResolutionScale;
-                return PrepassResolutionScale;
+                desc.scale *= scale;
+                return scale;
             }
             return 1f; // Functor: full res, and the uniform must say so
         }
 
         void RecordFogPass(RenderGraph renderGraph, UniversalResourceData resources,
-                           TextureHandle cameraColor, string passName, TextureHandle classifyRt)
+                           TextureHandle cameraColor, string passName, TextureHandle classifyRt,
+                           float solveScale)
         {
             // C1 hard requirement: the blend draws below only load what the solve pass wrote, so
             // without the pass or a renderable half-float MRT format there is nothing correct to
@@ -847,9 +861,16 @@ namespace AbstractOcclusion.WebGpuWater
             }
 
             TextureHandle solveAbsorb = CreateSolveTexture(renderGraph, cameraColor,
-                                                           SolveAbsorbTextureName);
+                                                           SolveAbsorbTextureName, solveScale,
+                                                           out float appliedSolveScale);
             TextureHandle solveInscatter = CreateSolveTexture(renderGraph, cameraColor,
-                                                              SolveInscatterTextureName);
+                                                              SolveInscatterTextureName, solveScale,
+                                                              out _);
+            // Published from the scale ACTUALLY applied (a Functor-sized camera target cannot be
+            // composed and stays full res), so the shader's tap math can never disagree with the
+            // allocated targets - the _OceanSurfacePrepassScale doctrine. Set at record time every
+            // fog frame: the blend passes only ever run after this, in the same frame.
+            Shader.SetGlobalFloat(ID_WaterFogSolveScale, appliedSolveScale);
             RecordFogSolvePass(renderGraph, resources, solveAbsorb, solveInscatter, classifyRt);
 
             using var builder = renderGraph.AddRasterRenderPass<PassData>(passName, out PassData data, _sampler);
@@ -859,6 +880,10 @@ namespace AbstractOcclusion.WebGpuWater
             builder.SetRenderAttachment(cameraColor, 0, AccessFlags.ReadWrite);
             builder.UseTexture(solveAbsorb, AccessFlags.Read);
             builder.UseTexture(solveInscatter, AccessFlags.Read);
+            // The scaled-solve upsample compares each pixel's own scene depth against the solve
+            // taps' stored depths; declared every frame (the full-res path just never samples it).
+            if (resources.cameraDepthTexture.IsValid())
+                builder.UseTexture(resources.cameraDepthTexture, AccessFlags.Read);
             // The solve targets are read through their global names (the SetGlobalTextureAfterPass
             // handoff convention) - same UseTexture + globals pairing the classify RT ships with.
             builder.UseAllGlobalTextures(true);
@@ -877,7 +902,7 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         static TextureHandle CreateSolveTexture(RenderGraph renderGraph, TextureHandle sizeSource,
-                                                string name)
+                                                string name, float scale, out float appliedScale)
         {
             TextureDesc desc = renderGraph.GetTextureDesc(sizeSource);
             desc.name = name;
@@ -885,6 +910,7 @@ namespace AbstractOcclusion.WebGpuWater
             desc.depthBufferBits = DepthBits.None;
             desc.msaaSamples = MSAASamples.None;
             desc.clearBuffer = false; // the fullscreen solve writes every pixel
+            appliedScale = ApplyScale(ref desc, scale);
             return renderGraph.CreateTexture(desc);
         }
 

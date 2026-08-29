@@ -282,6 +282,21 @@ float SurfWarpDistance(float s)
     return s * (1.0 + _SurfCompression * exp(-max(s, 0.0) / reach));
 }
 
+// World-space speed of an iso-phase surf crest along the shore-distance axis. The front phase is
+// warp(s) / wavelength + time / period, so ds/dt is wavelength / period divided by d(warp)/ds.
+// Keeping this beside SurfWarpDistance prevents particle carriers from approximating a different
+// wave speed than the analytic geometry they are meant to ride.
+float SurfFrontPhaseSpeed(float s)
+{
+    float wavelength = max(_SurfWavelength, SURF_MIN_WAVELENGTH);
+    float period = max(_SurfPeriod, SURF_MIN_PERIOD);
+    float reach = SURF_WARP_REACH_SPACINGS * wavelength;
+    float shoreDistance = max(s, 0.0);
+    float compression = _SurfCompression * exp(-shoreDistance / reach);
+    float warpDerivative = 1.0 + compression * (1.0 - shoreDistance / reach);
+    return (wavelength / period) / max(warpDerivative, SURF_MIN_INFLUENCE);
+}
+
 // Alongshore crest modulation: a slow world-space noise (two rotated sine octaves - cheap, smooth,
 // non-repeating at shore scale), seeded per front so segment gaps never align between consecutive
 // fronts. Crests are locally shore-parallel, so world-position noise naturally varies ALONG the

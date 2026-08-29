@@ -47,10 +47,18 @@ namespace AbstractOcclusion.WebGpuWater
         int _causticInterval = WaterQuality.Default.CausticInterval;
         int _readbackInterval = WaterQuality.Default.ReadbackInterval;
         int _oceanFftInterval = WaterQuality.Default.OceanFftInterval;
+        int _oceanFftResolution = WaterQuality.Default.OceanFftResolution;
         int _maxFoamParticles = WaterQuality.Default.MaxFoamParticles;
         WaterQuality.UnderwaterMode _underwaterFogMode = WaterQuality.Default.UnderwaterFog;
+        float _fogSolveScale = WaterQuality.Default.FogSolveScale;
+        int _maxSimulatedBodies = WaterQuality.Default.MaxSimulatedBodies;
+        /// <summary>Tier-resolved scheduler budget (see WaterSimScheduler.ResolveActiveSimBudget).</summary>
+        internal int MaxSimulatedBodies => _maxSimulatedBodies;
         /// <summary>Tier cap on the GPU foam-particle pool (WaterFoamParticles clamps to it).</summary>
         internal int FoamParticleBudget => _maxFoamParticles;
+        /// <summary>Tier-resolved FFT ocean cascade grid side. Read once at OceanFftModule.Initialize
+        /// (ApplyQuality runs first), so like the sim resolutions it is fixed for the session.</summary>
+        internal int OceanFftResolution => _oceanFftResolution;
         // Per-body surface material instances so reflection keywords don't leak across bodies
         // that share the source material. Created at OnEnable (play mode only) and destroyed at
         // OnDisable, which also restores the renderer's original shared material so an

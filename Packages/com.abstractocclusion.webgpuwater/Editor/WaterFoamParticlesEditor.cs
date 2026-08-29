@@ -40,13 +40,21 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             "Use it only for testing while its foam shape and size controls are being reworked.";
 
         SerializedProperty _useParticles;
-        SerializedProperty _volume, _compute, _material, _renderMode, _densityMaterial, _profile;
+        SerializedProperty _volume, _compute, _material, _renderMode, _densityMaterial,
+            _surfCrestRollerMaterial, _profile;
         SerializedProperty _capacity;
         SerializedProperty _simulationDrivenSpawning, _spawnThreshold, _spawnRate, _maxSpawnPerFrame,
             _sprayChance, _sprayLaunchSpeed;
         SerializedProperty _rippleCrestFlecksEnabled, _rippleCrestFleckAmount,
             _rippleCrestFleckMaxPerFrame, _rippleCrestFleckLifetimeRange, _rippleCrestFleckSizeRange,
             _rippleCrestFleckMotion;
+        SerializedProperty _surfCrestRollersEnabled, _surfCrestRollerSpawnRate,
+            _surfCrestRollerMaxPerFrame, _surfCrestRollerLifetimeRange,
+            _surfCrestRollerSizeRange, _surfCrestRollerTransport,
+            _surfCrestRollerBreakerThreshold, _surfCrestRollerDetachDrop,
+            _surfCrestRollerMinimumRideTime, _surfCrestRollerVerticalCarry,
+            _surfCrestRollerFlipbookGrid, _surfCrestRollerFlipbookFps,
+            _surfCrestRollerOpacity, _surfCrestRollerDebug;
         SerializedProperty _lifeRange, _sizeRange, _sizeHeroPower, _spawnMaxDistance;
         SerializedProperty _sprayMaterial, _sprayLifeRange, _spraySizeRange, _sprayFlipbookGrid, _sprayFlipbookFps;
         SerializedProperty _surfaceFoamOpacity, _sprayOpacity, _bubbleOpacity;
@@ -59,6 +67,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // Profile-driven state, refreshed each GUI pass: driven fields are DISABLED (not
         // just warned about) so users can't type into values the profile overwrites next frame.
         bool _ambientDriven;
+        bool _surfRollerDriven;
         bool _lookDriven;
         bool _motionDriven;
         bool _veilDriven;
@@ -82,6 +91,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             _material = serializedObject.FindProperty("particleMaterial");
             _renderMode = serializedObject.FindProperty("renderMode");
             _densityMaterial = serializedObject.FindProperty("densityMaterial");
+            _surfCrestRollerMaterial = serializedObject.FindProperty("surfCrestRollerMaterial");
             _profile = serializedObject.FindProperty("profile");
             _capacity = serializedObject.FindProperty("capacity");
             _simulationDrivenSpawning = serializedObject.FindProperty("simulationDrivenSpawning");
@@ -96,6 +106,20 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             _rippleCrestFleckLifetimeRange = serializedObject.FindProperty("rippleCrestFleckLifetimeRange");
             _rippleCrestFleckSizeRange = serializedObject.FindProperty("rippleCrestFleckSizeRange");
             _rippleCrestFleckMotion = serializedObject.FindProperty("rippleCrestFleckMotion");
+            _surfCrestRollersEnabled = serializedObject.FindProperty("surfCrestRollersEnabled");
+            _surfCrestRollerSpawnRate = serializedObject.FindProperty("surfCrestRollerSpawnRate");
+            _surfCrestRollerMaxPerFrame = serializedObject.FindProperty("surfCrestRollerMaxPerFrame");
+            _surfCrestRollerLifetimeRange = serializedObject.FindProperty("surfCrestRollerLifetimeRange");
+            _surfCrestRollerSizeRange = serializedObject.FindProperty("surfCrestRollerSizeRange");
+            _surfCrestRollerTransport = serializedObject.FindProperty("surfCrestRollerTransport");
+            _surfCrestRollerBreakerThreshold = serializedObject.FindProperty("surfCrestRollerBreakerThreshold");
+            _surfCrestRollerDetachDrop = serializedObject.FindProperty("surfCrestRollerDetachDrop");
+            _surfCrestRollerMinimumRideTime = serializedObject.FindProperty("surfCrestRollerMinimumRideTime");
+            _surfCrestRollerVerticalCarry = serializedObject.FindProperty("surfCrestRollerVerticalCarry");
+            _surfCrestRollerFlipbookGrid = serializedObject.FindProperty("surfCrestRollerFlipbookGrid");
+            _surfCrestRollerFlipbookFps = serializedObject.FindProperty("surfCrestRollerFlipbookFps");
+            _surfCrestRollerOpacity = serializedObject.FindProperty("surfCrestRollerOpacity");
+            _surfCrestRollerDebug = serializedObject.FindProperty("surfCrestRollerDebug");
             _lifeRange = serializedObject.FindProperty("lifeRange");
             _sizeRange = serializedObject.FindProperty("sizeRange");
             _sizeHeroPower = serializedObject.FindProperty("sizeHeroPower");
@@ -137,6 +161,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             var profile = _profile.objectReferenceValue as WaterFoamProfile;
             _ambientDriven = profile != null && profile.ambient.drive;
+            _surfRollerDriven = profile != null && profile.surfRollers != null
+                                && profile.surfRollers.drive;
             _lookDriven = profile != null && profile.look.drive;
             _motionDriven = profile != null && profile.motion.drive;
             _veilDriven = profile != null && profile.veil.drive;
@@ -152,8 +178,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             _dropletExpanded = WaterEditorUI.Section("2 - Airborne Droplets", _dropletExpanded, DrawAirborneDroplets);
             _landedExpanded = WaterEditorUI.Section("3 - Landed Foam", _landedExpanded, DrawLandedFoam);
             _bubbleExpanded = WaterEditorUI.Section("4 - Bubbles", _bubbleExpanded, DrawBubbles);
-
-            _ambientSourceExpanded = WaterEditorUI.Section("Source - Ambient Turbulence",
+            _ambientSourceExpanded = WaterEditorUI.Section("Source - Water-Driven Simulation",
                 _ambientSourceExpanded, DrawAmbientSource);
             _burstSourceExpanded = WaterEditorUI.Section("Source - Splash & Pump Bursts",
                 _burstSourceExpanded, DrawBurstSource);
@@ -170,10 +195,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             bool missingCompute = _compute.objectReferenceValue == null;
             bool missingMaterial = _material.objectReferenceValue == null;
             bool missingDensity = densityMode && _densityMaterial.objectReferenceValue == null;
+            bool missingSurfRoller = _simulationDrivenSpawning.boolValue
+                                  && _surfCrestRollersEnabled.boolValue
+                                  && _surfCrestRollerMaterial.objectReferenceValue == null;
 
-            if (missingCompute || missingMaterial || missingDensity)
+            if (missingCompute || missingMaterial || missingDensity || missingSurfRoller)
                 EditorGUILayout.HelpBox(
-                    "Missing " + MissingList(missingCompute, missingMaterial, missingDensity) +
+                    "Missing " + MissingList(missingCompute, missingMaterial, missingDensity,
+                                               missingSurfRoller) +
                     ". Click Wire / Repair Assets to load and assign the package defaults.",
                     MessageType.Warning);
 
@@ -221,12 +250,13 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             WaterEditorUI.DrawFoamProfileLink(serializedObject, _profile, body);
         }
 
-        static string MissingList(bool compute, bool material, bool density)
+        static string MissingList(bool compute, bool material, bool density, bool surfRoller)
         {
-            var parts = new System.Collections.Generic.List<string>(3);
+            var parts = new System.Collections.Generic.List<string>(4);
             if (compute) parts.Add("Particle Compute");
             if (material) parts.Add("Particle Material");
             if (density) parts.Add("Density Material");
+            if (surfRoller) parts.Add("Surf Roller Material");
             return string.Join(", ", parts);
         }
 
@@ -271,6 +301,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 EditorGUILayout.PropertyField(_densityMaterial,
                     new GUIContent("Density Material",
                         "Material on the FoamDensityComposite shader. Only used in Screen-Space Density mode."));
+
+            EditorGUILayout.PropertyField(_surfCrestRollerMaterial,
+                new GUIContent("Surf Roller Material",
+                    "Dedicated rolling-splash flipbook material. Empty falls back to Particle Material."));
 
             EditorGUILayout.PropertyField(_profile,
                 new GUIContent("Foam Profile",
@@ -402,6 +436,58 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         // ---- sources ------------------------------------------------------------------------------
 
+        void DrawSurfRollers()
+        {
+            EditorGUILayout.HelpBox(
+                _surfRollerDriven
+                    ? "Wave-particle controls are overridden by the assigned Foam Profile. Tune its " +
+                      "Wave Particles section, or turn that section's Drive toggle off to use these local " +
+                      "values. Simulation Driven Spawning above remains the master gate."
+                    : "This source samples the analytic shore-wave geometry directly. A particle rides the " +
+                      "crest at its exact phase speed, releases when the face collapses, falls under gravity, " +
+                      "then lands as ordinary surface foam. It is disabled by Simulation Driven Spawning above.",
+                MessageType.Info);
+
+            using (new EditorGUI.DisabledScope(_surfRollerDriven))
+            {
+                EditorGUILayout.PropertyField(_surfCrestRollersEnabled, new GUIContent("Enabled"));
+                bool sourceDisabled = !_surfCrestRollersEnabled.hasMultipleDifferentValues
+                                   && !_surfCrestRollersEnabled.boolValue;
+                using (new EditorGUI.DisabledScope(sourceDisabled))
+                {
+                    WaterEditorUI.SubHeading("Source & budget");
+                    EditorGUILayout.PropertyField(_surfCrestRollerSpawnRate, new GUIContent("Spawn Rate"));
+                    EditorGUILayout.PropertyField(_surfCrestRollerMaxPerFrame, new GUIContent("Max Per Frame"));
+                    EditorGUILayout.PropertyField(_surfCrestRollerBreakerThreshold,
+                        new GUIContent("Breaker Threshold"));
+                    EditorGUILayout.PropertyField(_surfCrestRollerLifetimeRange,
+                        new GUIContent("Lifetime Range"));
+                    EditorGUILayout.PropertyField(_surfCrestRollerSizeRange,
+                        new GUIContent("Size Range"));
+
+                    WaterEditorUI.SubHeading("Ride, release & landing");
+                    EditorGUILayout.PropertyField(_surfCrestRollerTransport,
+                        new GUIContent("Phase Transport", "1 follows the analytic crest's exact phase speed."));
+                    EditorGUILayout.PropertyField(_surfCrestRollerDetachDrop,
+                        new GUIContent("Collapse Threshold"));
+                    EditorGUILayout.PropertyField(_surfCrestRollerMinimumRideTime,
+                        new GUIContent("Minimum Ride Time"));
+                    EditorGUILayout.PropertyField(_surfCrestRollerVerticalCarry,
+                        new GUIContent("Vertical Carry"));
+
+                    WaterEditorUI.SubHeading("Rolling splash animation");
+                    EditorGUILayout.PropertyField(_surfCrestRollerFlipbookGrid,
+                        new GUIContent("Flipbook Grid"));
+                    EditorGUILayout.PropertyField(_surfCrestRollerFlipbookFps,
+                        new GUIContent("Flipbook FPS"));
+                    EditorGUILayout.PropertyField(_surfCrestRollerOpacity,
+                        new GUIContent("Opacity"));
+                    EditorGUILayout.PropertyField(_surfCrestRollerDebug,
+                        new GUIContent("State Debug", "Green = riding; orange = free flight."));
+                }
+            }
+        }
+
         void DrawAmbientSource()
         {
             EditorGUILayout.PropertyField(_simulationDrivenSpawning,
@@ -456,6 +542,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 EditorGUILayout.PropertyField(_spraySizeRange, new GUIContent("Mist Size",
                     "Size of ambient mist droplets only, for the same reason."));
             }
+
+            EditorGUILayout.Space();
+            WaterEditorUI.SubHeading("Analytic Shore-Wave Rollers");
+            using (new EditorGUI.DisabledScope(sourceDisabled))
+                DrawSurfRollers();
         }
 
         void DrawBubbles()

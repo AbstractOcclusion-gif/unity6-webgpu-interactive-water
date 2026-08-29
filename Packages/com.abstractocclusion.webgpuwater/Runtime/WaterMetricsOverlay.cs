@@ -82,6 +82,23 @@ namespace AbstractOcclusion.WebGpuWater
             _text.AppendFormat("Buoyancy query: {0:0.00} ms", QueryMilliseconds());
             if (_physicsRecorder.Valid && _physicsRecorder.LastValue > 0)
                 _text.AppendFormat("\nPhysics: {0:0.00} ms", _physicsRecorder.LastValue * NanosecondsToMilliseconds);
+            AppendSimLeases();
+        }
+
+        // The lease pool's debug view: one line per held sim context (owner, resolution, and
+        // whether the context was recycled from the idle store), plus the idle count.
+        void AppendSimLeases()
+        {
+            _text.AppendFormat("\nSim leases: {0} active / {1} idle",
+                               WaterSimLeasePool.ActiveLeaseCount, WaterSimLeasePool.IdleContextCount);
+            for (int i = 0; i < WaterSimLeasePool.ActiveLeaseCount; i++)
+            {
+                WaterSimLeasePool.LeaseInfo lease = WaterSimLeasePool.GetLease(i);
+                _text.AppendFormat("\n  {0} @{1}{2}",
+                                   lease.Owner != null ? lease.Owner.name : "(released owner)",
+                                   lease.Resolution,
+                                   lease.ReusedIdleContext ? " (reused)" : "");
+            }
         }
 
         float QueryMilliseconds()

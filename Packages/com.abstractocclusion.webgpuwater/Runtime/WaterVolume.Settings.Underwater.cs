@@ -119,10 +119,12 @@ namespace AbstractOcclusion.WebGpuWater
         static WaterVolume _fallbackBody;
         static int _fallbackBodyFrame = -1;
 
-        /// <summary>The water body a world point belongs to: the body whose horizontal
-        /// footprint contains the point, nearest-centre wins when several overlap, and the
-        /// primary body as a fallback when the point is outside every footprint. Objects call
-        /// this each frame so they float on, and are lit by, the lake they are actually in.</summary>
+        /// <summary>LEGACY resolve: the body whose horizontal FOOTPRINT contains the point
+        /// (height ignored), nearest-centre tiebreak, unconditional primary fallback. Kept for
+        /// the render-side callers whose semantics it matches (membership lighting, caustic
+        /// attribution, input routing). Gameplay callers use WaterDomainResolver instead: full
+        /// XYZ, exclusion-aware, intent-based, fallback only on request - the difference is
+        /// exactly what stacked water bodies and carved-dry interiors need.</summary>
         public static WaterVolume BodyContaining(Vector3 worldPoint)
             => ResolveContainingBody(worldPoint, requireFullscreenVolumeFog: false);
 
@@ -257,6 +259,9 @@ namespace AbstractOcclusion.WebGpuWater
             WaterFogTransparent.ResetStaticState();
             WaterReflections.ResetStaticState();
             WaterUniformPublisher.ResetStaticState();
+            WaterSurfaceProviders.ResetStaticState();
+            WaterTopology.ResetStaticState();
+            WaterSimLeasePool.ResetStaticState();
         }
 
         [Header("Simulation")]

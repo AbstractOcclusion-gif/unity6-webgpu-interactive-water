@@ -12,7 +12,8 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         public void QualityTier_SanitisesUnsafeValues()
         {
             var tier = new WaterQuality.Tier(1, 1, -1, false, false, 0, -1, 0f, false,
-                                             -1, 0, 0, 99, 0, WaterQuality.UnderwaterMode.Off);
+                                             -1, 0, 0, 99, 0, 0, WaterQuality.UnderwaterMode.Off, 0f,
+                                             -1);
 
             Assert.That(tier.SimResolution, Is.EqualTo(WaterSimulation.ThreadGroupSize));
             Assert.That(tier.CausticResolution, Is.GreaterThanOrEqualTo(64));
@@ -20,7 +21,10 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             Assert.That(tier.RenderScale, Is.EqualTo(0.25f));
             Assert.That(tier.CausticInterval, Is.EqualTo(1));
             Assert.That(tier.OceanFftInterval, Is.EqualTo(4));
+            Assert.That(tier.OceanFftResolution, Is.EqualTo(64));
+            Assert.That(tier.FogSolveScale, Is.EqualTo(0.25f));
             Assert.That(tier.MaxFoamParticles, Is.GreaterThanOrEqualTo(64));
+            Assert.That(tier.MaxSimulatedBodies, Is.Zero); // negatives clamp to the no-sims floor
         }
 
         [Test]
