@@ -387,8 +387,12 @@
                                        v.riverEndData.x * riverWeight);
                 float2 riverVelocity = SampleRiverFluidVelocity(
                     v.riverBakeUv, v.riverCurrentData.z);
-                o.riverCurrentData = float4(v.riverCurrentData.xy, riverVelocity)
-                                   * vertexRiverWeight;
+                // Keep metric coordinates and velocity continuous through a terminal band. The
+                // separate riverBakeUv.z weight blends the SAMPLED wave/detail values toward the
+                // receiving body. Multiplying coordinates by that weight contracted many metres
+                // toward (0,0) over the short seam and slowed time advection to zero, creating the
+                // dense phase-sweep comb visible above an otherwise perfectly sewn junction.
+                o.riverCurrentData = float4(v.riverCurrentData.xy, riverVelocity) * riverWeight;
                 // World position at the surface plane (height 0) picks the windowed UV; the
                 // xz mapping doesn't depend on ripple height, so this is exact.
                 float fade;

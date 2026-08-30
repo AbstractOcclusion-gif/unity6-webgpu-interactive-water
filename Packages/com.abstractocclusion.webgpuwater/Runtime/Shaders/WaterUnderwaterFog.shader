@@ -87,6 +87,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // meanings can never collide: debug views force the solve to full res (see the pass).
         TEXTURE2D(_WaterFogSolveAbsorb);
         TEXTURE2D(_WaterFogSolveInscatter);
+        Texture2D _RiverFogFrontDepth;
+        Texture2D _RiverFogBackDepth;
+        float _RiverFogDepthValid;
+        float _RiverFogExternalOnly;
         // Half-res fog solve (the C1 unlock, 2026-08-29): fraction of camera resolution the solve
         // targets were allocated at (1 = full res, the shipped default). Published by
         // WaterUnderwaterFogPass from the scale ACTUALLY applied - the _OceanSurfacePrepassScale
@@ -204,6 +208,46 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // in SurfaceHeightAtXZ below - so the pre-transparent opaque depth here is fine.
             float rawDepth = SampleSceneDepth(uv);
             return ComputeWorldSpacePosition(uv, rawDepth, UNITY_MATRIX_I_VP);
+        }
+
+        bool RiverFogSegment(float2 uv, float3 sceneWorld, out float pathLen,
+                             out float deepestY, out float surfaceRefY,
+                             out float3 wetStart)
+        {
+            pathLen = 0.0;
+            deepestY = _UnderwaterSurfaceY;
+            surfaceRefY = _UnderwaterSurfaceY;
+            wetStart = _WorldSpaceCameraPos;
+            if (_RiverFogDepthValid < 0.5) return false;
+
+            int2 pixel = int2(uv * _ScaledScreenParams.xy);
+            float rawFront = _RiverFogFrontDepth.Load(int3(pixel, 0)).r;
+            float rawBack = _RiverFogBackDepth.Load(int3(pixel, 0)).r;
+            if (rawBack == UNITY_RAW_FAR_CLIP_VALUE) return false;
+
+            float3 ray = sceneWorld - _WorldSpaceCameraPos;
+            float sceneDistance = length(ray);
+            float3 rayDirection = ray / max(sceneDistance, 1e-5);
+            float3 exitWorld = ComputeWorldSpacePosition(uv, rawBack, UNITY_MATRIX_I_VP);
+            float exitDistance = dot(exitWorld - _WorldSpaceCameraPos, rayDirection);
+            float entryDistance = 0.0;
+            float3 entryWorld = _WorldSpaceCameraPos;
+            if (rawFront != UNITY_RAW_FAR_CLIP_VALUE)
+            {
+                entryWorld = ComputeWorldSpacePosition(uv, rawFront, UNITY_MATRIX_I_VP);
+                entryDistance = dot(entryWorld - _WorldSpaceCameraPos, rayDirection);
+            }
+
+            float clippedEntry = max(entryDistance, 0.0);
+            float clippedExit = min(exitDistance, sceneDistance);
+            if (clippedExit <= clippedEntry) return false;
+
+            wetStart = _WorldSpaceCameraPos + rayDirection * clippedEntry;
+            float3 wetEnd = _WorldSpaceCameraPos + rayDirection * clippedExit;
+            pathLen = clippedExit - clippedEntry;
+            deepestY = min(wetStart.y, wetEnd.y);
+            surfaceRefY = max(wetStart.y, wetEnd.y);
+            return true;
         }
 
         // SurfaceHeightAtXZ / SurfaceSignedGap moved VERBATIM to WaterWaterline.hlsl: the
@@ -1043,6 +1087,23 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // derivative and must be evaluated in uniform control flow.
             float classifyPushDist;
             armWeight = ArmWeight(uv, classifyPushDist);
+            float3 sceneWorld = SceneWorldPos(uv);
+            float pathLen;
+            float deepestY;
+            float surfaceRefY;
+            float3 wetStart;
+            bool hasRiverFogSegment = RiverFogSegment(
+                uv, sceneWorld, pathLen, deepestY, surfaceRefY, wetStart);
+            if (hasRiverFogSegment) armWeight = 1.0;
+            if (!hasRiverFogSegment && _RiverFogExternalOnly > 0.5)
+            {
+                depthAttenuation = float3(1.0, 1.0, 1.0);
+                sunVisibility = 1.0;
+                debugColor = float4(0.0, 0.0, 0.0, 0.0);
+                wetStartOut = _WorldSpaceCameraPos;
+                wetSpanOut = 0.0;
+                return float3(1.0, 1.0, 1.0);
+            }
             // Zero-coverage exit. The mask multiplies BOTH passes' output (absorb takes
             // lerp(1, ..., armWeight), inscatter takes inscatter *= armWeight), so a pixel the
             // waterline feather has already zeroed cannot change a single texel no matter what the
@@ -1097,13 +1158,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // this paragraph once waited on confirmed the fix (committed 2026-07-28). (The
             // out-param the debug views actually read is classifyPushDist, via WaterFogDebugColor.)
             bool rayStartsWet = armWeight >= WATERLINE_COVERAGE_WET_MIN;
-            float3 sceneWorld = SceneWorldPos(uv);
-            float pathLen;
-            float deepestY;
-            float surfaceRefY;
-            float3 wetStart;
-            UnderwaterSegment(uv, sceneWorld, rayStartsWet, pathLen, deepestY, surfaceRefY,
-                              wetStart);
+            if (!hasRiverFogSegment)
+                UnderwaterSegment(uv, sceneWorld, rayStartsWet, pathLen, deepestY, surfaceRefY,
+                                  wetStart);
             // Dry-interior exclusion: the part of the wet span that crosses an exclusion volume is
             // AIR, so carve it out of the fog integral. Zero volumes = the loops never run. When
             // the whole span is dry (camera in a submerged room looking at its own wall), the
@@ -1527,6 +1584,62 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 output.inscatter = half4(total, 0.0);
                 return output;
             }
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Name "RiverFogFrontDepth"
+            ColorMask 0
+            ZWrite On
+            ZTest LEqual
+            Cull Back
+
+            HLSLPROGRAM
+            #pragma vertex RiverFogDepthVert
+            #pragma fragment RiverFogDepthFrag
+            #pragma target 4.0
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+            struct RiverFogDepthAttributes { float4 positionOS : POSITION; };
+            struct RiverFogDepthVaryings { float4 positionCS : SV_POSITION; };
+
+            RiverFogDepthVaryings RiverFogDepthVert(RiverFogDepthAttributes input)
+            {
+                RiverFogDepthVaryings output;
+                output.positionCS = TransformObjectToHClip(input.positionOS.xyz);
+                return output;
+            }
+
+            half4 RiverFogDepthFrag(RiverFogDepthVaryings input) : SV_Target { return 0.0; }
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Name "RiverFogBackDepth"
+            ColorMask 0
+            ZWrite On
+            ZTest LEqual
+            Cull Front
+
+            HLSLPROGRAM
+            #pragma vertex RiverFogDepthVert
+            #pragma fragment RiverFogDepthFrag
+            #pragma target 4.0
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+            struct RiverFogDepthAttributes { float4 positionOS : POSITION; };
+            struct RiverFogDepthVaryings { float4 positionCS : SV_POSITION; };
+
+            RiverFogDepthVaryings RiverFogDepthVert(RiverFogDepthAttributes input)
+            {
+                RiverFogDepthVaryings output;
+                output.positionCS = TransformObjectToHClip(input.positionOS.xyz);
+                return output;
+            }
+
+            half4 RiverFogDepthFrag(RiverFogDepthVaryings input) : SV_Target { return 0.0; }
             ENDHLSL
         }
     }

@@ -87,11 +87,17 @@ namespace AbstractOcclusion.WebGpuWater
             }
 
             if (_pass == null) return; // shader unassigned / not created
+            bool externalRiverFog = WaterRiverSurface.TryFindExternalFogSource(
+                renderingData.cameraData.camera, out WaterVolume externalRiverFogSource);
+            if (externalRiverFog && !WaterVolume.UnderwaterFogActive)
+                externalRiverFogSource.PrepareExternalRiverFogSource();
+            _pass.ExternalRiverFogSource = externalRiverFog ? externalRiverFogSource : null;
             // Fog: ocean = submerged only, pond = whenever fog is on. Waterline: the near plane
             // straddles the surface (partial submersion) - it arms BEFORE the eye submerges, so
             // the crossing shows a meniscus line instead of a hard pop. The pass records only
             // the sub-passes whose gate is set.
-            if (!WaterVolume.UnderwaterFogActive && !WaterVolume.WaterlineActive) return;
+            if (!WaterVolume.UnderwaterFogActive && !WaterVolume.WaterlineActive &&
+                !externalRiverFog) return;
             // PER-CAMERA pond cull: a bounded fog volume entirely outside THIS camera's frustum
             // can put nothing on its screen, so the whole recorded chain (prepass, height RTs,
             // classify, absorb, inscatter, waterline) is skipped for this camera - the pond arm
@@ -101,7 +107,8 @@ namespace AbstractOcclusion.WebGpuWater
             // test, so authoring keeps its fog while the game camera looks away. Oceans always
             // pass (infinite fog), and a null fog source fails ARMED.
             WaterVolume fogSource = WaterVolume.FogSource;
-            if (fogSource != null && !fogSource.FogVolumeVisibleTo(renderingData.cameraData.camera))
+            if (!externalRiverFog && fogSource != null &&
+                !fogSource.FogVolumeVisibleTo(renderingData.cameraData.camera))
                 return;
             renderer.EnqueuePass(_pass);
         }

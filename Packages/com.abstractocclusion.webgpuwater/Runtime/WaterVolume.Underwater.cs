@@ -2,6 +2,7 @@
 // Split out of WaterVolume.cs (final-clean E, verbatim move - any behavior change here is a bug):
 // the camera-submerged detection (wave-aware, with hysteresis) that arms the fullscreen fog pass,
 // and the per-body planar-mirror render driven from OnBeginCameraRender.
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -55,6 +56,23 @@ namespace AbstractOcclusion.WebGpuWater
         /// from the SAME field, so the CPU gate and the shader branch cannot disagree.</summary>
         internal bool UnderwaterFogSimple
             => _underwaterFogMode == WaterQuality.UnderwaterMode.Simple;
+
+        internal bool CanDriveExternalRiverFog
+            => waterFog && _underwaterFogMode != WaterQuality.UnderwaterMode.Off;
+
+        internal void PrepareExternalRiverFogSource()
+        {
+            if (!CanDriveExternalRiverFog)
+                throw new InvalidOperationException(
+                    "A water body with disabled fog cannot drive an external river fog pass.");
+
+            FogSource = this;
+            if (_globalsSource != this || _globalsFrame != Time.frameCount)
+                PublishBodyGlobalsTracked();
+            Publisher.PublishUnderwater(
+                0f, VolumeCenter.y, IsOceanClipmap ? 1f : 0f,
+                UnderwaterFogSimple ? 1f : 0f, 0f, 0f);
+        }
 
         // Screen-space caustic projection runs PER BODY: any active body with a caustic RT and its
         // Screen-Space Caustics opt-in on gets its own fullscreen projection (drawn with THAT body's

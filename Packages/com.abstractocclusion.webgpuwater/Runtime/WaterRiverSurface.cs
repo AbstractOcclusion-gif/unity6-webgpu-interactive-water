@@ -23,8 +23,13 @@ namespace AbstractOcclusion.WebGpuWater
         // answer full-XYZ containment; 2 m reads as a wadeable default.
         internal const float DefaultGameplayDepthMeters = 2f;
         const float MinGameplayDepthMeters = 0.1f;
+        const int FogVolumeLayerCount = 2;
+        const int TriangleIndexCount = 3;
+        const int FogBoundaryIndexCapacityPerAxis = 12;
+        const float BoundsSizeFromExtents = 2f;
 
         const string GeneratedMeshName = "Water River Ribbon (generated)";
+        const string GeneratedFogVolumeMeshName = "Water River Fog Volume (generated)";
         const string UnderSurfaceChildName = "River Surface Under (generated)";
         const string RiverModePropertyName = "_IsRiver";
         const float DisabledFeature = 0f;
@@ -46,6 +51,8 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.PropertyToID(MouthEndWaveFramePropertyName);
         static readonly int MouthEndWaveAnchorId =
             Shader.PropertyToID(MouthEndWaveAnchorPropertyName);
+        static readonly List<WaterRiverSurface> LiveSurfaces = new();
+        static readonly Plane[] FogFrustumPlanes = new Plane[6];
 
         [Tooltip("Spline data used to build this visible ribbon.")]
         [SerializeField] internal WaterRiverSpline spline;
@@ -66,6 +73,7 @@ namespace AbstractOcclusion.WebGpuWater
         MeshFilter _meshFilter;
         MeshRenderer _meshRenderer;
         Mesh _generatedMesh;
+        Mesh _generatedFogVolumeMesh;
         MaterialPropertyBlock _propertyBlock;
         WaterRiverSpline _subscribedSpline;
         readonly List<IWaterRiverRendererPropertySource> _rendererPropertySources = new();
@@ -87,6 +95,7 @@ namespace AbstractOcclusion.WebGpuWater
         bool _sourceBoundaryUsesTargetMouth;
 
         internal Mesh GeneratedMesh => _generatedMesh;
+        internal Mesh GeneratedFogVolumeMesh => _generatedFogVolumeMesh;
         internal WaterRiverSpline Spline => spline;
         internal WaterVolume WaterVolume => waterVolume;
         internal Renderer SurfaceRenderer => _meshRenderer;
@@ -99,8 +108,11 @@ namespace AbstractOcclusion.WebGpuWater
         internal event Action ConfigurationChanged;
         internal event Action GeometryChanged;
 
+        internal static void ResetStaticState() => LiveSurfaces.Clear();
+
         void OnEnable()
         {
+            if (!LiveSurfaces.Contains(this)) LiveSurfaces.Add(this);
             CacheRendererComponents();
             ConfigureRenderer();
             EnsureUnderRenderer();
@@ -115,6 +127,8 @@ namespace AbstractOcclusion.WebGpuWater
 
         void OnDisable()
         {
+            LiveSurfaces.Remove(this);
+            if (_sourceBoundaryTarget != null) _sourceBoundaryTarget.RebuildFogVolumeMesh();
             if (_provider != null) WaterSurfaceProviders.Unregister(_provider);
             UnsubscribeSplineEvents();
             UnsubscribeSourceBoundaryEvents();
@@ -160,6 +174,7 @@ namespace AbstractOcclusion.WebGpuWater
                 WaterRiverRibbonMeshGenerator.Populate(
                     _generatedMesh, spline, transform, samplesPerSegment,
                     _sourceBodySeam, _mouthBodySeam, BuildSourceBoundary());
+                RebuildFogVolumeMesh();
                 _meshFilter.sharedMesh = _generatedMesh;
                 if (_underFilter != null) _underFilter.sharedMesh = _generatedMesh;
                 PublishRendererProperties();
@@ -228,11 +243,14 @@ namespace AbstractOcclusion.WebGpuWater
             if (_sourceBoundaryTarget == target &&
                 _sourceBoundaryUsesTargetMouth == useTargetMouth) return;
 
+            WaterRiverSurface previousTarget = _sourceBoundaryTarget;
             UnsubscribeSourceBoundaryEvents();
             _sourceBoundaryTarget = target;
             _sourceBoundaryUsesTargetMouth = useTargetMouth;
             RebindSourceBoundaryEvents();
             RequestRebuild();
+            if (previousTarget != null) previousTarget.RebuildFogVolumeMesh();
+            if (target != null) target.RebuildFogVolumeMesh();
         }
 
         WaterRiverRibbonMeshGenerator.SharedBoundaryRow BuildSourceBoundary()
@@ -368,6 +386,178 @@ namespace AbstractOcclusion.WebGpuWater
             _generatedMesh.MarkDynamic();
         }
 
+        void RebuildFogVolumeMesh()
+        {
+            if (_generatedMesh == null || _generatedMesh.vertexCount == 0)
+            {
+                if (_generatedFogVolumeMesh != null) _generatedFogVolumeMesh.Clear();
+                return;
+            }
+
+            Vector3[] topVertices = _generatedMesh.vertices;
+            int topVertexCount = topVertices.Length;
+            int verticesPerRow = WaterRiverRibbonMeshGenerator.VerticesPerCrossSection;
+            if (topVertexCount % verticesPerRow != 0)
+                throw new InvalidOperationException(
+                    "The river ribbon does not contain complete cross-section rows.");
+
+            int rowCount = topVertexCount / verticesPerRow;
+            if (rowCount < 2)
+                throw new InvalidOperationException(
+                    "The river fog volume requires at least two cross-section rows.");
+
+            EnsureFogVolumeMesh();
+            var vertices = new Vector3[topVertexCount * FogVolumeLayerCount];
+            Array.Copy(topVertices, vertices, topVertexCount);
+            for (int vertexIndex = 0; vertexIndex < topVertexCount; vertexIndex++)
+            {
+                Vector3 topWorld = transform.TransformPoint(topVertices[vertexIndex]);
+                vertices[topVertexCount + vertexIndex] = transform.InverseTransformPoint(
+                    topWorld + Vector3.down * gameplayDepthMeters);
+            }
+
+            int[] topIndices = _generatedMesh.triangles;
+            var indices = new List<int>(topIndices.Length * FogVolumeLayerCount +
+                (rowCount + verticesPerRow) * FogBoundaryIndexCapacityPerAxis);
+            indices.AddRange(topIndices);
+            for (int triangle = 0; triangle < topIndices.Length;
+                 triangle += TriangleIndexCount)
+            {
+                indices.Add(topVertexCount + topIndices[triangle]);
+                indices.Add(topVertexCount + topIndices[triangle + 2]);
+                indices.Add(topVertexCount + topIndices[triangle + 1]);
+            }
+
+            if (_sourceBoundaryTarget == null && !HasBoundaryConnection(useMouth: false))
+                AddFogVolumeEdge(indices, topVertexCount, 0, 1, verticesPerRow);
+            AddFogVolumeEdge(indices, topVertexCount,
+                             verticesPerRow - 1, verticesPerRow, rowCount);
+            if (!HasBoundaryConnection(useMouth: true))
+                AddFogVolumeEdge(indices, topVertexCount,
+                                 topVertexCount - 1, -1, verticesPerRow);
+            AddFogVolumeEdge(indices, topVertexCount,
+                             topVertexCount - verticesPerRow, -verticesPerRow, rowCount);
+
+            _generatedFogVolumeMesh.Clear();
+            _generatedFogVolumeMesh.indexFormat = vertices.Length > ushort.MaxValue
+                ? IndexFormat.UInt32
+                : IndexFormat.UInt16;
+            _generatedFogVolumeMesh.vertices = vertices;
+            _generatedFogVolumeMesh.SetTriangles(indices, 0, calculateBounds: true);
+        }
+
+        void EnsureFogVolumeMesh()
+        {
+            if (_generatedFogVolumeMesh != null) return;
+            _generatedFogVolumeMesh = new Mesh
+            {
+                name = GeneratedFogVolumeMeshName,
+                hideFlags = HideFlags.DontSave,
+            };
+            _generatedFogVolumeMesh.MarkDynamic();
+        }
+
+        static void AddFogVolumeEdge(List<int> indices, int bottomOffset,
+                                     int firstTopIndex, int topIndexStep, int vertexCount)
+        {
+            for (int edgeVertex = 0; edgeVertex < vertexCount - 1; edgeVertex++)
+            {
+                int topA = firstTopIndex + edgeVertex * topIndexStep;
+                int topB = topA + topIndexStep;
+                int bottomA = bottomOffset + topA;
+                int bottomB = bottomOffset + topB;
+                indices.Add(topA);
+                indices.Add(topB);
+                indices.Add(bottomA);
+                indices.Add(topB);
+                indices.Add(bottomB);
+                indices.Add(bottomA);
+            }
+        }
+
+        bool HasBoundaryConnection(bool useMouth)
+        {
+            for (int surfaceIndex = 0; surfaceIndex < LiveSurfaces.Count; surfaceIndex++)
+            {
+                WaterRiverSurface candidate = LiveSurfaces[surfaceIndex];
+                if (candidate == null || candidate == this) continue;
+                if (candidate._sourceBoundaryTarget == this &&
+                    candidate._sourceBoundaryUsesTargetMouth == useMouth)
+                    return true;
+            }
+            return false;
+        }
+
+        internal static bool TryFindExternalFogSource(Camera camera, out WaterVolume fogSource)
+        {
+            fogSource = null;
+            if (camera == null || WaterVolume.CameraSubmerged) return false;
+
+            GeometryUtility.CalculateFrustumPlanes(camera, FogFrustumPlanes);
+            WaterVolume preferredSource =
+                WaterVolume.UnderwaterFogActive || WaterVolume.WaterlineActive
+                    ? WaterVolume.FogSource
+                    : null;
+            for (int surfaceIndex = 0; surfaceIndex < LiveSurfaces.Count; surfaceIndex++)
+            {
+                WaterRiverSurface surface = LiveSurfaces[surfaceIndex];
+                if (!surface.QualifiesForExternalFog(preferredSource)) continue;
+                if (!GeometryUtility.TestPlanesAABB(
+                        FogFrustumPlanes, surface.FogVolumeWorldBounds())) continue;
+                fogSource = surface.waterVolume;
+                return true;
+            }
+            return false;
+        }
+
+        internal static void CollectExternalFogSurfaces(Camera camera, WaterVolume fogSource,
+                                                        List<WaterRiverSurface> results)
+        {
+            if (results == null) throw new ArgumentNullException(nameof(results));
+            results.Clear();
+            if (camera == null || fogSource == null || WaterVolume.CameraSubmerged) return;
+
+            GeometryUtility.CalculateFrustumPlanes(camera, FogFrustumPlanes);
+            for (int surfaceIndex = 0; surfaceIndex < LiveSurfaces.Count; surfaceIndex++)
+            {
+                WaterRiverSurface surface = LiveSurfaces[surfaceIndex];
+                if (!surface.QualifiesForExternalFog(fogSource)) continue;
+                if (GeometryUtility.TestPlanesAABB(
+                        FogFrustumPlanes, surface.FogVolumeWorldBounds()))
+                    results.Add(surface);
+            }
+        }
+
+        bool QualifiesForExternalFog(WaterVolume requiredSource)
+        {
+            return isActiveAndEnabled && waterVolume != null && waterVolume.isActiveAndEnabled &&
+                   waterVolume.CanDriveExternalRiverFog &&
+                   (requiredSource == null || waterVolume == requiredSource) &&
+                   _generatedFogVolumeMesh != null &&
+                   _generatedFogVolumeMesh.vertexCount > 0 &&
+                   _meshRenderer != null && _meshRenderer.enabled &&
+                   !_meshRenderer.forceRenderingOff;
+        }
+
+        Bounds FogVolumeWorldBounds()
+        {
+            Bounds localBounds = _generatedFogVolumeMesh.bounds;
+            Vector3 center = transform.TransformPoint(localBounds.center);
+            Vector3 localExtents = localBounds.extents;
+            Matrix4x4 matrix = transform.localToWorldMatrix;
+            Vector3 worldExtents = new(
+                Mathf.Abs(matrix.m00) * localExtents.x +
+                Mathf.Abs(matrix.m01) * localExtents.y +
+                Mathf.Abs(matrix.m02) * localExtents.z,
+                Mathf.Abs(matrix.m10) * localExtents.x +
+                Mathf.Abs(matrix.m11) * localExtents.y +
+                Mathf.Abs(matrix.m12) * localExtents.z,
+                Mathf.Abs(matrix.m20) * localExtents.x +
+                Mathf.Abs(matrix.m21) * localExtents.y +
+                Mathf.Abs(matrix.m22) * localExtents.z);
+            return new Bounds(center, worldExtents * BoundsSizeFromExtents);
+        }
+
         void PublishRendererProperties()
         {
             if (_meshRenderer == null) return;
@@ -479,6 +669,7 @@ namespace AbstractOcclusion.WebGpuWater
         void ClearGeneratedGeometry()
         {
             if (_generatedMesh != null) _generatedMesh.Clear();
+            if (_generatedFogVolumeMesh != null) _generatedFogVolumeMesh.Clear();
             if (_meshFilter != null && _meshFilter.sharedMesh == _generatedMesh)
                 _meshFilter.sharedMesh = null;
         }
@@ -496,6 +687,8 @@ namespace AbstractOcclusion.WebGpuWater
                 _meshFilter.sharedMesh = null;
             WaterObjects.DestroyRuntime(_generatedMesh);
             _generatedMesh = null;
+            WaterObjects.DestroyRuntime(_generatedFogVolumeMesh);
+            _generatedFogVolumeMesh = null;
         }
     }
 }

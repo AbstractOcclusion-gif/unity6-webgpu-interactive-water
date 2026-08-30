@@ -16,6 +16,11 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         const float StartCurrentSpeed = 1f;
         const float EndCurrentSpeed = 5f;
         const float MinimumTriangleDoubleArea = 1e-5f;
+        const float FogDepthMeters = 3.5f;
+        const int FogVolumeLayerCount = 2;
+        const int TriangleIndexCount = 3;
+        const int ClosedEdgeUseCount = 2;
+        const float TetrahedronVolumeDivisor = 6f;
         const string SplineHostName = "River Ribbon Spline Test";
         const string MeshHostName = "River Ribbon Mesh Test";
         const string GeneratedMeshName = "River Ribbon Test Mesh";
@@ -349,6 +354,67 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         }
 
         [Test]
+        public void Surface_FogVolumeIsClosedAndUsesWorldVerticalGameplayDepth()
+        {
+            GameObject splineHost = CreateSpline(StraightKnots(), out WaterRiverSpline spline);
+            var surfaceHost = new GameObject(MeshHostName);
+            surfaceHost.transform.SetPositionAndRotation(
+                MeshHostPosition, Quaternion.Euler(12f, 37f, -8f));
+            surfaceHost.transform.localScale = MeshHostScale;
+            WaterRiverSurface surface = surfaceHost.AddComponent<WaterRiverSurface>();
+            try
+            {
+                surface.spline = spline;
+                surface.samplesPerSegment = SamplesPerSegment;
+                surface.gameplayDepthMeters = FogDepthMeters;
+                surface.RequestRebuild();
+
+                Mesh ribbon = surface.GeneratedMesh;
+                Mesh fogVolume = surface.GeneratedFogVolumeMesh;
+                Assert.That(fogVolume, Is.Not.Null);
+                Assert.That(fogVolume.vertexCount,
+                    Is.EqualTo(ribbon.vertexCount * FogVolumeLayerCount));
+
+                Vector3[] vertices = fogVolume.vertices;
+                for (int topIndex = 0; topIndex < ribbon.vertexCount; topIndex++)
+                {
+                    Vector3 topWorld = surfaceHost.transform.TransformPoint(vertices[topIndex]);
+                    Vector3 bottomWorld = surfaceHost.transform.TransformPoint(
+                        vertices[ribbon.vertexCount + topIndex]);
+                    Assert.That(bottomWorld.x,
+                        Is.EqualTo(topWorld.x).Within(FloatTolerance));
+                    Assert.That(bottomWorld.y,
+                        Is.EqualTo(topWorld.y - FogDepthMeters).Within(FloatTolerance));
+                    Assert.That(bottomWorld.z,
+                        Is.EqualTo(topWorld.z).Within(FloatTolerance));
+                }
+
+                var edgeUseCounts = new Dictionary<(int, int), int>();
+                int[] triangles = fogVolume.triangles;
+                for (int triangle = 0; triangle < triangles.Length;
+                     triangle += TriangleIndexCount)
+                {
+                    CountEdge(edgeUseCounts, triangles[triangle], triangles[triangle + 1]);
+                    CountEdge(edgeUseCounts, triangles[triangle + 1], triangles[triangle + 2]);
+                    CountEdge(edgeUseCounts, triangles[triangle + 2], triangles[triangle]);
+                }
+                foreach (int useCount in edgeUseCounts.Values)
+                    Assert.That(useCount, Is.EqualTo(ClosedEdgeUseCount),
+                        "Every proxy edge must belong to two triangles for a closed depth volume.");
+                Assert.That(SignedVolume(vertices, triangles), Is.GreaterThan(0f),
+                    "The closed proxy must face outward for front/back depth culling.");
+
+                surface.enabled = false;
+                Assert.That(surface.GeneratedFogVolumeMesh, Is.Null);
+            }
+            finally
+            {
+                Object.DestroyImmediate(surfaceHost);
+                Object.DestroyImmediate(splineHost);
+            }
+        }
+
+        [Test]
         public void WaterVolume_BuiltInGeometryGateDoesNotDisableComponent()
         {
             var volumeHost = new GameObject(VolumeHostName);
@@ -431,6 +497,27 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             Assert.That(actual.x, Is.EqualTo(expected.x).Within(FloatTolerance));
             Assert.That(actual.y, Is.EqualTo(expected.y).Within(FloatTolerance));
             Assert.That(actual.z, Is.EqualTo(expected.z).Within(FloatTolerance));
+        }
+
+        static void CountEdge(Dictionary<(int, int), int> counts, int first, int second)
+        {
+            var edge = first < second ? (first, second) : (second, first);
+            counts.TryGetValue(edge, out int useCount);
+            counts[edge] = useCount + 1;
+        }
+
+        static float SignedVolume(Vector3[] vertices, int[] triangles)
+        {
+            float sixTimesVolume = 0f;
+            for (int triangle = 0; triangle < triangles.Length;
+                 triangle += TriangleIndexCount)
+            {
+                Vector3 first = vertices[triangles[triangle]];
+                Vector3 second = vertices[triangles[triangle + 1]];
+                Vector3 third = vertices[triangles[triangle + 2]];
+                sixTimesVolume += Vector3.Dot(first, Vector3.Cross(second, third));
+            }
+            return sixTimesVolume / TetrahedronVolumeDivisor;
         }
 
         static void AssertFinite(Vector3 value)

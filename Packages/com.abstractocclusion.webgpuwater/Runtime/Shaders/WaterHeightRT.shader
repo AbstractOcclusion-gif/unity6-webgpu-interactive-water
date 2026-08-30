@@ -95,6 +95,7 @@ Shader "Hidden/AbstractOcclusion/WebGpuWater/WaterHeightRT"
                 float2 largeWaveSourceXZ;
                 float3 worldPos = DisplaceSurfaceVertex(
                     poolFlat, worldFlat, ripple, 0.0, (float4)0.0,
+                    0.0,
                     poolDisplaced, largeWaveSourceXZ);
                 HeightVaryings o;
                 // Use a pass-owned matrix instead of replacing the command buffer's camera

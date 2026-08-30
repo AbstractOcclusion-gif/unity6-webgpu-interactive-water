@@ -196,7 +196,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                       "(6) the spillway crate lands ON the chute and rides its slope into the lake, " +
                       "(7) WaterTopology.ConnectionsOf(lake) enumerates 2 connections (5 total), " +
                       "(8) dive INTO the mid-gap river: the fog must ride the river, not cut off " +
-                      "where the parent body's box ends.");
+                      "where the parent body's box ends, " +
+                      "(9) from a DRY camera, look across and below both river ribbons: their " +
+                      "water columns are foggy, terrain truncates the fog, and no glass wall or " +
+                      "plain shell is visible.");
         }
 
         // One connected river: THE recipe (facade-owned wiring), then connect to bodies at each

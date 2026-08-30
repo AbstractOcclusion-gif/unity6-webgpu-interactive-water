@@ -347,6 +347,7 @@ namespace AbstractOcclusion.WebGpuWater
             WaterReflections.ResetStaticState();
             WaterUniformPublisher.ResetStaticState();
             WaterSurfaceProviders.ResetStaticState();
+            WaterRiverSurface.ResetStaticState();
             WaterTopology.ResetStaticState();
             WaterSimLeasePool.ResetStaticState();
         }

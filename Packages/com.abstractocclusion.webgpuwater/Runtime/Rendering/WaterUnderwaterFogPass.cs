@@ -42,6 +42,10 @@ namespace AbstractOcclusion.WebGpuWater
         const string SolveAbsorbTextureName = "_WaterFogSolveAbsorb";
         const string SolveInscatterTextureName = "_WaterFogSolveInscatter";
         const string SolveScalePropertyName = "_WaterFogSolveScale";
+        const string RiverFogFrontDepthName = "_RiverFogFrontDepth";
+        const string RiverFogBackDepthName = "_RiverFogBackDepth";
+        const string RiverFogFrontDepthPassName = "RiverFogFrontDepth";
+        const string RiverFogBackDepthPassName = "RiverFogBackDepth";
         const GraphicsFormat SolveRtFormat = GraphicsFormat.R16G16B16A16_SFloat;
         // "WaterRestoreOpaqueDepth": rewrites the depth attachment from the opaque-only
         // _CameraDepthTexture so user transparents drawn after the water stack stop
@@ -113,6 +117,10 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_WaterFogSolveInscatter =
             Shader.PropertyToID(SolveInscatterTextureName);
         static readonly int ID_WaterFogSolveScale = Shader.PropertyToID(SolveScalePropertyName);
+        static readonly int ID_RiverFogFrontDepth = Shader.PropertyToID(RiverFogFrontDepthName);
+        static readonly int ID_RiverFogBackDepth = Shader.PropertyToID(RiverFogBackDepthName);
+        static readonly int ID_RiverFogDepthValid = Shader.PropertyToID("_RiverFogDepthValid");
+        static readonly int ID_RiverFogExternalOnly = Shader.PropertyToID("_RiverFogExternalOnly");
 
         readonly Material _material;
         readonly Material _heightRtMaterial;
@@ -122,10 +130,16 @@ namespace AbstractOcclusion.WebGpuWater
         readonly ProfilingSampler _lensHeightRtSampler = new ProfilingSampler(LensHeightRtPassName);
         readonly ProfilingSampler _classifySampler = new ProfilingSampler("WaterUnderwaterFog.Classify");
         readonly ProfilingSampler _solveSampler = new ProfilingSampler("WaterUnderwaterFog.Solve");
+        readonly ProfilingSampler _riverFogFrontSampler =
+            new ProfilingSampler("WaterUnderwaterFog.RiverFrontDepth");
+        readonly ProfilingSampler _riverFogBackSampler =
+            new ProfilingSampler("WaterUnderwaterFog.RiverBackDepth");
         readonly int _classifyShaderPass;
         readonly bool _classifyRtSupported;
         readonly bool _lensHeightRtSupported;
         readonly int _solveShaderPass;
+        readonly int _riverFogFrontDepthShaderPass;
+        readonly int _riverFogBackDepthShaderPass;
         readonly bool _solveRtSupported;
         // One complaint per session, not per frame: C1 makes the solve pass a hard requirement
         // of the fog chain (the blend passes have nothing correct to load without it), so a
@@ -134,6 +148,7 @@ namespace AbstractOcclusion.WebGpuWater
         // Reused each frame so the prepass allocates no garbage.
         readonly MaterialPropertyBlock _scratchBlock = new MaterialPropertyBlock();
         static readonly List<Renderer> s_SurfaceRenderers = new List<Renderer>();
+        static readonly List<WaterRiverSurface> s_RiverFogSurfaces = new List<WaterRiverSurface>();
         static Mesh s_HeightRtGrid;
         static Mesh s_LensHeightRtGrid;
 
@@ -147,6 +162,12 @@ namespace AbstractOcclusion.WebGpuWater
             _solveShaderPass = material != null
                 ? material.FindPass(SolveShaderPassName)
                 : InvalidShaderPass;
+            _riverFogFrontDepthShaderPass = material != null
+                ? material.FindPass(RiverFogFrontDepthPassName)
+                : InvalidShaderPass;
+            _riverFogBackDepthShaderPass = material != null
+                ? material.FindPass(RiverFogBackDepthPassName)
+                : InvalidShaderPass;
             _classifyRtSupported = SystemInfo.IsFormatSupported(ClassifyRtFormat,
                                                                 GraphicsFormatUsage.Render);
             _solveRtSupported = SystemInfo.IsFormatSupported(SolveRtFormat,
@@ -157,6 +178,8 @@ namespace AbstractOcclusion.WebGpuWater
                                                                   GraphicsFormatUsage.Sample);
             renderPassEvent = InjectionPoint;
         }
+
+        internal WaterVolume ExternalRiverFogSource { get; set; }
 
         sealed class PassData
         {
@@ -180,6 +203,13 @@ namespace AbstractOcclusion.WebGpuWater
         {
             public List<Renderer> renderers;
             public MaterialPropertyBlock block;
+        }
+
+        sealed class RiverFogDepthPassData
+        {
+            public Material material;
+            public int shaderPass;
+            public List<WaterRiverSurface> surfaces;
         }
 
         sealed class HeightRtPassData
@@ -211,6 +241,18 @@ namespace AbstractOcclusion.WebGpuWater
             // so a stale 1 after the ocean disappears would leave the fog reading a dead RT).
             bool prepassRecorded = false;
             WaterVolume fogSource = WaterVolume.FogSource;
+            bool riverFogRecorded = RecordRiverFogDepthPrepassIfNeeded(
+                renderGraph, cameraColor, cameraData.camera);
+            Shader.SetGlobalFloat(ID_RiverFogDepthValid, riverFogRecorded ? 1f : 0f);
+            // A river may be the reason this pass woke while its bounded parent lake/pond was not
+            // selected by the camera gate. Bounded fog is still meant to be visible from outside,
+            // so keep its established box segment on non-river pixels. Only a dry unbounded ocean
+            // needs river-only masking; otherwise its half-space would fog the entire landscape.
+            bool riverFogExternalOnly = riverFogRecorded && !WaterVolume.UnderwaterFogActive &&
+                                        (fogSource == null || fogSource.IsOceanClipmap);
+            Shader.SetGlobalFloat(
+                ID_RiverFogExternalOnly,
+                riverFogExternalOnly ? 1f : 0f);
             // NOT ON THE SIMPLE TIER - it has no reader there. UnderwaterSegment tests
             // _UnderwaterFogSimple BEFORE _OceanSurfaceDepthValid (WaterUnderwaterFog.shader), so a
             // Simple frame takes OceanFlatPath and _OceanSurfaceEyeDepth is sampled NOWHERE: its
@@ -283,7 +325,7 @@ namespace AbstractOcclusion.WebGpuWater
             // crossing band, whichever side of it is fogged). The same per-frame gates the
             // feature enqueued on decide which sub-passes record - fog and waterline arm
             // independently (a straddling near plane arms the line before the eye submerges).
-            if (WaterVolume.UnderwaterFogActive)
+            if (WaterVolume.UnderwaterFogActive || riverFogRecorded)
             {
                 // Half-res solve (the C1 unlock): the scale is the fog source's tier knob, probe-
                 // writable like the fog mode. Debug views force full res - they ride the solve
@@ -300,6 +342,56 @@ namespace AbstractOcclusion.WebGpuWater
             // writes), which is also why a view only appears while the fog is armed.
             if (WaterVolume.WaterlineActive && !WaterDebugView.FogViewActive)
                 RecordWaterlinePass(renderGraph, resources, cameraColor, classifyRt);
+        }
+
+        bool RecordRiverFogDepthPrepassIfNeeded(RenderGraph renderGraph, TextureHandle sizeSource,
+                                                Camera camera)
+        {
+            if (ExternalRiverFogSource == null ||
+                _riverFogFrontDepthShaderPass == InvalidShaderPass ||
+                _riverFogBackDepthShaderPass == InvalidShaderPass)
+                return false;
+
+            WaterRiverSurface.CollectExternalFogSurfaces(
+                camera, ExternalRiverFogSource, s_RiverFogSurfaces);
+            if (s_RiverFogSurfaces.Count == 0) return false;
+
+            TextureHandle front = WaterDepthTarget.Create(
+                renderGraph, sizeSource, RiverFogFrontDepthName);
+            TextureHandle back = WaterDepthTarget.Create(
+                renderGraph, sizeSource, RiverFogBackDepthName);
+            RecordRiverFogFaceDepth(
+                renderGraph, front, _riverFogFrontDepthShaderPass,
+                ID_RiverFogFrontDepth, _riverFogFrontSampler);
+            RecordRiverFogFaceDepth(
+                renderGraph, back, _riverFogBackDepthShaderPass,
+                ID_RiverFogBackDepth, _riverFogBackSampler);
+            return true;
+        }
+
+        void RecordRiverFogFaceDepth(RenderGraph renderGraph, TextureHandle depth,
+                                     int shaderPass, int globalTextureId,
+                                     ProfilingSampler sampler)
+        {
+            using var builder = renderGraph.AddRasterRenderPass<RiverFogDepthPassData>(
+                sampler.name, out RiverFogDepthPassData data, sampler);
+            data.material = _material;
+            data.shaderPass = shaderPass;
+            data.surfaces = s_RiverFogSurfaces;
+            builder.SetRenderAttachmentDepth(depth, AccessFlags.Write);
+            builder.AllowPassCulling(false);
+            builder.SetGlobalTextureAfterPass(depth, globalTextureId);
+            builder.SetRenderFunc((RiverFogDepthPassData d, RasterGraphContext context) =>
+            {
+                for (int surfaceIndex = 0; surfaceIndex < d.surfaces.Count; surfaceIndex++)
+                {
+                    WaterRiverSurface surface = d.surfaces[surfaceIndex];
+                    if (surface == null || surface.GeneratedFogVolumeMesh == null) continue;
+                    context.cmd.DrawMesh(
+                        surface.GeneratedFogVolumeMesh, surface.transform.localToWorldMatrix,
+                        d.material, 0, d.shaderPass);
+                }
+            });
         }
 
         TextureHandle RecordClassifyPass(RenderGraph renderGraph, TextureHandle sizeSource)
