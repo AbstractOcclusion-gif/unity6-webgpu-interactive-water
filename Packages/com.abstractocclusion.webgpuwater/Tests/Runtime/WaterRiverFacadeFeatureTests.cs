@@ -178,6 +178,29 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         }
 
         [Test]
+        public void MouthOutflow_ExtendsCurrentIntoReceivingBodyAndDecays()
+        {
+            _river.mouthEnd.body = _lake;
+            _river.mouthOutflowLengthMeters = 12f;
+            _river.RegenerateConnection(WaterRiverEndKind.Mouth);
+
+            Assert.That(_river.TryBuildMouthOutflow(out WaterRiverMouthOutflow outflow), Is.True);
+            WaterRiverCurrentField field = _river.GetComponent<WaterRiverCurrentField>();
+            Assert.That(_lake.currentFields, Does.Contain(field),
+                        "the actual mouth body owns the downstream jet even without a parent link");
+
+            Vector3 nearPoint = outflow.Origin + outflow.Downstream * 2f;
+            Vector3 farPoint = outflow.Origin + outflow.Downstream * 8f;
+            Assert.That(field.SampleCurrent(nearPoint, out Vector3 nearVelocity), Is.True);
+            Assert.That(field.SampleCurrent(farPoint, out Vector3 farVelocity), Is.True);
+            Assert.That(Vector3.Dot(nearVelocity, outflow.Downstream), Is.GreaterThan(0f));
+            Assert.That(farVelocity.magnitude, Is.LessThan(nearVelocity.magnitude));
+
+            Vector3 beyondPlume = outflow.Origin + outflow.Downstream * 13f;
+            Assert.That(field.SampleCurrent(beyondPlume, out _), Is.False);
+        }
+
+        [Test]
         public void TopologyPortLookup_FindsGeneratedPortsByPersistentId()
         {
             _river.mouthEnd.body = _lake;

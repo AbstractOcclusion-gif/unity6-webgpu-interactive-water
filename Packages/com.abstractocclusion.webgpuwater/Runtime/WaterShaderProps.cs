@@ -57,14 +57,21 @@ namespace AbstractOcclusion.WebGpuWater
         internal const string FoamCoreCutName = "_FoamCoreCut";
         internal const string FoamContactDepthName = "_FoamContactDepth";
         internal const string RiverFoamActiveName = "_RiverFoamActive";
+        internal const string RiverFoamOverallStrengthName = "_RiverFoamOverallStrength";
         internal const string RiverFoamStrengthName = "_RiverFoamStrength";
         internal const string RiverContactFoamStrengthName = "_RiverContactFoamStrength";
         internal const string RiverCascadeFoamStrengthName = "_RiverCascadeFoamStrength";
         internal const string RiverCascadeStartCosineName = "_RiverCascadeStartCosine";
         internal const string RiverCascadeFullCosineName = "_RiverCascadeFullCosine";
+        internal const string RiverCascadeTransportActiveName = "_RiverCascadeTransportActive";
+        internal const string RiverCascadeTransportSamplesName = "_RiverCascadeTransportSamples";
+        internal const string RiverCascadeTransportInverseLengthName =
+            "_RiverCascadeTransportInvLength";
         internal const string RiverFluidActiveName = "_RiverFluidActive";
         internal const string RiverFluidInverseLengthName = "_RiverFluidInvLength";
         internal const string RiverFluidMaximumSpeedName = "_RiverFluidMaxSpeed";
+        internal const string MouthOutflowFoamAppearanceName =
+            "_MouthOutflowFoamAppearance";
         internal static readonly int FoamEnabled = Shader.PropertyToID(FoamEnabledName);
         internal static readonly int FoamMask = Shader.PropertyToID(FoamMaskName);
         internal static readonly int FoamTileSize = Shader.PropertyToID(FoamTileSizeName);
@@ -72,6 +79,8 @@ namespace AbstractOcclusion.WebGpuWater
         internal static readonly int FoamCoreCut = Shader.PropertyToID(FoamCoreCutName);
         internal static readonly int FoamContactDepth = Shader.PropertyToID(FoamContactDepthName);
         internal static readonly int RiverFoamActive = Shader.PropertyToID(RiverFoamActiveName);
+        internal static readonly int RiverFoamOverallStrength =
+            Shader.PropertyToID(RiverFoamOverallStrengthName);
         internal static readonly int RiverFoamStrength = Shader.PropertyToID(RiverFoamStrengthName);
         internal static readonly int RiverContactFoamStrength =
             Shader.PropertyToID(RiverContactFoamStrengthName);
@@ -81,11 +90,19 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.PropertyToID(RiverCascadeStartCosineName);
         internal static readonly int RiverCascadeFullCosine =
             Shader.PropertyToID(RiverCascadeFullCosineName);
+        internal static readonly int RiverCascadeTransportActive =
+            Shader.PropertyToID(RiverCascadeTransportActiveName);
+        internal static readonly int RiverCascadeTransportSamples =
+            Shader.PropertyToID(RiverCascadeTransportSamplesName);
+        internal static readonly int RiverCascadeTransportInverseLength =
+            Shader.PropertyToID(RiverCascadeTransportInverseLengthName);
         internal static readonly int RiverFluidActive = Shader.PropertyToID(RiverFluidActiveName);
         internal static readonly int RiverFluidInverseLength =
             Shader.PropertyToID(RiverFluidInverseLengthName);
         internal static readonly int RiverFluidMaximumSpeed =
             Shader.PropertyToID(RiverFluidMaximumSpeedName);
+        internal static readonly int MouthOutflowFoamAppearance =
+            Shader.PropertyToID(MouthOutflowFoamAppearanceName);
 
         // ---- WaterShoreDepthField.cs <-> WaterSimulation.cs ----
         internal const string ShoreShoalDepthName = "_ShoreShoalDepth";

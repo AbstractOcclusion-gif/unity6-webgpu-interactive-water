@@ -14,16 +14,35 @@ namespace AbstractOcclusion.WebGpuWater.Editor
     {
         const string GenerateUndoLabel = "Generate River Connection";
         const string RemoveUndoLabel = "Remove River Connection";
+        const string MouthOutflowLengthPropertyName = "mouthOutflowLengthMeters";
+        const string MouthOutflowSpreadPropertyName = "mouthOutflowSpreadPerMeter";
+        const string MouthOutflowCurrentStrengthPropertyName = "mouthOutflowCurrentStrength";
+        const string MouthOutflowFoamLengthPropertyName = "mouthOutflowFoamLengthMeters";
+        const string MouthOutflowFoamStrengthPropertyName = "mouthOutflowFoamStrength";
+        const string MouthOutflowSectionTitle = "Mouth Outflow";
 
         SerializedProperty _parentVolume;
         SerializedProperty _sourceEnd;
         SerializedProperty _mouthEnd;
+        SerializedProperty _mouthOutflowLength;
+        SerializedProperty _mouthOutflowSpread;
+        SerializedProperty _mouthOutflowCurrentStrength;
+        SerializedProperty _mouthOutflowFoamLength;
+        SerializedProperty _mouthOutflowFoamStrength;
 
         void OnEnable()
         {
             _parentVolume = serializedObject.FindProperty("parentVolume");
             _sourceEnd = serializedObject.FindProperty("sourceEnd");
             _mouthEnd = serializedObject.FindProperty("mouthEnd");
+            _mouthOutflowLength = serializedObject.FindProperty(MouthOutflowLengthPropertyName);
+            _mouthOutflowSpread = serializedObject.FindProperty(MouthOutflowSpreadPropertyName);
+            _mouthOutflowCurrentStrength = serializedObject.FindProperty(
+                MouthOutflowCurrentStrengthPropertyName);
+            _mouthOutflowFoamLength = serializedObject.FindProperty(
+                MouthOutflowFoamLengthPropertyName);
+            _mouthOutflowFoamStrength = serializedObject.FindProperty(
+                MouthOutflowFoamStrengthPropertyName);
         }
 
         public override void OnInspectorGUI()
@@ -38,6 +57,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "and no underwater fog until a parent volume is assigned.", MessageType.Info);
 
             DrawOptionalComponents(river);
+            DrawMouthOutflow();
             DrawEnd(river, WaterRiverEndKind.Source, _sourceEnd, "Source End (first knot)");
             DrawEnd(river, WaterRiverEndKind.Mouth, _mouthEnd, "Mouth End (last knot)");
 
@@ -67,6 +87,17 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                                         "spline speed. Add Fluid Bake before adding river foam; " +
                                         "only obstacle-deflected turbulence requires an actual bake.",
                                         MessageType.None);
+        }
+
+        void DrawMouthOutflow()
+        {
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField(MouthOutflowSectionTitle, EditorStyles.boldLabel);
+            EditorGUILayout.PropertyField(_mouthOutflowLength);
+            EditorGUILayout.PropertyField(_mouthOutflowSpread);
+            EditorGUILayout.PropertyField(_mouthOutflowCurrentStrength);
+            EditorGUILayout.PropertyField(_mouthOutflowFoamLength);
+            EditorGUILayout.PropertyField(_mouthOutflowFoamStrength);
         }
 
         void DrawEnd(WaterRiver river, WaterRiverEndKind endKind, SerializedProperty endProperty,

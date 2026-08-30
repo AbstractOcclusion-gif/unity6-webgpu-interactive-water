@@ -240,6 +240,14 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_DetailNormalCrestBoost = Shader.PropertyToID("_DetailNormalCrestBoost");
         static readonly int ID_WindDirection = Shader.PropertyToID("_WindDirection");
         static readonly int ID_OceanCurrentOffset = Shader.PropertyToID("_OceanCurrentOffset");
+        static readonly int ID_MouthOutflowCount = Shader.PropertyToID("_MouthOutflowCount");
+        static readonly int ID_MouthOutflowOrigins = Shader.PropertyToID("_MouthOutflowOrigins");
+        static readonly int ID_MouthOutflowDirections = Shader.PropertyToID("_MouthOutflowDirections");
+        static readonly int ID_MouthOutflowParameters = Shader.PropertyToID("_MouthOutflowParameters");
+        static readonly int ID_MouthOutflowFoamFrames =
+            Shader.PropertyToID("_MouthOutflowFoamFrames");
+        static readonly int ID_MouthOutflowFoamAppearance =
+            WaterShaderProps.MouthOutflowFoamAppearance;
         static readonly int ID_UnderFresnelPhysical = Shader.PropertyToID("_UnderFresnelPhysical");
         static readonly int ID_UnderTirSoftness = Shader.PropertyToID("_UnderTirSoftness");
         static readonly int ID_UnderFresnelFloor = Shader.PropertyToID("_UnderFresnelFloor");
@@ -781,6 +789,16 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetVector(ID_WaveGroupPhases, _body.WaveBank.GroupPhases);
             sink.SetVector(ID_WaveShape, _body.WaveBank.Shape);
             sink.SetFloat(ID_WaveStokesNorm, _body.WaveBank.StokesNorm);
+            int mouthOutflowCount = _body.RiverMouthOutflowCount;
+            sink.SetFloat(ID_MouthOutflowCount, mouthOutflowCount);
+            sink.SetVectorArray(ID_MouthOutflowOrigins, _body.RiverMouthOutflowOrigins);
+            sink.SetVectorArray(ID_MouthOutflowDirections, _body.RiverMouthOutflowDirections);
+            sink.SetVectorArray(ID_MouthOutflowParameters, _body.RiverMouthOutflowParameters);
+            sink.SetVectorArray(
+                ID_MouthOutflowFoamFrames, _body.RiverMouthOutflowFoamFrames);
+            sink.SetVectorArray(
+                ID_MouthOutflowFoamAppearance,
+                _body.RiverMouthOutflowFoamAppearances);
 
             sink.SetColor(ID_FogColor, _body.fogColor);
             sink.SetColor(ID_FogExt, _body.fogExtinction);

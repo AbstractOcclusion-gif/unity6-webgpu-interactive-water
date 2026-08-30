@@ -206,6 +206,14 @@
                 // river vertices and pool meshes preserve the parent-anchored path.
                 float2 gridWaveSample = RiverEndWindWaveSampleXZ(
                     poolXZ, worldFlat.xz, riverEndSelector);
+                float2 outflowWorldXZ = MouthOutflowDriftedWorldXZ(worldFlat.xz);
+                float2 outflowPoolXZ = WorldToPool(
+                    float3(outflowWorldXZ.x, worldFlat.y, outflowWorldXZ.y)).xz;
+                float2 outflowWaveSample = RiverEndWindWaveSampleXZ(
+                    outflowPoolXZ, outflowWorldXZ, riverEndSelector);
+                float outflowInfluence = MouthOutflowCurrentInfluence(worldFlat.xz);
+                float gridWaveHeight = lerp(
+                    WaveHeight(gridWaveSample), WaveHeight(outflowWaveSample), outflowInfluence);
                 float2 riverWaveSample = RiverCurrentWaveSampleXZ(riverCurrentData);
                 // Value blend (Bert's call: "we sew borders then a fade to mix waves"):
                 // lerping the SAMPLE COORDINATE between two distant anchors sweeps the phase
@@ -214,10 +222,10 @@
                 // inputs); the terminal row then equals the receiving body's own height
                 // exactly. The uniform branch keeps pools single-evaluation, byte-identical.
                 if (_IsRiver > 0.5)
-                    position.y += lerp(WaveHeight(gridWaveSample),
+                    position.y += lerp(gridWaveHeight,
                                        WaveHeight(riverWaveSample), riverWeight);
                 else
-                    position.y += WaveHeight(gridWaveSample);
+                    position.y += gridWaveHeight;
                                                        // small wind-wave detail; open water
                                                        // layers the big swell on top in world space below
                 poolDisplaced = position;              // keep pool-space position for the tracer

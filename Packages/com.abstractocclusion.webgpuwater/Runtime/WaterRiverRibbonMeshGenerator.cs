@@ -76,6 +76,18 @@ namespace AbstractOcclusion.WebGpuWater
             internal float LongitudinalMeters => IsActive ? CurrentData[0].y : 0f;
         }
 
+        internal readonly struct RibbonMetrics
+        {
+            internal readonly float MouthLongitudinalMeters;
+            internal readonly Vector3 MouthRight;
+
+            internal RibbonMetrics(float mouthLongitudinalMeters, Vector3 mouthRight)
+            {
+                MouthLongitudinalMeters = mouthLongitudinalMeters;
+                MouthRight = mouthRight;
+            }
+        }
+
         // Mesh channel contract:
         //   position  - ribbon geometry in the owning surface's local space;
         //   normal    - transported ribbon-up direction;
@@ -90,19 +102,21 @@ namespace AbstractOcclusion.WebGpuWater
         //   UV2.x     - signed body blend selector: negative source, positive mouth, zero interior.
         // UV0 remains the normalized bake coordinate for later current-map and foam consumers. UV1
         // is the metric current coordinate used by the shared surface shader; vertex colors stay free.
-        internal static void Populate(Mesh mesh, WaterRiverSpline spline, Transform meshTransform,
-                                      int samplesPerSegment)
+        internal static RibbonMetrics Populate(
+            Mesh mesh, WaterRiverSpline spline, Transform meshTransform,
+            int samplesPerSegment)
             => Populate(mesh, spline, meshTransform, samplesPerSegment, default, default);
 
-        internal static void Populate(Mesh mesh, WaterRiverSpline spline, Transform meshTransform,
-                                      int samplesPerSegment, BodySeamEnd sourceSeam,
-                                      BodySeamEnd mouthSeam)
+        internal static RibbonMetrics Populate(
+            Mesh mesh, WaterRiverSpline spline, Transform meshTransform,
+            int samplesPerSegment, BodySeamEnd sourceSeam, BodySeamEnd mouthSeam)
             => Populate(mesh, spline, meshTransform, samplesPerSegment, sourceSeam, mouthSeam,
                         default);
 
-        internal static void Populate(Mesh mesh, WaterRiverSpline spline, Transform meshTransform,
-                                      int samplesPerSegment, BodySeamEnd sourceSeam,
-                                      BodySeamEnd mouthSeam, SharedBoundaryRow sourceBoundary)
+        internal static RibbonMetrics Populate(
+            Mesh mesh, WaterRiverSpline spline, Transform meshTransform,
+            int samplesPerSegment, BodySeamEnd sourceSeam,
+            BodySeamEnd mouthSeam, SharedBoundaryRow sourceBoundary)
         {
             ValidateInputs(mesh, spline, meshTransform, samplesPerSegment);
 
@@ -176,6 +190,7 @@ namespace AbstractOcclusion.WebGpuWater
                     "River body-seam transition bands overlap; shorten one transition radius.");
 
             float longitudinalOrigin = sourceBoundary.LongitudinalMeters;
+            Vector3 mouthRight = Vector3.zero;
             for (int splineSection = 0; splineSection < splineSections; splineSection++)
             {
                 WaterRiverSplineSample sample = samples[splineSection];
@@ -208,6 +223,7 @@ namespace AbstractOcclusion.WebGpuWater
                                   FullSeamWeight - bodyBlend, endSelector, worldToLocal,
                                   normalWorldToLocal, vertices, normals, tangents, uv,
                                   currentData, endBlendData, worldPositions, crossSectionUps);
+                if (splineSection == splineSections - 1) mouthRight = right;
             }
 
             if (sourceBoundary.IsActive)
@@ -231,6 +247,7 @@ namespace AbstractOcclusion.WebGpuWater
             mesh.SetUVs(2, endBlendData);
             mesh.triangles = indices;
             mesh.bounds = bounds;
+            return new RibbonMetrics(longitudinalOrigin + splineDistance, mouthRight);
         }
 
         static void ApplySharedSourceBoundary(in SharedBoundaryRow boundary, int section,

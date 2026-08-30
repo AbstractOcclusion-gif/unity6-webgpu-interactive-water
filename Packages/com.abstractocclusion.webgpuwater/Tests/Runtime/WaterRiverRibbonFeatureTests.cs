@@ -21,6 +21,8 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         const int TriangleIndexCount = 3;
         const int ClosedEdgeUseCount = 2;
         const float TetrahedronVolumeDivisor = 6f;
+        const int WaterFogOccluderDepthPassIndex = 3;
+        const string WaterFogOccluderDepthPassName = "WaterFogOccluderDepth";
         const string SplineHostName = "River Ribbon Spline Test";
         const string MeshHostName = "River Ribbon Mesh Test";
         const string GeneratedMeshName = "River Ribbon Test Mesh";
@@ -411,6 +413,57 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             {
                 Object.DestroyImmediate(surfaceHost);
                 Object.DestroyImmediate(splineHost);
+            }
+        }
+
+        [Test]
+        public void Surface_WaterShaderProvidesRiverFogOccluderDepthPass()
+        {
+            Shader shader = Shader.Find(WaterShaderNames.WaterSurface);
+            Assert.That(shader, Is.Not.Null);
+            var material = new Material(shader);
+            try
+            {
+                Assert.That(material.FindPass(WaterFogOccluderDepthPassName),
+                    Is.EqualTo(WaterFogOccluderDepthPassIndex));
+            }
+            finally
+            {
+                Object.DestroyImmediate(material);
+            }
+        }
+
+        [Test]
+        public void Surface_RiverFogOwnershipCollectorIncludesOnlyRenderableTopSheets()
+        {
+            GameObject splineHost = CreateSpline(StraightKnots(), out WaterRiverSpline spline);
+            var surfaceHost = new GameObject(MeshHostName);
+            WaterRiverSurface surface = surfaceHost.AddComponent<WaterRiverSurface>();
+            Material material = null;
+            try
+            {
+                Shader shader = Shader.Find(WaterShaderNames.WaterSurface);
+                Assert.That(shader, Is.Not.Null);
+                material = new Material(shader);
+                surfaceHost.GetComponent<MeshRenderer>().sharedMaterial = material;
+                surface.spline = spline;
+                surface.samplesPerSegment = SamplesPerSegment;
+                surface.RequestRebuild();
+
+                var renderers = new List<Renderer>();
+                WaterRiverSurface.AppendActiveSurfaceRenderers(renderers);
+                Assert.That(renderers.Contains(surface.SurfaceRenderer), Is.True);
+
+                surface.SurfaceRenderer.forceRenderingOff = true;
+                renderers.Clear();
+                WaterRiverSurface.AppendActiveSurfaceRenderers(renderers);
+                Assert.That(renderers.Contains(surface.SurfaceRenderer), Is.False);
+            }
+            finally
+            {
+                Object.DestroyImmediate(surfaceHost);
+                Object.DestroyImmediate(splineHost);
+                if (material != null) Object.DestroyImmediate(material);
             }
         }
 

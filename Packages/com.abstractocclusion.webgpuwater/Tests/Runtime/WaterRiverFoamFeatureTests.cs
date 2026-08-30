@@ -11,6 +11,7 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         const int Iterations = 80;
         const int ObstacleHalfWidth = 1;
         const int ObstacleHalfHeight = 2;
+        const int ShaderOutflowIndex = 0;
         const float DownstreamSpeed = 3f;
         const float MaximumPackedSpeed = 4f;
         const float FloatTolerance = 0.02f;
@@ -18,7 +19,17 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         const float RiverWidth = 6f;
         const float SampleLateralU = 0.5f;
         const float SampleNormalizedT = 0.5f;
+        const float ShortCascadePersistenceMeters = 0.01f;
+        const float LongCascadePersistenceMeters = 100f;
+        const float CascadeDropHeight = 6f;
+        const float CascadeEndMeters = 6f;
+        const float FlatReachEndMeters = 18f;
+        const float OverallFoamTestStrength = 0.4f;
+        const float MouthFoamPatternSizeMeters = 2.75f;
+        const float MouthFoamEdgeFeather = 0.3f;
+        const float MouthFoamCoreCut = 0.65f;
         const string HostName = "River Fluid Test";
+        const string CascadeReceivingBodyName = "Cascade Foam Receiving Body";
         const string TextureName = "River Fluid Test Texture";
 
         [Test]
@@ -179,6 +190,9 @@ namespace AbstractOcclusion.WebGpuWater.Tests
                 host.GetComponent<MeshRenderer>().GetPropertyBlock(properties);
                 Assert.That(properties.GetFloat(WaterShaderProps.RiverFluidActive), Is.EqualTo(1f));
                 Assert.That(properties.GetFloat(WaterShaderProps.RiverFoamActive), Is.EqualTo(1f));
+                Assert.That(
+                    properties.GetFloat(WaterShaderProps.RiverFoamOverallStrength),
+                    Is.EqualTo(1f));
                 Assert.That(properties.GetFloat(WaterShaderProps.RiverContactFoamStrength),
                             Is.GreaterThan(0f));
                 Assert.That(properties.GetFloat(WaterShaderProps.FoamContactDepth),
@@ -188,6 +202,12 @@ namespace AbstractOcclusion.WebGpuWater.Tests
                 Assert.That(properties.GetFloat(WaterShaderProps.RiverCascadeStartCosine),
                             Is.GreaterThan(
                                 properties.GetFloat(WaterShaderProps.RiverCascadeFullCosine)));
+                Assert.That(
+                    properties.GetFloat(WaterShaderProps.RiverCascadeTransportActive),
+                    Is.EqualTo(1f));
+                Assert.That(
+                    properties.GetFloat(WaterShaderProps.RiverCascadeTransportInverseLength),
+                    Is.GreaterThan(0f));
                 Assert.That(properties.GetTexture(WaterShaderProps.FoamMask), Is.SameAs(texture));
                 Assert.That(volume.HasLiveExternalFoamRenderer, Is.True);
 
@@ -203,6 +223,96 @@ namespace AbstractOcclusion.WebGpuWater.Tests
                 Object.DestroyImmediate(volumeHost);
                 Object.DestroyImmediate(data);
                 Object.DestroyImmediate(texture);
+            }
+        }
+
+        [Test]
+        public void CascadeFoam_PersistsAlongFlatReachAndPublishesTerminalCoverage()
+        {
+            GameObject host = CreateCascadeThenFlatSpline(out WaterRiverSpline spline);
+            var volumeHost = new GameObject(CascadeReceivingBodyName);
+            volumeHost.SetActive(false);
+            WaterVolume receivingBody = volumeHost.AddComponent<WaterVolume>();
+            try
+            {
+                WaterRiverSurface surface = host.AddComponent<WaterRiverSurface>();
+                surface.spline = spline;
+                surface.RequestRebuild();
+                host.AddComponent<WaterRiverFluid>();
+                WaterRiverFoam foam = host.AddComponent<WaterRiverFoam>();
+
+                foam.cascadePersistenceMeters = ShortCascadePersistenceMeters;
+                foam.RequestRebuild();
+                float shortPersistenceCoverage = foam.TransportedCascadeAtMouth;
+
+                foam.cascadePersistenceMeters = LongCascadePersistenceMeters;
+                foam.RequestRebuild();
+                float longPersistenceCoverage = foam.TransportedCascadeAtMouth;
+
+                Assert.That(longPersistenceCoverage, Is.GreaterThan(0f));
+                Assert.That(
+                    longPersistenceCoverage,
+                    Is.GreaterThan(shortPersistenceCoverage));
+
+                WaterRiver river = host.AddComponent<WaterRiver>();
+                foam.overallStrength = OverallFoamTestStrength;
+                foam.patternSize = MouthFoamPatternSizeMeters;
+                foam.edgeFeather = MouthFoamEdgeFeather;
+                foam.coreCut = MouthFoamCoreCut;
+                foam.RequestRebuild();
+                river.mouthEnd.body = receivingBody;
+                river.RegenerateConnection(WaterRiverEndKind.Mouth);
+
+                Assert.That(
+                    river.TryBuildMouthOutflow(out WaterRiverMouthOutflow outflow),
+                    Is.True);
+                Assert.That(
+                    outflow.FoamCoverage,
+                    Is.EqualTo(longPersistenceCoverage * OverallFoamTestStrength)
+                        .Within(FloatTolerance));
+                Assert.That(
+                    outflow.FoamLongitudinalMeters,
+                    Is.EqualTo(surface.MouthLongitudinalMeters).Within(FloatTolerance));
+                Assert.That(
+                    Vector3.Dot(outflow.Right, surface.MouthRight.normalized),
+                    Is.EqualTo(1f).Within(FloatTolerance));
+
+                var origins = new Vector4[WaterRiverMouthOutflow.MaximumShaderOutflows];
+                var directions = new Vector4[WaterRiverMouthOutflow.MaximumShaderOutflows];
+                var parameters = new Vector4[WaterRiverMouthOutflow.MaximumShaderOutflows];
+                var foamFrames = new Vector4[WaterRiverMouthOutflow.MaximumShaderOutflows];
+                var foamAppearances =
+                    new Vector4[WaterRiverMouthOutflow.MaximumShaderOutflows];
+                outflow.WriteShaderData(
+                    origins, directions, parameters, foamFrames, foamAppearances,
+                    ShaderOutflowIndex);
+                Assert.That(
+                    foamFrames[ShaderOutflowIndex].z,
+                    Is.EqualTo(surface.MouthLongitudinalMeters).Within(FloatTolerance));
+                Assert.That(
+                    foamFrames[ShaderOutflowIndex].x,
+                    Is.EqualTo(outflow.Right.x).Within(FloatTolerance));
+                Assert.That(
+                    foamFrames[ShaderOutflowIndex].y,
+                    Is.EqualTo(outflow.Right.z).Within(FloatTolerance));
+                Assert.That(
+                    foamFrames[ShaderOutflowIndex].w,
+                    Is.EqualTo(outflow.FoamLateralSpeedMetersPerSecond)
+                        .Within(FloatTolerance));
+                Assert.That(
+                    foamAppearances[ShaderOutflowIndex].x,
+                    Is.EqualTo(MouthFoamPatternSizeMeters).Within(FloatTolerance));
+                Assert.That(
+                    foamAppearances[ShaderOutflowIndex].y,
+                    Is.EqualTo(MouthFoamEdgeFeather).Within(FloatTolerance));
+                Assert.That(
+                    foamAppearances[ShaderOutflowIndex].z,
+                    Is.EqualTo(MouthFoamCoreCut).Within(FloatTolerance));
+            }
+            finally
+            {
+                Object.DestroyImmediate(host);
+                Object.DestroyImmediate(volumeHost);
             }
         }
 
@@ -314,6 +424,28 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             {
                 new WaterRiverKnot(Vector3.zero, tangent, RiverWidth, DownstreamSpeed),
                 new WaterRiverKnot(end, tangent, RiverWidth, DownstreamSpeed),
+            };
+            return host;
+        }
+
+        static GameObject CreateCascadeThenFlatSpline(out WaterRiverSpline spline)
+        {
+            var host = new GameObject(HostName);
+            spline = host.AddComponent<WaterRiverSpline>();
+            Vector3 cascadeEnd = new Vector3(0f, 0f, CascadeEndMeters);
+            Vector3 flatReachEnd = new Vector3(0f, 0f, FlatReachEndMeters);
+            Vector3 cascadeTangent = cascadeEnd * WaterRiverSpline.BezierHandleLengthFraction;
+            Vector3 flatTangent = (flatReachEnd - cascadeEnd) *
+                                  WaterRiverSpline.BezierHandleLengthFraction;
+            spline.knots = new List<WaterRiverKnot>
+            {
+                new WaterRiverKnot(
+                    new Vector3(0f, CascadeDropHeight, 0f),
+                    new Vector3(0f, -CascadeDropHeight, CascadeEndMeters) *
+                    WaterRiverSpline.BezierHandleLengthFraction,
+                    RiverWidth, DownstreamSpeed),
+                new WaterRiverKnot(cascadeEnd, cascadeTangent, RiverWidth, DownstreamSpeed),
+                new WaterRiverKnot(flatReachEnd, flatTangent, RiverWidth, DownstreamSpeed),
             };
             return host;
         }

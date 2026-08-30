@@ -44,6 +44,9 @@ namespace AbstractOcclusion.WebGpuWater
         const string SolveScalePropertyName = "_WaterFogSolveScale";
         const string RiverFogFrontDepthName = "_RiverFogFrontDepth";
         const string RiverFogBackDepthName = "_RiverFogBackDepth";
+        const string VisibleWaterSurfaceDepthName = "_VisibleWaterSurfaceDepth";
+        const string VisibleWaterSurfaceDepthBufferName = "VisibleWaterSurfaceDepthBuffer";
+        const string VisibleWaterSurfaceDepthValidName = "_VisibleWaterSurfaceDepthValid";
         const string RiverFogFrontDepthPassName = "RiverFogFrontDepth";
         const string RiverFogBackDepthPassName = "RiverFogBackDepth";
         const GraphicsFormat SolveRtFormat = GraphicsFormat.R16G16B16A16_SFloat;
@@ -55,6 +58,9 @@ namespace AbstractOcclusion.WebGpuWater
         internal const int RestoreDepthShaderPass = 3;
         // WaterSurface.shader's "OceanSurfaceEyeDepth" pass, drawn per surface renderer below.
         const int SurfaceDepthShaderPass = 1;
+        // WaterSurface.shader's "WaterFogOccluderDepth" pass. Kept after PondFoamOverlay so the
+        // existing externally-drawn pass indices remain stable.
+        const int VisibleWaterSurfaceDepthShaderPass = 3;
 
         static readonly int ID_OceanSurfaceEyeDepth = Shader.PropertyToID("_OceanSurfaceEyeDepth");
         static readonly int ID_OceanSurfaceOwnership = Shader.PropertyToID("_OceanSurfaceOwnership");
@@ -119,8 +125,12 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_WaterFogSolveScale = Shader.PropertyToID(SolveScalePropertyName);
         static readonly int ID_RiverFogFrontDepth = Shader.PropertyToID(RiverFogFrontDepthName);
         static readonly int ID_RiverFogBackDepth = Shader.PropertyToID(RiverFogBackDepthName);
+        static readonly int ID_VisibleWaterSurfaceDepth =
+            Shader.PropertyToID(VisibleWaterSurfaceDepthName);
         static readonly int ID_RiverFogDepthValid = Shader.PropertyToID("_RiverFogDepthValid");
         static readonly int ID_RiverFogExternalOnly = Shader.PropertyToID("_RiverFogExternalOnly");
+        static readonly int ID_VisibleWaterSurfaceDepthValid =
+            Shader.PropertyToID(VisibleWaterSurfaceDepthValidName);
 
         readonly Material _material;
         readonly Material _heightRtMaterial;
@@ -134,6 +144,8 @@ namespace AbstractOcclusion.WebGpuWater
             new ProfilingSampler("WaterUnderwaterFog.RiverFrontDepth");
         readonly ProfilingSampler _riverFogBackSampler =
             new ProfilingSampler("WaterUnderwaterFog.RiverBackDepth");
+        readonly ProfilingSampler _visibleWaterSurfaceSampler =
+            new ProfilingSampler("WaterUnderwaterFog.VisibleWaterSurfaceDepth");
         readonly int _classifyShaderPass;
         readonly bool _classifyRtSupported;
         readonly bool _lensHeightRtSupported;
@@ -148,6 +160,7 @@ namespace AbstractOcclusion.WebGpuWater
         // Reused each frame so the prepass allocates no garbage.
         readonly MaterialPropertyBlock _scratchBlock = new MaterialPropertyBlock();
         static readonly List<Renderer> s_SurfaceRenderers = new List<Renderer>();
+        static readonly List<Renderer> s_VisibleWaterSurfaceRenderers = new List<Renderer>();
         static readonly List<WaterRiverSurface> s_RiverFogSurfaces = new List<WaterRiverSurface>();
         static Mesh s_HeightRtGrid;
         static Mesh s_LensHeightRtGrid;
@@ -244,6 +257,16 @@ namespace AbstractOcclusion.WebGpuWater
             bool riverFogRecorded = RecordRiverFogDepthPrepassIfNeeded(
                 renderGraph, cameraColor, cameraData.camera);
             Shader.SetGlobalFloat(ID_RiverFogDepthValid, riverFogRecorded ? 1f : 0f);
+            // The late fullscreen solve needs the nearest rendered water sheet for BOTH possible
+            // segment owners. River fog uses it against the ribbon exit; bounded lake/pond fog
+            // uses it when the ray enters through the top. Tying this prepass to river work alone
+            // left a connected river invisible to the lake branch at their overlap.
+            bool visibleWaterSurfaceDepthRecorded =
+                (riverFogRecorded || WaterVolume.UnderwaterFogActive) &&
+                RecordVisibleWaterSurfaceDepth(renderGraph, cameraColor);
+            Shader.SetGlobalFloat(
+                ID_VisibleWaterSurfaceDepthValid,
+                visibleWaterSurfaceDepthRecorded ? 1f : 0f);
             // A river may be the reason this pass woke while its bounded parent lake/pond was not
             // selected by the camera gate. Bounded fog is still meant to be visible from outside,
             // so keep its established box segment on non-river pixels. Only a dry unbounded ocean
@@ -366,6 +389,46 @@ namespace AbstractOcclusion.WebGpuWater
             RecordRiverFogFaceDepth(
                 renderGraph, back, _riverFogBackDepthShaderPass,
                 ID_RiverFogBackDepth, _riverFogBackSampler);
+            return true;
+        }
+
+        bool RecordVisibleWaterSurfaceDepth(RenderGraph renderGraph, TextureHandle sizeSource)
+        {
+            WaterVolume.CollectAllAboveSurfaceRenderers(s_VisibleWaterSurfaceRenderers);
+            WaterRiverSurface.AppendActiveSurfaceRenderers(s_VisibleWaterSurfaceRenderers);
+            if (s_VisibleWaterSurfaceRenderers.Count == 0) return false;
+
+            TextureDesc colorDesc = renderGraph.GetTextureDesc(sizeSource);
+            colorDesc.name = VisibleWaterSurfaceDepthName;
+            colorDesc.colorFormat = GraphicsFormat.R32_SFloat;
+            colorDesc.depthBufferBits = DepthBits.None;
+            colorDesc.msaaSamples = MSAASamples.None;
+            colorDesc.clearBuffer = true;
+            colorDesc.clearColor = Color.clear;
+            TextureHandle color = renderGraph.CreateTexture(colorDesc);
+
+            TextureDesc depthDesc = renderGraph.GetTextureDesc(sizeSource);
+            depthDesc.name = VisibleWaterSurfaceDepthBufferName;
+            depthDesc.colorFormat = GraphicsFormat.None;
+            depthDesc.depthBufferBits = DepthBits.Depth32;
+            depthDesc.msaaSamples = MSAASamples.None;
+            depthDesc.clearBuffer = true;
+            TextureHandle depth = renderGraph.CreateTexture(depthDesc);
+
+            using var builder = renderGraph.AddRasterRenderPass<PrepassData>(
+                _visibleWaterSurfaceSampler.name, out PrepassData data,
+                _visibleWaterSurfaceSampler);
+            data.renderers = s_VisibleWaterSurfaceRenderers;
+            data.block = _scratchBlock;
+            builder.SetRenderAttachment(color, 0, AccessFlags.Write);
+            builder.SetRenderAttachmentDepth(depth, AccessFlags.Write);
+            builder.AllowPassCulling(false);
+            builder.SetGlobalTextureAfterPass(color, ID_VisibleWaterSurfaceDepth);
+            builder.SetRenderFunc((PrepassData d, RasterGraphContext context) =>
+            {
+                DrawSurfaceDepthRenderers(
+                    context.cmd, d.renderers, d.block, VisibleWaterSurfaceDepthShaderPass);
+            });
             return true;
         }
 
@@ -895,17 +958,26 @@ namespace AbstractOcclusion.WebGpuWater
             builder.SetGlobalTextureAfterPass(ownership, ID_OceanSurfaceOwnership);
             builder.SetRenderFunc((PrepassData d, RasterGraphContext ctx) =>
             {
-                for (int i = 0; i < d.renderers.Count; i++)
-                {
-                    Renderer renderer = d.renderers[i];
-                    if (renderer == null || renderer.sharedMaterial == null) continue;
-                    MeshFilter filter = renderer.GetComponent<MeshFilter>();
-                    if (filter == null || filter.sharedMesh == null) continue;
-                    renderer.GetPropertyBlock(d.block); // the renderer's live per-body/per-level uniforms
-                    ctx.cmd.DrawMesh(filter.sharedMesh, renderer.localToWorldMatrix,
-                                     renderer.sharedMaterial, 0, SurfaceDepthShaderPass, d.block);
-                }
+                DrawSurfaceDepthRenderers(
+                    ctx.cmd, d.renderers, d.block, SurfaceDepthShaderPass);
             });
+        }
+
+        static void DrawSurfaceDepthRenderers(RasterCommandBuffer commandBuffer,
+                                              List<Renderer> renderers,
+                                              MaterialPropertyBlock block, int shaderPass)
+        {
+            for (int rendererIndex = 0; rendererIndex < renderers.Count; rendererIndex++)
+            {
+                Renderer renderer = renderers[rendererIndex];
+                if (renderer == null || renderer.sharedMaterial == null ||
+                    renderer.sharedMaterial.passCount <= shaderPass) continue;
+                MeshFilter filter = renderer.GetComponent<MeshFilter>();
+                if (filter == null || filter.sharedMesh == null) continue;
+                renderer.GetPropertyBlock(block);
+                commandBuffer.DrawMesh(filter.sharedMesh, renderer.localToWorldMatrix,
+                                       renderer.sharedMaterial, 0, shaderPass, block);
+            }
         }
 
         static float ApplyPrepassScale(ref TextureDesc desc) =>

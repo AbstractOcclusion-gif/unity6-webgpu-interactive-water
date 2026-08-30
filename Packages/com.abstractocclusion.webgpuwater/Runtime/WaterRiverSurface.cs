@@ -51,6 +51,14 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.PropertyToID(MouthEndWaveFramePropertyName);
         static readonly int MouthEndWaveAnchorId =
             Shader.PropertyToID(MouthEndWaveAnchorPropertyName);
+        static readonly int MouthOutflowCountId = Shader.PropertyToID("_MouthOutflowCount");
+        static readonly int MouthOutflowOriginsId = Shader.PropertyToID("_MouthOutflowOrigins");
+        static readonly int MouthOutflowDirectionsId = Shader.PropertyToID("_MouthOutflowDirections");
+        static readonly int MouthOutflowParametersId = Shader.PropertyToID("_MouthOutflowParameters");
+        static readonly int MouthOutflowFoamFramesId =
+            Shader.PropertyToID("_MouthOutflowFoamFrames");
+        static readonly int MouthOutflowFoamAppearanceId =
+            WaterShaderProps.MouthOutflowFoamAppearance;
         static readonly List<WaterRiverSurface> LiveSurfaces = new();
         static readonly Plane[] FogFrustumPlanes = new Plane[6];
 
@@ -75,6 +83,18 @@ namespace AbstractOcclusion.WebGpuWater
         Mesh _generatedMesh;
         Mesh _generatedFogVolumeMesh;
         MaterialPropertyBlock _propertyBlock;
+        readonly Vector4[] _mouthOutflowOrigins =
+            new Vector4[WaterRiverMouthOutflow.MaximumShaderOutflows];
+        readonly Vector4[] _mouthOutflowDirections =
+            new Vector4[WaterRiverMouthOutflow.MaximumShaderOutflows];
+        readonly Vector4[] _mouthOutflowParameters =
+            new Vector4[WaterRiverMouthOutflow.MaximumShaderOutflows];
+        readonly Vector4[] _mouthOutflowFoamFrames =
+            new Vector4[WaterRiverMouthOutflow.MaximumShaderOutflows];
+        readonly Vector4[] _mouthOutflowFoamAppearances =
+            new Vector4[WaterRiverMouthOutflow.MaximumShaderOutflows];
+        float _mouthLongitudinalMeters;
+        Vector3 _mouthRight;
         WaterRiverSpline _subscribedSpline;
         readonly List<IWaterRiverRendererPropertySource> _rendererPropertySources = new();
 
@@ -100,6 +120,8 @@ namespace AbstractOcclusion.WebGpuWater
         internal WaterVolume WaterVolume => waterVolume;
         internal Renderer SurfaceRenderer => _meshRenderer;
         internal float GameplayDepthMeters => gameplayDepthMeters;
+        internal float MouthLongitudinalMeters => _mouthLongitudinalMeters;
+        internal Vector3 MouthRight => _mouthRight;
         /// <summary>This ribbon's domain-query face (registered while the surface is enabled).</summary>
         internal WaterRiverSurfaceProvider SurfaceProvider => _provider;
         /// <summary>Authored current field the provider prefers over the uniform spline speed;
@@ -171,9 +193,12 @@ namespace AbstractOcclusion.WebGpuWater
             try
             {
                 EnsureGeneratedMesh();
-                WaterRiverRibbonMeshGenerator.Populate(
-                    _generatedMesh, spline, transform, samplesPerSegment,
-                    _sourceBodySeam, _mouthBodySeam, BuildSourceBoundary());
+                WaterRiverRibbonMeshGenerator.RibbonMetrics metrics =
+                    WaterRiverRibbonMeshGenerator.Populate(
+                        _generatedMesh, spline, transform, samplesPerSegment,
+                        _sourceBodySeam, _mouthBodySeam, BuildSourceBoundary());
+                _mouthLongitudinalMeters = metrics.MouthLongitudinalMeters;
+                _mouthRight = metrics.MouthRight;
                 RebuildFogVolumeMesh();
                 _meshFilter.sharedMesh = _generatedMesh;
                 if (_underFilter != null) _underFilter.sharedMesh = _generatedMesh;
@@ -528,6 +553,20 @@ namespace AbstractOcclusion.WebGpuWater
             }
         }
 
+        /// <summary>Append every live river top sheet. These renderers join body surfaces in the
+        /// river-fog ownership prepass, so a ribbon cannot fog through its own top or through a
+        /// different connected river drawn in front of it.</summary>
+        internal static void AppendActiveSurfaceRenderers(List<Renderer> results)
+        {
+            if (results == null) throw new ArgumentNullException(nameof(results));
+            for (int surfaceIndex = 0; surfaceIndex < LiveSurfaces.Count; surfaceIndex++)
+            {
+                WaterRiverSurface surface = LiveSurfaces[surfaceIndex];
+                if (surface == null || !surface.HasRenderableSurface()) continue;
+                results.Add(surface._meshRenderer);
+            }
+        }
+
         bool QualifiesForExternalFog(WaterVolume requiredSource)
         {
             return isActiveAndEnabled && waterVolume != null && waterVolume.isActiveAndEnabled &&
@@ -535,8 +574,16 @@ namespace AbstractOcclusion.WebGpuWater
                    (requiredSource == null || waterVolume == requiredSource) &&
                    _generatedFogVolumeMesh != null &&
                    _generatedFogVolumeMesh.vertexCount > 0 &&
+                   HasRenderableSurface();
+        }
+
+        bool HasRenderableSurface()
+        {
+            return isActiveAndEnabled && gameObject.activeInHierarchy &&
+                   _generatedMesh != null && _generatedMesh.vertexCount > 0 &&
+                   _meshFilter != null && _meshFilter.sharedMesh == _generatedMesh &&
                    _meshRenderer != null && _meshRenderer.enabled &&
-                   !_meshRenderer.forceRenderingOff;
+                   !_meshRenderer.forceRenderingOff && _meshRenderer.sharedMaterial != null;
         }
 
         Bounds FogVolumeWorldBounds()
@@ -566,6 +613,7 @@ namespace AbstractOcclusion.WebGpuWater
                 waterVolume.WriteBodyProps(_propertyBlock);
             else
                 _propertyBlock.Clear();
+            PublishMouthOutflowProperties();
             ApplyRiverShaderOverrides();
             PublishEndWaveAnchors();
             for (int i = 0; i < _rendererPropertySources.Count; i++)
@@ -583,6 +631,31 @@ namespace AbstractOcclusion.WebGpuWater
             }
         }
 
+        void PublishMouthOutflowProperties()
+        {
+            Array.Clear(_mouthOutflowOrigins, 0, _mouthOutflowOrigins.Length);
+            Array.Clear(_mouthOutflowDirections, 0, _mouthOutflowDirections.Length);
+            Array.Clear(_mouthOutflowParameters, 0, _mouthOutflowParameters.Length);
+            Array.Clear(_mouthOutflowFoamFrames, 0, _mouthOutflowFoamFrames.Length);
+            Array.Clear(
+                _mouthOutflowFoamAppearances, 0, _mouthOutflowFoamAppearances.Length);
+            if (_riverFacade == null) _riverFacade = GetComponent<WaterRiver>();
+            WaterRiverMouthOutflow outflow = default;
+            bool active = _riverFacade != null &&
+                          _riverFacade.TryBuildMouthOutflow(out outflow);
+            if (active)
+                outflow.WriteShaderData(
+                    _mouthOutflowOrigins, _mouthOutflowDirections, _mouthOutflowParameters,
+                    _mouthOutflowFoamFrames, _mouthOutflowFoamAppearances, 0);
+            _propertyBlock.SetFloat(MouthOutflowCountId, active ? EnabledFeature : DisabledFeature);
+            _propertyBlock.SetVectorArray(MouthOutflowOriginsId, _mouthOutflowOrigins);
+            _propertyBlock.SetVectorArray(MouthOutflowDirectionsId, _mouthOutflowDirections);
+            _propertyBlock.SetVectorArray(MouthOutflowParametersId, _mouthOutflowParameters);
+            _propertyBlock.SetVectorArray(MouthOutflowFoamFramesId, _mouthOutflowFoamFrames);
+            _propertyBlock.SetVectorArray(
+                MouthOutflowFoamAppearanceId, _mouthOutflowFoamAppearances);
+        }
+
         void ApplyRiverShaderOverrides()
         {
             // The ribbon shares the established water look, including wind waves, detail normals,
@@ -596,6 +669,10 @@ namespace AbstractOcclusion.WebGpuWater
             _propertyBlock.SetFloat(WaterShaderProps.SurfActive, DisabledFeature);
             _propertyBlock.SetFloat(WaterShaderProps.UseBedDepth, DisabledFeature);
             _propertyBlock.SetFloat(WaterShaderProps.RiverFoamActive, DisabledFeature);
+            _propertyBlock.SetFloat(
+                WaterShaderProps.RiverFoamOverallStrength, EnabledFeature);
+            _propertyBlock.SetFloat(
+                WaterShaderProps.RiverCascadeTransportActive, DisabledFeature);
             _propertyBlock.SetFloat(WaterShaderProps.RiverFluidActive, DisabledFeature);
         }
 
@@ -668,6 +745,8 @@ namespace AbstractOcclusion.WebGpuWater
 
         void ClearGeneratedGeometry()
         {
+            _mouthLongitudinalMeters = 0f;
+            _mouthRight = Vector3.zero;
             if (_generatedMesh != null) _generatedMesh.Clear();
             if (_generatedFogVolumeMesh != null) _generatedFogVolumeMesh.Clear();
             if (_meshFilter != null && _meshFilter.sharedMesh == _generatedMesh)

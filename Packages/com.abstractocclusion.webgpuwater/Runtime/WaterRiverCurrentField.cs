@@ -20,9 +20,12 @@ namespace AbstractOcclusion.WebGpuWater
                  "the uniform spline speed for gameplay sampling.")]
         [SerializeField] internal WaterRiverFluid fluid;
 
+        WaterRiverMouthOutflow _mouthOutflow;
+
         protected override bool TryEvaluateCurrent(Vector3 worldPoint, out Vector3 worldVelocity)
         {
             worldVelocity = Vector3.zero;
+            if (_mouthOutflow.TrySampleCurrent(worldPoint, out worldVelocity)) return true;
             if (spline == null ||
                 !spline.TryProjectPoint(worldPoint, out WaterRiverSplineSample sample, out _))
                 return false;
@@ -76,6 +79,9 @@ namespace AbstractOcclusion.WebGpuWater
             Configure(riverSpline);
             fluid = riverFluid;
         }
+
+        internal void ConfigureMouthOutflow(in WaterRiverMouthOutflow outflow)
+            => _mouthOutflow = outflow;
 
         void Reset()
         {

@@ -10,11 +10,13 @@ namespace AbstractOcclusion.WebGpuWater.Editor
     internal sealed class WaterRiverFoamEditor : UnityEditor.Editor
     {
         const string StrengthPropertyName = "strength";
+        const string OverallStrengthPropertyName = "overallStrength";
         const string ContactStrengthPropertyName = "contactStrength";
         const string ContactDepthPropertyName = "contactDepth";
         const string CascadeStrengthPropertyName = "cascadeStrength";
         const string CascadeStartAnglePropertyName = "cascadeStartAngle";
         const string CascadeFullAnglePropertyName = "cascadeFullAngle";
+        const string CascadePersistencePropertyName = "cascadePersistenceMeters";
         const string PatternSizePropertyName = "patternSize";
         const string EdgeFeatherPropertyName = "edgeFeather";
         const string CoreCutPropertyName = "coreCut";
@@ -36,12 +38,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             serializedObject.Update();
             EditorGUILayout.HelpBox(InspectorHelp, MessageType.None);
             WaterEditorUI.SubHeading("Sources");
+            DrawProperty(OverallStrengthPropertyName);
             DrawProperty(ContactStrengthPropertyName);
             DrawProperty(ContactDepthPropertyName);
             DrawProperty(CascadeStrengthPropertyName);
             DrawProperty(CascadeStartAnglePropertyName);
             DrawProperty(CascadeFullAnglePropertyName);
-            DrawProperty(StrengthPropertyName, "Turbulence Strength");
+            DrawProperty(CascadePersistencePropertyName);
+            DrawProperty(StrengthPropertyName, "Baked Turbulence Strength");
             WaterEditorUI.SubHeading("Appearance");
             DrawProperty(PatternSizePropertyName);
             DrawProperty(EdgeFeatherPropertyName);

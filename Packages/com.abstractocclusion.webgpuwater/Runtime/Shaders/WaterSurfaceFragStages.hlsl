@@ -129,14 +129,22 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
     // Same end-anchored grid target as the vertex height, or normal and height desynchronise.
     float2 gridWaveSample = RiverEndWindWaveSampleXZ(
         i.position.xz, i.largeWaveSourceXZ, i.riverBakeUv.w);
+    float2 outflowWorldXZ = MouthOutflowDriftedWorldXZ(i.largeWaveSourceXZ);
+    float2 outflowPoolXZ = WorldToPool(
+        float3(outflowWorldXZ.x, i.worldPos.y, outflowWorldXZ.y)).xz;
+    float2 outflowWaveSample = RiverEndWindWaveSampleXZ(
+        outflowPoolXZ, outflowWorldXZ, i.riverBakeUv.w);
+    float outflowInfluence = MouthOutflowCurrentInfluence(i.largeWaveSourceXZ);
+    float2 gridWindSlope = lerp(
+        WaveSlope(gridWaveSample), WaveSlope(outflowWaveSample), outflowInfluence);
     float2 riverWaveSample = RiverCurrentWaveSampleXZ(riverCurrentData);
     // Match the vertex stage: blend sampled slopes, never the
     // coordinates (coordinate lerp = phase sweep = the washboard band). Uniform branch.
     float2 windSlope;
     if (_IsRiver > 0.5)
-        windSlope = lerp(WaveSlope(gridWaveSample), WaveSlope(riverWaveSample), riverWeight);
+        windSlope = lerp(gridWindSlope, WaveSlope(riverWaveSample), riverWeight);
     else
-        windSlope = WaveSlope(gridWaveSample);
+        windSlope = gridWindSlope;
     windSlope *= _WaveNormalStrength;
     // POOL convention, kept as the foam flow / relief input (g.nxz) so foam is unchanged by this.
     float2 nxz = info.ba - windSlope;
@@ -242,7 +250,12 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
             // of this uniform branch, so quad derivatives stay uniform; the ribbon interior keeps
             // the transported-frame detail exactly (weight 1), and pools never enter this branch.
             float2 riverTilt = RiverDetailNormalTilt(riverCurrentData, viewDistWorld);
-            float2 bodyTilt = DetailNormalTilt(i.largeWaveSourceXZ, viewDistWorld);
+            float2 bodyBaseTilt = DetailNormalTilt(i.largeWaveSourceXZ, viewDistWorld);
+            float2 bodyOutflowTilt = DetailNormalTilt(
+                MouthOutflowDriftedWorldXZ(i.largeWaveSourceXZ), viewDistWorld);
+            float2 bodyTilt = lerp(
+                bodyBaseTilt, bodyOutflowTilt,
+                MouthOutflowCurrentInfluence(i.largeWaveSourceXZ));
             float3 riverDetailTilt = slopeAxisX * riverTilt.x + slopeAxisZ * riverTilt.y;
             float3 bodyDetailTilt = float3(bodyTilt.x, 0.0, bodyTilt.y);
             detailTiltWorld = lerp(bodyDetailTilt, riverDetailTilt, riverWeight);
@@ -250,7 +263,12 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
         else
         {
             // The original unrotated-pool detail path, byte-for-byte.
-            float2 detailTilt = DetailNormalTilt(i.largeWaveSourceXZ, viewDistWorld);
+            float2 detailBaseTilt = DetailNormalTilt(i.largeWaveSourceXZ, viewDistWorld);
+            float2 detailOutflowTilt = DetailNormalTilt(
+                MouthOutflowDriftedWorldXZ(i.largeWaveSourceXZ), viewDistWorld);
+            float2 detailTilt = lerp(
+                detailBaseTilt, detailOutflowTilt,
+                MouthOutflowCurrentInfluence(i.largeWaveSourceXZ));
             detailTiltWorld = float3(detailTilt.x, 0.0, detailTilt.y);
         }
         normal = normalize(normal + detailTiltWorld * detailNormalStrength);
@@ -510,8 +528,37 @@ float SurfaceContactFoamCoverage(v2f i)
         : 0.0;
 }
 
+float RiverCascadePackedSample(int sampleIndex)
+{
+    int vectorIndex = sampleIndex / RIVER_CASCADE_TRANSPORT_SAMPLES_PER_VECTOR;
+    int componentIndex = sampleIndex -
+        vectorIndex * RIVER_CASCADE_TRANSPORT_SAMPLES_PER_VECTOR;
+    float4 packed = _RiverCascadeTransportSamples[vectorIndex];
+    return componentIndex == 0 ? packed.x
+        : componentIndex == 1 ? packed.y
+        : componentIndex == 2 ? packed.z : packed.w;
+}
+
+float RiverCascadeTransportCoverage(float longitudinalMeters)
+{
+    float longitudinalUv = saturate(
+        longitudinalMeters * _RiverCascadeTransportInvLength);
+    float samplePosition = longitudinalUv *
+        (RIVER_CASCADE_TRANSPORT_SAMPLE_COUNT - 1);
+    int firstSampleIndex = (int)floor(samplePosition);
+    int secondSampleIndex = min(
+        firstSampleIndex + 1, RIVER_CASCADE_TRANSPORT_SAMPLE_COUNT - 1);
+    return lerp(
+        RiverCascadePackedSample(firstSampleIndex),
+        RiverCascadePackedSample(secondSampleIndex),
+        frac(samplePosition));
+}
+
 float RiverCascadeFoamCoverage(v2f i)
 {
+    if (_RiverCascadeTransportActive > 0.5)
+        return RiverCascadeTransportCoverage(i.riverBakeUv.y);
+
     // worldNormal is the transported, undisplaced ribbon normal. Animated wave normals must not
     // make whitewater flash on and off as they pass over an otherwise flat reach.
     float vertical = saturate(abs(normalize(i.worldNormal).y));
@@ -536,27 +583,160 @@ float RiverFoamCoverage(v2f i, float contactCoverage)
         bakedCoverage,
         contactCoverage * _RiverContactFoamStrength);
     coverage = CombineFoamCoverage(coverage, RiverCascadeFoamCoverage(i));
-    // Every source fades through the same terminal ownership band.
-    return saturate(coverage * _FoamStrength) * i.riverBakeUv.z;
+    // The seam weight blends displacement and shading between coordinate frames; it is not surface
+    // ownership. The ribbon and receiving body meet at one border and do not overlap. Multiplying
+    // foam by that weight forced the terminal row to zero, and interpolation spread the zero across
+    // the final mesh section whenever the authored transition radius was smaller than its spacing.
+    // Cascade transport is evaluated from the unconformed spline and therefore remains alive
+    // through a flattened terminal seam. The mouth descriptor continues its terminal value.
+    return saturate(coverage * _FoamStrength) * saturate(_RiverFoamOverallStrength);
 }
 
-float2 PondFoamPatternUv(v2f i, float3 normal, float2 localTilt)
+float RiverMouthHandoffFoamCoverage(v2f i, float riverCoverage)
 {
-    float riverWeight = i.riverBakeUv.z;
+    float activeMouthBlend = saturate(i.riverBakeUv.w) *
+                             step(0.5, _MouthOutflowCount);
+    return lerp(
+        riverCoverage, RiverMouthOutflowTerminalFoamCoverage(), activeMouthBlend);
+}
+
+struct PondFoamSamples
+{
+    float2 bodyBaseUv;
+    float2 bodyOutflowUv;
+    float2 riverUv;
+    float2 bodyBaseDdx;
+    float2 bodyBaseDdy;
+    float2 bodyOutflowDdx;
+    float2 bodyOutflowDdy;
+    float2 riverDdx;
+    float2 riverDdy;
+    float3 outflowAppearance;
+    float outflowInfluence;
+    float riverWeight;
+};
+
+struct PondFoamEvaluation
+{
+    float3 pattern;
+    float core;
+    float lace;
+    float alpha;
+    float2 tilt;
+};
+
+PondFoamSamples BuildPondFoamSamples(v2f i, float3 normal, float2 localTilt)
+{
+    float tileSize = max(_FoamTileSize, 1e-3);
     float2 riverVelocity = SampleRiverFluidVelocity(
         i.riverBakeUv.xy, i.riverCurrentData.w);
     float2 riverMetres = i.riverCurrentData.xy - riverVelocity * _WaveTime;
-    float2 patternMetres = lerp(i.worldPos.xz, riverMetres, riverWeight);
-    float2 normalNudge = lerp(normal.xz, localTilt, riverWeight);
-    return patternMetres / max(_FoamTileSize, 1e-3)
-         + normalNudge * FOAM_NORMAL_NUDGE;
+    float2 bodyBaseUv = i.largeWaveSourceXZ / tileSize
+                      + normal.xz * FOAM_NORMAL_NUDGE;
+    float bodyOutflowInfluence;
+    float3 bodyOutflowAppearance;
+    float2 bodyOutflowMetres = MouthOutflowFoamPatternMetres(
+        i.largeWaveSourceXZ, bodyOutflowInfluence, bodyOutflowAppearance);
+    float riverMouthPatternActive;
+    float3 riverMouthAppearance;
+    float2 riverMouthOutflowMetres = RiverMouthOutflowFoamPatternMetres(
+        i.largeWaveSourceXZ, riverMouthPatternActive, riverMouthAppearance);
+    float rendererRiverWeight = saturate(_IsRiver);
+    // Renderer ownership is uniform. River terminal pixels select the upstream projection of the
+    // same outflow frame that the body evaluates; body pixels retain the bounded plume query.
+    float2 selectedOutflowMetres = lerp(
+        bodyOutflowMetres, riverMouthOutflowMetres, rendererRiverWeight);
+    float3 selectedOutflowAppearance = lerp(
+        bodyOutflowAppearance, riverMouthAppearance, rendererRiverWeight);
+    float outflowTileSize = max(selectedOutflowAppearance.x, 1e-3);
+    float2 bodyOutflowUv = selectedOutflowMetres / outflowTileSize
+                         + normal.xz * FOAM_NORMAL_NUDGE;
+    float2 riverUv = riverMetres / tileSize + localTilt * FOAM_NORMAL_NUDGE;
+
+    PondFoamSamples samples;
+    samples.bodyBaseUv = bodyBaseUv;
+    samples.bodyOutflowUv = bodyOutflowUv;
+    samples.riverUv = riverUv;
+    // Derivatives are captured before the mask-dependent sampling branch. EvaluateFoam uses
+    // explicit gradients, so the later per-pixel output blends remain WGSL-safe.
+    samples.bodyBaseDdx = ddx(bodyBaseUv);
+    samples.bodyBaseDdy = ddy(bodyBaseUv);
+    samples.bodyOutflowDdx = ddx(bodyOutflowUv);
+    samples.bodyOutflowDdy = ddy(bodyOutflowUv);
+    samples.riverDdx = ddx(riverUv);
+    samples.riverDdy = ddy(riverUv);
+    samples.outflowAppearance = selectedOutflowAppearance;
+    float riverMouthBlend = saturate(i.riverBakeUv.w) * riverMouthPatternActive;
+    samples.outflowInfluence = lerp(
+        bodyOutflowInfluence, riverMouthBlend, rendererRiverWeight);
+    // This remains the uniform renderer selector. The signed mouth weight above blends sampled
+    // river/outflow results only; it never crossfades the unrelated native body pattern.
+    samples.riverWeight = saturate(_IsRiver);
+    return samples;
 }
 
-float2 PondFoamPatternFlow(float2 localTilt)
+PondFoamEvaluation EvaluatePondFoamAt(
+    float2 uv, float2 uvDdx, float2 uvDdy, float2 flow,
+    float mask, float cameraDistance, float edgeFeather, float coreCut)
 {
-    // River pattern UV already carries physical speed*time advection. The classic two-phase flow
-    // offset remains for simulation foam only, otherwise it would drift the baked foam twice.
-    return localTilt * (1.0 - saturate(_IsRiver));
+    PondFoamEvaluation evaluation;
+    EvaluateFoam(uv, uvDdx, uvDdy, flow, mask, cameraDistance,
+                 edgeFeather, coreCut,
+                 evaluation.pattern, evaluation.core, evaluation.lace,
+                 evaluation.alpha, evaluation.tilt);
+    return evaluation;
+}
+
+PondFoamEvaluation BlendPondFoamEvaluations(
+    PondFoamEvaluation first, PondFoamEvaluation second, float weight)
+{
+    PondFoamEvaluation blended;
+    blended.pattern = lerp(first.pattern, second.pattern, weight);
+    blended.core = lerp(first.core, second.core, weight);
+    blended.lace = lerp(first.lace, second.lace, weight);
+    blended.alpha = lerp(first.alpha, second.alpha, weight);
+    blended.tilt = lerp(first.tilt, second.tilt, weight);
+    return blended;
+}
+
+PondFoamEvaluation EvaluateTransportedPondFoam(
+    PondFoamSamples samples, float2 bodyFlow, float mask, float cameraDistance)
+{
+    if (samples.riverWeight > 0.5)
+    {
+        // River metric UV already includes physical advection; applying the body's periodic flow
+        // offset here would transport it twice.
+        PondFoamEvaluation riverEvaluation = EvaluatePondFoamAt(
+            samples.riverUv, samples.riverDdx, samples.riverDdy,
+            float2(0.0, 0.0), mask, cameraDistance,
+            _FoamFeather, _FoamCoreCut);
+        if (samples.outflowInfluence <= 0.0) return riverEvaluation;
+
+        // Blend evaluated looks, never coordinates. At the terminal row this reaches exactly the
+        // same nudge, periodic flow and mouth frame used by the receiving body's first pixel.
+        PondFoamEvaluation mouthEvaluation = EvaluatePondFoamAt(
+            samples.bodyOutflowUv, samples.bodyOutflowDdx, samples.bodyOutflowDdy,
+            bodyFlow, mask, cameraDistance,
+            samples.outflowAppearance.y, samples.outflowAppearance.z);
+        return BlendPondFoamEvaluations(
+            riverEvaluation, mouthEvaluation, samples.outflowInfluence);
+    }
+
+    PondFoamEvaluation bodyEvaluation = EvaluatePondFoamAt(
+        samples.bodyBaseUv, samples.bodyBaseDdx, samples.bodyBaseDdy,
+        bodyFlow, mask, cameraDistance, _FoamFeather, _FoamCoreCut);
+
+    if (samples.outflowInfluence > 0.0)
+    {
+        PondFoamEvaluation outflowEvaluation = EvaluatePondFoamAt(
+            samples.bodyOutflowUv, samples.bodyOutflowDdx, samples.bodyOutflowDdy,
+            bodyFlow, mask, cameraDistance,
+            samples.outflowAppearance.y, samples.outflowAppearance.z);
+        bodyEvaluation = BlendPondFoamEvaluations(
+            bodyEvaluation, outflowEvaluation, samples.outflowInfluence);
+    }
+
+    return bodyEvaluation;
 }
 
 float3 ApplyPondFoamTiltToNormal(v2f i, float3 normal, float2 tilt)
@@ -569,7 +749,7 @@ float3 ApplyPondFoamTiltToNormal(v2f i, float3 normal, float2 tilt)
     float3 riverFoamNormal = normalize(normal
                                      + riverRight * tilt.x
                                      + riverDownstream * tilt.y);
-    return normalize(lerp(gridFoamNormal, riverFoamNormal, i.riverBakeUv.z));
+    return normalize(lerp(gridFoamNormal, riverFoamNormal, saturate(_IsRiver)));
 }
 
 // The whole seen-from-below path; returns the final pixel colour.
@@ -650,7 +830,7 @@ float4 UnderwaterStage(v2f i, WaterGeomStage g, float waterClarity)
     // two families overlapping cannot darken the same pixel twice. ----
     float undersideFoam = 0.0;                    // combined silhouette coverage
     float3 undersideGlow = float3(0.0, 0.0, 0.0); // sum of colour * pattern * that engine's coverage
-    if (_FoamEnabled > 0.5)
+    if (_FoamEnabled > 0.5 || _MouthOutflowCount > 0.5)
     {
         // Windowed bodies read the foam buffer at the SOURCE xz (undisplaced), exactly like the
         // above-water side (see PondFoamLayer): sampling at the chop-displaced worldPos puts the
@@ -662,26 +842,27 @@ float4 UnderwaterStage(v2f i, WaterGeomStage g, float waterClarity)
         // No contact foam on this side (see above), so nothing extra to add.
         // Same river guard as PondFoamCoverage. The underside deliberately omits screen-depth
         // contact foam, but retains slope whitewater and any baked turbulence.
+        float bodySimFoam = _FoamEnabled > 0.5
+            ? SimFoamCoverage(i.position.xz, fcoord, 0.0) : 0.0;
+        float riverFoam = (_RiverFoamActive > 0.5) ? RiverFoamCoverage(i, 0.0) : 0.0;
         float mask = (_IsRiver > 0.5)
-                   ? ((_RiverFoamActive > 0.5) ? RiverFoamCoverage(i, 0.0) : 0.0)
-                   : SimFoamCoverage(i.position.xz, fcoord, 0.0);
+                   ? RiverMouthHandoffFoamCoverage(i, riverFoam)
+                   : CombineFoamCoverage(
+                         bodySimFoam, MouthOutflowFoamCoverage(i.largeWaveSourceXZ));
 
-        // Same world-space pattern UV as the above-water side. Computed (with its
-        // screen derivatives) BEFORE the mask branch: WGSL requires derivatives in
-        // uniform control flow, and the branch below is per-fragment.
-        float2 fuv = PondFoamPatternUv(i, normal, nxz);
-        float2 fuvDdx = ddx(fuv);
-        float2 fuvDdy = ddy(fuv);
+        // Capture all coordinate frames and their gradients before the mask branch. Their sampled
+        // outputs are blended later; the incompatible river/body coordinates are never lerped.
+        PondFoamSamples foamSamples = BuildPondFoamSamples(i, normal, nxz);
 
         if (mask > FOAM_MASK_EPSILON)
         {
             float foamDist = distance(i.worldPos.xz, _WorldSpaceCameraPos.xz);
-            float3 pattern; float core, lace, foamAlpha; float2 tilt;
-            EvaluateFoam(fuv, fuvDdx, fuvDdy, PondFoamPatternFlow(nxz), mask,
-                         foamDist, pattern, core, lace, foamAlpha, tilt);
+            float2 bodyFlow = nxz;
+            PondFoamEvaluation foam = EvaluateTransportedPondFoam(
+                foamSamples, bodyFlow, mask, foamDist);
 
-            undersideFoam = max(undersideFoam, foamAlpha);
-            undersideGlow += _FoamColor.rgb * pattern * (lace * mask);
+            undersideFoam = max(undersideFoam, foam.alpha);
+            undersideGlow += _FoamColor.rgb * foam.pattern * (foam.lace * mask);
         }
     }
 
@@ -1122,9 +1303,12 @@ float PondFoamCoverage(v2f i)
     // velocity RG + foam B, so falling through to SimFoamCoverage would read rest velocity as a
     // half-strength foam haze.
     if (_IsRiver > 0.5)
-        return (_RiverFoamActive > 0.5)
+    {
+        float riverCoverage = (_RiverFoamActive > 0.5)
             ? RiverFoamCoverage(i, SurfaceContactFoamCoverage(i))
             : 0.0;
+        return RiverMouthHandoffFoamCoverage(i, riverCoverage);
+    }
 
     // Windowed bodies read the foam buffer in the window frame too - at the
     // SOURCE xz (undisplaced), like the whitecap path. Sampling at the displaced
@@ -1147,7 +1331,11 @@ float PondFoamCoverage(v2f i)
     // foamed" builds).
     float contact = SurfaceContactFoamCoverage(i);
 
-    return SimFoamCoverage(i.position.xz, fcoord, contact);
+    float bodySimFoam = _FoamEnabled > 0.5
+        ? SimFoamCoverage(i.position.xz, fcoord, contact) : 0.0;
+    return CombineFoamCoverage(
+        bodySimFoam,
+        MouthOutflowFoamCoverage(i.largeWaveSourceXZ));
 }
 
 FoamLayer PondFoamLayer(v2f i, WaterGeomStage g)
@@ -1179,7 +1367,7 @@ FoamLayer PondFoamLayer(v2f i, WaterGeomStage g)
                                  && _ChunkSphereClip < 0.5 && _ChunkBoxClip < 0.5
                                  && _ChunkUseMesh < 0.5;
 #endif
-    if (_FoamEnabled > 0.5 && !foamDeferredToOverlay)
+    if ((_FoamEnabled > 0.5 || _MouthOutflowCount > 0.5) && !foamDeferredToOverlay)
     {
         // Windowed bodies read the foam buffer in the window frame too - at the
         // SOURCE xz (undisplaced), like the whitecap path. Sampling at the displaced
@@ -1200,33 +1388,28 @@ FoamLayer PondFoamLayer(v2f i, WaterGeomStage g)
         // the early clip stays a conservative superset (this can only lower the mask).
         mask *= 1.0 - LbwFoamOwnershipGate(g.shore);
 
-        // WORLD-space pattern UV (like the ocean whitecap): scale set by the
-        // body's Foam Pattern Size, independent of extent, anchored under a
-        // scrolling window; nudged by the surface tilt so foam rides ripples.
-        // Computed (with its screen derivatives) BEFORE the mask branch: WGSL
-        // requires derivatives in uniform control flow, and the branch below
-        // is per-fragment.
-        float2 fuv = PondFoamPatternUv(i, normal, nxz);
-        float2 fuvDdx = ddx(fuv);
-        float2 fuvDdy = ddy(fuv);
+        // Capture body, outflow and river coordinates independently before the mask branch.
+        // EvaluateTransportedPondFoam blends sampled results, never unrelated UV frames.
+        PondFoamSamples foamSamples = BuildPondFoamSamples(i, normal, nxz);
 
         if (mask > FOAM_MASK_EPSILON)
         {
             float foamDist = distance(i.worldPos.xz, _WorldSpaceCameraPos.xz);
-            float3 pattern; float core, lace, foamAlpha; float2 tilt;
-            EvaluateFoam(fuv, fuvDdx, fuvDdy, PondFoamPatternFlow(nxz), mask,
-                         foamDist, pattern, core, lace, foamAlpha, tilt);
+            float2 bodyFlow = nxz;
+            PondFoamEvaluation foam = EvaluateTransportedPondFoam(
+                foamSamples, bodyFlow, mask, foamDist);
 
             // ---- Foam relief: tilt the lighting normal by the foam's own
             // normal map so the lace shades three-dimensionally. ----
-            float3 foamNormal = ApplyPondFoamTiltToNormal(i, normal, tilt);
+            float3 foamNormal = ApplyPondFoamTiltToNormal(i, normal, foam.tilt);
 
             // ---- Lit foam: wrapped diffuse from the sun over an ambient
             // floor, so foam shades with the waves instead of flat white. ----
             float wrapped = FoamWrappedDiffuse(foamNormal, _LightDir);
-            float3 albedo = _FoamColor.rgb * lerp(pattern, float3(1.0, 1.0, 1.0), core * FOAM_CORE_WHITEN);
+            float3 albedo = _FoamColor.rgb * lerp(
+                foam.pattern, float3(1.0, 1.0, 1.0), foam.core * FOAM_CORE_WHITEN);
             pondFoamLook = FoamLitColor(albedo, _SunColor, wrapped);
-            pondFoamAlpha = foamAlpha;
+            pondFoamAlpha = foam.alpha;
         }
     }
     FoamLayer layer;

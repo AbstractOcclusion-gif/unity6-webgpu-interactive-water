@@ -70,6 +70,15 @@ namespace AbstractOcclusion.WebGpuWater
         // contract exists to remove - such links should become waterfalls instead (scoped).
         internal const float MaxKnotInsetWarnMeters = 0.5f;
 
+        const float DefaultMouthOutflowLengthMeters = 16f;
+        const float DefaultMouthOutflowFoamLengthMeters = 4f;
+        const float DefaultMouthOutflowSpreadPerMeter = 0.2f;
+        const float DefaultMouthOutflowStrength = 1f;
+        const float DefaultMouthFoamPatternSizeMeters = 1f;
+        const float DefaultMouthFoamEdgeFeather = 0f;
+        const float DefaultMouthFoamCoreCut = 0f;
+        const int MouthProfileSampleCount = 5;
+
         const string SourceRiverPortName = "Port - River Source";
         const string MouthRiverPortName = "Port - River Mouth";
         const string TargetPortNamePrefix = "Port - ";
@@ -87,12 +96,34 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("Connect the spline's LAST knot (the mouth) to a receiving body.")]
         [SerializeField] internal WaterRiverEndConnection mouthEnd = new WaterRiverEndConnection();
 
+        [Header("Mouth outflow")]
+        [Tooltip("Distance into the receiving body over which the river current and visible flow decay.")]
+        [Min(WaterConnection.MinTransitionRadiusMeters)]
+        [SerializeField] internal float mouthOutflowLengthMeters = DefaultMouthOutflowLengthMeters;
+        [Tooltip("How many metres the plume half-width expands per metre travelled downstream.")]
+        [Min(0f)]
+        [SerializeField] internal float mouthOutflowSpreadPerMeter = DefaultMouthOutflowSpreadPerMeter;
+        [Tooltip("Multiplier applied to the terminal baked current in the receiving body.")]
+        [Min(0f)]
+        [SerializeField] internal float mouthOutflowCurrentStrength = DefaultMouthOutflowStrength;
+        [Tooltip("Distance into the receiving body over which carried river foam dissolves.")]
+        [Min(WaterConnection.MinTransitionRadiusMeters)]
+        [SerializeField] internal float mouthOutflowFoamLengthMeters =
+            DefaultMouthOutflowFoamLengthMeters;
+        [Tooltip("Multiplier applied to terminal baked foam carried into the receiving body.")]
+        [Min(0f)]
+        [SerializeField] internal float mouthOutflowFoamStrength = DefaultMouthOutflowStrength;
+
         WaterRiverSpline _spline;
         WaterRiverCurrentField _currentField;
         WaterRiverSurface _surface;
+        WaterRiverFluid _fluid;
+        WaterRiverFoam _foam;
         // The volume whose currentFields currently hold our field - remembered so detach removes
         // it from the RIGHT body even after parentVolume is retargeted mid-session.
         WaterVolume _currentFieldHost;
+        WaterVolume _mouthCurrentFieldHost;
+        WaterVolume _mouthOutflowHost;
 
         public WaterRiverSpline Spline => _spline != null ? _spline : GetComponent<WaterRiverSpline>();
         public WaterRiverSurface Surface => _surface != null ? _surface : GetComponent<WaterRiverSurface>();
@@ -117,16 +148,34 @@ namespace AbstractOcclusion.WebGpuWater
             ApplyWiring();
             SyncSeams();
             AttachCurrentFieldToParent();
+            SyncMouthOutflowRegistration();
             WarnOnInvalidSetup();
         }
 
         void OnDisable()
         {
             DetachCurrentFieldFromParent();
+            UnregisterMouthOutflow();
+        }
+
+        void LateUpdate()
+        {
+            if (_mouthOutflowHost == null || _currentField == null) return;
+            _mouthOutflowHost.InvalidateRiverMouthOutflows();
+            _currentField.ConfigureMouthOutflow(
+                TryBuildMouthOutflow(out WaterRiverMouthOutflow outflow) ? outflow : default);
         }
 
         void OnValidate()
         {
+            mouthOutflowLengthMeters = Mathf.Max(
+                WaterConnection.MinTransitionRadiusMeters, mouthOutflowLengthMeters);
+            mouthOutflowSpreadPerMeter = Mathf.Max(0f, mouthOutflowSpreadPerMeter);
+            mouthOutflowCurrentStrength = Mathf.Max(0f, mouthOutflowCurrentStrength);
+            mouthOutflowFoamLengthMeters = Mathf.Clamp(
+                mouthOutflowFoamLengthMeters, WaterConnection.MinTransitionRadiusMeters,
+                mouthOutflowLengthMeters);
+            mouthOutflowFoamStrength = Mathf.Max(0f, mouthOutflowFoamStrength);
             CacheSiblings();
             ApplyWiring();
             // Transform-only refresh: OnValidate must never create or destroy objects (Unity
@@ -135,6 +184,7 @@ namespace AbstractOcclusion.WebGpuWater
             // callers), so refreshing the terminal conformance is safe from this path too.
             SyncGeneratedConnectionAnchors();
             SyncSeams();
+            SyncMouthOutflowRegistration();
         }
 
         void CacheSiblings()
@@ -142,6 +192,8 @@ namespace AbstractOcclusion.WebGpuWater
             if (_spline == null) _spline = GetComponent<WaterRiverSpline>();
             if (_currentField == null) _currentField = GetComponent<WaterRiverCurrentField>();
             if (_surface == null) _surface = GetComponent<WaterRiverSurface>();
+            if (_fluid == null) _fluid = GetComponent<WaterRiverFluid>();
+            if (_foam == null) _foam = GetComponent<WaterRiverFoam>();
         }
 
         // Fill-null wiring between the trio, then push the facade's parent link. The facade field
@@ -172,26 +224,44 @@ namespace AbstractOcclusion.WebGpuWater
 
         internal void AttachCurrentFieldToParent()
         {
-            if (parentVolume == null || _currentField == null) return;
-            if (_currentFieldHost == parentVolume) return;
-            DetachCurrentFieldFromParent();
+            AttachCurrentField(parentVolume, ref _currentFieldHost);
+            WaterVolume mouthBody = ConnectedMouthBody;
+            AttachCurrentField(mouthBody != parentVolume ? mouthBody : null,
+                               ref _mouthCurrentFieldHost);
+        }
 
-            WaterCurrentField[] fields = parentVolume.currentFields ?? Array.Empty<WaterCurrentField>();
+        void AttachCurrentField(WaterVolume host, ref WaterVolume rememberedHost)
+        {
+            if (_currentField == null || rememberedHost == host) return;
+            DetachCurrentField(ref rememberedHost);
+            if (host == null) return;
+
+            WaterCurrentField[] fields = host.currentFields ?? Array.Empty<WaterCurrentField>();
             if (Array.IndexOf(fields, _currentField) < 0)
             {
                 var grown = new WaterCurrentField[fields.Length + 1];
                 Array.Copy(fields, grown, fields.Length);
                 grown[fields.Length] = _currentField;
-                parentVolume.currentFields = grown;
+                host.currentFields = grown;
             }
-            _currentFieldHost = parentVolume;
+            rememberedHost = host;
         }
 
         internal void DetachCurrentFieldFromParent()
         {
-            if (_currentFieldHost == null || _currentField == null) { _currentFieldHost = null; return; }
+            DetachCurrentField(ref _mouthCurrentFieldHost);
+            DetachCurrentField(ref _currentFieldHost);
+        }
 
-            WaterCurrentField[] fields = _currentFieldHost.currentFields;
+        void DetachCurrentField(ref WaterVolume rememberedHost)
+        {
+            if (rememberedHost == null || _currentField == null)
+            {
+                rememberedHost = null;
+                return;
+            }
+
+            WaterCurrentField[] fields = rememberedHost.currentFields;
             int index = fields != null ? Array.IndexOf(fields, _currentField) : -1;
             if (index >= 0)
             {
@@ -199,10 +269,121 @@ namespace AbstractOcclusion.WebGpuWater
                 var shrunk = new WaterCurrentField[fields.Length - 1];
                 for (int i = 0, w = 0; i < fields.Length; i++)
                     if (i != index) shrunk[w++] = fields[i];
-                _currentFieldHost.currentFields = shrunk;
+                rememberedHost.currentFields = shrunk;
             }
-            _currentFieldHost = null;
+            rememberedHost = null;
         }
+
+        WaterVolume ConnectedMouthBody =>
+            mouthEnd != null && mouthEnd.IsGenerated ? mouthEnd.body : null;
+
+        void SyncMouthOutflowRegistration()
+        {
+            CacheSiblings();
+            WaterVolume target = ConnectedMouthBody;
+            if (_mouthOutflowHost != target)
+            {
+                UnregisterMouthOutflow();
+                _mouthOutflowHost = target;
+                _mouthOutflowHost?.RegisterRiverMouthOutflow(this);
+            }
+            else _mouthOutflowHost?.InvalidateRiverMouthOutflows();
+
+            AttachCurrentFieldToParent();
+            if (_currentField == null) return;
+            _currentField.ConfigureMouthOutflow(
+                TryBuildMouthOutflow(out WaterRiverMouthOutflow outflow) ? outflow : default);
+            _surface?.RequestRendererRefresh();
+        }
+
+        void UnregisterMouthOutflow()
+        {
+            _mouthOutflowHost?.UnregisterRiverMouthOutflow(this);
+            _mouthOutflowHost = null;
+            _currentField?.ConfigureMouthOutflow(default);
+        }
+
+        internal bool TryBuildMouthOutflow(out WaterRiverMouthOutflow outflow)
+        {
+            outflow = default;
+            CacheSiblings();
+            if (ConnectedMouthBody == null || _spline == null || _spline.KnotCount < 2)
+                return false;
+
+            WaterRiverRibbonMeshGenerator.BodySeamEnd seam =
+                BodySeamFor(mouthEnd, WaterRiverEndKind.Mouth);
+            if (!seam.IsActive) return false;
+
+            WaterRiverKnot terminal = _spline.GetKnot(_spline.KnotCount - 1);
+            float speed = terminal.Speed;
+            float foamLateralSpeed = 0f;
+            float foamCoverage = 0f;
+            WaterRiverFluidBakeData bake = _fluid != null && _fluid.isActiveAndEnabled
+                ? _fluid.BakeData : null;
+            if (bake != null && bake.IsValid)
+            {
+                float speedSum = 0f;
+                float lateralSpeedSum = 0f;
+                float foamSum = 0f;
+                int validSamples = 0;
+                for (int sampleIndex = 0; sampleIndex < MouthProfileSampleCount; sampleIndex++)
+                {
+                    float lateral = sampleIndex / (float)(MouthProfileSampleCount - 1);
+                    if (!bake.TrySample(lateral, 1f, out Vector2 ribbonVelocity,
+                                        out float foam, out _))
+                        continue;
+                    speedSum += Mathf.Max(0f, ribbonVelocity.y);
+                    lateralSpeedSum += ribbonVelocity.x;
+                    foamSum += foam;
+                    validSamples++;
+                }
+                if (validSamples > 0)
+                {
+                    speed = speedSum > 0f ? speedSum / validSamples : terminal.Speed;
+                    foamLateralSpeed = lateralSpeedSum / validSamples;
+                    foamCoverage = foamSum / validSamples;
+                }
+            }
+
+            bool foamEnabled = _foam != null && _foam.isActiveAndEnabled;
+            if (foamEnabled)
+            {
+                float bakedCoverage = foamCoverage * _foam.strength;
+                float cascadeCoverage = _foam.TransportedCascadeAtMouth;
+                foamCoverage = CombineCoverage(bakedCoverage, cascadeCoverage);
+                float inheritedFoamStrength = _surface != null &&
+                                              _surface.WaterVolume != null
+                    ? _surface.WaterVolume.foamStrength : 1f;
+                foamCoverage = Mathf.Clamp01(foamCoverage * inheritedFoamStrength) *
+                               _foam.overallStrength;
+            }
+            else foamCoverage = 0f;
+            Vector3 foamRight = _surface != null ? _surface.MouthRight : Vector3.zero;
+            if (!WaterSurfaceKinematics.IsFinite(foamRight) || foamRight.sqrMagnitude <= 0f)
+                foamRight = seam.Right;
+            float foamLongitudinalMeters = _surface != null
+                ? _surface.MouthLongitudinalMeters : 0f;
+            if (foamLongitudinalMeters <= 0f && _foam != null)
+                foamLongitudinalMeters = _foam.TransportLength;
+            float foamPatternSizeMeters = _foam != null
+                ? _foam.patternSize : DefaultMouthFoamPatternSizeMeters;
+            float foamEdgeFeather = _foam != null
+                ? _foam.edgeFeather : DefaultMouthFoamEdgeFeather;
+            float foamCoreCut = _foam != null
+                ? _foam.coreCut : DefaultMouthFoamCoreCut;
+            outflow = new WaterRiverMouthOutflow(
+                seam.Centre, seam.Downstream, foamRight,
+                terminal.Width * 0.5f, mouthOutflowLengthMeters,
+                mouthOutflowSpreadPerMeter, speed, foamCoverage,
+                Mathf.Min(mouthOutflowFoamLengthMeters, mouthOutflowLengthMeters),
+                mouthOutflowCurrentStrength, mouthOutflowFoamStrength,
+                foamLongitudinalMeters, foamLateralSpeed, foamPatternSizeMeters,
+                foamEdgeFeather, foamCoreCut);
+            return outflow.IsActive;
+        }
+
+        static float CombineCoverage(float first, float second)
+            => Mathf.Clamp01(first + second - first * second);
 
         // ---- generated connections --------------------------------------------------------
 
@@ -338,6 +519,7 @@ namespace AbstractOcclusion.WebGpuWater
 
             PlaceEndTransforms(end, anchor, downstream);
             SyncSeams();
+            SyncMouthOutflowRegistration();
         }
 
         // ---- render seams ------------------------------------------------------------------
@@ -403,6 +585,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (!TryGetEndFrame(endKind, out Vector3 anchor, out Vector3 downstream, out _)) return;
             PlaceEndTransforms(end, anchor, downstream);
             end.connection.transitionRadiusMeters = end.transitionRadiusMeters;
+            _mouthOutflowHost?.InvalidateRiverMouthOutflows();
         }
 
         void PlaceEndTransforms(WaterRiverEndConnection end, Vector3 anchor, Vector3 downstream)
@@ -456,6 +639,7 @@ namespace AbstractOcclusion.WebGpuWater
             end.targetPort = null;
             end.connection = null;
             SyncSeams();
+            SyncMouthOutflowRegistration();
         }
 
         WaterConnectionPort EnsureChildPort(WaterConnectionPort existing, string childName)

@@ -137,11 +137,19 @@ sampler2D _FoamTex;
 // Baked river turbulence reuses _FoamMask on river renderers: those meshes never consume the
 // rectangular simulation field. Contact and cascade coverage are analytic and need no sampler.
 float _RiverFoamActive;
+float _RiverFoamOverallStrength;
 float _RiverFoamStrength;
 float _RiverContactFoamStrength;
 float _RiverCascadeFoamStrength;
 float _RiverCascadeStartCosine;
 float _RiverCascadeFullCosine;
+float _RiverCascadeTransportActive;
+#define RIVER_CASCADE_TRANSPORT_SAMPLE_COUNT 256
+#define RIVER_CASCADE_TRANSPORT_SAMPLES_PER_VECTOR 4
+#define RIVER_CASCADE_TRANSPORT_VECTOR_COUNT \
+    (RIVER_CASCADE_TRANSPORT_SAMPLE_COUNT / RIVER_CASCADE_TRANSPORT_SAMPLES_PER_VECTOR)
+float4 _RiverCascadeTransportSamples[RIVER_CASCADE_TRANSPORT_VECTOR_COUNT];
+float _RiverCascadeTransportInvLength;
 float _RiverFluidActive;
 float _RiverFluidInvLength;
 float _RiverFluidMaxSpeed;
@@ -260,6 +268,7 @@ float3 SampleFoamPattern(float2 uv, float2 uvDdx, float2 uvDdy)
 // rotated octave is a linear transform, so its gradients get the same rotation/scale.
 void EvaluateFoam(float2 fuv, float2 fuvDdx, float2 fuvDdy,
                   float2 flowXZ, float mask, float camDist,
+                  float edgeFeather, float coreCutStrength,
                   out float3 pattern, out float core, out float lace,
                   out float alpha, out float2 tilt)
 {
@@ -311,13 +320,15 @@ void EvaluateFoam(float2 fuv, float2 fuvDdx, float2 fuvDdy,
     // (original look). Even at full cut the lace term below keeps the
     // saturated centre near-solid; only the darkest pattern texels open up.
     float coreCut = saturate((pattern.r - laceThreshold) / FOAM_CORE_CUT_SOFTNESS);
-    float coreAlpha = core * lerp(1.0, coreCut, _FoamCoreCut);
+    float coreAlpha = core * lerp(1.0, coreCut, saturate(coreCutStrength));
 
     // Edge feathering (user-tunable): fade the layer out smoothly as the
     // mask thins instead of clipping at the mask epsilon. 0 = off (hard
     // edge, the original look). Core is untouched by construction: it only
     // exists above FOAM_CORE_START, well over any sensible feather band.
-    float feather = (_FoamFeather > 0.0) ? smoothstep(0.0, _FoamFeather, mask) : 1.0;
+    float safeEdgeFeather = max(edgeFeather, 0.0);
+    float feather = (safeEdgeFeather > 0.0)
+        ? smoothstep(0.0, safeEdgeFeather, mask) : 1.0;
     // The reach term doubles as the fleck weight: thin-mask flecks stay readable
     // without linear dimming forcing the strength slider up into blob territory.
     alpha = max(coreAlpha, lace * reach) * feather;

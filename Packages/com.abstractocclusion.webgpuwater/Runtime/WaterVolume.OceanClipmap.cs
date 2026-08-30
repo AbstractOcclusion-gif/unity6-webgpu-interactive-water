@@ -3,6 +3,7 @@
 // the nested-LOD annulus levels (above + under twins), their world-lattice snapping and geomorph
 // uniforms, and build / per-frame placement / teardown. The template mesh itself comes from
 // LargeWaterClipmap; the level-count/reach derivations live with the Ocean settings.
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -41,6 +42,27 @@ namespace AbstractOcclusion.WebGpuWater
             if (_clipmapLevels == null) return;
             for (int i = 0; i < _clipmapLevels.Length; i++)
                 AddLiveRenderer(into, _clipmapLevels[i].above);
+        }
+
+        /// <summary>Collect every live above-water sheet across all bodies. The river fog
+        /// ownership prepass uses this scene-wide set because a different connected body's sheet
+        /// can be the nearest visible surface in front of a ribbon volume.</summary>
+        internal static void CollectAllAboveSurfaceRenderers(List<Renderer> into)
+        {
+            if (into == null) throw new ArgumentNullException(nameof(into));
+            into.Clear();
+            for (int bodyIndex = 0; bodyIndex < Bodies.Count; bodyIndex++)
+            {
+                WaterVolume body = Bodies[bodyIndex];
+                if (body == null || !body.isActiveAndEnabled) continue;
+                body.CollectAboveSurfaceRenderers(into);
+            }
+            for (int rendererIndex = into.Count - 1; rendererIndex >= 0; rendererIndex--)
+            {
+                Renderer renderer = into[rendererIndex];
+                if (renderer.forceRenderingOff || renderer.sharedMaterial == null)
+                    into.RemoveAt(rendererIndex);
+            }
         }
 
         static void AddLiveRenderer(List<Renderer> into, Renderer renderer)

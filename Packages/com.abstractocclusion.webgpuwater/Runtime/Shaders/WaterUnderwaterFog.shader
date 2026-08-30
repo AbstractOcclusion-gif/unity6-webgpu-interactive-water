@@ -89,8 +89,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         TEXTURE2D(_WaterFogSolveInscatter);
         Texture2D _RiverFogFrontDepth;
         Texture2D _RiverFogBackDepth;
+        Texture2D _VisibleWaterSurfaceDepth;
         float _RiverFogDepthValid;
         float _RiverFogExternalOnly;
+        float _VisibleWaterSurfaceDepthValid;
+        #define VISIBLE_WATER_SURFACE_DEPTH_EPSILON 0.01
         // Half-res fog solve (the C1 unlock, 2026-08-29): fraction of camera resolution the solve
         // targets were allocated at (1 = full res, the shipped default). Published by
         // WaterUnderwaterFogPass from the scale ACTUALLY applied - the _OceanSurfacePrepassScale
@@ -210,6 +213,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             return ComputeWorldSpacePosition(uv, rawDepth, UNITY_MATRIX_I_VP);
         }
 
+        float VisibleWaterSurfaceEyeDepth(float2 uv)
+        {
+            int2 pixelMax = max(int2(_ScaledScreenParams.xy) - int2(1, 1), int2(0, 0));
+            int2 pixel = clamp(int2(uv * _ScaledScreenParams.xy), int2(0, 0), pixelMax);
+            return _VisibleWaterSurfaceDepth.Load(int3(pixel, 0)).r;
+        }
+
         bool RiverFogSegment(float2 uv, float3 sceneWorld, out float pathLen,
                              out float deepestY, out float surfaceRefY,
                              out float3 wetStart)
@@ -220,10 +230,29 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             wetStart = _WorldSpaceCameraPos;
             if (_RiverFogDepthValid < 0.5) return false;
 
-            int2 pixel = int2(uv * _ScaledScreenParams.xy);
+            int2 pixelMax = max(int2(_ScaledScreenParams.xy) - int2(1, 1), int2(0, 0));
+            int2 pixel = clamp(int2(uv * _ScaledScreenParams.xy), int2(0, 0), pixelMax);
             float rawFront = _RiverFogFrontDepth.Load(int3(pixel, 0)).r;
             float rawBack = _RiverFogBackDepth.Load(int3(pixel, 0)).r;
             if (rawBack == UNITY_RAW_FAR_CLIP_VALUE) return false;
+
+            // The fullscreen solve runs after transparent water, while sceneWorld comes from the
+            // opaque-only depth texture. A separate displaced-surface prepass restores the missing
+            // ownership fact: positive depth is an air-facing water sheet. If that sheet is no
+            // farther than this ribbon volume's exit, it owns the pixel and the late fog must not
+            // repaint through it. This covers both the ribbon's own top and any connected body or
+            // river drawn in front, while negative (underwater-facing) sheets deliberately leave
+            // the volume responsible. Full-resolution R32 depth keeps the comparison exact at
+            // seams; the small metric allowance only absorbs raster precision at coincident tops.
+            if (_VisibleWaterSurfaceDepthValid > 0.5)
+            {
+                float waterSurfaceEyeDepth = VisibleWaterSurfaceEyeDepth(uv);
+                float riverExitEyeDepth = LinearEyeDepth(rawBack, _ZBufferParams);
+                if (waterSurfaceEyeDepth > 0.0 &&
+                    waterSurfaceEyeDepth <= riverExitEyeDepth +
+                                            VISIBLE_WATER_SURFACE_DEPTH_EPSILON)
+                    return false;
+            }
 
             float3 ray = sceneWorld - _WorldSpaceCameraPos;
             float sceneDistance = length(ray);
@@ -1056,6 +1085,32 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             float entryPoolY = originPool.y + rayPool.y * tEnter;
             bool entersThroughTop = boxHit.y > tEnter && tEnter > 0.0
                                  && entryPoolY >= -POND_TOP_FACE_EPSILON;
+
+            // The analytic bounded-body waterline only knows this lake/pond's own wave field.
+            // At a connected mouth, a sloped river sheet can be the surface that actually rendered
+            // over either the body's top OR its terminal side plane. The surface pass already
+            // shades/refracts the column behind that sheet, so late lake fog must yield when the
+            // sheet is no farther than the lake entry. A genuine aquarium-style side view is
+            // preserved: its box entry lies in front of a water top seen deeper inside the volume.
+            // No positive sample means the above sheet did not rasterise (near-plane crossing,
+            // carve, or underside view), where the established analytic ownership remains valid.
+            if (_VisibleWaterSurfaceDepthValid > 0.5)
+            {
+                float waterSurfaceEyeDepth = VisibleWaterSurfaceEyeDepth(uv);
+                if (waterSurfaceEyeDepth > 0.0)
+                {
+                    if (entersThroughTop) return 0.0;
+                    if (tEnter > 0.0)
+                    {
+                        float3 entryWorld = PoolToWorld(originPool + rayPool * tEnter);
+                        float entryEyeDepth =
+                            -mul(UNITY_MATRIX_V, float4(entryWorld, 1.0)).z;
+                        if (waterSurfaceEyeDepth <= entryEyeDepth +
+                                                    VISIBLE_WATER_SURFACE_DEPTH_EPSILON)
+                            return 0.0;
+                    }
+                }
+            }
             return entersThroughTop ? coverage : 1.0;
         }
 

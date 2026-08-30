@@ -123,12 +123,14 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         // Pond-foam overlay (the after-fog surface-foam redraw): a body qualifies when its sim
-        // foam is on. Chunk bodies are excluded - their disc footprint clips (sphere/mesh) are
-        // Pass-0 state the overlay pass does not replicate, so their foam keeps the queue-time
-        // path (PondFoamLayer's overlay-skip gate makes the same exception on the GPU).
+        // foam is on or it receives a river-mouth source. Chunk bodies are excluded - their disc
+        // footprint clips (sphere/mesh) are Pass-0 state the overlay pass does not replicate, so
+        // their foam keeps the queue-time path (PondFoamLayer's overlay-skip gate makes the same
+        // exception on the GPU).
         static bool QualifiesForFoamOverlay(WaterVolume body)
             => body != null && body.isActiveAndEnabled &&
-               (body.Foam || body.HasLiveExternalFoamRenderer) && !body.IsChunk;
+               (body.Foam || body.HasLiveExternalFoamRenderer ||
+                body.RiverMouthOutflowCount > 0) && !body.IsChunk;
 
         /// <summary>True when at least one body needs the after-fog pond-foam overlay (the
         /// feature's cheap CPU gate before it enqueues the after-fog pass).</summary>
@@ -148,7 +150,8 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 WaterVolume body = Bodies[i];
                 if (!QualifiesForFoamOverlay(body)) continue;
-                if (body.Foam) body.CollectAboveSurfaceRenderers(into);
+                if (body.Foam || body.RiverMouthOutflowCount > 0)
+                    body.CollectAboveSurfaceRenderers(into);
                 body.CollectExternalFoamRenderers(into);
             }
         }

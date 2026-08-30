@@ -530,5 +530,61 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             }
             ENDCG
         }
+
+        // ---- Pass 3: nearest visible water sheet for late fullscreen-fog ownership. ----
+        // The fog composites after transparent water but reconstructs opaque scene depth.
+        // Re-drawing every live ABOVE sheet into a sampleable R32 target gives both bounded-body
+        // and river segments the missing fact without sampling URP's live depth-stencil
+        // (unsupported on the WebGPU path).
+        // Signed eye depth preserves the established ownership convention: positive = the sheet's
+        // air-facing side owns this pixel; negative = the underwater volume remains responsible.
+        Pass
+        {
+            Name "WaterFogOccluderDepth"
+            Cull Off
+            ZWrite On
+            ZTest LEqual
+            ColorMask R
+
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment fragFogOccluderDepth
+            #pragma target 4.0
+            #include "UnityCG.cginc"
+            #include "WaterCommon.hlsl"
+            #include "WaterFog.hlsl"
+            #include "WaterWaves.hlsl"
+            #include "WaterVolume.hlsl"
+            #include "WaterExclusion.hlsl"
+            #include "WaterExclusionMesh.hlsl"
+            #include "WaterLargeWaves.hlsl"
+            #include "WaterFoamCommon.hlsl"
+            #include "WaterSurfaceScreen.hlsl"
+            #include "WaterSurfaceShadow.hlsl"
+            #include "WaterSurfaceSpecular.hlsl"
+            #include "WaterSurfacePoolTrace.hlsl"
+            #include "WaterSurfaceFoamSampling.hlsl"
+            #include "WaterSurfaceDetailNormal.hlsl"
+            #include "WaterSurfaceVertStage.hlsl"
+
+            float fragFogOccluderDepth(v2f i, bool isFrontFace : SV_IsFrontFace) : SV_Target
+            {
+                if (PatchCoversBaseSheet(i.position)) discard;
+                if (InsideExclusion(i.worldPos)) discard;
+                if (_ExclusionMeshCount > 0.5)
+                {
+                    float2 meshRawSpan = ExclusionMeshRawSpan(int2(i.pos.xy));
+                    if (ExclusionMeshCoversDepth(LinearEyeDepth(meshRawSpan.x),
+                                                 LinearEyeDepth(meshRawSpan.y),
+                                                 LinearEyeDepth(i.pos.z), _ProjectionParams.z))
+                        discard;
+                }
+
+                float visibleSide = isFrontFace ? 1.0 : -1.0;
+                float physicalEyeDepth = -mul(UNITY_MATRIX_V, float4(i.worldPos, 1.0)).z;
+                return physicalEyeDepth * visibleSide;
+            }
+            ENDCG
+        }
     }
 }
