@@ -209,7 +209,6 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 // same contract ShorelineStage's clip() already relies on), and with zero
                 // volumes the uniform count skips the loop entirely.
                 if (InsideExclusion(i.worldPos)) discard;
-
                 // MESH exclusion volumes carve by their real silhouette instead of by an analytic
                 // shape, so they are not in the loop above: this fragment is inside one when its own
                 // eye depth lies between the prepass front and back faces at this pixel. One texel

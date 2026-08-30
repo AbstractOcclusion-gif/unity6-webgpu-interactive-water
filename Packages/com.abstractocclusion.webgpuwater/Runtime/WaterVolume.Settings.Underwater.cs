@@ -128,6 +128,92 @@ namespace AbstractOcclusion.WebGpuWater
         public static WaterVolume BodyContaining(Vector3 worldPoint)
             => ResolveContainingBody(worldPoint, requireFullscreenVolumeFog: false);
 
+        // RIVER FOG V1 (2026-08-29): which ribbon claims the eye, and which BODY supplies the
+        // medium. Engages only when every piece is present - no ribbon at the eye (the
+        // overwhelmingly common frame), a standalone ribbon (no parent) or a fog-ineligible
+        // parent all yield false, and the legacy volume path runs untouched. The margin pre-arms
+        // the gate just above the ribbon surface, mirroring FogArmBandMeters' role on volumes.
+        internal static bool TryResolveRiverFogOverride(Camera eyeCamera, float armBandMeters,
+                                                        out WaterVolume fogSource,
+                                                        out float riverSurfaceY)
+        {
+            fogSource = null;
+            riverSurfaceY = 0f;
+            if (eyeCamera == null) return false;
+            Vector3 eye = eyeCamera.transform.position;
+            IWaterSurfaceProvider ribbon =
+                WaterSurfaceProviders.ExtraProviderContaining(eye, armBandMeters);
+            if (ribbon == null)
+            {
+                _riverFogLastBodyId = 0; // out of every river: next entry starts fresh
+                return false;
+            }
+
+            WaterVolume mediumBody = SelectRiverFogMediumBody(ribbon, eye);
+            if (mediumBody == null) return false;
+            if (!ribbon.TrySampleSurface(eye, WaterQueryFields.Height,
+                                         minimumWaveLength: 0f, excludeInteractiveRipples: false,
+                                         out WaterSample surface))
+                return false;
+
+            fogSource = mediumBody;
+            _riverFogLastBodyId = mediumBody.BodyId;
+            riverSurfaceY = surface.Height;
+            return true;
+        }
+
+        // F1 fog-ribbon (2026-08-29): mid-river the fog must CONNECT the bodies, so the medium
+        // comes from the nearer CONNECTED end - swimming the river you arrive already carrying
+        // the destination's water. A hysteresis band around the midpoint stops the ~170-uniform
+        // republish from flapping while the camera hovers there (the resolver's own
+        // switch-margin doctrine). Honest v1 limit: the handoff is a SWITCH, not a blend -
+        // differing pond mediums pop once, mid-gap, at most once per crossing.
+        const float RiverFogMidpointT = 0.5f;
+        const float RiverFogHandoffNormalizedBand = 0.1f;
+        static int _riverFogLastBodyId;
+
+        static WaterVolume SelectRiverFogMediumBody(IWaterSurfaceProvider ribbon, Vector3 eye)
+        {
+            WaterVolume parent = ribbon.Body;
+            var riverProvider = ribbon as WaterRiverSurfaceProvider;
+            WaterRiverSurface ribbonSurface = riverProvider != null ? riverProvider.Surface : null;
+            WaterRiver facade = ribbonSurface != null
+                ? ribbonSurface.GetComponent<WaterRiver>() : null;
+            if (facade == null || facade.Spline == null)
+                return FirstFogEligible(parent, null, null);
+
+            WaterVolume sourceBody = facade.SourceEnd.body;
+            WaterVolume mouthBody = facade.MouthEnd.body;
+            if (!facade.Spline.TryProjectPoint(eye, out WaterRiverSplineSample sample, out _))
+                return FirstFogEligible(parent, mouthBody, sourceBody);
+
+            bool mouthSide = sample.NormalizedT >= RiverFogMidpointT;
+            if (_riverFogLastBodyId != 0 &&
+                Mathf.Abs(sample.NormalizedT - RiverFogMidpointT) < RiverFogHandoffNormalizedBand)
+            {
+                // Inside the band the incumbent side keeps the camera.
+                if (sourceBody != null && sourceBody.BodyId == _riverFogLastBodyId)
+                    mouthSide = false;
+                else if (mouthBody != null && mouthBody.BodyId == _riverFogLastBodyId)
+                    mouthSide = true;
+            }
+            WaterVolume nearSide = mouthSide ? mouthBody : sourceBody;
+            WaterVolume farSide = mouthSide ? sourceBody : mouthBody;
+            return FirstFogEligible(nearSide, farSide, parent);
+        }
+
+        static WaterVolume FirstFogEligible(WaterVolume first, WaterVolume second,
+                                            WaterVolume third)
+        {
+            if (IsFogEligible(first)) return first;
+            if (IsFogEligible(second)) return second;
+            if (IsFogEligible(third)) return third;
+            return null;
+        }
+
+        static bool IsFogEligible(WaterVolume body)
+            => body != null && body.isActiveAndEnabled && body.fullscreenVolumeFog;
+
         internal static WaterVolume BodyContainingForUnderwaterEffects(Vector3 worldPoint)
             => ResolveContainingBody(worldPoint, requireFullscreenVolumeFog: true);
 
@@ -228,6 +314,7 @@ namespace AbstractOcclusion.WebGpuWater
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         internal static void ResetStaticState()
         {
+            _riverFogLastBodyId = 0;
             Primary = null;
             Bodies.Clear();
             _fallbackBody = null;

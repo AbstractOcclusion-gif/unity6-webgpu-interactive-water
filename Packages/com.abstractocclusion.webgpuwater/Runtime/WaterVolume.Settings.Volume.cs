@@ -58,7 +58,10 @@ namespace AbstractOcclusion.WebGpuWater
         // Same-named forwarding accessors keep every reader unchanged. WaterFog stays a public get/set
         // (used by the sample scripting API) but now targets the settings; the rest are read-only.
         bool waterFog => waterFogSettings.waterFog;
-        bool fullscreenVolumeFog => waterFogSettings.fullscreenVolumeFog;
+        internal bool fullscreenVolumeFog => waterFogSettings.fullscreenVolumeFog;
+        // Builders (test rig, wizard) flip the fog toggle on freshly created bodies - the
+        // serialized default is OFF, and a fog demo with no fog demos nothing.
+        internal WaterFogSettings FogSettings => waterFogSettings;
         internal Color fogColor => waterFogSettings.fogColor;
         internal Color fogExtinction => waterFogSettings.fogExtinction;
         internal float fogDensity => waterFogSettings.fogDensity;

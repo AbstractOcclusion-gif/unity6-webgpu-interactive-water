@@ -148,6 +148,16 @@ namespace AbstractOcclusion.WebGpuWater
             RenderPlanarMirror(cam); // per-body planar: every planar body mirrors its OWN plane, not just primary
 
             if (!isPrimary) return;
+            // River fog v1: a camera inside a ribbon's water column gets flat-waterline fog at
+            // the RIVER's local height, medium from the ribbon's parent body. Additive and
+            // default-off-safe - no ribbon at the eye means the exact legacy path below.
+            if (TryResolveRiverFogOverride(cam, FogArmBandMeters,
+                                           out WaterVolume riverFogSource,
+                                           out float riverSurfaceY))
+            {
+                riverFogSource.UpdateUnderwaterState(cam, riverSurfaceY);
+                return;
+            }
             WaterVolume fogSource = BodyContainingForUnderwaterEffects(cam.transform.position);
             if (fogSource == null)
             {
@@ -281,6 +291,22 @@ namespace AbstractOcclusion.WebGpuWater
         // + surf front on the master beat; see SurfaceHeightAtCamera), so the gate tracks the rendered
         // surface. Bounded bodies require the camera inside their footprint; an ocean clipmap spans
         // everywhere, so only the height test applies.
+        // River fog v1 (2026-08-29): while set, the submerge/arm/straddle math anchors on this
+        // EXTERNAL flat surface height instead of this body's own plane, with a zero wave
+        // envelope (a ribbon has no FFT/analytic sea running on it - the bands reduce to exactly
+        // the pond form they were derived from). Valid only for the duration of one override
+        // call; the finally below guarantees a throw cannot leak river state into volume frames.
+        bool _externalSurfaceOverride;
+        float _externalSurfaceY;
+
+        internal void UpdateUnderwaterState(Camera eyeCamera, float externalFlatSurfaceY)
+        {
+            _externalSurfaceOverride = true;
+            _externalSurfaceY = externalFlatSurfaceY;
+            try { UpdateUnderwaterState(eyeCamera); }
+            finally { _externalSurfaceOverride = false; }
+        }
+
         void UpdateUnderwaterState(Camera eyeCamera)
         {
             FogSource = this;
@@ -351,12 +377,19 @@ namespace AbstractOcclusion.WebGpuWater
             // clip the fog to this body's box (pond / bounded lake = a finite fog volume). Simple mode
             // swaps the shader's per-pixel wavy-waterline march for the closed-form flat waterline at
             // surfaceY (wave-aware at the camera's xz, so the line still rides the local swell).
-            bool fogSimple = _underwaterFogMode == WaterQuality.UnderwaterMode.Simple;
+            bool fogSimple = _underwaterFogMode == WaterQuality.UnderwaterMode.Simple
+                          || _externalSurfaceOverride;
             // fogArmed mirrors UnderwaterFogActive to the GPU: the exclusion wall self-completes
             // (reconstructs the fog behind its veil) ONLY when the fullscreen pass will not paint,
             // and the surface's underside stage skips its own camera-depth downwelling dim (the
             // fog pass applies the identical term, which used to double-darken the ceiling).
-            Publisher.PublishUnderwater(eyeInWater ? 1f : 0f, surfaceY, IsOceanClipmap ? 1f : 0f,
+            // River frames publish UNBOUNDED (F1 fog-ribbon): a river spanning the gap between
+            // two bodies must not have its fog clipped by any single body's box - the flat
+            // Simple waterline at the river's height owns the reach, exactly the shipped
+            // Low-tier ocean combination. The unbounded shader branches that assume an ocean
+            // additionally gate on _OceanSurfaceDepthValid, which a pond medium never publishes.
+            Publisher.PublishUnderwater(eyeInWater ? 1f : 0f, surfaceY,
+                                        (IsOceanClipmap || _externalSurfaceOverride) ? 1f : 0f,
                                         fogSimple ? 1f : 0f, UnderwaterFogActive ? 1f : 0f,
                                         eyeInDryVolume ? 1f : 0f);
             if (WaterDebugView.LogFogGates)
@@ -428,7 +461,7 @@ namespace AbstractOcclusion.WebGpuWater
         // _CameraUnderwater consumer while water merely touches a screen edge.
         bool ComputeCameraSubmerged(Camera cam, out float surfaceY, out bool nearPlaneStraddles)
         {
-            surfaceY = SurfaceHeightAtCamera(cam);
+            surfaceY = _externalSurfaceOverride ? _externalSurfaceY : SurfaceHeightAtCamera(cam);
             nearPlaneStraddles = false;
             _fogNearSurface = false; // recomputed below; the early-outs must not keep a stale band
             if (!waterFog) { _wasCameraSubmerged = false; return false; } // one Water Fog toggle drives both looks
@@ -456,8 +489,9 @@ namespace AbstractOcclusion.WebGpuWater
             // the CAMERA moves. Over-arming is the intended trade: an armed pass whose mask
             // admits nothing changes no pixel (the property this band was always meant to
             // have); it merely runs.
-            float envelope = SurfaceHeightEnvelope();
-            float fogArmCeilingY = VolumeCenter.y + envelope + FogArmBandMeters;
+            float envelope = _externalSurfaceOverride ? 0f : SurfaceHeightEnvelope();
+            float surfaceAnchorY = _externalSurfaceOverride ? _externalSurfaceY : VolumeCenter.y;
+            float fogArmCeilingY = surfaceAnchorY + envelope + FogArmBandMeters;
             // Waterline straddle band. REWRITTEN 2026-08-09, on the fog gate's own doctrine
             // (above): each corner used to be tested against its STALE per-corner readback
             // height with the fixed WaterlineArmPad, which is exactly the shape the fog arm
@@ -472,8 +506,8 @@ namespace AbstractOcclusion.WebGpuWater
             // behaviour by construction: their envelope is 0, so the band reduces to
             // rest +- WaterlineArmPad, the exact test this replaces. Also deletes four
             // stale readback samples per frame - the corners no longer read the field.
-            float waterlineCeilingY = VolumeCenter.y + envelope + WaterlineArmPad;
-            float waterlineFloorY = VolumeCenter.y - envelope - WaterlineArmPad;
+            float waterlineCeilingY = surfaceAnchorY + envelope + WaterlineArmPad;
+            float waterlineFloorY = surfaceAnchorY - envelope - WaterlineArmPad;
             int straddleUnder = 0;
             int straddleAbove = 0;
             int cornersNearOrUnder = 0;
@@ -492,7 +526,7 @@ namespace AbstractOcclusion.WebGpuWater
 
             // Footprint: bounded bodies fog (and draw their waterline) only with the camera roughly
             // over them; an ocean clipmap spans everywhere.
-            bool inFootprint = IsOceanClipmap;
+            bool inFootprint = IsOceanClipmap || _externalSurfaceOverride;
             if (!inFootprint)
             {
                 Vector3 pool = WorldToPool(cam.transform.position);

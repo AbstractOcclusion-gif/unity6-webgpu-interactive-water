@@ -87,6 +87,7 @@ namespace AbstractOcclusion.WebGpuWater
         Rigidbody _rb;
         Collider _col;
         WaterVolume _body;
+        IWaterSurfaceProvider _provider; // resolve winner; the same object as _body for volume water
         int _domainBodyId; // hysteresis hint for the domain resolver (0 = none)
 
         // Float points in the body's local space, plus the world-space sphere radius
@@ -196,10 +197,27 @@ namespace AbstractOcclusion.WebGpuWater
             // is currently in. Domain-resolved (2026-08-29): full-XYZ - stacked bodies pick by
             // elevation; exclusion volumes read as dry (no lift inside a carved hull interior);
             // no Primary fallback - out of water means out of water. The stored id is the
-            // hysteresis hint that stops edge chatter.
-            _body = WaterDomainResolver.GameplayBodyAt(
-                transform.position, WaterQueryIntent.BuoyancySurface, ref _domainBodyId);
-            if (_body == null || _localPoints == null || _localPoints.Length == 0) return;
+            // hysteresis hint that stops edge chatter. River round (2026-08-29): keep the
+            // winning PROVIDER, not just its body - a ribbon's spline elevation exists only on
+            // the provider, and a standalone ribbon has no body at all.
+            WaterDomainQueryOptions options =
+                WaterDomainQueryOptions.ForIntent(WaterQueryIntent.BuoyancySurface);
+            options.PreviousBodyId = _domainBodyId;
+            options.Fields = WaterQueryFields.Height;
+            options.MinimumWaveLength = objectWidth;
+            options.ExcludeInteractiveRipples = ignoreInteractiveRipples;
+            if (!WaterDomainResolver.Resolve(transform.position, in options,
+                                             out WaterDomainSample domain))
+            {
+                _domainBodyId = 0;
+                _body = null;
+                _provider = null;
+                return;
+            }
+            _domainBodyId = domain.BodyId;
+            _body = domain.Body;
+            _provider = domain.Provider;
+            if (_provider == null || _localPoints == null || _localPoints.Length == 0) return;
 
             BuildWorldPoints();
             // ONE batched surface query for every point (height + normal + velocity), through the water
@@ -207,14 +225,21 @@ namespace AbstractOcclusion.WebGpuWater
             // is rented per-owner (GetInstanceID is stable + unique) so there is no per-frame allocation.
             int ownerId = GetInstanceID();
             _results = SharedQuery.RentResults(ownerId, _worldPoints.Length);
-            _body.SampleHeights(ownerId, objectWidth, _worldPoints, _results,
-                                WaterQueryFields.HeightNormalVelocity, ignoreInteractiveRipples);
+            if (ReferenceEquals(_provider, _body))
+                // Volume winner: the exact pre-river batch path, byte-identical by construction.
+                _body.SampleHeights(ownerId, objectWidth, _worldPoints, _results,
+                                    WaterQueryFields.HeightNormalVelocity, ignoreInteractiveRipples);
+            else
+                SampleProviderHeights();
 
             float gravity = Physics.gravity.magnitude;
             float invCount = 1f / _localPoints.Length;
             float submergedSum = 0f;
-            // One constant lift/settle direction for this body (the volume up), as in the original model.
-            Vector3 up = _body.VolumeUp;
+            // One constant lift/settle direction, as in the original model: the body's volume up
+            // when one owns the water, world up for a standalone ribbon. The river's tilted frame
+            // enters through the per-point sample normal/velocity, NOT the lift axis (a feel
+            // decision recorded in the river research doc, axis D - revisit on sighting).
+            Vector3 up = _body != null ? _body.VolumeUp : Vector3.up;
 
             for (int i = 0; i < _worldPoints.Length; i++)
             {
@@ -242,6 +267,17 @@ namespace AbstractOcclusion.WebGpuWater
         {
             for (int i = 0; i < _localPoints.Length; i++)
                 _worldPoints[i] = transform.TransformPoint(_localPoints[i]);
+        }
+
+        // Non-volume winner (a river ribbon): the provider is CPU-analytic, so a per-probe loop
+        // into the SAME rented buffer gives rivers full parity while the volume batch path stays
+        // untouched. TrySampleSurface leaves a missed sample invalid (a probe hanging past the
+        // banks), which the force loop already skips.
+        void SampleProviderHeights()
+        {
+            for (int i = 0; i < _worldPoints.Length; i++)
+                _provider.TrySampleSurface(_worldPoints[i], WaterQueryFields.HeightNormalVelocity,
+                                           objectWidth, ignoreInteractiveRipples, out _results[i]);
         }
 
         // Lift + drag + wave-drift at one submerged point. With every added field at its default this is

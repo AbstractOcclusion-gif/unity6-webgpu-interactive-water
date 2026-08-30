@@ -66,6 +66,22 @@ namespace AbstractOcclusion.WebGpuWater
         /// sentinel in WaterDomainQueryOptions.PreviousBodyId.</summary>
         internal static int NextBodyId() => ++_nextBodyId;
 
+        /// <summary>The registered EXTRA provider (a ribbon) whose widened domain contains the
+        /// point, or null. Bodies are deliberately not consulted - callers with a body question
+        /// have the body registry. The margin widens the column the way the resolver's
+        /// hysteresis band does, so the river fog gate can pre-arm just above the surface.</summary>
+        internal static IWaterSurfaceProvider ExtraProviderContaining(Vector3 worldPoint,
+                                                                      float boundaryMarginMeters)
+        {
+            for (int i = 0; i < _registered.Count; i++)
+            {
+                IWaterSurfaceProvider provider = _registered[i];
+                if (provider != null && provider.ContainsPointWithin(worldPoint, boundaryMarginMeters))
+                    return provider;
+            }
+            return null;
+        }
+
         internal static void Register(IWaterSurfaceProvider provider)
         {
             if (provider == null) throw new System.ArgumentNullException(nameof(provider));

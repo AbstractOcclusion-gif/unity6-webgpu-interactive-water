@@ -87,18 +87,20 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
     // pre-displacement, so the non-windowed branch was already source-correct.
     float3 rippleSourcePos = float3(i.largeWaveSourceXZ.x, i.worldPos.y, i.largeWaveSourceXZ.y);
     float4 info = SampleRipple(i.position, rippleSourcePos, fade);
-    float interactiveRippleWeight = 1.0 - saturate(_IsRiver);
-    // A river has no valid coordinates in the rectangular interactive-ripple simulation. The
-    // vertex stage therefore excludes this field too; matching that gate here keeps its shading
-    // normal attached to the analytic wind-wave geometry instead of an unrelated volume texture.
+    // Per-pixel river weight: the ribbon body has no valid coordinates in the rectangular
+    // interactive-ripple simulation, while a connected terminal band fades this gate open to
+    // the receiving body - matching the vertex stage, so
+    // the ripple shading normal and the ripple displacement stay one object across the seam.
+    float interactiveRippleWeight = 1.0 - i.riverBakeUv.z;
     info *= interactiveRippleWeight;
 
     // make the water look more "peaked": walk a few steps along the ripple normal
     // in the active UV domain (pool for whole-body, sim window for windowed).
     float2 coord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
                                         : (WorldToSim(rippleSourcePos).xz * 0.5 + 0.5);
-    int refineSteps = clamp((int)(_PeakedRefineSteps * interactiveRippleWeight),
-                            0, PEAKED_REFINE_MAX_STEPS);
+    // The receiving body and the river terminal must use the same filter. Interior river pixels
+    // carry zero ripple data, so running the body's uniform trip count there remains inert.
+    int refineSteps = clamp((int)_PeakedRefineSteps, 0, PEAKED_REFINE_MAX_STEPS);
     [loop] // uniform trip count (tier knob); explicit-LOD samples are loop-safe
     for (int k = 0; k < refineSteps; k++)
     {
@@ -120,14 +122,22 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
     // Combine the ripple normal (info.ba = normal.xz) with the wind-wave
     // tilt. A height gradient g contributes normal.xz = -g, so the two
     // slopes simply add in the xz components before re-deriving y.
-    float riverWeight = saturate(_IsRiver);
+    float riverWeight = i.riverBakeUv.z;
     float2 sampledRiverVelocity = SampleRiverFluidVelocity(
-        i.riverBakeUv, i.riverCurrentData.w);
+        i.riverBakeUv.xy, i.riverCurrentData.w);
     float4 riverCurrentData = float4(i.riverCurrentData.xy, sampledRiverVelocity);
-    float2 gridWaveSample = WindWaveSampleXZ(i.position.xz, i.largeWaveSourceXZ);
+    // Same end-anchored grid target as the vertex height, or normal and height desynchronise.
+    float2 gridWaveSample = RiverEndWindWaveSampleXZ(
+        i.position.xz, i.largeWaveSourceXZ, i.riverBakeUv.w);
     float2 riverWaveSample = RiverCurrentWaveSampleXZ(riverCurrentData);
-    float2 windSlope = WaveSlope(lerp(gridWaveSample, riverWaveSample, riverWeight))
-                     * _WaveNormalStrength;
+    // Match the vertex stage: blend sampled slopes, never the
+    // coordinates (coordinate lerp = phase sweep = the washboard band). Uniform branch.
+    float2 windSlope;
+    if (_IsRiver > 0.5)
+        windSlope = lerp(WaveSlope(gridWaveSample), WaveSlope(riverWaveSample), riverWeight);
+    else
+        windSlope = WaveSlope(gridWaveSample);
+    windSlope *= _WaveNormalStrength;
     // POOL convention, kept as the foam flow / relief input (g.nxz) so foam is unchanged by this.
     float2 nxz = info.ba - windSlope;
 
@@ -219,19 +229,30 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
         // and a slick wipes - scale the detail strength by the same local factor the FFT tilt uses,
         // so near-field micro-ripple and far-field cascade roughness tell one story.
         detailNormalStrength *= SeaStateMssScale(i.largeWaveSourceXZ);
-        float2 detailTilt;
         // _IsRiver is per-renderer uniform, so derivatives inside either detail-normal path remain
         // uniform across a WebGPU quad. Pools keep their exact wind/world-space path; ribbons use
         // metric UV1 coordinates and interpolated spline speed to visibly travel downstream.
+        float3 detailTiltWorld;
         if (_IsRiver > 0.5)
-            detailTilt = RiverDetailNormalTilt(riverCurrentData, viewDistWorld);
+        {
+            // Micro-detail must cross-fade to the receiving body's world-anchored detail across
+            // a connected terminal band, or the seam prints as
+            // a texture line even when heights and large waves already agree (RAM lerps its river
+            // shading toward the sea's own cascades the same way). Both taps run on every pixel
+            // of this uniform branch, so quad derivatives stay uniform; the ribbon interior keeps
+            // the transported-frame detail exactly (weight 1), and pools never enter this branch.
+            float2 riverTilt = RiverDetailNormalTilt(riverCurrentData, viewDistWorld);
+            float2 bodyTilt = DetailNormalTilt(i.largeWaveSourceXZ, viewDistWorld);
+            float3 riverDetailTilt = slopeAxisX * riverTilt.x + slopeAxisZ * riverTilt.y;
+            float3 bodyDetailTilt = float3(bodyTilt.x, 0.0, bodyTilt.y);
+            detailTiltWorld = lerp(bodyDetailTilt, riverDetailTilt, riverWeight);
+        }
         else
-            detailTilt = DetailNormalTilt(i.largeWaveSourceXZ, viewDistWorld);
-        float3 gridDetailTilt = float3(detailTilt.x, 0.0, detailTilt.y);
-        float3 riverDetailTilt = slopeAxisX * detailTilt.x + slopeAxisZ * detailTilt.y;
-        // Preserve the original unrotated-pool detail path byte-for-byte while orienting only
-        // river microdetail in the transported ribbon frame.
-        float3 detailTiltWorld = lerp(gridDetailTilt, riverDetailTilt, saturate(_IsRiver));
+        {
+            // The original unrotated-pool detail path, byte-for-byte.
+            float2 detailTilt = DetailNormalTilt(i.largeWaveSourceXZ, viewDistWorld);
+            detailTiltWorld = float3(detailTilt.x, 0.0, detailTilt.y);
+        }
         normal = normalize(normal + detailTiltWorld * detailNormalStrength);
     }
     WaterGeomStage g;
@@ -441,14 +462,15 @@ float RiverFoamCoverage(v2f i)
     float2 uv = saturate(float2(i.riverBakeUv.x,
                                 i.riverBakeUv.y * _RiverFluidInvLength));
     float bakedCoverage = tex2Dlod(_FoamMask, float4(uv, 0.0, 0.0)).b;
-    return saturate(bakedCoverage * _RiverFoamStrength * _FoamStrength);
+    // Baked river foam fades out across a connected terminal band.
+    return saturate(bakedCoverage * _RiverFoamStrength * _FoamStrength) * i.riverBakeUv.z;
 }
 
 float2 PondFoamPatternUv(v2f i, float3 normal, float2 localTilt)
 {
-    float riverWeight = saturate(_IsRiver);
+    float riverWeight = i.riverBakeUv.z;
     float2 riverVelocity = SampleRiverFluidVelocity(
-        i.riverBakeUv, i.riverCurrentData.w);
+        i.riverBakeUv.xy, i.riverCurrentData.w);
     float2 riverMetres = i.riverCurrentData.xy - riverVelocity * _WaveTime;
     float2 patternMetres = lerp(i.worldPos.xz, riverMetres, riverWeight);
     float2 normalNudge = lerp(normal.xz, localTilt, riverWeight);
@@ -473,7 +495,7 @@ float3 ApplyPondFoamTiltToNormal(v2f i, float3 normal, float2 tilt)
     float3 riverFoamNormal = normalize(normal
                                      + riverRight * tilt.x
                                      + riverDownstream * tilt.y);
-    return normalize(lerp(gridFoamNormal, riverFoamNormal, saturate(_IsRiver)));
+    return normalize(lerp(gridFoamNormal, riverFoamNormal, i.riverBakeUv.z));
 }
 
 // The whole seen-from-below path; returns the final pixel colour.

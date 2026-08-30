@@ -39,6 +39,30 @@ namespace AbstractOcclusion.WebGpuWater
             return written;
         }
 
+        /// <summary>Find a live connection by a port's PERSISTENT id (WaterConnectionPort.PortId
+        /// - the identity saves and streaming key on, unlike session BodyIds). Ports participate
+        /// in topology only through a connection, so the connection registry is the scan set;
+        /// allocation-free, authored connections are few. False when no live connection carries
+        /// the id.</summary>
+        public static bool TryGetPort(string portId, out WaterConnectionPort port,
+                                      out WaterConnection connection)
+        {
+            port = null;
+            connection = null;
+            if (string.IsNullOrEmpty(portId)) return false;
+            for (int i = 0; i < _connections.Count; i++)
+            {
+                WaterConnection candidate = _connections[i];
+                if (candidate == null || !candidate.IsWired) continue;
+                if (candidate.PortA.PortId == portId) { port = candidate.PortA; }
+                else if (candidate.PortB.PortId == portId) { port = candidate.PortB; }
+                else continue;
+                connection = candidate;
+                return true;
+            }
+            return false;
+        }
+
         internal static void Register(WaterConnection connection)
         {
             if (connection == null) throw new System.ArgumentNullException(nameof(connection));
@@ -92,8 +116,18 @@ namespace AbstractOcclusion.WebGpuWater
                 Vector3 anchorB = connection.portB.Anchor;
                 Vector3 axis = anchorB - anchorA;
                 float axisLength = axis.magnitude;
-                if (axisLength <= Mathf.Epsilon) continue;
-                Vector3 seamNormal = axis / axisLength;
+                // A true river stitch intentionally puts both terminal rows - and therefore both
+                // ports - at the same position. Fall back to their authored downstream axis so
+                // coincident geometry still gets the gameplay handoff.
+                Vector3 seamNormal;
+                if (axisLength <= Mathf.Epsilon)
+                {
+                    Vector3 authoredAxis = connection.portA.FlowDirection +
+                                           connection.portB.FlowDirection;
+                    if (authoredAxis.sqrMagnitude <= Mathf.Epsilon) continue;
+                    seamNormal = authoredAxis.normalized;
+                }
+                else seamNormal = axis / axisLength;
                 Vector3 seamCenter = (anchorA + anchorB) * 0.5f;
                 float signedPlaneDistance = Vector3.Dot(point - seamCenter, seamNormal);
                 float planeDistance = Mathf.Abs(signedPlaneDistance);

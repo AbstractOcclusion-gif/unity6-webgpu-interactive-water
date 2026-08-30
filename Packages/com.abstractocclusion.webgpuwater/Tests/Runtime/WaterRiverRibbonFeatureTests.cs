@@ -47,6 +47,7 @@ namespace AbstractOcclusion.WebGpuWater.Tests
                            WaterRiverRibbonMeshGenerator.VerticesPerCrossSection));
             Assert.That(context.Mesh.triangles.Length,
                 Is.EqualTo((expectedCrossSections - 1) *
+                           WaterRiverRibbonMeshGenerator.RibbonQuadsPerCrossSectionPair *
                            WaterRiverRibbonMeshGenerator.IndicesPerRibbonQuad));
         }
 
@@ -64,7 +65,9 @@ namespace AbstractOcclusion.WebGpuWater.Tests
                 int leftIndex = crossSection *
                                 WaterRiverRibbonMeshGenerator.VerticesPerCrossSection;
                 Vector3 left = context.MeshHost.transform.TransformPoint(vertices[leftIndex]);
-                Vector3 right = context.MeshHost.transform.TransformPoint(vertices[leftIndex + 1]);
+                int rightIndex = leftIndex +
+                                 WaterRiverRibbonMeshGenerator.VerticesPerCrossSection - 1;
+                Vector3 right = context.MeshHost.transform.TransformPoint(vertices[rightIndex]);
 
                 AssertVector3((left + right) * 0.5f, sample.Position);
                 AssertVector3(left, sample.Position - sample.Right * (sample.Width * 0.5f));
@@ -87,10 +90,12 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             {
                 int leftIndex = crossSection *
                                 WaterRiverRibbonMeshGenerator.VerticesPerCrossSection;
+                int rightIndex = leftIndex +
+                                 WaterRiverRibbonMeshGenerator.VerticesPerCrossSection - 1;
                 Assert.That(uv[leftIndex].x, Is.EqualTo(0f).Within(FloatTolerance));
-                Assert.That(uv[leftIndex + 1].x, Is.EqualTo(1f).Within(FloatTolerance));
+                Assert.That(uv[rightIndex].x, Is.EqualTo(1f).Within(FloatTolerance));
                 Assert.That(uv[leftIndex].y,
-                    Is.EqualTo(uv[leftIndex + 1].y).Within(FloatTolerance));
+                    Is.EqualTo(uv[rightIndex].y).Within(FloatTolerance));
                 Assert.That(uv[leftIndex].y, Is.GreaterThan(previousLongitudinal));
                 previousLongitudinal = uv[leftIndex].y;
             }
@@ -108,7 +113,7 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             };
             using var context = CreateContext(knots, SamplesPerSegment);
             Vector2[] normalizedUv = context.Mesh.uv;
-            var currentData = new List<Vector3>();
+            var currentData = new List<Vector4>();
             context.Mesh.GetUVs(1, currentData);
 
             Assert.That(currentData.Count, Is.EqualTo(context.Mesh.vertexCount));
@@ -119,8 +124,10 @@ namespace AbstractOcclusion.WebGpuWater.Tests
                     normalizedT, out WaterRiverSplineSample sample), Is.True);
                 int leftIndex = crossSection *
                                 WaterRiverRibbonMeshGenerator.VerticesPerCrossSection;
-                Vector3 left = currentData[leftIndex];
-                Vector3 right = currentData[leftIndex + 1];
+                int rightIndex = leftIndex +
+                                 WaterRiverRibbonMeshGenerator.VerticesPerCrossSection - 1;
+                Vector4 left = currentData[leftIndex];
+                Vector4 right = currentData[rightIndex];
 
                 AssertFinite(left);
                 AssertFinite(right);
@@ -131,6 +138,65 @@ namespace AbstractOcclusion.WebGpuWater.Tests
                 Assert.That(right.y, Is.EqualTo(left.y).Within(FloatTolerance));
                 Assert.That(left.z, Is.EqualTo(sample.Speed).Within(FloatTolerance));
                 Assert.That(right.z, Is.EqualTo(sample.Speed).Within(FloatTolerance));
+                Assert.That(left.w, Is.EqualTo(1f).Within(FloatTolerance));
+                Assert.That(right.w, Is.EqualTo(1f).Within(FloatTolerance));
+            }
+        }
+
+        [Test]
+        public void Populate_SharedSourceBoundaryCopiesTheUpstreamTerminalRowVerbatim()
+        {
+            GameObject splineHost = CreateSpline(StraightKnots(), out WaterRiverSpline spline);
+            var meshHost = new GameObject(MeshHostName);
+            var mesh = new Mesh { name = GeneratedMeshName };
+            try
+            {
+                int columns = WaterRiverRibbonMeshGenerator.VerticesPerCrossSection;
+                var boundary = new WaterRiverRibbonMeshGenerator.SharedBoundaryRow
+                {
+                    WorldPositions = new Vector3[columns],
+                    WorldNormals = new Vector3[columns],
+                    WorldTangents = new Vector4[columns],
+                    Uv = new Vector2[columns],
+                    CurrentData = new Vector4[columns],
+                };
+                const float upstreamLongitudinalMeters = 23f;
+                for (int column = 0; column < columns; column++)
+                {
+                    float lateral01 = column / (float)(columns - 1);
+                    float lateralMeters = Mathf.Lerp(-StartWidth * 0.5f,
+                                                      StartWidth * 0.5f, lateral01);
+                    boundary.WorldPositions[column] = new Vector3(lateralMeters, 0f, 0f);
+                    boundary.WorldNormals[column] = Vector3.up;
+                    boundary.WorldTangents[column] = new Vector4(1f, 0f, 0f, -1f);
+                    boundary.Uv[column] = new Vector2(lateral01, upstreamLongitudinalMeters);
+                    boundary.CurrentData[column] = new Vector4(
+                        lateralMeters, upstreamLongitudinalMeters, Speed, 1f);
+                }
+
+                WaterRiverRibbonMeshGenerator.Populate(
+                    mesh, spline, meshHost.transform, SamplesPerSegment, default, default,
+                    boundary);
+
+                var currentData = new List<Vector4>();
+                mesh.GetUVs(1, currentData);
+                for (int column = 0; column < columns; column++)
+                {
+                    AssertVector3(mesh.vertices[column], boundary.WorldPositions[column]);
+                    AssertVector3(mesh.normals[column], boundary.WorldNormals[column]);
+                    Assert.That(mesh.tangents[column], Is.EqualTo(boundary.WorldTangents[column]));
+                    Assert.That(mesh.uv[column], Is.EqualTo(boundary.Uv[column]));
+                    Assert.That(currentData[column], Is.EqualTo(boundary.CurrentData[column]));
+                }
+                int secondRow = columns;
+                Assert.That(currentData[secondRow].y, Is.GreaterThan(upstreamLongitudinalMeters),
+                            "the downstream ribbon continues the upstream phase coordinate");
+            }
+            finally
+            {
+                Object.DestroyImmediate(mesh);
+                Object.DestroyImmediate(meshHost);
+                Object.DestroyImmediate(splineHost);
             }
         }
 
@@ -224,8 +290,10 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             Vector3[] vertices = context.Mesh.vertices;
             int lastLeftIndex = SamplesPerSegment *
                                 WaterRiverRibbonMeshGenerator.VerticesPerCrossSection;
+            int lastRightIndex = lastLeftIndex +
+                                 WaterRiverRibbonMeshGenerator.VerticesPerCrossSection - 1;
             Vector3 left = context.MeshHost.transform.TransformPoint(vertices[lastLeftIndex]);
-            Vector3 right = context.MeshHost.transform.TransformPoint(vertices[lastLeftIndex + 1]);
+            Vector3 right = context.MeshHost.transform.TransformPoint(vertices[lastRightIndex]);
 
             Assert.That(Vector3.Distance(left, right),
                 Is.EqualTo(EndWidth).Within(FloatTolerance));

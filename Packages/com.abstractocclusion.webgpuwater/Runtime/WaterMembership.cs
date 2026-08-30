@@ -24,6 +24,7 @@ namespace AbstractOcclusion.WebGpuWater
         // game clock does not advance outside Play.
         const float EmptyRescanIntervalSeconds = 0.5f;
         float _nextRescanTime;
+        int _domainBodyId; // hysteresis hint for the domain resolver (0 = none)
 
         // Lazy init (not Awake): with ExecuteAlways the first edit-mode tick can arrive
         // before Awake after a domain reload. Re-tried while empty so visuals that spawn a
@@ -49,7 +50,16 @@ namespace AbstractOcclusion.WebGpuWater
             EnsureInitialized();
             if (_renderers.Length == 0) return; // nothing to tint yet
 
-            WaterVolume body = WaterVolume.BodyContaining(transform.position);
+            // Domain-resolved (river round, 2026-08-29): full-XYZ containment, so a crate in a
+            // sloped ribbon lights from the ribbon's PARENT body (the resolver maps a river win
+            // to its owning volume), and stacked bodies pick by elevation. PrimaryBody fallback
+            // preserves the lighting doctrine this component kept BodyContaining for: an object
+            // out of every domain falls back to the primary's uniforms rather than flickering.
+            // Inside an exclusion carve the resolve fails ("dry wins") and the block drops -
+            // a crate in a dry room no longer shows water caustics.
+            WaterVolume body = WaterDomainResolver.GameplayBodyAt(
+                transform.position, WaterQueryIntent.ContainingVolume,
+                WaterFallbackPolicy.PrimaryBody, ref _domainBodyId);
             if (body == null)
             {
                 // No body contains this object any more (the lake was disabled, or it drifted out).

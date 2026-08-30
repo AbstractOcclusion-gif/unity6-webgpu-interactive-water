@@ -12,8 +12,8 @@ namespace AbstractOcclusion.WebGpuWater
     [DisallowMultipleComponent]
     public sealed class WaterConnection : MonoBehaviour
     {
-        const float MinTransitionRadiusMeters = 0.1f;
-        const float DefaultTransitionRadiusMeters = 4f;
+        internal const float MinTransitionRadiusMeters = 0.1f;
+        internal const float DefaultTransitionRadiusMeters = 4f;
 
         [Tooltip("Upstream-side port (by the authored flow sign convention).")]
         [SerializeField] internal WaterConnectionPort portA;
@@ -41,6 +41,24 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>Both ports assigned and alive - the only state the seam blend consumes.</summary>
         public bool IsWired => portA != null && portB != null;
 
+        /// <summary>The port the authored flow exits through (sign convention: positive flow
+        /// runs A toward B). Zero flow reports B - "downstream" defaults to the B side so an
+        /// unauthored connection still answers deterministically.</summary>
+        public WaterConnectionPort DownstreamPort => authoredFlowRate >= 0f ? portB : portA;
+
+        /// <summary>The far-side port from the given session body id, or null when the id
+        /// touches neither side. Keeps FishingGame-style graph walks out of the port/flow sign
+        /// conventions.</summary>
+        public WaterConnectionPort OtherPortFor(int bodyId)
+        {
+            if (!IsWired) return null;
+            IWaterSurfaceProvider providerA = portA.ResolveProvider();
+            IWaterSurfaceProvider providerB = portB.ResolveProvider();
+            if (providerA != null && providerA.BodyId == bodyId) return portB;
+            if (providerB != null && providerB.BodyId == bodyId) return portA;
+            return null;
+        }
+
         void OnEnable()
         {
             if (!IsWired)
@@ -54,5 +72,36 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         void OnDisable() => WaterTopology.Unregister(this);
+
+#if UNITY_EDITOR
+        // The seam made visible: the port axis, and the transition SLAB the query blend actually
+        // uses (WaterTopology.ApplySeamBlend measures distance to the plane at the midpoint) -
+        // so an author sees where the handoff happens, not just where the ports sit.
+        const float GizmoSlabDrawSizeMeters = 4f;
+        static readonly Color GizmoAxisColor = new Color(1f, 0.85f, 0.2f, 0.9f);
+        static readonly Color GizmoSlabColor = new Color(1f, 0.85f, 0.2f, 0.25f);
+
+        void OnDrawGizmosSelected()
+        {
+            if (!IsWired) return;
+            Vector3 anchorA = portA.Anchor;
+            Vector3 anchorB = portB.Anchor;
+            Vector3 axis = anchorB - anchorA;
+            if (axis.sqrMagnitude <= Mathf.Epsilon) return;
+
+            Gizmos.color = GizmoAxisColor;
+            Gizmos.DrawLine(anchorA, anchorB);
+
+            Vector3 seamCenter = (anchorA + anchorB) * 0.5f;
+            Gizmos.color = GizmoSlabColor;
+            Gizmos.matrix = Matrix4x4.TRS(seamCenter,
+                                          Quaternion.LookRotation(axis.normalized, Vector3.up),
+                                          Vector3.one);
+            Gizmos.DrawWireCube(Vector3.zero,
+                                new Vector3(GizmoSlabDrawSizeMeters, GizmoSlabDrawSizeMeters,
+                                            transitionRadiusMeters * 2f));
+            Gizmos.matrix = Matrix4x4.identity;
+        }
+#endif
     }
 }

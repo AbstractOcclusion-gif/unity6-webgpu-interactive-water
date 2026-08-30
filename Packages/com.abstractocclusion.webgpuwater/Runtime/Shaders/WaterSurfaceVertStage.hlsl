@@ -134,8 +134,13 @@
                 float4 tangent : TANGENT;
                 // River normalized lateral bake coordinate + longitudinal metres.
                 float2 riverBakeUv : TEXCOORD0;
-                // River-only metric surface coordinate + physical speed. Pool meshes leave UV1 at 0.
-                float3 riverCurrentData : TEXCOORD1;
+                // River-only metric surface coordinate + physical speed; w = SEAM WEIGHT: 1 on
+                // the ribbon body, fading to 0 across a connected terminal band.
+                // Pool meshes leave UV1 at 0.
+                float4 riverCurrentData : TEXCOORD1;
+                // River-only signed receiving-body selector: negative source, positive mouth,
+                // zero interior. Pool meshes leave UV2 at 0.
+                float2 riverEndData : TEXCOORD2;
             };
             struct v2f
             {
@@ -150,7 +155,8 @@
                 float3 worldNormal : TEXCOORD5; // base sheet normal; transported ribbon-up for rivers
                 float4 worldTangent : TEXCOORD6; // x-slope axis; w reconstructs the z-slope axis
                 float4 riverCurrentData : TEXCOORD7; // metric position xy, baked velocity zw
-                float2 riverBakeUv : TEXCOORD8; // lateral 0..1, longitudinal world metres
+                float4 riverBakeUv : TEXCOORD8; // lateral 0..1, longitudinal world metres;
+                                                // z = per-pixel river weight; w = signed end selector
             };
 
             #define RIVER_FRAME_MIN_LENGTH_SQ 1e-8
@@ -190,14 +196,28 @@
 
             float3 DisplaceSurfaceVertex(float3 poolFlat, float3 worldFlat, float4 info,
                                          float riverWeight, float4 riverCurrentData,
+                                         float riverEndSelector,
                                          out float3 poolDisplaced, out float2 largeWaveSourceXZ)
             {
                 float2 poolXZ = poolFlat.xz;
                 float3 position = poolFlat;
                 position.y += info.r;                  // interactive ripple heightfield (windowed: faded)
-                float2 gridWaveSample = WindWaveSampleXZ(poolXZ, worldFlat.xz);
+                // A connected terminal's grid target is the receiving body's anchor; interior
+                // river vertices and pool meshes preserve the parent-anchored path.
+                float2 gridWaveSample = RiverEndWindWaveSampleXZ(
+                    poolXZ, worldFlat.xz, riverEndSelector);
                 float2 riverWaveSample = RiverCurrentWaveSampleXZ(riverCurrentData);
-                position.y += WaveHeight(lerp(gridWaveSample, riverWaveSample, riverWeight));
+                // Value blend (Bert's call: "we sew borders then a fade to mix waves"):
+                // lerping the SAMPLE COORDINATE between two distant anchors sweeps the phase
+                // through many wave cycles across the short transition - that IS the washboard band
+                // at the mouth. Blend the sampled HEIGHTS instead (RAM blends outputs, never
+                // inputs); the terminal row then equals the receiving body's own height
+                // exactly. The uniform branch keeps pools single-evaluation, byte-identical.
+                if (_IsRiver > 0.5)
+                    position.y += lerp(WaveHeight(gridWaveSample),
+                                       WaveHeight(riverWaveSample), riverWeight);
+                else
+                    position.y += WaveHeight(gridWaveSample);
                                                        // small wind-wave detail; open water
                                                        // layers the big swell on top in world space below
                 poolDisplaced = position;              // keep pool-space position for the tracer
@@ -341,6 +361,9 @@
                 // around the uniform branch and terminated its worker process. Pools, patches and
                 // clipmaps retain riverWeight = 0 and therefore their original path exactly.
                 float riverWeight = saturate(_IsRiver);
+                // River-ness per vertex. Geometry remains mesh-authored; motion/current visuals
+                // transition to the receiving body across the conformed terminal band.
+                float vertexRiverWeight = riverWeight * saturate(v.riverCurrentData.w);
                 float3 riverWorldFlat = mul(unity_ObjectToWorld, v.vertex).xyz;
                 worldFlat = lerp(worldFlat, riverWorldFlat, riverWeight);
                 poolFlat = lerp(poolFlat, WorldToPool(riverWorldFlat), riverWeight);
@@ -360,10 +383,12 @@
                 o.worldTangent.xyz = normalize(lerp(gridWorldTangent, riverWorldTangent,
                                                     riverWeight));
                 o.worldTangent.w = lerp(GRID_TANGENT_HANDEDNESS, v.tangent.w, riverWeight);
-                o.riverBakeUv = v.riverBakeUv * riverWeight;
+                o.riverBakeUv = float4(v.riverBakeUv * riverWeight, vertexRiverWeight,
+                                       v.riverEndData.x * riverWeight);
                 float2 riverVelocity = SampleRiverFluidVelocity(
                     v.riverBakeUv, v.riverCurrentData.z);
-                o.riverCurrentData = float4(v.riverCurrentData.xy, riverVelocity) * riverWeight;
+                o.riverCurrentData = float4(v.riverCurrentData.xy, riverVelocity)
+                                   * vertexRiverWeight;
                 // World position at the surface plane (height 0) picks the windowed UV; the
                 // xz mapping doesn't depend on ripple height, so this is exact.
                 float fade;
@@ -372,10 +397,12 @@
                 // space simulation owns an explicit mapping, sampling it on a winding ribbon makes
                 // an unrelated second wave layer that the river wind-wave controls cannot affect.
                 // Keep the shared analytic wind waves below; those are world-unit authored and are
-                // the technically valid reusable motion path for this mesh.
-                info *= 1.0 - riverWeight;
+                // the technically valid reusable motion path for this mesh. The terminal band
+                // re-admits the receiving body's ripples as its seam weight approaches zero.
+                info *= 1.0 - vertexRiverWeight;
                 float3 worldPos = DisplaceSurfaceVertex(
-                    poolFlat, worldFlat, info, riverWeight, o.riverCurrentData,
+                    poolFlat, worldFlat, info, vertexRiverWeight, o.riverCurrentData,
+                    o.riverBakeUv.w,
                     o.position, o.largeWaveSourceXZ);
                 // The common shader expresses height along the WaterVolume up axis. A ribbon may
                 // turn through a waterfall, so carry that same scalar displacement along its

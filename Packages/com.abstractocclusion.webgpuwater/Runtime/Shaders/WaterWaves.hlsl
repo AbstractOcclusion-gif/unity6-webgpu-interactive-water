@@ -76,6 +76,41 @@ float2 RiverCurrentWaveSampleXZ(float4 currentData)
     return riverMetres / max(_WaveMetersPerUnit, WAVE_METERS_MIN);
 }
 
+// ---- body-border seam wave anchor (KWS/RAM study 2026-08-30) ----
+// A connected terminal band cross-fades TOWARD the receiving body's wind-wave field, but
+// WindWaveSampleXZ above anchors in THIS renderer's pool frame - the PARENT body's for a river
+// ribbon. At an end whose receiving body is NOT the parent (the source-end reservoir of a
+// lake-parented river), the two sides of the seam sample the same metric wave bank at two
+// different anchors, and the phase jump prints as a moving texture line at the boundary. These
+// per-end uniforms carry the receiving body's own pool anchor so the terminal grid target IS that
+// body's rendered field: frame = world->pool rows (xAxis.xz / extent.x, zAxis.xz / extent.z),
+// anchor = (center.xz, receiving-body metres-per-pool-unit / PARENT metres-per-pool-unit - the
+// bank phase multiplies by the PARENT's _WaveMetersPerUnit downstream - and w as the mode gate:
+// 0 = inactive, keep the parent-anchored path; 1 = anchor to the receiving body). Published by
+// WaterRiverSurface each LateUpdate; unpublished defaults are zero, so every non-river renderer
+// and every unconnected end keeps today's path bit-for-bit.
+float4 _RiverEndWaveFrame0;  // source end
+float4 _RiverEndWaveAnchor0;
+float4 _RiverEndWaveFrame1;  // mouth end
+float4 _RiverEndWaveAnchor1;
+
+#define RIVER_END_SELECTOR_EPSILON 0.0001
+
+float2 RiverEndWindWaveSampleXZ(float2 poolXZ, float2 worldXZ, float endSelector)
+{
+    // The dedicated selector avoids inferring an end from longitudinal coordinates. Zero means
+    // an interior river vertex or a pool mesh and therefore preserves the parent wave path.
+    if (abs(endSelector) < RIVER_END_SELECTOR_EPSILON)
+        return WindWaveSampleXZ(poolXZ, worldXZ);
+    bool sourceEnd = endSelector < 0.0;
+    float4 frame = sourceEnd ? _RiverEndWaveFrame0 : _RiverEndWaveFrame1;
+    float4 anchor = sourceEnd ? _RiverEndWaveAnchor0 : _RiverEndWaveAnchor1;
+    if (anchor.w < 0.5) return WindWaveSampleXZ(poolXZ, worldXZ);
+    // Pure ALU consumers only (WaveHeight/WaveSlope), so this varying branch is derivative-safe.
+    float2 rel = worldXZ - anchor.xy;
+    return float2(dot(frame.xy, rel), dot(frame.zw, rel)) * anchor.z;
+}
+
 // Envelope carriers: the group envelope is the MAGNITUDE of the complex sum of these four waves.
 // Random phases (below) make that magnitude Rayleigh-ish - the stochastic envelope of a real
 // narrow-banded sea (Longuet-Higgins 1984) - so chop arrives in APERIODIC sets and lulls instead of

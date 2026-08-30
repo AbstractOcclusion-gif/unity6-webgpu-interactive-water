@@ -121,5 +121,21 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             Assert.That(Mathf.Abs(nearRiver.SurfaceHeight - nearLake.SurfaceHeight),
                         Is.LessThan(0.2f), "the handoff must be continuous across the seam");
         }
+
+        [Test]
+        public void QueryHandoff_UsesPortFlowDirectionWhenSharedRowsMakePortsCoincident()
+        {
+            Vector3 coincidentAnchor = new Vector3(0f, 5f, SeamZ);
+            _connection.PortA.transform.SetPositionAndRotation(
+                coincidentAnchor, Quaternion.LookRotation(Vector3.forward));
+            _connection.PortB.transform.SetPositionAndRotation(
+                coincidentAnchor, Quaternion.LookRotation(Vector3.forward));
+
+            Assert.That(WaterDomainResolver.Resolve(
+                new Vector3(0f, 5f, SeamZ - 0.1f), Containing(),
+                out WaterDomainSample nearRiver), Is.True);
+            Assert.That(nearRiver.Connection.Active, Is.True);
+            Assert.That(nearRiver.Connection.OtherBodyId, Is.EqualTo(_lakeSide.Id));
+        }
     }
 }

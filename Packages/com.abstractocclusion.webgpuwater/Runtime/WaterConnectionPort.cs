@@ -33,7 +33,13 @@ namespace AbstractOcclusion.WebGpuWater
         // production code paths.
         internal IWaterSurfaceProvider providerOverride;
 
-        public string PortId => portId;
+        /// <summary>GUID-once persistent id. Ensured lazily too: a port created AT RUNTIME
+        /// (facade generation, builds) never sees Reset/OnValidate, and an id-less port would
+        /// orphan everything keyed on it.</summary>
+        public string PortId
+        {
+            get { EnsurePortId(); return portId; }
+        }
         public Vector3 Anchor => transform.position;
         /// <summary>Authored downstream direction (the transform's forward, normalized).</summary>
         public Vector3 FlowDirection => transform.forward;
@@ -53,10 +59,25 @@ namespace AbstractOcclusion.WebGpuWater
 
         // GUID-once: a port that loses its id would orphan every system keyed on it, so the id is
         // only ever created when absent, never regenerated.
-        void EnsurePortId()
+        internal void EnsurePortId()
         {
             if (!string.IsNullOrEmpty(portId)) return;
             portId = System.Guid.NewGuid().ToString("N");
         }
+
+#if UNITY_EDITOR
+        // Selected-only so a scene full of ports stays clean; the arrow is the authored
+        // DOWNSTREAM direction - the part of a port you cannot read off its transform gizmo.
+        const float GizmoAnchorRadiusMeters = 0.2f;
+        const float GizmoArrowLengthMeters = 1.5f;
+        static readonly Color GizmoPortColor = new Color(0.2f, 0.8f, 1f, 0.9f);
+
+        void OnDrawGizmosSelected()
+        {
+            Gizmos.color = GizmoPortColor;
+            Gizmos.DrawWireSphere(Anchor, GizmoAnchorRadiusMeters);
+            Gizmos.DrawLine(Anchor, Anchor + FlowDirection * GizmoArrowLengthMeters);
+        }
+#endif
     }
 }

@@ -1,8 +1,13 @@
-// WebGpuWater build kit - one-click CONNECTED WATERS test rig (2026-08-29 domain/topology round).
+// WebGpuWater build kit - one-click CONNECTED WATERS test rig (2026-08-29 domain/topology round;
+// v2 same day: a MULTI-BODY CONNECTED CHAIN; v3 same day: REAL GAPS between the bodies, so both
+// rivers span open air and the underwater connection - gameplay, stitch and fog - is exercised
+// end to end, not hidden by overlapping footprints).
 //
-// Builds, into the open scene, the exact situations the new 3D-domain layer exists for, so they
-// can be eyeballed in one Play press:
-//   - a sloped RIVER ribbon flowing into a LAKE through a ported WaterConnection (seam blend),
+// Builds, into the open scene, the exact situations the domain/topology layer exists for, so
+// they can be eyeballed in one Play press:
+//   - a CHAIN of connected waters: RESERVOIR -> upper river -> lower river -> LAKE <- spillway
+//     <- POND, every seam a facade-generated ported WaterConnection (5 connections; the lake
+//     touches 2 - the WaterTopology.ConnectionsOf enumeration case),
 //   - a POND stacked directly above a SEWER at the same XZ (elevation-resolved domains),
 //   - an EXCLUSION box carved into the lake (no float/splash/ripples inside),
 //   - buoyant crates dropped over each case.
@@ -21,50 +26,81 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const int ConnectedDemoMenuPriority = 11; // right under the exclusion-volume creator
         const string ConnectedDemoRootName = "Connected Waters Test Rig";
 
-        // ---- lake (primary, the river's receiving body) ----
+        // ---- lake (primary, the chain's receiving body) ----
         static readonly Vector3 LakeCenter = Vector3.zero;
         static readonly Vector3 LakeExtent = new Vector3(8f, 2f, 8f);
 
-        // ---- stacked pair: same XZ, different elevations (the founding 3D-domain case) ----
-        static readonly Vector3 PondCenter = new Vector3(14f, 6f, 0f);
-        static readonly Vector3 SewerCenter = new Vector3(14f, 0f, 0f);
+        // ---- stacked pair: same XZ, different elevations (the founding 3D-domain case).
+        // v3: moved OUT to x = 22 so a ~10 m air gap separates the pond from the lake and the
+        // spillway genuinely bridges two waters instead of grazing overlapping footprints.
+        static readonly Vector3 PondCenter = new Vector3(22f, 6f, 0f);
+        static readonly Vector3 SewerCenter = new Vector3(22f, 0f, 0f);
         static readonly Vector3 StackedExtent = new Vector3(4f, 1.5f, 4f);
 
-        // ---- river: three knots descending onto the lake's -Z edge ----
-        static readonly Vector3 RiverKnotHigh = new Vector3(-3f, 4.2f, -24f);
-        static readonly Vector3 RiverKnotMid = new Vector3(-1f, 2.2f, -16f);
-        static readonly Vector3 RiverKnotMouth = new Vector3(0f, 0.1f, -9f);
+        // ---- reservoir: the uplands body FEEDING the main river's source (v3: pushed further
+        // upstream so the river crosses ~19 m of open air before entering the lake) ----
+        static readonly Vector3 ReservoirCenter = new Vector3(-3f, 4.2f, -32f);
+        static readonly Vector3 ReservoirExtent = new Vector3(5f, 1.5f, 5f);
+
+        // ---- main river: split at an open-air junction so the rig exercises a TRUE shared-row
+        // river-to-river stitch as well as the two river-to-body border seams. THE BORDER
+        // AUTHORING RULE (v5): a terminal knot sits ON its body's footprint border AND rest
+        // plane. The generator makes that exact even if authored data drifts, then conforms the
+        // preceding rows to the border frame. No receiving-body pixels are carved.
+        static readonly Vector3 RiverKnotHigh = new Vector3(-3f, 4.2f, -27f); // reservoir z border
+        static readonly Vector3 RiverKnotUpperMid = new Vector3(-2f, 3.1f, -22f);
+        static readonly Vector3 RiverKnotJunction = new Vector3(-1f, 2.2f, -17f);
+        static readonly Vector3 RiverKnotLowerMid = new Vector3(-0.5f, 1.0f, -12f);
+        static readonly Vector3 RiverKnotMouth = new Vector3(0f, 0f, -8f); // lake z border
         static readonly Vector3 RiverKnotTangent = new Vector3(0.6f, -0.6f, 2.6f);
         const float RiverWidthMeters = 3f;
         const float RiverSpeedMetersPerSecond = 1.5f;
 
-        // ---- the seam: one port on the river mouth, one on the lake edge ----
-        static readonly Vector3 RiverPortPosition = new Vector3(0f, 0.1f, -9.5f);
-        static readonly Vector3 LakePortPosition = new Vector3(0f, 0f, -8f);
+        // ---- spillway: the chute draining the POND into the lake's NE corner - the second
+        // inflow that makes the lake a multi-connection body. Terminal knots follow the same
+        // border rule (top on the pond's x border under its 6, mouth on the lake's x border
+        // under its 0); v3: the run crosses the ~10 m air gap, so mid-chute there is river with
+        // NO body underneath.
+        static readonly Vector3 SpillKnotTop = new Vector3(18f, 6f, 1f);
+        static readonly Vector3 SpillKnotMid = new Vector3(13f, 3.0f, 4f);
+        static readonly Vector3 SpillKnotMouth = new Vector3(8f, 0f, 6.5f);
+        static readonly Vector3 SpillKnotTangent = new Vector3(-2f, -1f, 1f);
+        const float SpillwayWidthMeters = 2f;
+        const float SpillwaySpeedMetersPerSecond = 2.5f;
+
+        // ---- seams: generated by the WaterRiver facade at every connected end ----
         const float SeamTransitionRadiusMeters = 3f;
 
         // ---- exclusion carve inside the lake ----
         static readonly Vector3 CarvePosition = new Vector3(2f, -0.5f, 2f);
         static readonly Vector3 CarveSize = new Vector3(2f, 2f, 2f);
 
-        // ---- crates: open lake / inside the carve / into the pond / the air gap ----
+        // ---- crates, one per case ----
         const float CrateSize = 0.5f;
         static readonly Vector3[] CrateDropPositions =
         {
-            new Vector3(-2f, 1f, 0f),   // open lake: floats at 0
-            new Vector3(2f, 1f, 2f),    // over the carve: must NOT float or splash - sinks to the floor
-            new Vector3(14f, 7.5f, 0f), // over the pond: floats at 6, never at the sewer's 0
-            new Vector3(14f, 3f, 0f),   // the air gap: no water until it falls into the sewer domain
+            new Vector3(-2f, 1f, 0f),      // open lake: floats at 0
+            new Vector3(2f, 1f, 2f),       // over the carve: must NOT float or splash - sinks to the floor
+            new Vector3(22f, 7.5f, 0f),    // over the pond: floats at 6, never at the sewer's 0
+            new Vector3(22f, 3f, 0f),      // the air gap: no water until it falls into the sewer domain
+            new Vector3(-3f, 5.5f, -32f),  // over the reservoir: floats at 4.2 (a THIRD elevation)
+            new Vector3(-1f, 3.4f, -17f),  // over the shared-row river junction
+            new Vector3(13f, 4.5f, 4f),    // onto the spillway MID-GAP: rides the ribbon over open air
         };
 
         // Floor under everything so sunk props (the carve crate) rest instead of falling forever.
-        static readonly Vector3 FloorCenter = new Vector3(4f, -2.2f, -4f);
-        static readonly Vector3 FloorSize = new Vector3(44f, 0.2f, 44f);
+        // Sized to reach the reservoir (z -37) and the moved stacked pair (x 26).
+        static readonly Vector3 FloorCenter = new Vector3(4f, -2.2f, -9f);
+        static readonly Vector3 FloorSize = new Vector3(56f, 0.2f, 64f);
 
         [MenuItem(ConnectedDemoMenuPath, false, ConnectedDemoMenuPriority)]
         static void CreateConnectedWatersRig()
         {
             int undoGroup = Undo.GetCurrentGroup();
+            Undo.SetCurrentGroupName("Rebuild Connected Waters Test Rig");
+            GameObject existingRoot = GameObject.Find(ConnectedDemoRootName);
+            if (existingRoot != null && existingRoot.scene.IsValid())
+                Undo.DestroyObjectImmediate(existingRoot);
             var root = NewUndoableGameObject(ConnectedDemoRootName);
 
             if (!CreateContext(root.transform, out BuildContext ctx, CreateUniqueWaterFolder()))
@@ -81,12 +117,62 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                                                StackedExtent, primary: false, withPool: false,
                                                withGodRays: false, withFoamParticles: false,
                                                withSplash: true);
-            CreateWaterBody(ctx, root.transform, "Sewer (stacked below)", SewerCenter,
-                            StackedExtent, primary: false, withPool: false, withGodRays: false,
-                            withFoamParticles: false, withSplash: true);
+            WaterVolume sewer = CreateWaterBody(ctx, root.transform, "Sewer (stacked below)",
+                            SewerCenter, StackedExtent, primary: false, withPool: false,
+                            withGodRays: false, withFoamParticles: false, withSplash: true);
+            WaterVolume reservoir = CreateWaterBody(ctx, root.transform, "Reservoir (uplands)",
+                                                    ReservoirCenter, ReservoirExtent,
+                                                    primary: false, withPool: false,
+                                                    withGodRays: false, withFoamParticles: false,
+                                                    withSplash: true);
 
-            WaterRiverSurface river = CreateDemoRiver(root.transform, lake, ctx);
-            CreateDemoSeam(root.transform, river, lake);
+            // Freshly created bodies default Water Fog OFF; this rig demos the underwater
+            // CONNECTION (check 8), so every body is a fog medium. Fullscreen volume fog is
+            // already on by default - only the master toggle needs flipping.
+            EnableUnderwaterFog(lake, pond, sewer, reservoir);
+
+            // The main run is deliberately two meshes. The lower source copies the upper mouth
+            // row verbatim, so this is the regression case for RAM-style river sewing rather
+            // than two ribbons hidden under one another.
+            WaterRiver upperRiver = CreateConnectedRiver(
+                root.transform, ctx, "Upper River (reservoir to junction)",
+                new List<WaterRiverKnot>
+                {
+                    new WaterRiverKnot(RiverKnotHigh, RiverKnotTangent, RiverWidthMeters,
+                                       RiverSpeedMetersPerSecond),
+                    new WaterRiverKnot(RiverKnotUpperMid, RiverKnotTangent, RiverWidthMeters,
+                                       RiverSpeedMetersPerSecond),
+                    new WaterRiverKnot(RiverKnotJunction, RiverKnotTangent, RiverWidthMeters,
+                                       RiverSpeedMetersPerSecond),
+                },
+                parentBody: lake, sourceBody: reservoir, mouthBody: null);
+            WaterRiver lowerRiver = CreateConnectedRiver(
+                root.transform, ctx, "Lower River (junction to lake)",
+                new List<WaterRiverKnot>
+                {
+                    new WaterRiverKnot(RiverKnotJunction, RiverKnotTangent, RiverWidthMeters,
+                                       RiverSpeedMetersPerSecond),
+                    new WaterRiverKnot(RiverKnotLowerMid, RiverKnotTangent, RiverWidthMeters,
+                                       RiverSpeedMetersPerSecond),
+                    new WaterRiverKnot(RiverKnotMouth, RiverKnotTangent, RiverWidthMeters,
+                                       RiverSpeedMetersPerSecond),
+                },
+                parentBody: lake, sourceBody: null, mouthBody: lake);
+            lowerRiver.sourceEnd.upstreamRiver = upperRiver;
+            lowerRiver.sourceEnd.transitionRadiusMeters = SeamTransitionRadiusMeters;
+            WaterRiverEditor.GenerateEnd(lowerRiver, WaterRiverEndKind.Source);
+
+            CreateConnectedRiver(root.transform, ctx, "Spillway (pond to lake)",
+                new List<WaterRiverKnot>
+                {
+                    new WaterRiverKnot(SpillKnotTop, SpillKnotTangent, SpillwayWidthMeters,
+                                       SpillwaySpeedMetersPerSecond),
+                    new WaterRiverKnot(SpillKnotMid, SpillKnotTangent, SpillwayWidthMeters,
+                                       SpillwaySpeedMetersPerSecond),
+                    new WaterRiverKnot(SpillKnotMouth, SpillKnotTangent, SpillwayWidthMeters,
+                                       SpillwaySpeedMetersPerSecond),
+                },
+                parentBody: lake, sourceBody: pond, mouthBody: lake);
 
             var carve = NewUndoableGameObject("Lake Carve (dry room)");
             carve.transform.SetParent(root.transform);
@@ -99,68 +185,61 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             Selection.activeGameObject = root;
             Undo.CollapseUndoOperations(undoGroup);
-            Debug.Log("[WebGpuWater] Connected Waters Test Rig built. Press Play and check: " +
-                      "(1) the river ribbon slopes into the lake and the crossing has no height/flow step, " +
+            Debug.Log("[WebGpuWater] Connected Waters Test Rig built (multi-body chain). Press " +
+                      "Play and check: " +
+                      "(1) the main river has no height/flow step at its flush reservoir border, " +
+                      "exact shared-row mid-air junction, or flush lake border, " +
                       "(2) the pond crate floats at the POND's surface, never the sewer's, " +
                       "(3) the air-gap crate falls until it reaches the sewer's water, " +
-                      "(4) the crate over the carve sinks silently - no splash, no ripples, no lift.");
+                      "(4) the crate over the carve sinks silently - no splash, no ripples, no lift, " +
+                      "(5) the reservoir crate floats at 4.2 - a third elevation, " +
+                      "(6) the spillway crate lands ON the chute and rides its slope into the lake, " +
+                      "(7) WaterTopology.ConnectionsOf(lake) enumerates 2 connections (5 total), " +
+                      "(8) dive INTO the mid-gap river: the fog must ride the river, not cut off " +
+                      "where the parent body's box ends.");
         }
 
-        // River rig: spline + current field beside it, ribbon surface driven by the lake's
-        // animated uniforms. Wired exactly as a hand-authored river would be, so the rig also
-        // documents the authoring recipe.
-        static WaterRiverSurface CreateDemoRiver(Transform parent, WaterVolume lake, BuildContext ctx)
+        // One connected river: THE recipe (facade-owned wiring), then connect to bodies at each
+        // named end. The explicit parent body supplies animated uniforms and the underwater
+        // medium; both halves of a river-to-river stitch intentionally share it.
+        static WaterRiver CreateConnectedRiver(Transform parent, BuildContext ctx, string riverName,
+                                               List<WaterRiverKnot> knots, WaterVolume parentBody,
+                                               WaterVolume sourceBody,
+                                               WaterVolume mouthBody)
         {
-            var riverGO = NewUndoableGameObject("River (spline ribbon)");
-            riverGO.transform.SetParent(parent);
+            WaterRiver river = CreateRiverRig(parent, parentBody, ctx.MatAbove, ctx.MatUnder,
+                                              knots);
+            river.gameObject.name = riverName;
 
-            var spline = riverGO.AddComponent<WaterRiverSpline>();
-            spline.knots = new List<WaterRiverKnot>
+            if (sourceBody != null)
             {
-                new WaterRiverKnot(RiverKnotHigh, RiverKnotTangent, RiverWidthMeters,
-                                   RiverSpeedMetersPerSecond),
-                new WaterRiverKnot(RiverKnotMid, RiverKnotTangent, RiverWidthMeters,
-                                   RiverSpeedMetersPerSecond),
-                new WaterRiverKnot(RiverKnotMouth, RiverKnotTangent, RiverWidthMeters,
-                                   RiverSpeedMetersPerSecond),
-            };
-
-            var currentField = riverGO.AddComponent<WaterRiverCurrentField>();
-            currentField.Configure(spline);
-            // The lake reads the river's current near the mouth through its own field list, so
-            // in-lake samples by the seam inherit the inflow push.
-            lake.currentFields = new WaterCurrentField[] { currentField };
-
-            var surface = riverGO.AddComponent<WaterRiverSurface>();
-            surface.Configure(spline, lake, ctx.MatAbove, WaterRiverSurface.DefaultSamplesPerSegment);
-            EditorUtility.SetDirty(lake);
-            return surface;
+                river.sourceEnd.body = sourceBody;
+                river.sourceEnd.transitionRadiusMeters = SeamTransitionRadiusMeters;
+                WaterRiverEditor.GenerateEnd(river, WaterRiverEndKind.Source);
+            }
+            if (mouthBody != null)
+            {
+                river.mouthEnd.body = mouthBody;
+                river.mouthEnd.transitionRadiusMeters = SeamTransitionRadiusMeters;
+                WaterRiverEditor.GenerateEnd(river, WaterRiverEndKind.Mouth);
+            }
+            return river;
         }
 
-        // The seam: a port on each side + the connection. Port forwards point downstream (+Z,
-        // river into lake) so the authored flow direction reads correctly in gizmos/queries.
-        static void CreateDemoSeam(Transform parent, WaterRiverSurface river, WaterVolume lake)
+        // The wizard's tuned baseline, not the class default: WaterFogSettings ships
+        // fogDensity = 2, which reads as a solid murk WALL right at the surface of a bounded
+        // body (their fog volume deliberately renders from any angle). 0.2 is the value the
+        // full wizard has authored since 2026-07-25.
+        const float RigFogDensity = 0.2f;
+
+        static void EnableUnderwaterFog(params WaterVolume[] bodies)
         {
-            var riverPortGO = NewUndoableGameObject("Port - River Mouth");
-            riverPortGO.transform.SetParent(parent);
-            riverPortGO.transform.SetPositionAndRotation(RiverPortPosition, Quaternion.identity);
-            var riverPort = riverPortGO.AddComponent<WaterConnectionPort>();
-            riverPort.river = river;
-            riverPort.authoredFlowRate = RiverWidthMeters * RiverSpeedMetersPerSecond;
-
-            var lakePortGO = NewUndoableGameObject("Port - Lake Edge");
-            lakePortGO.transform.SetParent(parent);
-            lakePortGO.transform.SetPositionAndRotation(LakePortPosition, Quaternion.identity);
-            var lakePort = lakePortGO.AddComponent<WaterConnectionPort>();
-            lakePort.body = lake;
-
-            var connectionGO = NewUndoableGameObject("Connection - River to Lake");
-            connectionGO.transform.SetParent(parent);
-            var connection = connectionGO.AddComponent<WaterConnection>();
-            connection.portA = riverPort;
-            connection.portB = lakePort;
-            connection.transitionRadiusMeters = SeamTransitionRadiusMeters;
-            connection.authoredFlowRate = riverPort.authoredFlowRate;
+            foreach (WaterVolume body in bodies)
+            {
+                if (body == null) continue;
+                body.FogSettings.waterFog = true;
+                body.FogSettings.fogDensity = RigFogDensity;
+            }
         }
 
         // A crate with the wizard's full floatable set (defaults; no preset table needed here):

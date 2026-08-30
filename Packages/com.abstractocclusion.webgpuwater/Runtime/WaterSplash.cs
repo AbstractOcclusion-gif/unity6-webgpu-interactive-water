@@ -45,23 +45,26 @@ namespace AbstractOcclusion.WebGpuWater
             // Domain-resolved (2026-08-29): nearest surface in vertical reach, exclusion-aware -
             // a crate falling through a carved (dry) interior must NOT splash - and never the
             // Primary fallback, which used to splash objects that were nowhere near water.
-            WaterVolume body = WaterDomainResolver.GameplayBodyAt(
-                center, WaterQueryIntent.NearestWithinVerticalLimits, ref _domainBodyId);
-            if (body == null) { _wasUnder = false; return; }
-
-            // ANALYTIC waterline only (rest plane + wind waves + ocean swell), valid from
-            // frame 0. Deliberately NOT TryGetWaterHeight: that is a rippled READBACK query,
-            // so a splash component re-stamped the surface sampler's demand window every
-            // physics tick and held the full sim-field GPU->CPU transfer open for its whole
-            // lifetime (sim RT as RGBAFloat - 4 MiB per frame at the High tier) to answer a
-            // binary under/over test the analytic surface answers as well: interactive
-            // ripples are centimetre-scale against a collider-sized entry band, and a wake
-            // ripple re-triggering its own maker's splash is exactly the feedback loop
-            // TryGetAnalyticWaterline exists to break. Out of footprint: keep last frame's
-            // state rather than assume a surface at world y = 0, which would swallow the
-            // first entry splash of any body placed off the origin.
-            if (!body.TryGetAnalyticWaterline(center.x, center.z, out float surfaceY))
+            // River round (2026-08-29): the height now comes from the resolved DOMAIN, so a
+            // splash into a sloped ribbon fires at the ribbon's local elevation instead of the
+            // parent plane, and a standalone ribbon (Body null) still splashes through the
+            // override emitter. ExcludeInteractiveRipples keeps the old TryGetAnalyticWaterline
+            // doctrine: analytic-only, valid from frame 0, no readback demand window, and a wake
+            // ripple can never re-trigger its own maker's splash.
+            WaterDomainQueryOptions options =
+                WaterDomainQueryOptions.ForIntent(WaterQueryIntent.NearestWithinVerticalLimits);
+            options.PreviousBodyId = _domainBodyId;
+            options.Fields = WaterQueryFields.Height;
+            options.ExcludeInteractiveRipples = true;
+            if (!WaterDomainResolver.Resolve(center, in options, out WaterDomainSample domain))
+            {
+                _domainBodyId = 0;
+                _wasUnder = false;
                 return;
+            }
+            _domainBodyId = domain.BodyId;
+            WaterVolume body = domain.Body;
+            float surfaceY = domain.SurfaceHeight;
 
             float halfY = _col != null ? _col.bounds.extents.y : FallbackHalfExtent;
             float halfX = _col != null ? _col.bounds.extents.x : FallbackHalfExtent;
@@ -73,13 +76,22 @@ namespace AbstractOcclusion.WebGpuWater
                 if (speed >= minImpactSpeed)
                 {
                     float strength = Mathf.Clamp01(speed / Mathf.Max(MinDivisorSpeed, maxImpactSpeed));
-                    // Explicit override wins; otherwise the body the object entered supplies the emitter.
-                    WaterSplashEmitter activeEmitter = emitter != null ? emitter : body.ResolveSplashEmitter();
+                    // Explicit override wins; otherwise the body the object entered supplies the
+                    // emitter (a standalone ribbon has none - the override is its only source).
+                    WaterSplashEmitter activeEmitter = emitter != null
+                        ? emitter : body != null ? body.ResolveSplashEmitter() : null;
                     if (activeEmitter != null)
                         activeEmitter.EmitSplash(new Vector3(center.x, surfaceY, center.z), strength, halfX * 2f);
                     float impactRippleStrength = Mathf.Min(rippleStrength, speed * SpeedToRippleStrength);
-                    body.AddRipple(center.x, center.z, Mathf.Clamp(halfX, MinRippleRadius, MaxRippleRadius),
-                                   ApplyImpactRippleCap(impactRippleStrength, body.splashImpactRippleCap));
+                    // Ripples stamp into the BODY's sim: over a parented ribbon that is the
+                    // parent's water around the banks (the ribbon itself renders no interactive
+                    // ripples - the river gate in WaterSurfaceFragStages); a standalone ribbon
+                    // has no sim at all.
+                    if (body != null)
+                        body.AddRipple(center.x, center.z,
+                                       Mathf.Clamp(halfX, MinRippleRadius, MaxRippleRadius),
+                                       ApplyImpactRippleCap(impactRippleStrength,
+                                                           body.splashImpactRippleCap));
                 }
             }
             _wasUnder = under;
