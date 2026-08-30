@@ -208,7 +208,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 // demotes the invocation (helpers keep feeding neighbour derivatives, the
                 // same contract ShorelineStage's clip() already relies on), and with zero
                 // volumes the uniform count skips the loop entirely.
-                if (InsideExclusion(i.worldPos)) discard;
+                // CONSERVATIVE: keeps a few screen pixels of sheet OVER the carve rim so the
+                // wall's feathered waterline always meets covered pixels - see
+                // InsideExclusionCarveConservative (WaterSurfaceFragStages.hlsl).
+                if (InsideExclusionCarveConservative(i.worldPos)) discard;
                 // MESH exclusion volumes carve by their real silhouette instead of by an analytic
                 // shape, so they are not in the loop above: this fragment is inside one when its own
                 // eye depth lies between the prepass front and back faces at this pixel. One texel
@@ -379,9 +382,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 // stepping against each other. Inert on every body without a patch.
                 if (PatchCoversBaseSheet(i.position)) discard;
 
-                // Dry-interior exclusion: no surface there, so no waterline either (matches the
-                // visible pass's discard, mesh tier included - the two must agree, or this RT would
-                // report a surface the visible pass threw away).
+                // Dry-interior exclusion: no surface there, so no waterline either. EXACT test on
+                // purpose, unlike the visible pass's CONSERVATIVE one: this RT is the fog's
+                // rasterized carve authority, and widening it would move fog ownership at the rim
+                // (the July 27-28 saga). The visible pass may keep a few rim pixels this RT
+                // reports as carved - those pixels shade themselves opaquely (ZWrite On, Blend
+                // Off), so the fog never needs to own them.
                 if (InsideExclusion(i.worldPos)) discard;
                 if (_ExclusionMeshCount > 0.5)
                 {
@@ -485,8 +491,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 // stepping against each other. Inert on every body without a patch.
                 if (PatchCoversBaseSheet(i.position)) discard;
 
-                // Same carve rules as the visible pass: no surface there, no foam either.
-                if (InsideExclusion(i.worldPos)) discard;
+                // Same carve rules as the visible pass (CONSERVATIVE): where the sheet keeps its
+                // rim overlap, foam must too, or foam pops off a strip the surface still draws.
+                if (InsideExclusionCarveConservative(i.worldPos)) discard;
                 if (_ExclusionMeshCount > 0.5)
                 {
                     float2 meshRawSpan = ExclusionMeshRawSpan(int2(i.pos.xy));

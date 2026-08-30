@@ -938,7 +938,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // of the surface. Otherwise the inversion's first iteration supplies the smooth
             // vertical read while the completed solve supplies the true chop-inverted position.
             float farGap;
-            if (WaterlineFarFromSurface(classifyPoint, farGap))
+            if (WaterlineFarFromSurface(classifyPoint, _ExclusionCount > 0.5, farGap))
             {
                 classifyGap = farGap;
                 gapSmooth = farGap;

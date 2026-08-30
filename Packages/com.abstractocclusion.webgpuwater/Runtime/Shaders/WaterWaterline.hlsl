@@ -248,11 +248,17 @@ float SurfaceSignedGapRT(float3 world, float flatFallbackY)
 // xz makes the decision identical for every lane by construction. The value returned still uses the
 // caller's own y, so the gap stays smooth across the screen and its derivative stays meaningful.
 //
-// Returns false when the RT is unavailable - not recorded this frame, or the camera sits in the
-// window's feather - which falls back to the accurate path. Never a wrong answer, only a slower one.
-bool WaterlineFarFromSurface(float3 classifyPoint, out float farGap)
+// Returns false when a carve can make a distant junction visible, or when the RT is unavailable -
+// not recorded this frame, or the camera sits in the window's feather - which falls back to the
+// accurate path. Never a wrong answer, only a slower one.
+bool WaterlineFarFromSurface(float3 classifyPoint, bool exclusionsActive, out float farGap)
 {
     farGap = 0.0;
+    // Eye distance cannot prove that a visible carve junction is irrelevant: a camera several
+    // metres above the ocean can still look through an exclusion wall at the displaced sheet.
+    // Keep the exact classification for the whole frame whenever a carve exists so the fog,
+    // meniscus and wall do not change ownership algorithms at the four-metre threshold.
+    if (exclusionsActive) return false;
     if (HeightRTFeatherWeight(_WorldSpaceCameraPos.xz) < 1.0) return false;
     float surfaceY = SampleHeightRTWorldY(_WorldSpaceCameraPos.xz);
     if (abs(_WorldSpaceCameraPos.y - surfaceY) <= WATERLINE_RT_SKIP_MARGIN_METERS) return false;

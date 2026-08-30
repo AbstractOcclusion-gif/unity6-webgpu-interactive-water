@@ -13,6 +13,7 @@
 //   - buoyant crates dropped over each case.
 // A scene-object creator, so it lives on the GameObject menu beside the exclusion-volume
 // creator (the Window/ MenuRoot hosts tool windows). Reuses the wizard's generators end to end.
+using System;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
@@ -109,7 +110,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 return;
             }
 
-            // Bodies: lean (no pool walls / god rays / foam) - this rig is for QUERY behaviour.
+            // Bodies stay lean (no pool walls, god rays or particle foam). Each river receives
+            // procedural surface foam below so this rig also exercises the stitched render path.
             WaterVolume lake = CreateWaterBody(ctx, root.transform, "Lake", LakeCenter, LakeExtent,
                                                primary: true, withPool: false, withGodRays: false,
                                                withFoamParticles: false, withSplash: true);
@@ -199,7 +201,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                       "where the parent body's box ends, " +
                       "(9) from a DRY camera, look across and below both river ribbons: their " +
                       "water columns are foggy, terrain truncates the fog, and no glass wall or " +
-                      "plain shell is visible.");
+                      "plain shell is visible, " +
+                      "(10) river banks show contact foam and sloped reaches show whitewater; " +
+                      "both remain continuous through the sewn junctions.");
         }
 
         // One connected river: THE recipe (facade-owned wiring), then connect to bodies at each
@@ -213,6 +217,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             WaterRiver river = CreateRiverRig(parent, parentBody, ctx.MatAbove, ctx.MatUnder,
                                               knots);
             river.gameObject.name = riverName;
+            AddProceduralRiverFoam(river);
 
             if (sourceBody != null)
             {
@@ -227,6 +232,15 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 WaterRiverEditor.GenerateEnd(river, WaterRiverEndKind.Mouth);
             }
             return river;
+        }
+
+        static void AddProceduralRiverFoam(WaterRiver river)
+        {
+            if (river == null) throw new ArgumentNullException(nameof(river));
+            if (river.GetComponent<WaterRiverFluid>() == null)
+                Undo.AddComponent<WaterRiverFluid>(river.gameObject);
+            if (river.GetComponent<WaterRiverFoam>() == null)
+                Undo.AddComponent<WaterRiverFoam>(river.gameObject);
         }
 
         // The wizard's tuned baseline, not the class default: WaterFogSettings ships

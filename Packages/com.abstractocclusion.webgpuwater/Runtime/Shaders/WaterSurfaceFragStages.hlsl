@@ -456,14 +456,88 @@ float SurfWhitewashCoverage(v2f i, WaterGeomStage g, float2 foamWorldDdx, float2
     return surfFoam;
 }
 
-float RiverFoamCoverage(v2f i)
+// ---- Conservative carve discard for the VISIBLE sheet (and its foam overlay) ----------
+// The wall fades its waterline over a screen-pixel feather, and seen steeply from above
+// the wall face is so foreshortened that its whole surviving top strip sits inside that
+// feather: the sheet had already discarded those pixels, so nothing opaque remained and
+// the scene showed through the rim (the 4-6 m look-down hole, Exclusion Demo 2026-08-30).
+// Cured the way the chunk disc cures its own rim (CHUNK_SPHERE_CLIP_MARGIN): the sheet
+// overdraws the carve by a few SCREEN pixels so the two razor edges share a COVERED seam
+// - the sheet writes depth, the wall draws ZTest LEqual, so the overlap never shows.
+// The depth-prepass discard stays EXACT on purpose: that RT is the fog's rasterized carve
+// authority and widening it would move fog ownership at the rim (the July 27-28 saga).
+// 8 px = the wall's 6 px coverage curve plus its silhouette-quad derivative fringe.
+#define EXCLUSION_CARVE_OVERLAP_PIXELS 8.0
+
+// InsideExclusion minus a screen-space margin: true only when the fragment sits deeper
+// inside the primitive than the margin. fwidth lives here rather than in
+// WaterExclusion.hlsl because that header is included by compute kernels, where
+// derivatives do not compile. No early-out: fwidth needs every lane through every
+// iteration (the loop and its mesh-slot skip are uniform; only the bool is per-fragment).
+bool InsideExclusionCarveConservative(float3 worldPos)
+{
+    bool inside = false;
+    int count = (int)_ExclusionCount;
+    [loop]
+    for (int i = 0; i < count; i++)
+    {
+        if (ExclusionIsMesh(i)) continue; // camera-ray query: the prepass answers it exactly
+        float3 local = mul(_ExclusionWorldToLocal[i], float4(worldPos, 1.0)).xyz;
+        float interiorDepth = PrimitiveInteriorDepth(_ExclusionShape[i].x, local,
+                                                     EXCLUSION_LOCAL_HALF_EXTENT);
+        float margin = EXCLUSION_CARVE_OVERLAP_PIXELS * fwidth(interiorDepth);
+        inside = inside || (interiorDepth > margin);
+    }
+    return inside;
+}
+
+float CombineFoamCoverage(float first, float second)
+{
+    return saturate(first + second - first * second);
+}
+
+float SurfaceContactFoamCoverage(v2f i)
+{
+    // A ribbon remains a bounded surface even when its receiving Water Volume uses a scrolling
+    // window. Ponds retain their established bounded-body gate.
+    if (_IsRiver < 0.5 && _SimWindowed > 0.5) return 0.0;
+    float2 screenUv = ScreenUV(i.screenPos);
+    float sceneEye = LinearEyeDepth(RawSceneDepth(screenUv));
+    float surfaceEye = EyeDepthOf(i.worldPos);
+    float behind = sceneEye - surfaceEye;
+    return behind > 0.0
+        ? 1.0 - saturate(behind / max(_FoamContactDepth, RIVER_FOAM_SAFE_DENOMINATOR))
+        : 0.0;
+}
+
+float RiverCascadeFoamCoverage(v2f i)
+{
+    // worldNormal is the transported, undisplaced ribbon normal. Animated wave normals must not
+    // make whitewater flash on and off as they pass over an otherwise flat reach.
+    float vertical = saturate(abs(normalize(i.worldNormal).y));
+    float cosineRange = max(_RiverCascadeStartCosine - _RiverCascadeFullCosine,
+                            RIVER_FOAM_SAFE_DENOMINATOR);
+    float grade = saturate((_RiverCascadeStartCosine - vertical) / cosineRange);
+    return smoothstep(0.0, 1.0, grade) * _RiverCascadeFoamStrength;
+}
+
+float RiverFoamCoverage(v2f i, float contactCoverage)
 {
     if (_IsRiver < 0.5 || _RiverFoamActive < 0.5) return 0.0;
-    float2 uv = saturate(float2(i.riverBakeUv.x,
-                                i.riverBakeUv.y * _RiverFluidInvLength));
-    float bakedCoverage = tex2Dlod(_FoamMask, float4(uv, 0.0, 0.0)).b;
-    // Baked river foam fades out across a connected terminal band.
-    return saturate(bakedCoverage * _RiverFoamStrength * _FoamStrength) * i.riverBakeUv.z;
+    float bakedCoverage = 0.0;
+    if (_RiverFluidActive > 0.5)
+    {
+        float2 uv = saturate(float2(i.riverBakeUv.x,
+                                    i.riverBakeUv.y * _RiverFluidInvLength));
+        bakedCoverage = tex2Dlod(_FoamMask, float4(uv, 0.0, 0.0)).b
+                      * _RiverFoamStrength;
+    }
+    float coverage = CombineFoamCoverage(
+        bakedCoverage,
+        contactCoverage * _RiverContactFoamStrength);
+    coverage = CombineFoamCoverage(coverage, RiverCascadeFoamCoverage(i));
+    // Every source fades through the same terminal ownership band.
+    return saturate(coverage * _FoamStrength) * i.riverBakeUv.z;
 }
 
 float2 PondFoamPatternUv(v2f i, float3 normal, float2 localTilt)
@@ -586,10 +660,10 @@ float4 UnderwaterStage(v2f i, WaterGeomStage g, float waterClarity)
         float2 fcoord = (_SimWindowed < 0.5) ? (i.position.xz * 0.5 + 0.5)
                                              : (WorldToSim(foamSourcePos).xz * 0.5 + 0.5);
         // No contact foam on this side (see above), so nothing extra to add.
-        // Same river guard as PondFoamCoverage: rivers either read the baked coverage or
-        // show nothing - SimFoamCoverage on a river reads the packed fluid RG as foam.
+        // Same river guard as PondFoamCoverage. The underside deliberately omits screen-depth
+        // contact foam, but retains slope whitewater and any baked turbulence.
         float mask = (_IsRiver > 0.5)
-                   ? ((_RiverFoamActive > 0.5) ? RiverFoamCoverage(i) : 0.0)
+                   ? ((_RiverFoamActive > 0.5) ? RiverFoamCoverage(i, 0.0) : 0.0)
                    : SimFoamCoverage(i.position.xz, fcoord, 0.0);
 
         // Same world-space pattern UV as the above-water side. Computed (with its
@@ -1043,11 +1117,14 @@ FoamLayer OceanWhitecapLayer(v2f i, WaterGeomStage g, float2 foamWorldDdx,
 // Every tap here is explicit-LOD, so it is legal in any control flow.
 float PondFoamCoverage(v2f i)
 {
-    // Rivers never consume the rectangular sim field (WaterSurfaceFoamSampling.hlsl), and a
-    // river with the packed fluid bake bound has REBOUND _FoamMask (RG = encoded velocity,
-    // B = foam): falling through to SimFoamCoverage read that RG as foam + wet mark -
-    // encoded rest velocity is 0.5, so the whole river grew a half-strength foam haze.
-    if (_IsRiver > 0.5) return (_RiverFoamActive > 0.5) ? RiverFoamCoverage(i) : 0.0;
+    // Rivers own analytic contact/cascade coverage and optional baked turbulence. They never
+    // consume the rectangular body sim field: with a fluid bake, _FoamMask is rebound to packed
+    // velocity RG + foam B, so falling through to SimFoamCoverage would read rest velocity as a
+    // half-strength foam haze.
+    if (_IsRiver > 0.5)
+        return (_RiverFoamActive > 0.5)
+            ? RiverFoamCoverage(i, SurfaceContactFoamCoverage(i))
+            : 0.0;
 
     // Windowed bodies read the foam buffer in the window frame too - at the
     // SOURCE xz (undisplaced), like the whitecap path. Sampling at the displaced
@@ -1068,15 +1145,7 @@ float PondFoamCoverage(v2f i)
     // so it is skipped entirely. Needs the depth texture; the behind-guard only adds
     // foam where the scene is genuinely just BEHIND the surface (fixes "all water
     // foamed" builds).
-    float contact = 0.0;
-    if (_SimWindowed < 0.5)
-    {
-        float2 suv = ScreenUV(i.screenPos);
-        float sceneEye = LinearEyeDepth(RawSceneDepth(suv));
-        float surfEye  = EyeDepthOf(i.worldPos);
-        float behind   = sceneEye - surfEye; // > 0 when scene sits below the surface
-        contact = behind > 0.0 ? (1.0 - saturate(behind / max(_FoamContactDepth, 1e-4))) : 0.0;
-    }
+    float contact = SurfaceContactFoamCoverage(i);
 
     return SimFoamCoverage(i.position.xz, fcoord, contact);
 }

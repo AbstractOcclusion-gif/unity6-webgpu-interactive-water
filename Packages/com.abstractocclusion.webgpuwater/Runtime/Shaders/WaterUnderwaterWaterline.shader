@@ -109,7 +109,7 @@ Shader "Hidden/AbstractOcclusion/WebGpuWater/WaterUnderwaterWaterline"
                 // the derivative below stays defined. Same test and same margin as the fog pass -
                 // see WaterlineFarFromSurface in WaterWaterline.hlsl for why it is sound.
                 float farGap;
-                if (WaterlineFarFromSurface(nearWorld, farGap))
+                if (WaterlineFarFromSurface(nearWorld, _ExclusionCount > 0.5, farGap))
                 {
                     gap = farGap;
                     gapSmooth = farGap;

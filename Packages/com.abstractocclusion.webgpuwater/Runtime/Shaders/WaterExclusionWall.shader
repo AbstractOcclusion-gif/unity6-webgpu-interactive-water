@@ -22,8 +22,8 @@
 // fullscreen underwater fog integrates to the REAL scene behind it (carved through the
 // box) - the transparent wall then tints on top. God rays likewise march through it
 // (their in-box samples are skipped + sun-shadowed by the volume itself).
-// No fresnel/specular yet; the waterline clip is the primary body's REST plane - the
-// meniscus/wavy seal is the next step on top of this pass.
+// No fresnel/specular yet; the waterline classification follows the same surface authority
+// as the fullscreen fog so their screen-space handoff cannot expose a seam.
 Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
 {
     SubShader
@@ -46,11 +46,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
             #include "WaterFog.hlsl"       // WaterInscatterColor + DownwellingAttenuation + fog globals
-            #include "WaterVolume.hlsl"    // _VolumeCenter: the primary body's rest plane (waterline clip)
+            #include "WaterVolume.hlsl"    // _VolumeCenter: the primary body's optical reference plane
             #include "WaterExclusion.hlsl" // carve helpers + shared shadow-column terms (fog reconstruction)
             #include "WaterExclusionMeshSpan.hlsl" // MESH volumes: the prepass dry span (URP-core only)
             #include "WaterShore.hlsl"     // ShoreShoalDepth: the fog pass's depth-clarity input
-            #include "WaterWaterline.hlsl" // SurfaceHeightAtXZ: the displaced waterline the wall clips at
+            #include "WaterWaterline.hlsl" // shared fog/wall waterline classification
 
             // Sun globals (published by WaterUniformPublisher), same declarations as the fog pass.
             float3 _LightDir;
@@ -66,8 +66,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
             // the water behind the veil AFTER transparents - the wall must NOT self-complete or its
             // opaque backdrop would hide the correctly fogged scene (bounded lakes seen from above).
             float _UnderwaterFogArmed;
-            // 1 = the quality tier's Simple fog mode (flat waterline): the wall then keeps the
-            // flat rest-plane clip, the same branch the fog itself takes on that tier.
+            // 1 = the quality tier's Simple fog mode (flat waterline): the wall then uses the
+            // same CPU-published height as the fog itself.
             float _UnderwaterFogSimple;
             // The rest of the fog's own gate state, read here so this wall can work out how much
             // of each pixel the fullscreen pass will actually paint (see FogCoverageAtPixel).
@@ -130,10 +130,21 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
                     classifyPoint += rayDir * ExclusionPushToExit(classifyPoint, rayDir, 0.0,
                                                                   _ProjectionParams.z);
                 }
-                float gap = (_UnderwaterFogSimple > 0.5) ? classifyPoint.y - _UnderwaterSurfaceY
-                                                         : SurfaceSignedGap(classifyPoint);
+                // Full fog classifies the dry-carve exit with the chop-inverted solve. Using the
+                // cheaper vertical query here shifts the wall/fog ownership boundary on waves.
+                float gap;
+                float gapSmooth;
+                if (_UnderwaterFogSimple > 0.5)
+                {
+                    gap = classifyPoint.y - _UnderwaterSurfaceY;
+                    gapSmooth = gap;
+                }
+                else
+                {
+                    gap = SurfaceSignedGapChopInvertedPair(classifyPoint, gapSmooth);
+                }
                 float overCover = (_CameraDryVolume > 0.5) ? WATERLINE_CARVE_OVER_COVER_PIXELS : 0.0;
-                return WaterlineCoverage(gap, fwidth(gap), overCover);
+                return WaterlineCoverage(gap, fwidth(gapSmooth), overCover);
             }
 
             // Waterline classification (see frag): the curve and its gradient floor are SHARED
@@ -141,6 +152,50 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
             // edges are the same shape and cannot leave a band between them. Only the coverage
             // below which a fragment is dropped instead of paying the blend lives here.
             #define WALL_MIN_COVERAGE 0.002
+
+            float WallSurfaceHeight(float2 worldXZ)
+            {
+                return (_UnderwaterFogSimple > 0.5)
+                     ? _VolumeCenter.y
+                     : SurfaceHeightAtXZ(worldXZ);
+            }
+
+            // The wall normally shades the ray's ENTRY face and prices the dry chord ahead of it.
+            // From above a ray can instead enter through the dry top, whose waterline coverage is
+            // zero, then leave through a submerged side. That side is the EXIT face, so the chord
+            // lies behind the fragment and the old forward-only query returned zero. Assign the
+            // complete camera-ray chord to exactly one submerged face: the entry when it is wet,
+            // otherwise the wet exit. A camera genuinely inside the dry volume keeps its exit
+            // transparent, preserving the authored view from inside a room or hull.
+            float AnalyticWallOwnedDrySpan(float3 fragmentWS, float3 cameraRayDirWS,
+                                           float3 sceneWorld)
+            {
+                float3 cameraLocal = mul(GetWorldToObjectMatrix(),
+                                         float4(_WorldSpaceCameraPos, 1.0)).xyz;
+                if (PrimitiveContains(_WallShape, cameraLocal, EXCLUSION_LOCAL_HALF_EXTENT))
+                    return 0.0;
+
+                float3 rayLocal = mul((float3x3)GetWorldToObjectMatrix(), cameraRayDirWS);
+                float2 interval = PrimitiveIntersect(_WallShape, cameraLocal, rayLocal,
+                                                     EXCLUSION_LOCAL_HALF_EXTENT);
+                float intervalStart = max(interval.x, 0.0);
+                float sceneRayDistance = max(dot(sceneWorld - _WorldSpaceCameraPos,
+                                                 cameraRayDirWS), 0.0);
+                float drySpan = max(min(interval.y, sceneRayDistance) - intervalStart, 0.0);
+                if (drySpan <= 0.0) return 0.0;
+
+                float fragmentRayDistance = dot(fragmentWS - _WorldSpaceCameraPos,
+                                                cameraRayDirWS);
+                bool fragmentIsEntry = abs(fragmentRayDistance - interval.x)
+                                     <= abs(fragmentRayDistance - interval.y);
+                float3 entryWS = _WorldSpaceCameraPos + cameraRayDirWS * interval.x;
+                bool entryIsSubmerged = entryWS.y <= WallSurfaceHeight(entryWS.xz);
+                if (fragmentIsEntry) return entryIsSubmerged ? drySpan : 0.0;
+
+                float3 exitWS = _WorldSpaceCameraPos + cameraRayDirWS * interval.y;
+                bool exitIsSubmerged = exitWS.y <= WallSurfaceHeight(exitWS.xz);
+                return (!entryIsSubmerged && exitIsSubmerged) ? drySpan : 0.0;
+            }
 
             // The sun-wrap, edge-occlusion and facet constants live in WaterExclusion.hlsl
             // (EXCLUSION_PANE_* / EXCLUSION_EDGE_*): the fog's carve-boundary pane shading and
@@ -158,7 +213,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
             {
                 float3 sceneColor = tex2Dlod(_CameraOpaqueTexture, float4(screenUV, 0.0, 0.0)).rgb;
 
-                float level = _VolumeCenter.y; // the rest plane, the same waterline the wall clips at
+                float level = _VolumeCenter.y; // stable optical-depth reference used by the fog integral
                 float3 seg = sceneWorld - wallWS;
                 float segLen = max(length(seg), 1e-5);
                 float3 segDir = seg / segLen;
@@ -218,15 +273,15 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
 
             half4 frag(Varyings IN) : SV_Target
             {
-                // Walls exist only below the WAVY waterline - the same displaced surface the fog
-                // integrates against (SurfaceHeightAtXZ). The old flat rest-plane clip left an
-                // EMPTY band between the wall top and a wave crest on partially submerged
-                // volumes (the surface sheet is discarded inside the carve, so nothing else
-                // filled it). Simple fog tiers keep the flat clip, matching the fog's own branch
-                // there. The screen-space meniscus seal remains the follow-up pass.
-                float waterlineY = (_UnderwaterFogSimple > 0.5)
-                                 ? _VolumeCenter.y
-                                 : SurfaceHeightAtXZ(IN.positionWS.xz);
+                // FROM AIR the wall's visible counterpart is the SURFACE SHEET (discarded over
+                // the carve), so the wall classifies against the sheet's own authority -
+                // SurfaceHeightAtXZ, the same field the vertex stage displaces by. The
+                // chop-inverted FOG authority lives in FogCoverageAtPixel above, whose
+                // counterpart IS the fog; classifying the wall with it moved the wall top off
+                // the rendered sheet rim (empty band, camera above water looking down).
+                // Simple fog tiers keep the flat rest-plane clip, matching the fog's own
+                // branch there. The screen-space meniscus seal remains the follow-up pass.
+                float waterlineY = WallSurfaceHeight(IN.positionWS.xz);
                 // CLASSIFY the fragment against that waterline - do NOT cut the mesh at it.
                 // A clip turns this test into a SILHOUETTE, and a silhouette then has to line up to
                 // the pixel with the surface sheet's own carve silhouette AND with wherever the fog
@@ -284,23 +339,29 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
                 // Water opacity over the CARVED span this ray actually crosses behind the
                 // fragment (capped at the real scene), per channel: this is BOTH the colour
                 // saturation and (via its max channel) the blend coverage. The veil is the exact
-                // stand-in for the water the carve removed from the fog integral - an entering
-                // face carries the box's dry chord, an exiting face carries ~0. So from open
-                // water the pocket blends seamlessly back into the fog, and from INSIDE the
-                // carve the veil vanishes instead of double-counting scatter on top of the
-                // fully-fogged water behind (the "brighter inside than outside" bug). A fixed
-                // 8m stand-in depth previously did that double-counting. The per-volume boost
-                // multiplies the OPTICAL DEPTH, so a boosted wall reads as denser water.
+                // stand-in for the water the carve removed from the fog integral. One submerged
+                // boundary owns the complete dry chord: normally the entry, or the exit after a
+                // dry top entry. From INSIDE the carve the exit remains empty instead of
+                // double-counting scatter on top of the fully-fogged water behind (the "brighter
+                // inside than outside" bug). A fixed 8m stand-in depth previously did that
+                // double-counting. The per-volume boost multiplies the OPTICAL DEPTH, so a
+                // boosted wall reads as denser water.
                 float3 rayDirWS = -viewDirWS; // camera -> fragment, continuing behind it
                 float sceneDist = max(dot(sceneWorld - IN.positionWS, rayDirWS), 0.0);
-                // Analytic volumes contribute their closed-form chord; MESH volumes contribute the
-                // prepass span at this pixel (the analytic loop skips them by design). An entering
-                // face therefore still carries the full dry chord and an exiting face ~0, whichever
-                // tier the volume belongs to - so the veil stays the exact stand-in for the water
-                // the carve removed.
-                float carvedSpan = ExclusionRayLength(IN.positionWS, rayDirWS, sceneDist);
-                if (_ExclusionMeshCount > 0.5)
-                    carvedSpan += ExclusionMeshRayLength(screenUV, IN.positionWS, rayDirWS, sceneDist);
+                // Analytic walls assign the complete camera-ray chord to one face. This includes
+                // the top-entry/side-exit case where the chord is BEHIND the visible side. Mesh
+                // walls retain their camera-prepass path: unlike an analytic draw, a combined mesh
+                // span cannot identify which per-volume wall owns an exit face.
+                float carvedSpan = 0.0;
+                if (_WallShape < EXCLUSION_SHAPE_MESH)
+                {
+                    carvedSpan = AnalyticWallOwnedDrySpan(IN.positionWS, rayDirWS, sceneWorld);
+                }
+                else if (_ExclusionMeshCount > 0.5)
+                {
+                    carvedSpan = ExclusionMeshRayLength(screenUV, IN.positionWS,
+                                                        rayDirWS, sceneDist);
+                }
                 float3 opacity = 1.0 - exp(-_WaterExtinction.rgb *
                                            (_WaterFogDensity * carvedSpan * _WallScatterBoost));
                 color *= opacity;

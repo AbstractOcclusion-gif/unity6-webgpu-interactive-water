@@ -43,6 +43,7 @@ float _ShoreSwashDepositGain;  // FOAM-5: >0 = persistent swash deposits live in
 #define FOAM_NORMAL_NUDGE   0.1
 // Skip all foam texture work below this mask level (nothing would be visible).
 #define FOAM_MASK_EPSILON   0.005
+#define RIVER_FOAM_SAFE_DENOMINATOR 1e-4
 // Flow-phased pattern drift: how far the foam pattern is dragged along the
 // local surface flow (UV units per phase) and how fast the two phases cycle.
 // Two half-offset phases cross-faded by a seesaw weight hide the reset jump
@@ -133,10 +134,14 @@ float3 WhitecapOctaveBlend(float3 a, float3 b)
 // Foam: the _FoamMask sim buffer is declared in WaterFoamMask.hlsl (shared with the fog pass);
 // _FoamTex is an optional per-material pattern (defaults white = flat foam).
 sampler2D _FoamTex;
-// Static river coverage reuses _FoamMask on river renderers: those meshes never consume the
-// rectangular simulation field, and avoiding a new sampler is load-bearing for the pass budget.
+// Baked river turbulence reuses _FoamMask on river renderers: those meshes never consume the
+// rectangular simulation field. Contact and cascade coverage are analytic and need no sampler.
 float _RiverFoamActive;
 float _RiverFoamStrength;
+float _RiverContactFoamStrength;
+float _RiverCascadeFoamStrength;
+float _RiverCascadeStartCosine;
+float _RiverCascadeFullCosine;
 float _RiverFluidActive;
 float _RiverFluidInvLength;
 float _RiverFluidMaxSpeed;

@@ -113,7 +113,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_OceanWhitecapFrames = Shader.PropertyToID("_OceanWhitecapFrames");
         static readonly int ID_OceanWhitecapFPS = Shader.PropertyToID("_OceanWhitecapFPS");
         static readonly int ID_FoamBorder = Shader.PropertyToID("_FoamBorderWidth");
-        static readonly int ID_FoamContact = Shader.PropertyToID("_FoamContactDepth");
+        static readonly int ID_FoamContact = WaterShaderProps.FoamContactDepth;
         static readonly int ID_FoamFeather = WaterShaderProps.FoamFeather;
         static readonly int ID_FoamCoreCut = WaterShaderProps.FoamCoreCut;
         static readonly int ID_WaveA = Shader.PropertyToID("_WaveA");

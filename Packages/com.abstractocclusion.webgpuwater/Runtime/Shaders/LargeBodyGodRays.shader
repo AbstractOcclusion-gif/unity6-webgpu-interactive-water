@@ -1054,6 +1054,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             #pragma multi_compile_fragment _ WATER_STRIP_SHORE
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "WaterExclusionMeshSpan.hlsl" // current-frame per-pixel carve silhouette
             // SurfaceSignedGap + WaterlineCoverage: the fog's per-pixel waterline curve,
             // READ-ONLY (the same contract the raymarch pass states for its include).
             #include "WaterWaterline.hlsl"
@@ -1074,6 +1075,8 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
             // The From Air knob, read here for the same reason the raymarch pass reads it: with it
             // at 0 no pane pixel can exist, and the mask below can therefore stay armed.
             float _LargeGodRayFromAir;
+
+            #define GODRAY_COMPOSITE_DIR_EPSILON 1e-5
 
             struct Attributes { uint vertexID : SV_VertexID; };
             struct Varyings   { float4 positionCS : SV_POSITION; float2 uv : TEXCOORD0; };
@@ -1101,6 +1104,41 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 ownership += OceanOwnershipSample(uv + offset) * 0.25;
                 ownership += OceanOwnershipSample(uv - offset) * 0.25;
                 return saturate(ownership.r + analyticCoverage * (1.0 - ownership.g));
+            }
+
+            float PaneAwareCompositeMask(float2 screenUV, float waterCoverage, float3 nearWorld)
+            {
+                // A submerged pixel is already fully admitted and needs no carve query. This also
+                // keeps the ordinary underwater field on the established zero-extra-work path.
+                if (waterCoverage >= 1.0) return waterCoverage;
+
+                bool paneViewPossible = _LargeGodRayFromAir > 0.0
+                                      && (_ExclusionCount > 0.5 || _CameraDryVolume > 0.5);
+                if (!paneViewPossible) return waterCoverage;
+
+                // An older renderer without the exclusion prepass cannot identify the pane at
+                // composite time. Preserve its former from-air behavior instead of deleting the
+                // feature; migrated renderers take the exact per-pixel path below.
+                if (_ExclusionPrepassValid < 0.5) return 1.0;
+
+                float3 toNear = nearWorld - _WorldSpaceCameraPos;
+                float3 rayDir = toNear / max(length(toNear), GODRAY_COMPOSITE_DIR_EPSILON);
+                float2 carveSpan;
+                float carveExit;
+                if (!ExclusionPrepassExitDistance(screenUV, _WorldSpaceCameraPos, rayDir,
+                                                  carveSpan, carveExit))
+                    return waterCoverage;
+
+                // Match the raymarch's pane rule: only an exclusion exit that is actually under
+                // the current displaced surface may bypass the normal waterline mask. Open ocean
+                // beside the pane therefore keeps current-frame coverage and clips half-res bleed.
+                float3 carveExitWorld = _WorldSpaceCameraPos + rayDir * carveExit;
+#ifdef WATER_FOG_SIMPLE
+                bool carveExitInWater = carveExitWorld.y <= _UnderwaterSurfaceY;
+#else
+                bool carveExitInWater = SurfaceSignedGapChopInverted(carveExitWorld) <= 0.0;
+#endif
+                return carveExitInWater ? 1.0 : waterCoverage;
             }
 
             half4 FragComposite(Varyings input) : SV_Target
@@ -1152,20 +1190,12 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyGodRays"
                 }
 #endif
 
-                // NOT where a from-air pane can exist: that view draws shafts ABOVE the waterline
-                // (through a carve window), and this pass cannot tell a pane pixel from an air
-                // pixel - the regime lives in the raymarch pass and is not stored, the half-res
-                // target having no spare channel to put it in.
-                //
-                // But "a carve exists" is not "a pane can exist", and keying the stand-down on the
-                // first surrendered the net across the WHOLE SCREEN for every exclusion scene,
-                // submerged views included, whether or not the author had opted in. With the knob
-                // at 0 the raymarch pass early-outs on every dry pixel, so there is provably
-                // nothing above the waterline to protect and the mask stays armed. Uniform gates,
-                // applied to the RESULT; still bit-identical for any scene that HAS opted in.
-                bool paneViewPossible = _LargeGodRayFromAir > 0.0
-                                      && (_ExclusionCount > 0.5 || _CameraDryVolume > 0.5);
-                float mask = paneViewPossible ? 1.0 : coverage;
+                // The from-air pane is the one legal exception to the waterline mask. It used to
+                // disable that mask SCREEN-WIDE whenever any exclusion existed, so bilinear
+                // sampling of the half-resolution shaft target leaked pane light onto the open
+                // surface. Re-identify the exception from the full-resolution exclusion prepass:
+                // only this pixel's submerged carve exit may pass unmasked.
+                float mask = PaneAwareCompositeMask(input.uv, coverage, nearWorld);
                 shafts.rgb *= mask;
                 return shafts;
             }

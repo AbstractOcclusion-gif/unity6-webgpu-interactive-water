@@ -55,8 +55,13 @@ namespace AbstractOcclusion.WebGpuWater
         internal const string FoamTileSizeName = "_FoamTileSize";
         internal const string FoamFeatherName = "_FoamFeather";
         internal const string FoamCoreCutName = "_FoamCoreCut";
+        internal const string FoamContactDepthName = "_FoamContactDepth";
         internal const string RiverFoamActiveName = "_RiverFoamActive";
         internal const string RiverFoamStrengthName = "_RiverFoamStrength";
+        internal const string RiverContactFoamStrengthName = "_RiverContactFoamStrength";
+        internal const string RiverCascadeFoamStrengthName = "_RiverCascadeFoamStrength";
+        internal const string RiverCascadeStartCosineName = "_RiverCascadeStartCosine";
+        internal const string RiverCascadeFullCosineName = "_RiverCascadeFullCosine";
         internal const string RiverFluidActiveName = "_RiverFluidActive";
         internal const string RiverFluidInverseLengthName = "_RiverFluidInvLength";
         internal const string RiverFluidMaximumSpeedName = "_RiverFluidMaxSpeed";
@@ -65,8 +70,17 @@ namespace AbstractOcclusion.WebGpuWater
         internal static readonly int FoamTileSize = Shader.PropertyToID(FoamTileSizeName);
         internal static readonly int FoamFeather = Shader.PropertyToID(FoamFeatherName);
         internal static readonly int FoamCoreCut = Shader.PropertyToID(FoamCoreCutName);
+        internal static readonly int FoamContactDepth = Shader.PropertyToID(FoamContactDepthName);
         internal static readonly int RiverFoamActive = Shader.PropertyToID(RiverFoamActiveName);
         internal static readonly int RiverFoamStrength = Shader.PropertyToID(RiverFoamStrengthName);
+        internal static readonly int RiverContactFoamStrength =
+            Shader.PropertyToID(RiverContactFoamStrengthName);
+        internal static readonly int RiverCascadeFoamStrength =
+            Shader.PropertyToID(RiverCascadeFoamStrengthName);
+        internal static readonly int RiverCascadeStartCosine =
+            Shader.PropertyToID(RiverCascadeStartCosineName);
+        internal static readonly int RiverCascadeFullCosine =
+            Shader.PropertyToID(RiverCascadeFullCosineName);
         internal static readonly int RiverFluidActive = Shader.PropertyToID(RiverFluidActiveName);
         internal static readonly int RiverFluidInverseLength =
             Shader.PropertyToID(RiverFluidInverseLengthName);

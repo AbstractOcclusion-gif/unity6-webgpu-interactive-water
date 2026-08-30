@@ -56,14 +56,16 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 using (new EditorGUI.DisabledScope(fluid != null))
                     if (GUILayout.Button("Add Fluid Bake"))
                         Undo.AddComponent<WaterRiverFluid>(river.gameObject);
-                // Foam requires the fluid bake (RequireComponent chain) - keep the gesture honest.
+                // Foam requires the fluid component, but its contact and cascade sources work
+                // before that component has a completed turbulence bake.
                 using (new EditorGUI.DisabledScope(foam != null || fluid == null))
                     if (GUILayout.Button("Add Foam"))
                         Undo.AddComponent<WaterRiverFoam>(river.gameObject);
             }
             if (fluid == null)
-                EditorGUILayout.HelpBox("No fluid bake: the current field uses the uniform spline " +
-                                        "speed. Add the bake for obstacle-deflected flow and foam.",
+                EditorGUILayout.HelpBox("No fluid component: the current field uses the uniform " +
+                                        "spline speed. Add Fluid Bake before adding river foam; " +
+                                        "only obstacle-deflected turbulence requires an actual bake.",
                                         MessageType.None);
         }
 

@@ -179,6 +179,15 @@ namespace AbstractOcclusion.WebGpuWater.Tests
                 host.GetComponent<MeshRenderer>().GetPropertyBlock(properties);
                 Assert.That(properties.GetFloat(WaterShaderProps.RiverFluidActive), Is.EqualTo(1f));
                 Assert.That(properties.GetFloat(WaterShaderProps.RiverFoamActive), Is.EqualTo(1f));
+                Assert.That(properties.GetFloat(WaterShaderProps.RiverContactFoamStrength),
+                            Is.GreaterThan(0f));
+                Assert.That(properties.GetFloat(WaterShaderProps.FoamContactDepth),
+                            Is.GreaterThan(0f));
+                Assert.That(properties.GetFloat(WaterShaderProps.RiverCascadeFoamStrength),
+                            Is.GreaterThan(0f));
+                Assert.That(properties.GetFloat(WaterShaderProps.RiverCascadeStartCosine),
+                            Is.GreaterThan(
+                                properties.GetFloat(WaterShaderProps.RiverCascadeFullCosine)));
                 Assert.That(properties.GetTexture(WaterShaderProps.FoamMask), Is.SameAs(texture));
                 Assert.That(volume.HasLiveExternalFoamRenderer, Is.True);
 
@@ -194,6 +203,37 @@ namespace AbstractOcclusion.WebGpuWater.Tests
                 Object.DestroyImmediate(volumeHost);
                 Object.DestroyImmediate(data);
                 Object.DestroyImmediate(texture);
+            }
+        }
+
+        [Test]
+        public void Foam_EnablesProceduralSourcesWithoutFluidBake()
+        {
+            GameObject volumeHost = new GameObject("River Procedural Foam Volume Test");
+            volumeHost.SetActive(false);
+            WaterVolume volume = volumeHost.AddComponent<WaterVolume>();
+            GameObject host = CreateStraightSpline(out WaterRiverSpline spline);
+            try
+            {
+                WaterRiverSurface surface = host.AddComponent<WaterRiverSurface>();
+                surface.spline = spline;
+                surface.waterVolume = volume;
+                surface.RequestRebuild();
+                host.AddComponent<WaterRiverFluid>();
+                WaterRiverFoam foam = host.AddComponent<WaterRiverFoam>();
+                foam.RequestRebuild();
+
+                var properties = new MaterialPropertyBlock();
+                host.GetComponent<MeshRenderer>().GetPropertyBlock(properties);
+                Assert.That(properties.GetFloat(WaterShaderProps.RiverFluidActive), Is.EqualTo(0f));
+                Assert.That(properties.GetFloat(WaterShaderProps.RiverFoamActive), Is.EqualTo(1f));
+                Assert.That(properties.GetFloat(WaterShaderProps.FoamEnabled), Is.EqualTo(1f));
+                Assert.That(volume.HasLiveExternalFoamRenderer, Is.True);
+            }
+            finally
+            {
+                Object.DestroyImmediate(host);
+                Object.DestroyImmediate(volumeHost);
             }
         }
 
