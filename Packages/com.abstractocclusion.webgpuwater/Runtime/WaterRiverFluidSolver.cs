@@ -21,12 +21,14 @@ namespace AbstractOcclusion.WebGpuWater
         internal readonly float Vorticity;
         internal readonly float FoamThreshold;
         internal readonly float FoamStrength;
+        internal readonly float ObstacleFoamTrailLengthMeters;
         internal readonly float BankFoamStrength;
 
         internal WaterRiverFluidSolveSettings(
             int iterations, float deltaTime, float viscosity, float pressure,
             float force, float velocityDecay, float vorticity,
-            float foamThreshold, float foamStrength, float bankFoamStrength)
+            float foamThreshold, float foamStrength,
+            float obstacleFoamTrailLengthMeters, float bankFoamStrength)
         {
             Iterations = iterations;
             DeltaTime = deltaTime;
@@ -37,6 +39,7 @@ namespace AbstractOcclusion.WebGpuWater
             Vorticity = vorticity;
             FoamThreshold = foamThreshold;
             FoamStrength = foamStrength;
+            ObstacleFoamTrailLengthMeters = obstacleFoamTrailLengthMeters;
             BankFoamStrength = bankFoamStrength;
         }
     }
@@ -82,6 +85,7 @@ namespace AbstractOcclusion.WebGpuWater
         // radius reads the velocity CONTRAST across an obstacle's whole shadow instead of a
         // one-cell ring, so the foam response is a soft band rather than a thin halo.
         const int FoamShearRadiusCells = 2;
+        const float MaximumFoamTransportLateralCellsPerRow = 2f;
         // Obstacle-driven foam is generated only inside this physical neighbourhood. The
         // projected velocity remains global for current motion, but its long pressure wake
         // must not become a fresh foam source at every downstream cell.
@@ -461,6 +465,7 @@ namespace AbstractOcclusion.WebGpuWater
             float[] lateralCellSize, float longitudinalCellSize,
             WaterRiverFluidSolveSettings settings)
         {
+            var obstacleSources = new float[foam.Length];
             for (int row = 0; row < height; row++)
             {
                 float lateralStep = lateralCellSize[row];
@@ -494,20 +499,31 @@ namespace AbstractOcclusion.WebGpuWater
                             0.5f * inverseLateralStep +
                         (up.Velocity.y - down.Velocity.y) *
                             0.5f * inverseLongitudinalStep;
-                    foam[index] = CalculateFoamGeneration(
+                    float obstacleSource = CalculateObstacleFoamGeneration(
                         cells, mask, width, height, column, row,
                         obstacleInfluence[index], bowFaceMask[index],
-                        downstreamSpeed[row], centre, curl, velocityDivergence,
+                        centre, curl, velocityDivergence,
                         lateralStep, longitudinalCellSize, settings);
+                    obstacleSources[index] = obstacleSource;
+                    float lateralSpan = 2f * FoamShearRadiusCells * lateralStep;
+                    float bankActivity = CalculateBankActivity(
+                        column, width, downstreamSpeed[row], lateralSpan,
+                        settings.BankFoamStrength);
+                    foam[index] = Mathf.Max(
+                        obstacleSource, CalculateFoamCoverage(bankActivity, settings));
                 }
             }
+
+            TransportObstacleFoam(
+                cells, foam, obstacleSources, width, height, mask, lateralCellSize,
+                longitudinalCellSize, settings.ObstacleFoamTrailLengthMeters);
         }
 
-        static float CalculateFoamGeneration(
+        static float CalculateObstacleFoamGeneration(
             Cell[] cells, bool[] mask, int width, int height, int column, int row,
-            float obstacleInfluence, bool bowFace, float downstreamSpeed, Cell centre,
-            float curl, float velocityDivergence, float lateralCellSize,
-            float longitudinalCellSize, WaterRiverFluidSolveSettings settings)
+            float obstacleInfluence, bool bowFace, Cell centre, float curl,
+            float velocityDivergence, float lateralCellSize, float longitudinalCellSize,
+            WaterRiverFluidSolveSettings settings)
         {
             Vector2 shearLeft = ReadShearVelocity(cells, mask, width, height,
                                                   column - FoamShearRadiusCells, row, centre);
@@ -533,11 +549,102 @@ namespace AbstractOcclusion.WebGpuWater
                 ? 0f
                 : Mathf.Max(0f, -velocityDivergence) * ConvergenceFoamWeight;
             float obstacleActivity = (shear + swirl + convergence) * obstacleInfluence;
-            float bankActivity = CalculateBankActivity(
-                column, width, downstreamSpeed, lateralSpan, settings.BankFoamStrength);
-            float activity = Mathf.Max(obstacleActivity, bankActivity);
-            return Mathf.Clamp01(
+            return CalculateFoamCoverage(obstacleActivity, settings);
+        }
+
+        static float CalculateFoamCoverage(
+            float activity, WaterRiverFluidSolveSettings settings)
+            => Mathf.Clamp01(
                 (activity - settings.FoamThreshold) * settings.FoamStrength);
+
+        // The steady velocity solve has no meaningful elapsed foam time. Transport the final
+        // obstacle source spatially, one downstream row at a time, and carry its travelled
+        // distance separately. This follows the baked deflection while guaranteeing an exact
+        // zero after the authored trail length, regardless of iteration count or river length.
+        static void TransportObstacleFoam(
+            Cell[] cells, float[] foam, float[] obstacleSources, int width, int height,
+            bool[] mask, float[] lateralCellSize, float longitudinalCellSize,
+            float trailLengthMeters)
+        {
+            if (trailLengthMeters <= 0f) return;
+
+            var transportedCoverage = (float[])obstacleSources.Clone();
+            var travelledDistance = new float[obstacleSources.Length];
+            for (int index = 0; index < travelledDistance.Length; index++)
+                travelledDistance[index] = obstacleSources[index] > 0f
+                    ? 0f : float.PositiveInfinity;
+
+            for (int row = 1; row < height; row++)
+            {
+                float lateralStep = lateralCellSize[row];
+                for (int column = 0; column < width; column++)
+                {
+                    int index = row * width + column;
+                    if (!mask[index]) continue;
+
+                    Vector2 velocity = cells[index].Velocity;
+                    if (velocity.y <= MinimumPositiveValue) continue;
+                    float lateralCells = velocity.x / velocity.y *
+                        longitudinalCellSize / lateralStep;
+                    lateralCells = Mathf.Clamp(
+                        lateralCells, -MaximumFoamTransportLateralCellsPerRow,
+                        MaximumFoamTransportLateralCellsPerRow);
+                    float upstreamColumn = column - lateralCells;
+                    if (!TrySampleTransportRow(
+                            transportedCoverage, travelledDistance, mask, width,
+                            row - 1, upstreamColumn, out float upstreamCoverage,
+                            out float upstreamDistance))
+                        continue;
+
+                    float lateralDistance = lateralCells * lateralStep;
+                    float stepDistance = Mathf.Sqrt(
+                        longitudinalCellSize * longitudinalCellSize +
+                        lateralDistance * lateralDistance);
+                    float nextDistance = upstreamDistance + stepDistance;
+                    if (nextDistance >= trailLengthMeters) continue;
+
+                    float remainingBeforeStep = trailLengthMeters - upstreamDistance;
+                    float remainingAfterStep = trailLengthMeters - nextDistance;
+                    float advectedCoverage = upstreamCoverage *
+                        (remainingAfterStep / remainingBeforeStep);
+                    if (advectedCoverage <= transportedCoverage[index]) continue;
+
+                    transportedCoverage[index] = advectedCoverage;
+                    travelledDistance[index] = nextDistance;
+                    foam[index] = Mathf.Max(foam[index], advectedCoverage);
+                }
+            }
+        }
+
+        static bool TrySampleTransportRow(
+            float[] coverage, float[] travelledDistance, bool[] mask, int width,
+            int row, float column, out float sampledCoverage, out float sampledDistance)
+        {
+            float clampedColumn = Mathf.Clamp(column, 0f, width - 1f);
+            int firstColumn = Mathf.FloorToInt(clampedColumn);
+            int secondColumn = Mathf.Min(firstColumn + 1, width - 1);
+            float secondWeight = clampedColumn - firstColumn;
+            float firstWeight = 1f - secondWeight;
+            int firstIndex = row * width + firstColumn;
+            int secondIndex = row * width + secondColumn;
+            float firstContribution = mask[firstIndex]
+                ? coverage[firstIndex] * firstWeight : 0f;
+            float secondContribution = mask[secondIndex]
+                ? coverage[secondIndex] * secondWeight : 0f;
+            sampledCoverage = firstContribution + secondContribution;
+            if (sampledCoverage <= 0f)
+            {
+                sampledDistance = 0f;
+                return false;
+            }
+
+            float weightedDistance = 0f;
+            if (firstContribution > 0f)
+                weightedDistance += travelledDistance[firstIndex] * firstContribution;
+            if (secondContribution > 0f)
+                weightedDistance += travelledDistance[secondIndex] * secondContribution;
+            sampledDistance = weightedDistance / sampledCoverage;
+            return float.IsFinite(sampledDistance);
         }
 
         static float CalculateBankActivity(int column, int width, float downstreamSpeed,
@@ -742,6 +849,9 @@ namespace AbstractOcclusion.WebGpuWater
             ValidateNonNegative(settings.Vorticity, nameof(settings.Vorticity));
             ValidateNonNegative(settings.FoamThreshold, nameof(settings.FoamThreshold));
             ValidateNonNegative(settings.FoamStrength, nameof(settings.FoamStrength));
+            ValidateNonNegative(
+                settings.ObstacleFoamTrailLengthMeters,
+                nameof(settings.ObstacleFoamTrailLengthMeters));
             if (!float.IsFinite(settings.BankFoamStrength) ||
                 settings.BankFoamStrength < 0f || settings.BankFoamStrength > 1f)
                 throw new ArgumentOutOfRangeException(nameof(settings.BankFoamStrength));

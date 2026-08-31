@@ -24,6 +24,7 @@ namespace AbstractOcclusion.WebGpuWater
         const float DefaultVorticity = 0.13f;
         const float DefaultFoamThreshold = 0.25f;
         const float DefaultFoamStrength = 0.65f;
+        const float DefaultObstacleFoamTrailLengthMeters = 3f;
         const float DefaultBankFoamStrength = 0f;
         const float EnabledFeature = 1f;
         const float DisabledFeature = 0f;
@@ -47,6 +48,10 @@ namespace AbstractOcclusion.WebGpuWater
         [Min(0f)] [SerializeField] internal float vorticity = DefaultVorticity;
         [Min(0f)] [SerializeField] internal float foamThreshold = DefaultFoamThreshold;
         [Min(0f)] [SerializeField] internal float foamStrength = DefaultFoamStrength;
+        [Tooltip("Distance in metres that obstacle-generated foam drifts downstream. " +
+                 "Set to zero to keep foam only at its generation point.")]
+        [Min(0f)] [SerializeField] internal float obstacleFoamTrailLengthMeters =
+            DefaultObstacleFoamTrailLengthMeters;
         [Tooltip("How strongly river banks behave as no-slip foam-producing walls. Set to zero to suppress edge-only foam.")]
         [Range(0f, 1f)] [SerializeField] internal float bankFoamStrength = DefaultBankFoamStrength;
 
@@ -101,7 +106,7 @@ namespace AbstractOcclusion.WebGpuWater
             => new WaterRiverFluidSolveSettings(
                 iterations, deltaTime, viscosity, pressure, flowForce,
                 velocityDecay, vorticity, foamThreshold, foamStrength,
-                bankFoamStrength);
+                obstacleFoamTrailLengthMeters, bankFoamStrength);
 
         internal void AssignBakeData(WaterRiverFluidBakeData data)
         {
@@ -132,6 +137,8 @@ namespace AbstractOcclusion.WebGpuWater
             vorticity = Mathf.Max(0f, vorticity);
             foamThreshold = Mathf.Max(0f, foamThreshold);
             foamStrength = Mathf.Max(0f, foamStrength);
+            obstacleFoamTrailLengthMeters = Mathf.Max(
+                0f, obstacleFoamTrailLengthMeters);
             bankFoamStrength = Mathf.Clamp01(bankFoamStrength);
         }
     }

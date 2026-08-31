@@ -23,6 +23,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const string VorticityPropertyName = "vorticity";
         const string FoamThresholdPropertyName = "foamThreshold";
         const string FoamStrengthPropertyName = "foamStrength";
+        const string ObstacleFoamTrailLengthPropertyName =
+            "obstacleFoamTrailLengthMeters";
         const string BankFoamStrengthPropertyName = "bankFoamStrength";
         const string BakeButtonLabel = "Bake Settled Fluid";
         const string InspectorHelp =
@@ -63,6 +65,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             WaterEditorUI.SubHeading("Generated Foam");
             DrawProperty(FoamThresholdPropertyName);
             DrawProperty(FoamStrengthPropertyName);
+            DrawProperty(ObstacleFoamTrailLengthPropertyName);
             DrawProperty(BankFoamStrengthPropertyName);
             serializedObject.ApplyModifiedProperties();
 

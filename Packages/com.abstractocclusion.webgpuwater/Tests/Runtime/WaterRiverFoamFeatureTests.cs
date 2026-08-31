@@ -18,6 +18,8 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         const float FloatTolerance = 0.02f;
         const float RiverLength = 12f;
         const float RiverWidth = 6f;
+        const float ObstacleFoamInfluenceMeters = 0.5f;
+        const float ObstacleFoamTrailLengthMeters = 3f;
         const float SampleLateralU = 0.5f;
         const float SampleNormalizedT = 0.5f;
         const float ShortCascadePersistenceMeters = 0.01f;
@@ -120,7 +122,7 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         }
 
         [Test]
-        public void Solve_ObstacleFoamSnapshotDoesNotFollowProjectedWakeAcrossRiver()
+        public void Solve_ObstacleFoamDriftsDownstreamAndStopsAtTrailLength()
         {
             WaterRiverFluidSolveResult result = WaterRiverFluidSolver.Solve(
                 Width, Height, CreateFluidMask(true), CreateDownstreamSpeeds(),
@@ -129,14 +131,23 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             int downstreamStartRow = Height - upstreamEndRow;
             int obstacleStartRow = Height / 2 - ObstacleHalfHeight;
             int obstacleEndRow = Height / 2 + ObstacleHalfHeight + 1;
+            float longitudinalCellSize = RiverLength / Height;
+            int transportedStartRow = obstacleEndRow + Mathf.CeilToInt(
+                ObstacleFoamInfluenceMeters / longitudinalCellSize);
+            int transportedEndRow = transportedStartRow + FarReachDivisor;
+            int trailEndRow = obstacleEndRow + Mathf.CeilToInt(
+                ObstacleFoamTrailLengthMeters / longitudinalCellSize) + 1;
 
             float obstacleFoam = MaximumFoamInRows(
                 result, obstacleStartRow, obstacleEndRow);
+            float transportedFoam = MaximumFoamInRows(
+                result, transportedStartRow, transportedEndRow);
             float farUpstreamFoam = MaximumFoamInRows(result, 0, upstreamEndRow);
             float farDownstreamFoam = MaximumFoamInRows(
-                result, downstreamStartRow, Height);
+                result, Mathf.Max(downstreamStartRow, trailEndRow), Height);
 
             Assert.That(obstacleFoam, Is.GreaterThan(0f));
+            Assert.That(transportedFoam, Is.GreaterThan(0f));
             Assert.That(farUpstreamFoam, Is.Zero.Within(FloatTolerance));
             Assert.That(farDownstreamFoam, Is.Zero.Within(FloatTolerance));
         }
@@ -391,7 +402,8 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         static WaterRiverFluidSolveSettings CreateSettings()
             => new WaterRiverFluidSolveSettings(
                 Iterations, 0.1f, 0.08f, 0.2f, 0.5f,
-                0.999f, 0.1f, 0.25f, 0.65f, 0f);
+                0.999f, 0.1f, 0.25f, 0.65f,
+                ObstacleFoamTrailLengthMeters, 0f);
 
         static float MaximumFoamInRows(WaterRiverFluidSolveResult result,
                                        int startRow, int endRow)
