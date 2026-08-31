@@ -311,6 +311,61 @@ float RiverMouthOutflowTerminalFoamCoverage()
     return saturate(_MouthOutflowOrigins[RIVER_OWN_MOUTH_OUTFLOW_INDEX].w);
 }
 
+// An infinite ocean has no meaningful rectangular border to sew against. Its connected river
+// therefore owns a short overlap strip ending at the outflow origin. The descriptor's spare
+// appearance lane carries that strip length only for unbounded-ocean mouths; bounded bodies leave
+// it at zero and retain their exact historical path.
+float MouthOutflowOceanOwnership(float2 worldXZ)
+{
+    float ownership = 0.0;
+    int count = clamp((int)_MouthOutflowCount, 0, WATER_MAX_MOUTH_OUTFLOWS);
+    [loop]
+    for (int outflowIndex = 0; outflowIndex < count; outflowIndex++)
+    {
+        float overlapMeters = _MouthOutflowFoamAppearance[outflowIndex].w;
+        if (overlapMeters <= 0.0) continue;
+
+        float4 originData = _MouthOutflowOrigins[outflowIndex];
+        float2 downstream = normalize(_MouthOutflowDirections[outflowIndex].xy);
+        float2 right = float2(downstream.y, -downstream.x);
+        float2 offset = worldXZ - originData.xy;
+        float longitudinal = dot(offset, downstream);
+        float lateral = abs(dot(offset, right));
+        float insideLength = step(-overlapMeters, longitudinal) * step(longitudinal, 0.0);
+        float insideWidth = step(lateral, originData.z);
+        ownership = max(ownership, insideLength * insideWidth);
+    }
+    return ownership;
+}
+
+// Calm the ocean as it passes beneath the apron, then restore its waves over the same distance
+// downstream. The lateral shoulder is deliberately wider than the discarded strip: displaced
+// ocean vertices outside the strip cannot lean back through the river banks.
+float MouthOutflowOceanCalm(float2 worldXZ)
+{
+    float calm = 0.0;
+    int count = clamp((int)_MouthOutflowCount, 0, WATER_MAX_MOUTH_OUTFLOWS);
+    [loop]
+    for (int outflowIndex = 0; outflowIndex < count; outflowIndex++)
+    {
+        float overlapMeters = _MouthOutflowFoamAppearance[outflowIndex].w;
+        if (overlapMeters <= 0.0) continue;
+
+        float4 originData = _MouthOutflowOrigins[outflowIndex];
+        float2 downstream = normalize(_MouthOutflowDirections[outflowIndex].xy);
+        float2 right = float2(downstream.y, -downstream.x);
+        float2 offset = worldXZ - originData.xy;
+        float longitudinal = dot(offset, downstream);
+        float lateral = abs(dot(offset, right));
+        float upstreamRise = smoothstep(-overlapMeters, 0.0, longitudinal);
+        float downstreamFall = 1.0 - smoothstep(0.0, overlapMeters, longitudinal);
+        float lateralFall = 1.0 - smoothstep(
+            originData.z, originData.z + overlapMeters, lateral);
+        calm = max(calm, upstreamRise * downstreamFall * lateralFall);
+    }
+    return saturate(calm);
+}
+
 // ---- body-border seam wave anchor (KWS/RAM study 2026-08-30) ----
 // A connected terminal band cross-fades TOWARD the receiving body's wind-wave field, but
 // WindWaveSampleXZ above anchors in THIS renderer's pool frame - the PARENT body's for a river

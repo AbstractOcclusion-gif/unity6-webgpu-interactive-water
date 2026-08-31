@@ -360,6 +360,10 @@ namespace AbstractOcclusion.WebGpuWater.Tests
                 Assert.That(
                     foamAppearances[ShaderOutflowIndex].z,
                     Is.EqualTo(MouthFoamCoreCut).Within(FloatTolerance));
+                Assert.That(
+                    foamAppearances[ShaderOutflowIndex].w,
+                    Is.EqualTo(0f).Within(FloatTolerance),
+                    "bounded receiving bodies must not publish an ocean ownership strip");
             }
             finally
             {

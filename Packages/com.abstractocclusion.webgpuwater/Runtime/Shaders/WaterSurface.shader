@@ -196,6 +196,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
             fixed4 frag(v2f i) : SV_Target
             {
+                // A connected river owns the coincident apron at an unbounded-ocean mouth. This
+                // discards only the visible sheet; fog and volume ownership remain untouched.
+                if (_IsRiver < 0.5 && MouthOutflowOceanOwnership(i.largeWaveSourceXZ) > 0.5)
+                    discard;
+
                 // The near-field patch already owns these pixels (see PatchCoversBaseSheet).
                 // Coincident sheets at different tessellations, so whichever wins the depth test
                 // flips per region once a disturbance opens the gap - the surface reads as slabs
@@ -376,6 +381,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
             OceanSurfaceDepthOutput fragDepth(v2f i, bool isFrontFace : SV_IsFrontFace)
             {
+                if (_IsRiver < 0.5 && MouthOutflowOceanOwnership(i.largeWaveSourceXZ) > 0.5)
+                    discard;
+
                 // The near-field patch already owns these pixels (see PatchCoversBaseSheet).
                 // Coincident sheets at different tessellations, so whichever wins the depth test
                 // flips per region once a disturbance opens the gap - the surface reads as slabs
@@ -485,6 +493,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
             fixed4 fragFoamOverlay(v2f i) : SV_Target
             {
+                if (_IsRiver < 0.5 && MouthOutflowOceanOwnership(i.largeWaveSourceXZ) > 0.5)
+                    discard;
+
                 // The near-field patch already owns these pixels (see PatchCoversBaseSheet).
                 // Coincident sheets at different tessellations, so whichever wins the depth test
                 // flips per region once a disturbance opens the gap - the surface reads as slabs
@@ -569,6 +580,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 
             float fragFogOccluderDepth(v2f i, bool isFrontFace : SV_IsFrontFace) : SV_Target
             {
+                if (_IsRiver < 0.5 && MouthOutflowOceanOwnership(i.largeWaveSourceXZ) > 0.5)
+                    discard;
+
                 if (PatchCoversBaseSheet(i.position)) discard;
                 if (InsideExclusion(i.worldPos)) discard;
                 if (_ExclusionMeshCount > 0.5)

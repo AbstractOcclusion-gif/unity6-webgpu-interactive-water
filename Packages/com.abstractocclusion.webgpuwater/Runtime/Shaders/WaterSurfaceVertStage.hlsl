@@ -354,7 +354,9 @@
             {
                 float2 poolXZ = poolFlat.xz;
                 float3 position = poolFlat;
-                position.y += info.r;                  // interactive ripple heightfield (windowed: faded)
+                float oceanMouthWaveWeight = 1.0 - MouthOutflowOceanCalm(worldFlat.xz);
+                position.y += info.r * oceanMouthWaveWeight;
+                                                        // interactive ripple heightfield (windowed: faded)
                 // A connected terminal's grid target is the receiving body's anchor; interior
                 // river vertices and pool meshes preserve the parent-anchored path.
                 float2 gridWaveSample = RiverEndWindWaveSampleXZ(
@@ -383,10 +385,10 @@
                 // inputs); the terminal row then equals the receiving body's own height
                 // exactly. The uniform branch keeps pools single-evaluation, byte-identical.
                 if (_IsRiver > 0.5)
-                    position.y += lerp(gridWaveHeight,
+                    position.y += lerp(gridWaveHeight * oceanMouthWaveWeight,
                                        riverWaveHeight, riverWeight);
                 else
-                    position.y += gridWaveHeight;
+                    position.y += gridWaveHeight * oceanMouthWaveWeight;
                                                        // small wind-wave detail; open water
                                                        // layers the big swell on top in world space below
                 poolDisplaced = position;              // keep pool-space position for the tracer
@@ -417,8 +419,8 @@
                     float lbwHeight;
                     float2 lbwDisp;
                     LargeBodyWaveHeightDispShore(sourceXZ, shoreVert, surfVert, lbwHeight, lbwDisp);
-                    worldPos.y  += lbwHeight;
-                    worldPos.xz += lbwDisp; // 0 when choppiness = 0
+                    worldPos.y  += lbwHeight * oceanMouthWaveWeight;
+                    worldPos.xz += lbwDisp * oceanMouthWaveWeight; // 0 when choppiness = 0
                 }
                 // Interactive-ripple horizontal choppiness (Crest-style _HorizontalDisplace, aimed at the
                 // WAKE): the ripple sim only lifts HEIGHT, so the wake V and interactive ripples read soft
@@ -432,7 +434,7 @@
                 // minor back when a whole-field multiplier kept lbwDisp at centimetres; at honest
                 // metres that mismatch became a wake smearing across its own geometry.
                 if (_RippleChoppiness > 0.0)
-                    worldPos.xz -= _RippleChoppiness * info.ba;
+                    worldPos.xz -= _RippleChoppiness * info.ba * oceanMouthWaveWeight;
                 worldPos = StabilizeChunkBoundary(worldFlat, worldPos, poolXZ);
                 // Surf swash film: over the beach the surface HUGS THE SAND (a thin film a few
                 // centimetres proud of it) wherever the swash has recently reached - a flat plane

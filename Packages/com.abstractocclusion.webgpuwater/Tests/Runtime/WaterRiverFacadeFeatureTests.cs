@@ -4,8 +4,10 @@
 // persistent identity saves key on), and the parent current-field link APPENDS - the demo rig's
 // original array overwrite is exactly the bug this suite exists to keep dead.
 using System.Collections.Generic;
+using System.Reflection;
 using NUnit.Framework;
 using UnityEngine;
+using InvalidOperationException = System.InvalidOperationException;
 
 namespace AbstractOcclusion.WebGpuWater.Tests
 {
@@ -16,6 +18,10 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         const float RiverLength = 18f;
         const float RiverWidth = 4f;
         const float RiverSpeed = 2f;
+        const float OceanOverlapMeters = 3f;
+
+        static readonly FieldInfo OceanSettingsField = typeof(WaterVolume).GetField(
+            "ocean", BindingFlags.Instance | BindingFlags.NonPublic);
 
         readonly List<GameObject> _objects = new List<GameObject>();
         WaterRiver _river;
@@ -198,6 +204,63 @@ namespace AbstractOcclusion.WebGpuWater.Tests
 
             Vector3 beyondPlume = outflow.Origin + outflow.Downstream * 13f;
             Assert.That(field.SampleCurrent(beyondPlume, out _), Is.False);
+        }
+
+        [Test]
+        public void UnboundedOceanMouth_UsesAuthoredTangentAndPublishesSurfaceOverlap()
+        {
+            Assert.That(OceanSettingsField, Is.Not.Null);
+            var oceanSettings =
+                (WaterVolume.OceanSettings)OceanSettingsField.GetValue(_lake);
+            oceanSettings.openWater = true;
+            oceanSettings.unboundedOcean = true;
+            _river.mouthEnd.body = _lake;
+            _river.mouthEnd.transitionRadiusMeters = OceanOverlapMeters;
+
+            _river.RegenerateConnection(WaterRiverEndKind.Mouth);
+
+            Assert.That(
+                _river.TryGetEndFrame(WaterRiverEndKind.Mouth, out Vector3 anchor,
+                                      out Vector3 downstream, out _),
+                Is.True);
+            Vector3 oceanUp = _lake.VolumeUp;
+            Vector3 planarDownstream = Vector3.ProjectOnPlane(downstream, oceanUp).normalized;
+            Vector3 expectedTarget = anchor + planarDownstream * OceanOverlapMeters;
+            expectedTarget += oceanUp * Vector3.Dot(_lake.VolumeCenter - expectedTarget, oceanUp);
+            Assert.That(
+                Vector3.Distance(_river.MouthEnd.targetPort.transform.position, expectedTarget),
+                Is.LessThan(1e-4f));
+
+            Assert.That(_river.TryBuildMouthOutflow(out WaterRiverMouthOutflow outflow),
+                        Is.True);
+            Assert.That(Vector3.Distance(outflow.Origin, expectedTarget), Is.LessThan(1e-4f));
+            Assert.That(outflow.OceanMouthOverlapMeters,
+                        Is.EqualTo(OceanOverlapMeters).Within(1e-4f));
+
+            var origins = new Vector4[WaterRiverMouthOutflow.MaximumShaderOutflows];
+            var directions = new Vector4[WaterRiverMouthOutflow.MaximumShaderOutflows];
+            var parameters = new Vector4[WaterRiverMouthOutflow.MaximumShaderOutflows];
+            var foamFrames = new Vector4[WaterRiverMouthOutflow.MaximumShaderOutflows];
+            var foamAppearances = new Vector4[WaterRiverMouthOutflow.MaximumShaderOutflows];
+            outflow.WriteShaderData(
+                origins, directions, parameters, foamFrames, foamAppearances, 0);
+            Assert.That(foamAppearances[0].w,
+                        Is.EqualTo(OceanOverlapMeters).Within(1e-4f));
+        }
+
+        [Test]
+        public void UnboundedOceanSource_FailsWithAnExplicitUnsupportedDirection()
+        {
+            Assert.That(OceanSettingsField, Is.Not.Null);
+            var oceanSettings =
+                (WaterVolume.OceanSettings)OceanSettingsField.GetValue(_lake);
+            oceanSettings.openWater = true;
+            oceanSettings.unboundedOcean = true;
+            _river.sourceEnd.body = _lake;
+
+            InvalidOperationException exception = Assert.Throws<InvalidOperationException>(
+                () => _river.RegenerateConnection(WaterRiverEndKind.Source));
+            Assert.That(exception.Message, Does.Contain("cannot feed a river Source"));
         }
 
         [Test]

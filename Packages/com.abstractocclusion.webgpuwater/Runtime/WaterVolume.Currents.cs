@@ -70,6 +70,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal readonly float FoamPatternSizeMeters;
         internal readonly float FoamEdgeFeather;
         internal readonly float FoamCoreCut;
+        internal readonly float OceanMouthOverlapMeters;
 
         internal WaterRiverMouthOutflow(
             Vector3 origin, Vector3 downstream, Vector3 right,
@@ -77,7 +78,7 @@ namespace AbstractOcclusion.WebGpuWater
             float speedMetersPerSecond, float foamCoverage, float foamLengthMeters,
             float currentStrength, float foamStrength, float foamLongitudinalMeters,
             float foamLateralSpeedMetersPerSecond, float foamPatternSizeMeters,
-            float foamEdgeFeather, float foamCoreCut)
+            float foamEdgeFeather, float foamCoreCut, float oceanMouthOverlapMeters)
         {
             Origin = origin;
             Downstream = downstream.normalized;
@@ -95,6 +96,7 @@ namespace AbstractOcclusion.WebGpuWater
             FoamPatternSizeMeters = foamPatternSizeMeters;
             FoamEdgeFeather = foamEdgeFeather;
             FoamCoreCut = foamCoreCut;
+            OceanMouthOverlapMeters = oceanMouthOverlapMeters;
         }
 
         internal bool IsActive =>
@@ -115,7 +117,8 @@ namespace AbstractOcclusion.WebGpuWater
             float.IsFinite(FoamPatternSizeMeters) &&
             FoamPatternSizeMeters >= MinimumExtentMeters &&
             float.IsFinite(FoamEdgeFeather) && FoamEdgeFeather >= 0f &&
-            float.IsFinite(FoamCoreCut) && FoamCoreCut >= 0f;
+            float.IsFinite(FoamCoreCut) && FoamCoreCut >= 0f &&
+            float.IsFinite(OceanMouthOverlapMeters) && OceanMouthOverlapMeters >= 0f;
 
         internal bool TrySampleCurrent(Vector3 worldPoint, out Vector3 worldVelocity)
         {
@@ -154,7 +157,8 @@ namespace AbstractOcclusion.WebGpuWater
                 Right.x, Right.z, FoamLongitudinalMeters,
                 FoamLateralSpeedMetersPerSecond);
             foamAppearances[index] = new Vector4(
-                FoamPatternSizeMeters, FoamEdgeFeather, FoamCoreCut, 0f);
+                FoamPatternSizeMeters, FoamEdgeFeather, FoamCoreCut,
+                OceanMouthOverlapMeters);
         }
     }
 

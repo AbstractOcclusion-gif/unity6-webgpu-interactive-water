@@ -371,6 +371,8 @@ namespace AbstractOcclusion.WebGpuWater
                 ? _foam.edgeFeather : DefaultMouthFoamEdgeFeather;
             float foamCoreCut = _foam != null
                 ? _foam.coreCut : DefaultMouthFoamCoreCut;
+            float oceanMouthOverlapMeters = IsUnboundedOcean(ConnectedMouthBody)
+                ? mouthEnd.transitionRadiusMeters : 0f;
             outflow = new WaterRiverMouthOutflow(
                 seam.Centre, seam.Downstream, foamRight,
                 terminal.Width * 0.5f, mouthOutflowLengthMeters,
@@ -378,7 +380,7 @@ namespace AbstractOcclusion.WebGpuWater
                 Mathf.Min(mouthOutflowFoamLengthMeters, mouthOutflowLengthMeters),
                 mouthOutflowCurrentStrength, mouthOutflowFoamStrength,
                 foamLongitudinalMeters, foamLateralSpeed, foamPatternSizeMeters,
-                foamEdgeFeather, foamCoreCut);
+                foamEdgeFeather, foamCoreCut, oceanMouthOverlapMeters);
             return outflow.IsActive;
         }
 
@@ -413,7 +415,7 @@ namespace AbstractOcclusion.WebGpuWater
             return true;
         }
 
-        /// <summary>Where the BODY-side port lands: the closest point ON the body's footprint
+        /// <summary>Where a bounded BODY-side port lands: the closest point ON the body's footprint
         /// BORDER to the river anchor, at the body's rest level, always horizontal. THE BORDER
         /// CONTRACT: surface-to-surface connections meet only at the footprint edge - the seam
         /// then coincides with the bank line, where the body's own edge feather
@@ -442,6 +444,21 @@ namespace AbstractOcclusion.WebGpuWater
             }
             Vector3 border = body.PoolToWorld(new Vector3(x, 0f, z));
             return new Vector3(border.x, restY, border.z);
+        }
+
+        static bool IsUnboundedOcean(WaterVolume body)
+            => body != null && body.openWater && body.unboundedOcean;
+
+        static Vector3 DeriveOceanPortPosition(WaterVolume ocean, Vector3 riverAnchor,
+                                               Vector3 downstream, float overlapMeters)
+        {
+            Vector3 up = ocean.VolumeUp;
+            Vector3 planarDownstream = Vector3.ProjectOnPlane(downstream, up);
+            if (planarDownstream.sqrMagnitude <= 0f)
+                planarDownstream = ocean.VolumeRotation * Vector3.forward;
+            planarDownstream.Normalize();
+            Vector3 target = riverAnchor + planarDownstream * overlapMeters;
+            return target + up * Vector3.Dot(ocean.VolumeCenter - target, up);
         }
 
         // See MaxKnotInsetWarnMeters. Only called from explicit (re)generation - OnValidate-path
@@ -479,6 +496,10 @@ namespace AbstractOcclusion.WebGpuWater
                 throw new InvalidOperationException(
                     "WaterRiver: river-to-river stitching is authored on the downstream " +
                     "river's Source end.");
+            if (endKind == WaterRiverEndKind.Source && IsUnboundedOcean(end.body))
+                throw new InvalidOperationException(
+                    "WaterRiver: an unbounded ocean can currently receive a river Mouth, but " +
+                    "cannot feed a river Source. Author the ocean connection at the last knot.");
             if (end.upstreamRiver == this)
                 throw new InvalidOperationException("WaterRiver: a river cannot connect to itself.");
             if (end.upstreamRiver != null && UpstreamChainContains(end.upstreamRiver, this))
@@ -491,7 +512,8 @@ namespace AbstractOcclusion.WebGpuWater
             if (!TryGetEndFrame(endKind, out Vector3 anchor, out Vector3 downstream, out float flowRate))
                 throw new InvalidOperationException(
                     "WaterRiver: the spline cannot provide a terminal frame (needs >= 2 valid knots).");
-            if (end.body != null) WarnIfAnchorDeepInsideFootprint(endKind, end.body, anchor);
+            if (end.body != null && !IsUnboundedOcean(end.body))
+                WarnIfAnchorDeepInsideFootprint(endKind, end.body, anchor);
 
             string riverPortName = endKind == WaterRiverEndKind.Source
                 ? SourceRiverPortName : MouthRiverPortName;
@@ -517,15 +539,17 @@ namespace AbstractOcclusion.WebGpuWater
             end.connection.transitionRadiusMeters = end.transitionRadiusMeters;
             end.connection.authoredFlowRate = flowRate;
 
-            PlaceEndTransforms(end, anchor, downstream);
+            PlaceEndTransforms(end, endKind, anchor, downstream);
             SyncSeams();
             SyncMouthOutflowRegistration();
         }
 
         // ---- render seams ------------------------------------------------------------------
 
-        // A body remains the sole owner of its footprint. The river generator conforms its
-        // existing terminal rows to this exact border frame; no hidden apron or body carve exists.
+        // A bounded body remains the sole owner of its footprint. An unbounded ocean has no useful
+        // rectangle border, so its target frame extends one transition radius along the authored
+        // river tangent. The conformed terminal band becomes the visible overlap apron while the
+        // ocean shader relinquishes only that coincident surface strip.
         void SyncSeams()
         {
             CacheSiblings();
@@ -546,6 +570,25 @@ namespace AbstractOcclusion.WebGpuWater
 
             WaterVolume body = end.body;
             Vector3 centre = end.targetPort.transform.position;
+            Vector3 up = body.VolumeUp;
+            if (IsUnboundedOcean(body))
+            {
+                Vector3 oceanDownstream = Vector3.ProjectOnPlane(
+                    end.riverPort.transform.forward, up);
+                if (oceanDownstream.sqrMagnitude <= 0f)
+                    oceanDownstream = body.VolumeRotation * Vector3.forward;
+                oceanDownstream.Normalize();
+                return new WaterRiverRibbonMeshGenerator.BodySeamEnd
+                {
+                    Enabled = true,
+                    LengthMeters = end.transitionRadiusMeters,
+                    Centre = centre,
+                    Downstream = oceanDownstream,
+                    Right = Vector3.Cross(up, oceanDownstream).normalized,
+                    Up = up.normalized,
+                };
+            }
+
             Vector3 pool = body.WorldToPool(centre);
             Vector3 extent = body.VolumeExtentSafe;
             float xEdgeDistance = Mathf.Abs(Mathf.Abs(pool.x) - 1f) * extent.x;
@@ -556,7 +599,6 @@ namespace AbstractOcclusion.WebGpuWater
                 ? axisX * (pool.x >= 0f ? 1f : -1f)
                 : axisZ * (pool.z >= 0f ? 1f : -1f);
             Vector3 downstream = endKind == WaterRiverEndKind.Mouth ? -outward : outward;
-            Vector3 up = body.VolumeUp;
             Vector3 right = Vector3.Cross(up, downstream).normalized;
 
             return new WaterRiverRibbonMeshGenerator.BodySeamEnd
@@ -583,12 +625,13 @@ namespace AbstractOcclusion.WebGpuWater
             WaterRiverEndConnection end = EndFor(endKind);
             if (!end.IsGenerated || !end.WantsConnection || end.HasAmbiguousTarget) return;
             if (!TryGetEndFrame(endKind, out Vector3 anchor, out Vector3 downstream, out _)) return;
-            PlaceEndTransforms(end, anchor, downstream);
+            PlaceEndTransforms(end, endKind, anchor, downstream);
             end.connection.transitionRadiusMeters = end.transitionRadiusMeters;
             _mouthOutflowHost?.InvalidateRiverMouthOutflows();
         }
 
-        void PlaceEndTransforms(WaterRiverEndConnection end, Vector3 anchor, Vector3 downstream)
+        void PlaceEndTransforms(WaterRiverEndConnection end, WaterRiverEndKind endKind,
+                                Vector3 anchor, Vector3 downstream)
         {
             Quaternion facing = downstream.sqrMagnitude > 0f
                 ? Quaternion.LookRotation(downstream, Vector3.up) : Quaternion.identity;
@@ -597,7 +640,10 @@ namespace AbstractOcclusion.WebGpuWater
             Quaternion targetFacing = facing;
             if (end.body != null)
             {
-                targetAnchor = DeriveBodyPortPosition(end.body, anchor);
+                targetAnchor = IsUnboundedOcean(end.body)
+                    ? DeriveOceanPortPosition(
+                        end.body, anchor, downstream, end.transitionRadiusMeters)
+                    : DeriveBodyPortPosition(end.body, anchor);
             }
             else
             {

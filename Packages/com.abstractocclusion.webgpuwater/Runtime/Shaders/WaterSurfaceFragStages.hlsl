@@ -123,6 +123,8 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
     // tilt. A height gradient g contributes normal.xz = -g, so the two
     // slopes simply add in the xz components before re-deriving y.
     float riverWeight = i.riverBakeUv.z;
+    float oceanMouthWaveWeight = 1.0 - MouthOutflowOceanCalm(i.largeWaveSourceXZ);
+    info.ba *= oceanMouthWaveWeight;
     float2 sampledRiverVelocity = SampleRiverFluidVelocity(
         i.riverBakeUv.xy, i.riverCurrentData.w);
     float4 riverCurrentData = float4(i.riverCurrentData.xy, sampledRiverVelocity);
@@ -137,6 +139,7 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
     float outflowInfluence = MouthOutflowCurrentInfluence(i.largeWaveSourceXZ);
     float2 gridWindSlope = lerp(
         WaveSlope(gridWaveSample), WaveSlope(outflowWaveSample), outflowInfluence);
+    gridWindSlope *= oceanMouthWaveWeight;
     float2 riverWaveSampleA;
     float2 riverWaveSampleB;
     float riverWavePhaseBlend;
@@ -216,6 +219,9 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
                                                               i.largeWaveSourceXZ,
                                                               _WaveNormalStrength,
                                                               shoreFrag, surfFrag);
+        normalFoam.xyz = normalize(lerp(
+            largeWaveBaseNormal, normalFoam.xyz, oceanMouthWaveWeight));
+        normalFoam.w *= oceanMouthWaveWeight;
         float inverseLargeWaveUp = rcp(max(normalFoam.y, LBW_NORMAL_MIN_Y));
         float2 riverLargeWaveTilt = normalFoam.xz * inverseLargeWaveUp;
         float3 riverLargeWaveNormal = normalize(normal
@@ -242,6 +248,7 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
                                                      : _DetailNormalStrength;
     if (detailNormalStrength > 0.0)
     {
+        detailNormalStrength *= oceanMouthWaveWeight;
         // Wind ripple is not an even film: it concentrates on the STEEP faces of the waves carrying
         // it and thins out in the flat troughs. length(normal.xz) IS the sine of the local tilt (the
         // normal is unit here), read AFTER the large-body wave normal is folded in above, so ocean
@@ -365,6 +372,7 @@ float OceanWhitecapCoverage(v2f i, WaterGeomStage g, float2 foamWorldDdx, float2
         // pattern/dissolve/lit pipeline as the FFT whitecaps below.
         coverage = g.surfGeomFoam;
     }
+    coverage *= 1.0 - MouthOutflowOceanCalm(i.largeWaveSourceXZ);
     if (coverage > FOAM_MASK_EPSILON)
     {
         // Parallax: sample the PATTERN where a layer floating just above the surface

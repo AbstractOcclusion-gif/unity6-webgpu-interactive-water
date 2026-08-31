@@ -52,6 +52,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         bool _showOceanAperiodic = false;
         bool _showWindFetch = false;
         bool _showOceanSwellAdvanced = false;
+        bool _showShoal = false;
         bool _showSurf = false;
         bool _showSurfAdvanced = false;
 
@@ -143,6 +144,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             Sync(ref _showOceanAperiodic, nameof(_showOceanAperiodic), load);
             Sync(ref _showWindFetch, nameof(_showWindFetch), load);
             Sync(ref _showOceanSwellAdvanced, nameof(_showOceanSwellAdvanced), load);
+            Sync(ref _showShoal, nameof(_showShoal), load);
             Sync(ref _showSurf, nameof(_showSurf), load);
             Sync(ref _showSurfAdvanced, nameof(_showSurfAdvanced), load);
 
@@ -237,6 +239,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     DrawRippleSection();
                     DrawOceanSwellSection();
                     DrawWindWavesSection();
+                    DrawShoalTransformSection();
                     DrawSurfFrontsSection();
                     break;
 

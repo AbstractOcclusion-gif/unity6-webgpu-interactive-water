@@ -18,6 +18,7 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         const int SamplesPerSegment = 8;
         const float BodySurfaceY = 0.05f;
         const float TransitionLengthMeters = 6f;
+        const float OceanOverlapMeters = 3f;
         const float PositionTolerance = 1e-4f;
 
         readonly List<UnityEngine.Object> _objects = new List<UnityEngine.Object>();
@@ -71,6 +72,17 @@ namespace AbstractOcclusion.WebGpuWater.Tests
                 Enabled = true,
                 LengthMeters = length,
                 Centre = new Vector3(0f, BodySurfaceY, 0f),
+                Downstream = Vector3.forward,
+                Right = Vector3.right,
+                Up = Vector3.up,
+            };
+
+        static WaterRiverRibbonMeshGenerator.BodySeamEnd OceanMouthSeam() =>
+            new WaterRiverRibbonMeshGenerator.BodySeamEnd
+            {
+                Enabled = true,
+                LengthMeters = OceanOverlapMeters,
+                Centre = new Vector3(0f, BodySurfaceY, RiverLength + OceanOverlapMeters),
                 Downstream = Vector3.forward,
                 Right = Vector3.right,
                 Up = Vector3.up,
@@ -159,6 +171,23 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             Assert.That(current[centreColumn].w, Is.EqualTo(0f).Within(1e-5f));
             Assert.That(end[centreColumn].x, Is.EqualTo(-1f).Within(1e-5f));
             Assert.That(end[end.Count - 1], Is.EqualTo(Vector2.zero));
+        }
+
+        [Test]
+        public void OceanMouthSeam_ExtendsTheTerminalRowAlongTheAuthoredFrame()
+        {
+            WaterRiverRibbonMeshGenerator.Populate(
+                _mesh, _spline, _meshTransform, SamplesPerSegment,
+                default, OceanMouthSeam());
+
+            int columns = WaterRiverRibbonMeshGenerator.VerticesPerCrossSection;
+            int terminalCentre = _mesh.vertexCount - columns + columns / 2;
+            Vector3 terminal = _mesh.vertices[terminalCentre];
+            Assert.That(terminal.x, Is.EqualTo(0f).Within(PositionTolerance));
+            Assert.That(terminal.y, Is.EqualTo(BodySurfaceY).Within(PositionTolerance));
+            Assert.That(terminal.z,
+                        Is.EqualTo(RiverLength + OceanOverlapMeters)
+                            .Within(PositionTolerance));
         }
 
         [Test]

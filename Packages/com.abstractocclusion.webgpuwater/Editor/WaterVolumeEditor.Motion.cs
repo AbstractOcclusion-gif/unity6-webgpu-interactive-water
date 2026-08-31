@@ -1,7 +1,7 @@
 // WebGpuWater - WaterVolume inspector: the MOTION tab.
 // Every source of surface height, in one place, ordered LARGEST FIRST below the things that steer
 // them all:
-//   global clock -> wind -> interactive ripples -> ocean sea state -> small wind waves -> surf fronts.
+//   global clock -> wind -> interactive ripples -> ocean sea state -> small wind waves -> shoal -> surf fronts.
 // Reading the tab top-down is reading the wave stack. Nothing here decides how the water LOOKS.
 //
 // Wind is its own section, above the wave sources rather than inside one. It used to live inside
@@ -9,9 +9,10 @@
 // authored from the ripple section - the two are now genuinely independent (Peak Wavelength owns the
 // ocean's scale, Fetch owns the ripples'), and the layout says so.
 //
-// The surf block was extracted from the old 45-field "Bed Depth" section: its motion (shoal,
-// fronts, crests, swash) is here, its foam is in Surface > Foam > Shore & Swash, its colour in
-// Volume > Bed Colour & Clarity. It greys out until Bed Depth is on in the Body tab.
+// The shore-motion block was extracted from the old 45-field "Bed Depth" section. Bathymetric
+// shoaling is independent from the optional breaker/swash layer, so each owns a section here;
+// shore foam is in Surface > Foam > Shore & Swash, colour in Volume > Bed Colour & Clarity.
+// Both grey out until Bed Depth is on in the Body tab.
 #if UNITY_EDITOR
 using UnityEditor;
 using UnityEngine;
@@ -313,11 +314,38 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const float SwellSteepness = 1f / 60f;
         // Float slop, so the readout does not flicker on when the floor merely ties the authored value.
         const float ShoalBandReadoutEpsilon = 1e-3f;
+        const string ShoalTransformHelp =
+            "Depth-driven attenuation, growth, refraction and compression of the existing wave " +
+            "field. This remains active when Surf Fronts is off and requires a baked terrain bed.";
+        const string SurfMouthLimitationHelp =
+            "Known limitation: Surf Fronts follow the baked shoreline and do not yet carve an " +
+            "automatic calm aperture around connected river mouths.";
+
+        void DrawShoalTransformSection()
+        {
+            _showShoal = WaterEditorUI.Section("Shoal Transform", _showShoal, () =>
+            {
+                EditorGUILayout.HelpBox(ShoalTransformHelp, MessageType.None);
+                DrawFields(WaterVolumePropertyPaths.ShoreShoalDepth);
+                if (target is WaterVolume bandVolume &&
+                    bandVolume.ShoreShoalDepthEffective >
+                    Prop(WaterVolumePropertyPaths.ShoreShoalDepth).floatValue +
+                    ShoalBandReadoutEpsilon)
+                    EditorGUILayout.LabelField(" ",
+                        $"Effective: {bandVolume.ShoreShoalDepthEffective:0.##} m " +
+                        "(floored at twice the offshore sea height)",
+                        EditorStyles.miniLabel);
+                DrawFields(
+                    WaterVolumePropertyPaths.ShoreRefraction,
+                    WaterVolumePropertyPaths.ShoreCompression,
+                    WaterVolumePropertyPaths.ShoreGreens);
+            }, contentEnabled: UsesBedDepth);
+        }
 
         void DrawSurfFrontsSection()
         {
             _showSurf = WaterEditorUI.SectionWithToggle(
-                "Surf Fronts (shoaling breakers)", _showSurf, Prop(WaterVolumePropertyPaths.SurfEnabled), () =>
+                "Surf Fronts (breakers & swash)", _showSurf, Prop(WaterVolumePropertyPaths.SurfEnabled), () =>
             {
                 DrawFields(WaterVolumePropertyPaths.SurfAmplitude);
                 // Runtime silently floors the surf amplitude at the swell height; surface the effective
@@ -336,23 +364,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     EditorGUILayout.LabelField(" ",
                         $"Derived spacing: {surfVolume.SurfWavelengthEffective:0.#} m",
                         EditorStyles.miniLabel);
-                DrawFields("bedDepthSettings.surfPeriod", "bedDepthSettings.shoreShoalDepth");
-                // Same treatment as the surf amplitude above: the band is floored so that shoaling
-                // always begins outside the depth the sea can survive in, and a big sea moves that
-                // floor well past whatever is typed here.
-                if (target is WaterVolume bandVolume &&
-                    bandVolume.ShoreShoalDepthEffective > Prop("bedDepthSettings.shoreShoalDepth").floatValue + ShoalBandReadoutEpsilon)
-                    EditorGUILayout.LabelField(" ",
-                        $"Effective: {bandVolume.ShoreShoalDepthEffective:0.##} m (floored at twice the offshore sea height)",
-                        EditorStyles.miniLabel);
+                DrawFields("bedDepthSettings.surfPeriod");
 
                 _showSurfAdvanced = WaterEditorUI.SubSection("Advanced", _showSurfAdvanced, () =>
                 {
-                    WaterEditorUI.SubHeading("Shoal transform");
-                    DrawFields(
-                        "bedDepthSettings.shoreRefraction",
-                        "bedDepthSettings.shoreCompression",
-                        "bedDepthSettings.shoreGreens");
                     WaterEditorUI.SubHeading("Front shaping");
                     DrawFields(
                         "bedDepthSettings.surfBandDepth",
@@ -370,6 +385,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                                "bedDepthSettings.surfSwashMaxSlopeDegrees");
                 });
 
+                // TODO(MOUTH-SURF): derive an aperture from the existing mouth-outflow descriptor
+                // and suppress breaker/front/swash ownership there while preserving depth shoaling.
+                if (IsOcean)
+                    EditorGUILayout.HelpBox(SurfMouthLimitationHelp, MessageType.Warning);
                 EditorGUILayout.HelpBox(SurfFoamPointerHelp, MessageType.None);
             },
             contentEnabled: UsesBedDepth);
