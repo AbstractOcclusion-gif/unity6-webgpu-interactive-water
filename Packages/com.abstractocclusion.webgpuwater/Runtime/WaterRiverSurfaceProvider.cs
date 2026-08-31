@@ -86,9 +86,18 @@ namespace AbstractOcclusion.WebGpuWater
 
             // Real spline elevation - the whole point of this provider. The ribbon's Up is the
             // spline frame's normal, already unit length (WaterRiverSplineEvaluator).
-            sample.Height = spline.Position.y;
+            float disturbanceHeight = 0f;
+            Vector2 disturbanceNormalTilt = Vector2.zero;
+            WaterRiverDisturbance disturbance = _surface.Disturbance;
+            if (!excludeInteractiveRipples && disturbance != null)
+                disturbance.TrySample(worldPoint, in spline, out disturbanceHeight,
+                                      out disturbanceNormalTilt, out _);
+            sample.Height = spline.Position.y + disturbanceHeight * spline.Up.y;
             sample.Valid = true;
-            if ((fields & WaterQueryFields.Normal) != 0) sample.Normal = spline.Up;
+            if ((fields & WaterQueryFields.Normal) != 0)
+                sample.Normal = Vector3.Normalize(
+                    spline.Up + spline.Right * disturbanceNormalTilt.x +
+                    spline.Tangent * disturbanceNormalTilt.y);
             if ((fields & WaterQueryFields.Velocity) != 0)
                 sample.Velocity = ResolveCurrent(worldPoint, spline);
             return true;

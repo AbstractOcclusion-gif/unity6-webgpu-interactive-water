@@ -137,12 +137,20 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
     float outflowInfluence = MouthOutflowCurrentInfluence(i.largeWaveSourceXZ);
     float2 gridWindSlope = lerp(
         WaveSlope(gridWaveSample), WaveSlope(outflowWaveSample), outflowInfluence);
-    float2 riverWaveSample = RiverCurrentWaveSampleXZ(riverCurrentData);
+    float2 riverWaveSampleA;
+    float2 riverWaveSampleB;
+    float riverWavePhaseBlend;
+    RiverCurrentWaveSampleXZ(
+        riverCurrentData, riverWaveSampleA, riverWaveSampleB,
+        riverWavePhaseBlend);
+    float2 riverWaveSlope = lerp(
+        WaveSlope(riverWaveSampleA), WaveSlope(riverWaveSampleB),
+        riverWavePhaseBlend);
     // Match the vertex stage: blend sampled slopes, never the
     // coordinates (coordinate lerp = phase sweep = the washboard band). Uniform branch.
     float2 windSlope;
     if (_IsRiver > 0.5)
-        windSlope = lerp(gridWindSlope, WaveSlope(riverWaveSample), riverWeight);
+        windSlope = lerp(gridWindSlope, riverWaveSlope, riverWeight);
     else
         windSlope = gridWindSlope;
     windSlope *= _WaveNormalStrength;
@@ -158,6 +166,15 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
     // Converting first means nothing ever exceeds a real slope, at any depth or footprint.
     float2 nxzWorld = info.ba * SIM_SLOPE_TO_POOL * _SimSlopeToWorld.xy
                     - windSlope * _PoolSlopeToWorld.xy;
+    // The analytic river field is differentiated in physical ribbon metres, so its normal tilt
+    // adds directly in the transported width/flow frame without a pool-aspect conversion.
+    RiverDisturbanceSample riverDisturbance;
+    riverDisturbance.height = 0.0;
+    riverDisturbance.normalTilt = float2(0.0, 0.0);
+    riverDisturbance.foam = 0.0;
+    if (_IsRiver > 0.5 && _RiverDisturbanceActive > 0.5)
+        riverDisturbance = EvaluateRiverDisturbance(i.riverCurrentData.xy);
+    nxzWorld += riverDisturbance.normalTilt * riverWeight;
     // Rotation only - the extent division is already carried by _PoolSlopeToWorld above. The
     // interpolated basis is VolumeRot's x/up/z frame for every existing grid and the mesh's
     // transported width/up/flow frame for a river, so slopes follow descending waterfall spans.
@@ -570,7 +587,11 @@ float RiverCascadeFoamCoverage(v2f i)
 
 float RiverFoamCoverage(v2f i, float contactCoverage)
 {
-    if (_IsRiver < 0.5 || _RiverFoamActive < 0.5) return 0.0;
+    if (_IsRiver < 0.5) return 0.0;
+    float disturbanceCoverage;
+    RiverDisturbanceHeightAt(i.riverCurrentData.xy, disturbanceCoverage);
+    disturbanceCoverage *= saturate(i.riverBakeUv.z);
+    if (_RiverFoamActive < 0.5) return saturate(disturbanceCoverage);
     float bakedCoverage = 0.0;
     if (_RiverFluidActive > 0.5)
     {
@@ -583,6 +604,7 @@ float RiverFoamCoverage(v2f i, float contactCoverage)
         bakedCoverage,
         contactCoverage * _RiverContactFoamStrength);
     coverage = CombineFoamCoverage(coverage, RiverCascadeFoamCoverage(i));
+    coverage = CombineFoamCoverage(coverage, disturbanceCoverage);
     // The seam weight blends displacement and shading between coordinate frames; it is not surface
     // ownership. The ribbon and receiving body meet at one border and do not overlap. Multiplying
     // foam by that weight forced the terminal row to zero, and interpolation spread the zero across
@@ -605,6 +627,7 @@ struct PondFoamSamples
     float2 bodyBaseUv;
     float2 bodyOutflowUv;
     float2 riverUv;
+    float2 riverFlow;
     float2 bodyBaseDdx;
     float2 bodyBaseDdy;
     float2 bodyOutflowDdx;
@@ -630,7 +653,6 @@ PondFoamSamples BuildPondFoamSamples(v2f i, float3 normal, float2 localTilt)
     float tileSize = max(_FoamTileSize, 1e-3);
     float2 riverVelocity = SampleRiverFluidVelocity(
         i.riverBakeUv.xy, i.riverCurrentData.w);
-    float2 riverMetres = i.riverCurrentData.xy - riverVelocity * _WaveTime;
     float2 bodyBaseUv = i.largeWaveSourceXZ / tileSize
                       + normal.xz * FOAM_NORMAL_NUDGE;
     float bodyOutflowInfluence;
@@ -651,12 +673,14 @@ PondFoamSamples BuildPondFoamSamples(v2f i, float3 normal, float2 localTilt)
     float outflowTileSize = max(selectedOutflowAppearance.x, 1e-3);
     float2 bodyOutflowUv = selectedOutflowMetres / outflowTileSize
                          + normal.xz * FOAM_NORMAL_NUDGE;
-    float2 riverUv = riverMetres / tileSize + localTilt * FOAM_NORMAL_NUDGE;
+    float2 riverUv = i.riverCurrentData.xy / tileSize
+                   + localTilt * FOAM_NORMAL_NUDGE;
 
     PondFoamSamples samples;
     samples.bodyBaseUv = bodyBaseUv;
     samples.bodyOutflowUv = bodyOutflowUv;
     samples.riverUv = riverUv;
+    samples.riverFlow = riverVelocity / tileSize;
     // Derivatives are captured before the mask-dependent sampling branch. EvaluateFoam uses
     // explicit gradients, so the later per-pixel output blends remain WGSL-safe.
     samples.bodyBaseDdx = ddx(bodyBaseUv);
@@ -677,10 +701,12 @@ PondFoamSamples BuildPondFoamSamples(v2f i, float3 normal, float2 localTilt)
 
 PondFoamEvaluation EvaluatePondFoamAt(
     float2 uv, float2 uvDdx, float2 uvDdy, float2 flow,
+    float flowDistance, float flowRate,
     float mask, float cameraDistance, float edgeFeather, float coreCut)
 {
     PondFoamEvaluation evaluation;
-    EvaluateFoam(uv, uvDdx, uvDdy, flow, mask, cameraDistance,
+    EvaluateFoam(uv, uvDdx, uvDdy, flow, flowDistance, flowRate,
+                 mask, cameraDistance,
                  edgeFeather, coreCut,
                  evaluation.pattern, evaluation.core, evaluation.lace,
                  evaluation.alpha, evaluation.tilt);
@@ -704,11 +730,14 @@ PondFoamEvaluation EvaluateTransportedPondFoam(
 {
     if (samples.riverWeight > 0.5)
     {
-        // River metric UV already includes physical advection; applying the body's periodic flow
-        // offset here would transport it twice.
+        // The periodic two-phase transport keeps local baked-flow differences bounded. Pre-offsetting
+        // river UV by velocity times the unbounded global clock accumulated permanent longitudinal
+        // shear and eventually collapsed the pattern into straight lanes.
         PondFoamEvaluation riverEvaluation = EvaluatePondFoamAt(
             samples.riverUv, samples.riverDdx, samples.riverDdy,
-            float2(0.0, 0.0), mask, cameraDistance,
+            samples.riverFlow,
+            RIVER_CURRENT_PHASE_WINDOW_SECONDS, RIVER_CURRENT_PHASE_RATE,
+            mask, cameraDistance,
             _FoamFeather, _FoamCoreCut);
         if (samples.outflowInfluence <= 0.0) return riverEvaluation;
 
@@ -716,7 +745,8 @@ PondFoamEvaluation EvaluateTransportedPondFoam(
         // same nudge, periodic flow and mouth frame used by the receiving body's first pixel.
         PondFoamEvaluation mouthEvaluation = EvaluatePondFoamAt(
             samples.bodyOutflowUv, samples.bodyOutflowDdx, samples.bodyOutflowDdy,
-            bodyFlow, mask, cameraDistance,
+            bodyFlow, FOAM_FLOW_DISTANCE, FOAM_FLOW_RATE,
+            mask, cameraDistance,
             samples.outflowAppearance.y, samples.outflowAppearance.z);
         return BlendPondFoamEvaluations(
             riverEvaluation, mouthEvaluation, samples.outflowInfluence);
@@ -724,13 +754,15 @@ PondFoamEvaluation EvaluateTransportedPondFoam(
 
     PondFoamEvaluation bodyEvaluation = EvaluatePondFoamAt(
         samples.bodyBaseUv, samples.bodyBaseDdx, samples.bodyBaseDdy,
-        bodyFlow, mask, cameraDistance, _FoamFeather, _FoamCoreCut);
+        bodyFlow, FOAM_FLOW_DISTANCE, FOAM_FLOW_RATE,
+        mask, cameraDistance, _FoamFeather, _FoamCoreCut);
 
     if (samples.outflowInfluence > 0.0)
     {
         PondFoamEvaluation outflowEvaluation = EvaluatePondFoamAt(
             samples.bodyOutflowUv, samples.bodyOutflowDdx, samples.bodyOutflowDdy,
-            bodyFlow, mask, cameraDistance,
+            bodyFlow, FOAM_FLOW_DISTANCE, FOAM_FLOW_RATE,
+            mask, cameraDistance,
             samples.outflowAppearance.y, samples.outflowAppearance.z);
         bodyEvaluation = BlendPondFoamEvaluations(
             bodyEvaluation, outflowEvaluation, samples.outflowInfluence);
@@ -1304,9 +1336,7 @@ float PondFoamCoverage(v2f i)
     // half-strength foam haze.
     if (_IsRiver > 0.5)
     {
-        float riverCoverage = (_RiverFoamActive > 0.5)
-            ? RiverFoamCoverage(i, SurfaceContactFoamCoverage(i))
-            : 0.0;
+        float riverCoverage = RiverFoamCoverage(i, SurfaceContactFoamCoverage(i));
         return RiverMouthHandoffFoamCoverage(i, riverCoverage);
     }
 

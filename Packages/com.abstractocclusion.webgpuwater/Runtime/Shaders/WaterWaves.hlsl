@@ -68,12 +68,25 @@ float2 WindWaveSampleXZ(float2 poolXZ, float2 worldXZ)
     return poolXZ;
 }
 
-float2 RiverCurrentWaveSampleXZ(float4 currentData)
+#define RIVER_CURRENT_PHASE_RATE 2.0
+#define RIVER_CURRENT_PHASE_WINDOW_SECONDS 0.5
+
+void RiverCurrentWaveSampleXZ(float4 currentData, out float2 sampleA,
+                              out float2 sampleB, out float phaseBlend)
 {
     // UV1.xy is metric ribbon space. ZW is the baked lateral/downstream velocity, so the same
     // obstacle-deflected flow transports the visible wave pattern and the physical current.
-    float2 riverMetres = currentData.xy - currentData.zw * _WaveTime;
-    return riverMetres / max(_WaveMetersPerUnit, WAVE_METERS_MIN);
+    // Local velocity multiplied by unbounded time accumulates unlimited shear wherever adjacent
+    // cells differ, eventually straightening the whole surface into longitudinal lanes. Two
+    // bounded phases preserve forward transport and cross-fade through each reset without a pop.
+    float phaseA = frac(_WaveTime * RIVER_CURRENT_PHASE_RATE);
+    float phaseB = frac(phaseA + 0.5);
+    phaseBlend = abs(phaseA * 2.0 - 1.0);
+    float inverseWaveMetres = rcp(max(_WaveMetersPerUnit, WAVE_METERS_MIN));
+    sampleA = (currentData.xy - currentData.zw *
+               (phaseA * RIVER_CURRENT_PHASE_WINDOW_SECONDS)) * inverseWaveMetres;
+    sampleB = (currentData.xy - currentData.zw *
+               (phaseB * RIVER_CURRENT_PHASE_WINDOW_SECONDS)) * inverseWaveMetres;
 }
 
 // ---- connected river mouth outflows ---------------------------------------------------------

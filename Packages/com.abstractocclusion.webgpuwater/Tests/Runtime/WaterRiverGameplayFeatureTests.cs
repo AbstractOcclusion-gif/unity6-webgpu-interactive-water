@@ -17,6 +17,8 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         const float RiverWidth = 5f;
         const float RiverSpeed = 2f;
         const float ArmBandMeters = 0.5f;
+        const float SplashProbeHeight = 7f;
+        const float SurfaceComparisonTolerance = 1e-5f;
 
         readonly List<GameObject> _objects = new List<GameObject>();
         WaterRiverSurface _surface;
@@ -131,6 +133,45 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             Assert.That(sample.Provider, Is.SameAs(_provider));
             Assert.That(sample.InsideDomain, Is.False);
             Assert.That(sample.SurfaceHeight, Is.LessThan(highAbove.y));
+        }
+
+        [Test]
+        public void SplashRouting_RibbonWithParentBody_RejectsTheVolumeGpuDomain()
+        {
+            GameObject bodyHost = new GameObject("River Splash Parent Body");
+            _objects.Add(bodyHost);
+            bodyHost.SetActive(false);
+            WaterVolume body = bodyHost.AddComponent<WaterVolume>();
+            _surface.waterVolume = body;
+
+            Assert.That(WaterSplashEmitter.UsesVolumeParticleDomain(_provider, body), Is.False,
+                        "a ribbon shares body state, not the body's rectangular particle frame");
+            Assert.That(WaterSplashEmitter.UsesVolumeParticleDomain(body, body), Is.True,
+                        "the volume provider must retain the existing GPU splash path");
+        }
+
+        [Test]
+        public void SplashDriftSurface_RibbonUsesSplineHeightAndCurrent()
+        {
+            GameObject bodyHost = new GameObject("River Splash Drift Parent Body");
+            _objects.Add(bodyHost);
+            bodyHost.SetActive(false);
+            WaterVolume body = bodyHost.AddComponent<WaterVolume>();
+            _surface.waterVolume = body;
+
+            Vector3 point = new Vector3(0f, SplashProbeHeight, RiverLength * 0.5f);
+            Assert.That(_provider.TrySampleSurface(point, WaterQueryFields.HeightNormalVelocity,
+                                                   0f, false, out WaterSample expected), Is.True);
+            Assert.That(WaterSplashEmitter.TryResolveDriftSurface(
+                            point, out float surfaceY, out Vector2 surfaceDrift), Is.True);
+
+            Assert.That(surfaceY, Is.EqualTo(expected.Height).Within(SurfaceComparisonTolerance));
+            Assert.That(surfaceDrift.x,
+                        Is.EqualTo(expected.Velocity.x).Within(SurfaceComparisonTolerance));
+            Assert.That(surfaceDrift.y,
+                        Is.EqualTo(expected.Velocity.z).Within(SurfaceComparisonTolerance));
+            Assert.That(surfaceDrift.sqrMagnitude, Is.GreaterThan(0f),
+                        "settled river droplets must be carried by the river current");
         }
     }
 }

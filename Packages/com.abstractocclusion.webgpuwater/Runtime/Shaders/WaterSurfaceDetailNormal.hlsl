@@ -320,6 +320,11 @@ float2 DetailNormalTilt(float2 worldXZ, float viewDist)
 
 #define RIVER_DETAIL_CROSSING_X 0.18
 #define RIVER_DETAIL_DOWNSTREAM_Y -0.983666
+// Bounded two-phase transport clock - same contract as RiverCurrentWaveSampleXZ in
+// WaterWaves.hlsl (window * rate = 1, so the pattern still travels at the sampled
+// speed). Local defines keep this include self-contained.
+#define RIVER_DETAIL_PHASE_RATE 2.0
+#define RIVER_DETAIL_PHASE_WINDOW_SECONDS 0.5
 
 float2 RiverDetailNormalTilt(float4 currentData, float viewDist)
 {
@@ -334,13 +339,32 @@ float2 RiverDetailNormalTilt(float4 currentData, float viewDist)
     float farSpeedRatio = max(_DetailNormalFarSpeed, DETAIL_NORMAL_MIN_SPEED)
                         / max(_DetailNormalSpeed, DETAIL_NORMAL_MIN_SPEED);
     float riverSpeed = length(currentData.zw);
-    return DetailNormalTiltScrolled(
+    // Scrolling by riverSpeed * unbounded _WaveTime let every pixel-to-pixel speed
+    // difference - even the half-precision ripple of a perfectly uniform bake - integrate
+    // into unlimited longitudinal shear, combing the micro detail into flow-aligned lanes
+    // that sharpen the longer a session runs. Two bounded phases cap the excursion at
+    // window * speed metres and cross-fade through each reset, exactly like the wind-wave
+    // and foam transports; forward speed is unchanged because window * rate = 1.
+    float phaseA = frac(_WaveTime * RIVER_DETAIL_PHASE_RATE);
+    float phaseB = frac(phaseA + 0.5);
+    float phaseBlend = abs(phaseA * 2.0 - 1.0);
+    float scrollTimeA = phaseA * RIVER_DETAIL_PHASE_WINDOW_SECONDS;
+    float scrollTimeB = phaseB * RIVER_DETAIL_PHASE_WINDOW_SECONDS;
+    float2 tiltA = DetailNormalTiltScrolled(
         currentData.xy,
-        riverDirection0 * _WaveTime,
-        riverDirection1 * _WaveTime,
+        riverDirection0 * scrollTimeA,
+        riverDirection1 * scrollTimeA,
         riverSpeed,
         riverSpeed * farSpeedRatio,
         viewDist);
+    float2 tiltB = DetailNormalTiltScrolled(
+        currentData.xy,
+        riverDirection0 * scrollTimeB,
+        riverDirection1 * scrollTimeB,
+        riverSpeed,
+        riverSpeed * farSpeedRatio,
+        viewDist);
+    return lerp(tiltA, tiltB, phaseBlend);
 }
 
 #endif // WATER_SURFACE_DETAIL_NORMAL_INCLUDED

@@ -93,6 +93,7 @@ namespace AbstractOcclusion.WebGpuWater
             new Vector4[WaterRiverMouthOutflow.MaximumShaderOutflows];
         readonly Vector4[] _mouthOutflowFoamAppearances =
             new Vector4[WaterRiverMouthOutflow.MaximumShaderOutflows];
+        float _sourceLongitudinalMeters;
         float _mouthLongitudinalMeters;
         Vector3 _mouthRight;
         WaterRiverSpline _subscribedSpline;
@@ -100,6 +101,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         WaterRiverSurfaceProvider _provider;
         WaterRiverCurrentField _currentField;
+        WaterRiverDisturbance _disturbance;
         WaterRiver _riverFacade;
         // The underside twin is RUNTIME-CREATED and DontSave: the generated mesh itself never
         // serializes, so a scene-persisted child would come back holding a missing mesh. Play
@@ -120,6 +122,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal WaterVolume WaterVolume => waterVolume;
         internal Renderer SurfaceRenderer => _meshRenderer;
         internal float GameplayDepthMeters => gameplayDepthMeters;
+        internal float SourceLongitudinalMeters => _sourceLongitudinalMeters;
         internal float MouthLongitudinalMeters => _mouthLongitudinalMeters;
         internal Vector3 MouthRight => _mouthRight;
         /// <summary>This ribbon's domain-query face (registered while the surface is enabled).</summary>
@@ -127,6 +130,7 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>Authored current field the provider prefers over the uniform spline speed;
         /// resolved from this object, then the spline's (where the field usually lives).</summary>
         internal WaterRiverCurrentField CurrentField => _currentField;
+        internal WaterRiverDisturbance Disturbance => _disturbance;
         internal event Action ConfigurationChanged;
         internal event Action GeometryChanged;
 
@@ -197,6 +201,7 @@ namespace AbstractOcclusion.WebGpuWater
                     WaterRiverRibbonMeshGenerator.Populate(
                         _generatedMesh, spline, transform, samplesPerSegment,
                         _sourceBodySeam, _mouthBodySeam, BuildSourceBoundary());
+                _sourceLongitudinalMeters = metrics.SourceLongitudinalMeters;
                 _mouthLongitudinalMeters = metrics.MouthLongitudinalMeters;
                 _mouthRight = metrics.MouthRight;
                 RebuildFogVolumeMesh();
@@ -360,6 +365,23 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         internal void RequestRendererRefresh() => PublishRendererProperties();
+
+        internal void RegisterDisturbance(WaterRiverDisturbance disturbance)
+        {
+            if (disturbance == null) throw new ArgumentNullException(nameof(disturbance));
+            if (_disturbance != null && _disturbance != disturbance)
+                throw new InvalidOperationException(
+                    "A river surface can own only one disturbance system.");
+            _disturbance = disturbance;
+            RegisterRendererPropertySource(disturbance);
+        }
+
+        internal void UnregisterDisturbance(WaterRiverDisturbance disturbance)
+        {
+            if (_disturbance != disturbance) return;
+            UnregisterRendererPropertySource(disturbance);
+            _disturbance = null;
+        }
 
         // The current field usually sits beside the spline (WaterRiverCurrentField.Reset), but a
         // surface-local one wins so a ribbon can carry its own. Re-run by OnValidate through
@@ -745,6 +767,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         void ClearGeneratedGeometry()
         {
+            _sourceLongitudinalMeters = 0f;
             _mouthLongitudinalMeters = 0f;
             _mouthRight = Vector3.zero;
             if (_generatedMesh != null) _generatedMesh.Clear();

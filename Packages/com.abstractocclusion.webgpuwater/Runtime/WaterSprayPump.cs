@@ -90,6 +90,7 @@ namespace AbstractOcclusion.WebGpuWater
         const float DefaultSprayRadius = 0.25f;
         const float DefaultPlowWeight = 0.5f;
         const float DefaultContinuousPlowMultiplier = 2f;
+        const float DefaultRockCurrentWeight = 1f;
         const float DefaultContinuousCrownTriggerStrength = 0.75f;
         const float DefaultContinuousCrownRate = 0.75f;
         const float DefaultTurnRateForFullResponse = 90f;
@@ -134,8 +135,8 @@ namespace AbstractOcclusion.WebGpuWater
         const float MinFrameDeltaSeconds = 1e-4f;
         // Floors the min..max span so a misconfigured maxImpactSpeed <= minImpactSpeed can't divide by zero.
         const float MinImpactSpeedSpan = 1e-3f;
-        // The trigger only needs the surface height; skipping Normal/Velocity skips their per-point work.
-        const WaterQueryFields TriggerFields = WaterQueryFields.Height;
+        // Rock probes need physical current as well as height change. Normal remains unused.
+        const WaterQueryFields TriggerFields = WaterQueryFields.Height | WaterQueryFields.Velocity;
 
         /// <summary>One probe: a local-space point and what it reacts to.</summary>
         [System.Serializable]
@@ -201,6 +202,11 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("Extra horizontal-plow response for Continuous Boat/Both probes. Keeps a planing bow " +
                  "spraying at practical boat speeds without making one-shot impact bursts too sensitive.")]
         [Min(0f)] [SerializeField] float continuousPlowMultiplier = DefaultContinuousPlowMultiplier;
+
+        [Tooltip("Static-obstacle spray: scales water velocity driving into a Rock/Both probe's " +
+                 "outward direction. A zero-direction probe uses the full horizontal relative current. " +
+                 "0 disables current-driven rock spray while retaining wave-slam response.")]
+        [Min(0f)] [SerializeField] float rockCurrentWeight = DefaultRockCurrentWeight;
 
         [Tooltip("Minimum seconds between two bursts from ONE probe, so a sustained impact doesn't emit every frame.")]
         [Min(0f)] [SerializeField] float emitCooldownSeconds = DefaultEmitCooldownSeconds;
@@ -338,22 +344,20 @@ namespace AbstractOcclusion.WebGpuWater
             for (int i = 0; i < count; i++)
                 _worldPoints[i] = transform.TransformPoint(probes[i].localOffset);
 
-            // One body for the whole cluster: a pump belongs to a single object floating on a single body.
-            // Any probe outside that body's footprint comes back Valid=false and is skipped below.
-            // Domain-resolved (2026-08-29): exclusion-aware, no Primary fallback.
-            WaterVolume body = WaterDomainResolver.GameplayBodyAt(
-                transform.position, WaterQueryIntent.BuoyancySurface, ref _domainBodyId);
-            if (body == null)
+            // Keep the winning PROVIDER, not only its parent volume. A ribbon can extend beyond that
+            // rectangular parent and its spline height/current exist only on the provider.
+            if (!TryResolveDomain(out IWaterSurfaceProvider provider, out WaterVolume body))
             {
                 InvalidateAll();
                 return;
             }
 
-            SampleSurfaces(body, count);
+            SampleSurfaces(provider, body, count);
 
             // Explicit override wins; otherwise the body the pump floats on supplies the emitter
             // (resolved once for the whole cluster, since every probe shares that one body).
-            WaterSplashEmitter activeEmitter = emitter != null ? emitter : body.ResolveSplashEmitter();
+            WaterSplashEmitter activeEmitter = emitter != null
+                ? emitter : body != null ? body.ResolveSplashEmitter() : null;
 
             for (int i = 0; i < count; i++)
                 StepProbe(i, count, deltaSeconds, signedYawRate, activeEmitter);
@@ -378,9 +382,30 @@ namespace AbstractOcclusion.WebGpuWater
             return yawDegrees / deltaSeconds;
         }
 
-        // At most two batched queries: one ripple-included (Rock/Both), one analytic-only (Boat). Each is
-        // run only if some probe needs it, so a uniform-mode pump pays for a single query.
-        void SampleSurfaces(WaterVolume body, int count)
+        bool TryResolveDomain(out IWaterSurfaceProvider provider, out WaterVolume body)
+        {
+            WaterDomainQueryOptions options =
+                WaterDomainQueryOptions.ForIntent(WaterQueryIntent.BuoyancySurface);
+            options.PreviousBodyId = _domainBodyId;
+            options.Fields = WaterQueryFields.Height;
+            if (!WaterDomainResolver.Resolve(transform.position, in options,
+                                             out WaterDomainSample domain))
+            {
+                _domainBodyId = 0;
+                provider = null;
+                body = null;
+                return false;
+            }
+
+            _domainBodyId = domain.BodyId;
+            provider = domain.Provider;
+            body = domain.Body;
+            return provider != null;
+        }
+
+        // At most two batched queries for volume water. A ribbon provider is sampled directly per
+        // probe, matching WaterBuoyancy's provider path and retaining spline height/current.
+        void SampleSurfaces(IWaterSurfaceProvider provider, WaterVolume body, int count)
         {
             bool needRipples = false;
             bool needAnalytic = false;
@@ -390,11 +415,25 @@ namespace AbstractOcclusion.WebGpuWater
                 else needRipples = true;
             }
 
-            int owner = GetInstanceID();
-            if (needRipples)
-                body.SampleHeights(owner, 0f, _worldPoints, _rippleSamples, TriggerFields, excludeInteractiveRipples: false);
-            if (needAnalytic)
-                body.SampleHeights(owner, 0f, _worldPoints, _analyticSamples, TriggerFields, excludeInteractiveRipples: true);
+            if (ReferenceEquals(provider, body))
+            {
+                int owner = GetInstanceID();
+                if (needRipples)
+                    body.SampleHeights(owner, 0f, _worldPoints, _rippleSamples, TriggerFields,
+                                       excludeInteractiveRipples: false);
+                if (needAnalytic)
+                    body.SampleHeights(owner, 0f, _worldPoints, _analyticSamples, TriggerFields,
+                                       excludeInteractiveRipples: true);
+                return;
+            }
+
+            for (int index = 0; index < count; index++)
+            {
+                bool analyticOnly = probes[index].mode == WaterSprayMode.Boat;
+                WaterSample[] samples = analyticOnly ? _analyticSamples : _rippleSamples;
+                provider.TrySampleSurface(_worldPoints[index], TriggerFields, 0f, analyticOnly,
+                                          out samples[index]);
+            }
         }
 
         void StepProbe(int index, int probeCount, float deltaSeconds, float signedYawRate,
@@ -418,7 +457,8 @@ namespace AbstractOcclusion.WebGpuWater
             _probeBandDistances[index] = Mathf.Abs(world.y - surfaceHeight);
             _probeGates[index] =
 #endif
-            TryEmit(index, probeCount, mode, world, surfaceHeight, deltaSeconds, signedYawRate, activeEmitter);
+            TryEmit(index, probeCount, mode, world, surfaceHeight, sample.Velocity,
+                    deltaSeconds, signedYawRate, activeEmitter);
 
             _states[index].PreviousProbePosition = world;
             _states[index].PreviousSurfaceHeight = surfaceHeight;
@@ -426,8 +466,8 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         SprayProbeGate TryEmit(int index, int probeCount, WaterSprayMode mode, Vector3 world,
-                               float surfaceHeight, float deltaSeconds, float signedYawRate,
-                               WaterSplashEmitter activeEmitter)
+                               float surfaceHeight, Vector3 surfaceVelocity, float deltaSeconds,
+                               float signedYawRate, WaterSplashEmitter activeEmitter)
         {
             ref ProbeState state = ref _states[index];
             bool continuous = probes[index].emission == WaterSprayEmission.Continuous;
@@ -460,7 +500,13 @@ namespace AbstractOcclusion.WebGpuWater
             var horizontalStep = new Vector2(world.x - previous.x, world.z - previous.z);
             float horizontalSpeed = horizontalStep.magnitude / deltaSeconds;
 
-            float waterSignal = WaterMotionSignal(surfaceRise, probes[index].waterMotion);
+            Vector3 probeVelocity = (world - previous) / deltaSeconds;
+            Vector3 relativeWaterVelocity = surfaceVelocity - probeVelocity;
+            Vector3 outwardWorld = transform.TransformDirection(probes[index].outwardLocal);
+            float currentImpact = RelativeCurrentImpact(relativeWaterVelocity, outwardWorld);
+            float waterSignal = Mathf.Max(
+                WaterMotionSignal(surfaceRise, probes[index].waterMotion),
+                currentImpact * rockCurrentWeight);
             float plowMultiplier = continuous ? continuousPlowMultiplier : 1f;
             float boatSignal = Mathf.Max(0f, probeDescent)
                              + horizontalPlowWeight * plowMultiplier * horizontalSpeed;
@@ -652,6 +698,19 @@ namespace AbstractOcclusion.WebGpuWater
                 case WaterSprayWaterMotion.Both: return Mathf.Abs(surfaceRise);
                 default: return Mathf.Max(0f, surfaceRise);
             }
+        }
+
+        internal static float RelativeCurrentImpact(Vector3 relativeWaterVelocity,
+                                                    Vector3 outwardWorld)
+        {
+            Vector2 horizontalFlow = new Vector2(relativeWaterVelocity.x, relativeWaterVelocity.z);
+            if (horizontalFlow.sqrMagnitude <= MinPetalLengthSquared) return 0f;
+
+            Vector2 horizontalOutward = new Vector2(outwardWorld.x, outwardWorld.z);
+            if (horizontalOutward.sqrMagnitude <= MinPetalLengthSquared)
+                return horizontalFlow.magnitude;
+            horizontalOutward.Normalize();
+            return Mathf.Max(0f, -Vector2.Dot(horizontalFlow, horizontalOutward));
         }
 
         static void ResetContinuousRun(ref ProbeState state)

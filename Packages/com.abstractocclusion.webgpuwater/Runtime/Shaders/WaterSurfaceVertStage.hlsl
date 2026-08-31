@@ -162,6 +162,159 @@
             #define RIVER_FRAME_MIN_LENGTH_SQ 1e-8
             #define GRID_TANGENT_HANDEDNESS -1.0
 
+            // River-native analytic disturbance sources. The arrays are fixed-size so the same
+            // declaration compiles on D3D and WebGPU/WGSL; inactive slots are explicitly zeroed
+            // by WaterRiverDisturbance instead of relying on stale MaterialPropertyBlock data.
+            #define RIVER_DISTURBANCE_MAX_SOURCES 8
+            #define RIVER_DISTURBANCE_MIN_DISTANCE 0.001
+            #define RIVER_DISTURBANCE_EXP_CLAMP 80.0
+            #define RIVER_DISTURBANCE_CRESCENT_RADIUS 1.0
+            #define RIVER_DISTURBANCE_CRESCENT_WIDTH 0.32
+            #define RIVER_DISTURBANCE_CRESCENT_MIN_FACING -0.15
+            #define RIVER_DISTURBANCE_CRESCENT_FULL_FACING 0.45
+            #define RIVER_DISTURBANCE_DOWNSTREAM_OFFSET 1.15
+            #define RIVER_DISTURBANCE_DOWNSTREAM_DEPRESSION 0.65
+            #define RIVER_DISTURBANCE_WAKE_AMPLITUDE 0.28
+            #define RIVER_DISTURBANCE_WAKE_ANGLE_TANGENT 0.36
+            #define RIVER_DISTURBANCE_WAKE_RIDGE_WIDTH 0.32
+            #define RIVER_DISTURBANCE_WAKE_PHASE_RADIUS 1.5
+            #define RIVER_DISTURBANCE_WAKE_START_RADIUS 0.25
+            #define RIVER_DISTURBANCE_IMPACT_PROFILE_SCALE 2.0
+
+            float _RiverDisturbanceActive;
+            float _RiverDisturbanceCount;
+            float _RiverDisturbanceNormalStep;
+            float4 _RiverDisturbancePositionRadius[RIVER_DISTURBANCE_MAX_SOURCES];
+            float4 _RiverDisturbanceDirectionWake[RIVER_DISTURBANCE_MAX_SOURCES];
+            float4 _RiverDisturbanceImpact[RIVER_DISTURBANCE_MAX_SOURCES];
+
+            struct RiverDisturbanceSample
+            {
+                float height;
+                float2 normalTilt;
+                float foam;
+            };
+
+            float RiverDisturbanceSafeExp(float exponent)
+            {
+                return exp(max(-RIVER_DISTURBANCE_EXP_CLAMP, exponent));
+            }
+
+            float RiverDisturbanceUpstreamCrescent(float2 delta, float2 direction,
+                                                   float radius)
+            {
+                float distanceFromSource = length(delta);
+                float shellWidth = max(
+                    radius * RIVER_DISTURBANCE_CRESCENT_WIDTH,
+                    RIVER_DISTURBANCE_MIN_DISTANCE);
+                float radialOffset =
+                    (distanceFromSource - radius * RIVER_DISTURBANCE_CRESCENT_RADIUS) /
+                    shellWidth;
+                float radialShell = RiverDisturbanceSafeExp(
+                    -radialOffset * radialOffset);
+                float upstreamFacing = -dot(delta, direction) /
+                    max(distanceFromSource, RIVER_DISTURBANCE_MIN_DISTANCE);
+                float angularEnvelope = smoothstep(
+                    RIVER_DISTURBANCE_CRESCENT_MIN_FACING,
+                    RIVER_DISTURBANCE_CRESCENT_FULL_FACING, upstreamFacing);
+                return radialShell * angularEnvelope;
+            }
+
+            float RiverDisturbanceSourceHeight(float2 metricPosition, int sourceIndex,
+                                               out float foam)
+            {
+                float4 positionRadius = _RiverDisturbancePositionRadius[sourceIndex];
+                float4 directionWake = _RiverDisturbanceDirectionWake[sourceIndex];
+                float4 impact = _RiverDisturbanceImpact[sourceIndex];
+                float radius = max(positionRadius.z, RIVER_DISTURBANCE_MIN_DISTANCE);
+                float2 direction = directionWake.xy;
+                float2 delta = metricPosition - positionRadius.xy;
+
+                float2 downstream = delta - direction *
+                    (radius * RIVER_DISTURBANCE_DOWNSTREAM_OFFSET);
+                float inverseRadiusSquared = rcp(radius * radius);
+                float upstreamCrescent = RiverDisturbanceUpstreamCrescent(
+                    delta, direction, radius);
+                float downstreamGaussian = RiverDisturbanceSafeExp(
+                    -dot(downstream, downstream) * inverseRadiusSquared);
+                float height = positionRadius.w *
+                    (upstreamCrescent - RIVER_DISTURBANCE_DOWNSTREAM_DEPRESSION *
+                     downstreamGaussian);
+
+                float along = dot(delta, direction);
+                float2 perpendicular = float2(-direction.y, direction.x);
+                float lateral = abs(dot(delta, perpendicular));
+                float wakeLength = max(directionWake.z, radius);
+                float wakeStart = smoothstep(
+                    0.0, radius * RIVER_DISTURBANCE_WAKE_START_RADIUS, along);
+                float wakeEnvelope = wakeStart * RiverDisturbanceSafeExp(
+                    -max(0.0, along) / wakeLength);
+                float ridgeDistance = lateral - max(0.0, along) *
+                                      RIVER_DISTURBANCE_WAKE_ANGLE_TANGENT;
+                float ridgeWidth = max(radius * RIVER_DISTURBANCE_WAKE_RIDGE_WIDTH,
+                                       RIVER_DISTURBANCE_MIN_DISTANCE);
+                float ridge = RiverDisturbanceSafeExp(
+                    -(ridgeDistance * ridgeDistance) / (ridgeWidth * ridgeWidth));
+                float phase = max(0.0, along) * UNITY_PI /
+                    max(radius * RIVER_DISTURBANCE_WAKE_PHASE_RADIUS,
+                        RIVER_DISTURBANCE_MIN_DISTANCE);
+                height += positionRadius.w * RIVER_DISTURBANCE_WAKE_AMPLITUDE *
+                          wakeEnvelope * ridge * sin(phase);
+
+                float impactWidth = max(impact.z, RIVER_DISTURBANCE_MIN_DISTANCE);
+                float radialOffset = (length(delta) - impact.y) / impactWidth;
+                float impactProfile =
+                    (1.0 - RIVER_DISTURBANCE_IMPACT_PROFILE_SCALE *
+                     radialOffset * radialOffset) *
+                    RiverDisturbanceSafeExp(-radialOffset * radialOffset);
+                height += impact.x * impactProfile;
+
+                foam = directionWake.w * saturate(
+                    max(upstreamCrescent, wakeEnvelope * ridge) +
+                    abs(impactProfile) * saturate(abs(impact.x)));
+                return height;
+            }
+
+            float RiverDisturbanceHeightAt(float2 metricPosition, out float foam)
+            {
+                float height = 0.0;
+                foam = 0.0;
+                if (_RiverDisturbanceActive < 0.5) return 0.0;
+                [unroll]
+                for (int sourceIndex = 0;
+                     sourceIndex < RIVER_DISTURBANCE_MAX_SOURCES; sourceIndex++)
+                {
+                    float sourceFoam;
+                    float sourceHeight = RiverDisturbanceSourceHeight(
+                        metricPosition, sourceIndex, sourceFoam);
+                    float activeSource = step((float)sourceIndex + 0.5,
+                                              _RiverDisturbanceCount);
+                    height += sourceHeight * activeSource;
+                    foam = max(foam, sourceFoam * activeSource);
+                }
+                return height * saturate(_RiverDisturbanceActive);
+            }
+
+            RiverDisturbanceSample EvaluateRiverDisturbance(float2 metricPosition)
+            {
+                RiverDisturbanceSample sample;
+                sample.height = RiverDisturbanceHeightAt(metricPosition, sample.foam);
+                float unusedFoam;
+                float metricStep = max(_RiverDisturbanceNormalStep,
+                                       RIVER_DISTURBANCE_MIN_DISTANCE);
+                float left = RiverDisturbanceHeightAt(
+                    metricPosition - float2(metricStep, 0.0), unusedFoam);
+                float right = RiverDisturbanceHeightAt(
+                    metricPosition + float2(metricStep, 0.0), unusedFoam);
+                float behind = RiverDisturbanceHeightAt(
+                    metricPosition - float2(0.0, metricStep), unusedFoam);
+                float ahead = RiverDisturbanceHeightAt(
+                    metricPosition + float2(0.0, metricStep), unusedFoam);
+                sample.normalTilt = float2(left - right, behind - ahead) /
+                                    (2.0 * metricStep);
+                return sample;
+            }
+
             float2 SampleRiverFluidVelocity(float2 bakeCoordinate, float fallbackSpeed)
             {
                 if (_RiverFluidActive < 0.5) return float2(0.0, max(fallbackSpeed, 0.0));
@@ -214,7 +367,15 @@
                 float outflowInfluence = MouthOutflowCurrentInfluence(worldFlat.xz);
                 float gridWaveHeight = lerp(
                     WaveHeight(gridWaveSample), WaveHeight(outflowWaveSample), outflowInfluence);
-                float2 riverWaveSample = RiverCurrentWaveSampleXZ(riverCurrentData);
+                float2 riverWaveSampleA;
+                float2 riverWaveSampleB;
+                float riverWavePhaseBlend;
+                RiverCurrentWaveSampleXZ(
+                    riverCurrentData, riverWaveSampleA, riverWaveSampleB,
+                    riverWavePhaseBlend);
+                float riverWaveHeight = lerp(
+                    WaveHeight(riverWaveSampleA), WaveHeight(riverWaveSampleB),
+                    riverWavePhaseBlend);
                 // Value blend (Bert's call: "we sew borders then a fade to mix waves"):
                 // lerping the SAMPLE COORDINATE between two distant anchors sweeps the phase
                 // through many wave cycles across the short transition - that IS the washboard band
@@ -223,7 +384,7 @@
                 // exactly. The uniform branch keeps pools single-evaluation, byte-identical.
                 if (_IsRiver > 0.5)
                     position.y += lerp(gridWaveHeight,
-                                       WaveHeight(riverWaveSample), riverWeight);
+                                       riverWaveHeight, riverWeight);
                 else
                     position.y += gridWaveHeight;
                                                        // small wind-wave detail; open water
@@ -422,6 +583,17 @@
                 float riverHeight = dot(worldPos - worldFlat, gridWorldNormal);
                 float3 riverWorldPos = worldFlat + o.worldNormal * riverHeight;
                 worldPos = lerp(worldPos, riverWorldPos, riverWeight);
+                // River disturbance height is authored in world metres and follows the transported
+                // surface normal. The terminal seam weight fades it before the receiving body's
+                // rectangular solver takes ownership.
+                float riverDisturbanceHeight = 0.0;
+                if (_IsRiver > 0.5 && _RiverDisturbanceActive > 0.5)
+                {
+                    float disturbanceFoamUnused;
+                    riverDisturbanceHeight = RiverDisturbanceHeightAt(
+                        v.riverCurrentData.xy, disturbanceFoamUnused);
+                }
+                worldPos += o.worldNormal * riverDisturbanceHeight * vertexRiverWeight;
                 o.worldPos = worldPos;
                 // Nudge the patch a fixed few centimetres toward the camera IN VIEW SPACE so it wins the
                 // depth test against the coplanar far plane at EVERY distance. The old bias was a constant

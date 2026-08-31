@@ -10,8 +10,9 @@
 // Droplets pop, then stick to the water surface and DRIFT with the waves: they
 // launch ballistically (low gravity), and once they reach the live waterline they
 // snap to it and are carried along the local surface flow, reacting as ripples
-// pass under them. The drift is driven on the CPU from WaterVolume's height
-// readback, so it tracks the same surface the shader renders.
+// pass under them. The drift is driven on the CPU from the resolved surface
+// provider, so volume water keeps its live readback while river ribbons use
+// their spline height and authored/baked current.
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -324,14 +325,7 @@ namespace AbstractOcclusion.WebGpuWater
         void DriftOnSurface(ref ParticleSystem.Particle droplet, float dt)
         {
             Vector3 position = droplet.position;
-            // Resolve the body under THIS droplet so a splash in lake B drifts on lake B's
-            // surface, not the primary's. Domain-resolved (2026-08-29): stateless per droplet
-            // (no hysteresis id), exclusion-aware - droplets stay ballistic over dry space.
-            int noHint = 0;
-            WaterVolume body = WaterDomainResolver.GameplayBodyAt(
-                position, WaterQueryIntent.BuoyancySurface, ref noHint);
-            if (body == null ||
-                !body.TryGetSurface(position.x, position.z, out float surfaceY, out Vector2 waveDrift))
+            if (!TryResolveDriftSurface(position, out float surfaceY, out Vector2 surfaceDrift))
                 return; // outside the pool or no readback yet: stay ballistic
 
             float age = droplet.startLifetime - droplet.remainingLifetime;
@@ -346,13 +340,46 @@ namespace AbstractOcclusion.WebGpuWater
 
             Vector3 velocity = droplet.velocity;
             velocity.y = 0f;
-            velocity += new Vector3(waveDrift.x, 0f, waveDrift.y) * (driftStrength * dt);
+            velocity += new Vector3(surfaceDrift.x, 0f, surfaceDrift.y) * (driftStrength * dt);
             velocity -= velocity * Mathf.Min(1f, driftDamping * dt);
 
             position += velocity * dt;
             droplet.position = position;
             droplet.velocity = velocity;
         }
+
+        // Volume fallback droplets retain the original live sim-readback drift. A ribbon cannot
+        // use that API: its parent volume is only the shader-state owner and may be kilometres
+        // away from the spline point. The resolved provider already supplies the ribbon's real
+        // height and physical current, so keep that identity all the way to the particle.
+        internal static bool TryResolveDriftSurface(Vector3 worldPoint, out float surfaceY,
+                                                     out Vector2 surfaceDrift)
+        {
+            surfaceY = 0f;
+            surfaceDrift = Vector2.zero;
+
+            WaterDomainQueryOptions options =
+                WaterDomainQueryOptions.ForIntent(WaterQueryIntent.BuoyancySurface);
+            options.Fields = WaterQueryFields.Height | WaterQueryFields.Velocity;
+            if (!WaterDomainResolver.Resolve(worldPoint, in options, out WaterDomainSample domain))
+                return false;
+
+            if (UsesVolumeParticleDomain(domain.Provider, domain.Body))
+            {
+                return domain.Body.TryGetSurface(worldPoint.x, worldPoint.z,
+                                                 out surfaceY, out surfaceDrift);
+            }
+
+            surfaceY = domain.SurfaceHeight;
+            surfaceDrift = new Vector2(domain.Velocity.x, domain.Velocity.z);
+            return true;
+        }
+
+        // WaterFoamParticles is framed, simulated and culled by one WaterVolume. A more-specific
+        // provider (currently a river ribbon) may share that volume's shader state without sharing
+        // its rectangular particle domain, so it must use the provider-aware CPU fallback.
+        internal static bool UsesVolumeParticleDomain(IWaterSurfaceProvider provider, WaterVolume body)
+            => body != null && ReferenceEquals(provider, body);
 
         /// <summary>Emit a splash at a surface point. strength is 0..1. Droplets are thrown by
         /// the body's GPU foam-particle system when one is present (spray unification: every
@@ -396,15 +423,23 @@ namespace AbstractOcclusion.WebGpuWater
 
             // Domain-resolved (2026-08-29): a burst requested inside an exclusion volume (dry
             // space) resolves to no body and emits nothing - splash spawning obeys the carve.
-            int burstHint = 0;
-            WaterVolume body = WaterDomainResolver.GameplayBodyAt(
-                surfacePos, WaterQueryIntent.RayInteraction, ref burstHint);
-            WaterFoamParticles gpuSpray = body != null ? body.GetComponent<WaterFoamParticles>() : null;
+            WaterDomainQueryOptions options =
+                WaterDomainQueryOptions.ForIntent(WaterQueryIntent.RayInteraction);
+            options.Fields = WaterQueryFields.Height;
+            bool resolved = WaterDomainResolver.Resolve(surfacePos, in options,
+                                                        out WaterDomainSample domain);
+            WaterVolume body = resolved ? domain.Body : null;
+            WaterFoamParticles bodyParticles =
+                body != null ? body.GetComponent<WaterFoamParticles>() : null;
             // Body-wide particle master (WaterFoamParticles "Use Particles"): off = this body emits NO splash
             // at all - GPU droplets AND the Shuriken crown - matching the ambient foam the same switch silences.
             // A body with no foam system has no switch, so it keeps splashing as before.
-            if (gpuSpray != null && !gpuSpray.UseParticles) return;
-            ApplyImpactLayerGravity(gpuSpray);
+            if (bodyParticles != null && !bodyParticles.UseParticles) return;
+            ApplyImpactLayerGravity(bodyParticles);
+            WaterFoamParticles gpuSpray = resolved &&
+                                           UsesVolumeParticleDomain(domain.Provider, body)
+                ? bodyParticles
+                : null;
             if (gpuSpray != null && gpuSpray.isActiveAndEnabled)
             {
                 // Map the burst shaping onto the GPU request; per-droplet jitter runs in-kernel.

@@ -267,13 +267,14 @@ float3 SampleFoamPattern(float2 uv, float2 uvDdx, float2 uvDdy)
 // The flow/phase/relief offsets are ADDITIVE, so the base gradients stay exact; the
 // rotated octave is a linear transform, so its gradients get the same rotation/scale.
 void EvaluateFoam(float2 fuv, float2 fuvDdx, float2 fuvDdy,
-                  float2 flowXZ, float mask, float camDist,
+                  float2 flowXZ, float flowDistance, float flowRate,
+                  float mask, float camDist,
                   float edgeFeather, float coreCutStrength,
                   out float3 pattern, out float core, out float lace,
                   out float alpha, out float2 tilt)
 {
-    float2 flowDir = flowXZ * FOAM_FLOW_DISTANCE;
-    float phaseA = frac(_Time.y * FOAM_FLOW_RATE);
+    float2 flowDir = flowXZ * flowDistance;
+    float phaseA = frac(_Time.y * flowRate);
     float phaseB = frac(phaseA + 0.5);
     float seesaw = abs(phaseA * 2.0 - 1.0);
     float2 uvA = fuv - flowDir * phaseA;
