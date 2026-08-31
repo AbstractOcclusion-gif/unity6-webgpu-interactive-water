@@ -56,12 +56,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
                 ValidateSolveWork(fluid);
                 BuildSolveInputs(fluid, spline, arcSamples, riverLength,
-                                 out bool[] fluidMask, out float[] downstreamSpeed,
-                                 out float[] distanceLookup);
+                                  out bool[] fluidMask, out float[] downstreamSpeed,
+                                  out float[] lateralCellSize, out float[] distanceLookup);
                 EditorUtility.DisplayProgressBar(ProgressTitle, SolvingProgress, 0.5f);
                 WaterRiverFluidSolveResult result = WaterRiverFluidSolver.Solve(
                     fluid.lateralResolution, fluid.longitudinalResolution,
-                    fluidMask, downstreamSpeed, fluid.CreateSolveSettings());
+                    fluidMask, downstreamSpeed, lateralCellSize,
+                    riverLength / fluid.longitudinalResolution,
+                    fluid.CreateSolveSettings());
                 WaterRiverFluidBakeData data = SaveBake(fluid, result, riverLength,
                                                         distanceLookup);
                 Undo.RecordObject(fluid, "Assign River Fluid Bake");
@@ -100,12 +102,13 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         static void BuildSolveInputs(WaterRiverFluid fluid, WaterRiverSpline spline,
                                      ArcSample[] arcSamples, float riverLength,
                                      out bool[] fluidMask, out float[] downstreamSpeed,
-                                     out float[] distanceLookup)
+                                     out float[] lateralCellSize, out float[] distanceLookup)
         {
             int width = fluid.lateralResolution;
             int height = fluid.longitudinalResolution;
             fluidMask = new bool[checked(width * height)];
             downstreamSpeed = new float[height];
+            lateralCellSize = new float[height];
             distanceLookup = BuildDistanceLookup(arcSamples, riverLength);
             Physics.SyncTransforms();
 
@@ -118,11 +121,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     throw new InvalidOperationException(
                         $"River spline evaluation failed while rasterizing row {row}.");
                 downstreamSpeed[row] = sample.Speed;
-                float lateralCellSize = sample.Width / width;
+                lateralCellSize[row] = sample.Width / width;
                 float longitudinalCellSize = riverLength / height;
                 float contactRadius = Mathf.Max(
                     fluid.obstacleContactRadius,
-                    Mathf.Min(lateralCellSize, longitudinalCellSize) * CellRadiusFraction);
+                    Mathf.Min(lateralCellSize[row], longitudinalCellSize) * CellRadiusFraction);
                 for (int column = 0; column < width; column++)
                 {
                     int index = row * width + column;

@@ -11,6 +11,7 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         const int Iterations = 80;
         const int ObstacleHalfWidth = 1;
         const int ObstacleHalfHeight = 2;
+        const int FarReachDivisor = 4;
         const int ShaderOutflowIndex = 0;
         const float DownstreamSpeed = 3f;
         const float MaximumPackedSpeed = 4f;
@@ -40,9 +41,11 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             WaterRiverFluidSolveSettings settings = CreateSettings();
 
             WaterRiverFluidSolveResult first = WaterRiverFluidSolver.Solve(
-                Width, Height, mask, speeds, settings);
+                Width, Height, mask, speeds, CreateLateralCellSizes(),
+                RiverLength / Height, settings);
             WaterRiverFluidSolveResult second = WaterRiverFluidSolver.Solve(
-                Width, Height, mask, speeds, settings);
+                Width, Height, mask, speeds, CreateLateralCellSizes(),
+                RiverLength / Height, settings);
 
             Assert.That(first.Width, Is.EqualTo(Width));
             Assert.That(first.Height, Is.EqualTo(Height));
@@ -64,18 +67,34 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         public void Solve_ClearChannelFlowsDownstreamWithoutLateralDrift()
         {
             WaterRiverFluidSolveResult result = WaterRiverFluidSolver.Solve(
-                Width, Height, CreateFluidMask(false), CreateDownstreamSpeeds(), CreateSettings());
+                Width, Height, CreateFluidMask(false), CreateDownstreamSpeeds(),
+                CreateLateralCellSizes(), RiverLength / Height, CreateSettings());
             Vector2 centre = result.Velocity[CellIndex(Width / 2, Height / 2)];
 
             Assert.That(Mathf.Abs(centre.x), Is.LessThan(FloatTolerance));
-            Assert.That(centre.y, Is.GreaterThan(0f));
+            Assert.That(centre.y, Is.EqualTo(DownstreamSpeed).Within(FloatTolerance));
+        }
+
+        [Test]
+        public void Solve_DisabledBankFoamLeavesClearChannelFoamFree()
+        {
+            WaterRiverFluidSolveResult result = WaterRiverFluidSolver.Solve(
+                Width, Height, CreateFluidMask(false), CreateDownstreamSpeeds(),
+                CreateLateralCellSizes(), RiverLength / Height, CreateSettings());
+
+            float maximumFoam = 0f;
+            for (int index = 0; index < result.Foam.Length; index++)
+                maximumFoam = Mathf.Max(maximumFoam, result.Foam[index]);
+
+            Assert.That(maximumFoam, Is.Zero.Within(FloatTolerance));
         }
 
         [Test]
         public void Solve_SolidObstacleStopsItsCellsAndDeflectsSurroundingFlow()
         {
             WaterRiverFluidSolveResult result = WaterRiverFluidSolver.Solve(
-                Width, Height, CreateFluidMask(true), CreateDownstreamSpeeds(), CreateSettings());
+                Width, Height, CreateFluidMask(true), CreateDownstreamSpeeds(),
+                CreateLateralCellSizes(), RiverLength / Height, CreateSettings());
             int obstacleColumn = Width / 2;
             int obstacleRow = Height / 2;
             Vector2 solidVelocity = result.Velocity[CellIndex(obstacleColumn, obstacleRow)];
@@ -98,6 +117,28 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             Assert.That(solidVelocity, Is.EqualTo(Vector2.zero));
             Assert.That(maximumLateralVelocity, Is.GreaterThan(FloatTolerance));
             Assert.That(maximumFoam, Is.GreaterThan(0f));
+        }
+
+        [Test]
+        public void Solve_ObstacleFoamSnapshotDoesNotFollowProjectedWakeAcrossRiver()
+        {
+            WaterRiverFluidSolveResult result = WaterRiverFluidSolver.Solve(
+                Width, Height, CreateFluidMask(true), CreateDownstreamSpeeds(),
+                CreateLateralCellSizes(), RiverLength / Height, CreateSettings());
+            int upstreamEndRow = Height / FarReachDivisor;
+            int downstreamStartRow = Height - upstreamEndRow;
+            int obstacleStartRow = Height / 2 - ObstacleHalfHeight;
+            int obstacleEndRow = Height / 2 + ObstacleHalfHeight + 1;
+
+            float obstacleFoam = MaximumFoamInRows(
+                result, obstacleStartRow, obstacleEndRow);
+            float farUpstreamFoam = MaximumFoamInRows(result, 0, upstreamEndRow);
+            float farDownstreamFoam = MaximumFoamInRows(
+                result, downstreamStartRow, Height);
+
+            Assert.That(obstacleFoam, Is.GreaterThan(0f));
+            Assert.That(farUpstreamFoam, Is.Zero.Within(FloatTolerance));
+            Assert.That(farDownstreamFoam, Is.Zero.Within(FloatTolerance));
         }
 
         [Test]
@@ -350,7 +391,31 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         static WaterRiverFluidSolveSettings CreateSettings()
             => new WaterRiverFluidSolveSettings(
                 Iterations, 0.1f, 0.08f, 0.2f, 0.5f,
-                0.999f, 0.1f, 0.01f, 8f);
+                0.999f, 0.1f, 0.25f, 0.65f, 0f);
+
+        static float MaximumFoamInRows(WaterRiverFluidSolveResult result,
+                                       int startRow, int endRow)
+        {
+            float maximumFoam = 0f;
+            for (int row = startRow; row < endRow; row++)
+            {
+                for (int column = 0; column < Width; column++)
+                {
+                    int index = CellIndex(column, row);
+                    if (!result.FluidMask[index]) continue;
+                    maximumFoam = Mathf.Max(maximumFoam, result.Foam[index]);
+                }
+            }
+            return maximumFoam;
+        }
+
+        static float[] CreateLateralCellSizes()
+        {
+            var sizes = new float[Height];
+            float cellSize = RiverWidth / Width;
+            for (int row = 0; row < Height; row++) sizes[row] = cellSize;
+            return sizes;
+        }
 
         static bool[] CreateFluidMask(bool addObstacle)
         {

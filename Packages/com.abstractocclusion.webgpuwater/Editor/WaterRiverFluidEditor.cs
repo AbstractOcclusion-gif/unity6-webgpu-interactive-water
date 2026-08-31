@@ -23,6 +23,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const string VorticityPropertyName = "vorticity";
         const string FoamThresholdPropertyName = "foamThreshold";
         const string FoamStrengthPropertyName = "foamStrength";
+        const string BankFoamStrengthPropertyName = "bankFoamStrength";
         const string BakeButtonLabel = "Bake Settled Fluid";
         const string InspectorHelp =
             "Bakes a settled 2D fluid simulation in river-ribbon space. Spline Speed drives the " +
@@ -62,6 +63,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             WaterEditorUI.SubHeading("Generated Foam");
             DrawProperty(FoamThresholdPropertyName);
             DrawProperty(FoamStrengthPropertyName);
+            DrawProperty(BankFoamStrengthPropertyName);
             serializedObject.ApplyModifiedProperties();
 
             DrawWarningsAndStatus();

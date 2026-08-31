@@ -23,6 +23,7 @@ namespace AbstractOcclusion.WebGpuWater
         const float HalfWidth = 0.5f;
         const float LeftBankUv = 0f;
         const float RightBankUv = 1f;
+        const float LocalSourceLongitudinalMeters = 0f;
         const float TangentHandedness = -1f;
         const float FullSeamWeight = 1f;
         const float InvertibleMatrixDeterminantEpsilon = 1e-8f;
@@ -78,11 +79,14 @@ namespace AbstractOcclusion.WebGpuWater
 
         internal readonly struct RibbonMetrics
         {
+            internal readonly float SourceLongitudinalMeters;
             internal readonly float MouthLongitudinalMeters;
             internal readonly Vector3 MouthRight;
 
-            internal RibbonMetrics(float mouthLongitudinalMeters, Vector3 mouthRight)
+            internal RibbonMetrics(float sourceLongitudinalMeters, float mouthLongitudinalMeters,
+                                   Vector3 mouthRight)
             {
+                SourceLongitudinalMeters = sourceLongitudinalMeters;
                 MouthLongitudinalMeters = mouthLongitudinalMeters;
                 MouthRight = mouthRight;
             }
@@ -93,15 +97,15 @@ namespace AbstractOcclusion.WebGpuWater
         //   normal    - transported ribbon-up direction;
         //   tangent   - bank-left to bank-right direction, w=-1 so the bitangent is downstream;
         //   UV0.x     - lateral coordinate (left bank 0, right bank 1);
-        //   UV0.y     - cumulative centreline distance in world metres;
+        //   UV0.y     - centreline distance from THIS river's source in world metres;
         //   UV1.x     - signed lateral distance from the centreline in world metres;
         //   UV1.y     - cumulative centreline distance in world metres;
         //   UV1.z     - interpolated downstream current speed in world metres per second;
         //   UV1.w     - SEAM WEIGHT: 1 on the ribbon body, fading to 0 across a connected end's
         //               body-transition band. The vertex stage multiplies the river flag by it;
         //   UV2.x     - signed body blend selector: negative source, positive mouth, zero interior.
-        // UV0 remains the normalized bake coordinate for later current-map and foam consumers. UV1
-        // is the metric current coordinate used by the shared surface shader; vertex colors stay free.
+        // UV0 is local because every river owns its own baked current/foam texture. UV1 stays
+        // cumulative across connected rivers so waves and disturbances remain phase-continuous.
         internal static RibbonMetrics Populate(
             Mesh mesh, WaterRiverSpline spline, Transform meshTransform,
             int samplesPerSegment)
@@ -219,7 +223,8 @@ namespace AbstractOcclusion.WebGpuWater
 
                 WriteCrossSection(splineSection, centre, right, up,
                                   sample.Width * HalfWidth,
-                                  longitudinalOrigin + sourceDistance, sample.Speed,
+                                  sourceDistance, longitudinalOrigin + sourceDistance,
+                                  sample.Speed,
                                   FullSeamWeight - bodyBlend, endSelector, worldToLocal,
                                   normalWorldToLocal, vertices, normals, tangents, uv,
                                   currentData, endBlendData, worldPositions, crossSectionUps);
@@ -247,7 +252,8 @@ namespace AbstractOcclusion.WebGpuWater
             mesh.SetUVs(2, endBlendData);
             mesh.triangles = indices;
             mesh.bounds = bounds;
-            return new RibbonMetrics(longitudinalOrigin + splineDistance, mouthRight);
+            return new RibbonMetrics(
+                longitudinalOrigin, longitudinalOrigin + splineDistance, mouthRight);
         }
 
         static void ApplySharedSourceBoundary(in SharedBoundaryRow boundary, int section,
@@ -279,7 +285,8 @@ namespace AbstractOcclusion.WebGpuWater
                 Vector3 localTangent = worldToLocal.MultiplyVector(worldTangentDirection).normalized;
                 tangents[vertexIndex] = new Vector4(
                     localTangent.x, localTangent.y, localTangent.z, worldTangent.w);
-                uv[vertexIndex] = boundary.Uv[column];
+                uv[vertexIndex] = new Vector2(
+                    boundary.Uv[column].x, LocalSourceLongitudinalMeters);
                 Vector4 targetCurrentData = boundary.CurrentData[column];
                 currentData[vertexIndex] = new Vector4(
                     targetCurrentData.x, targetCurrentData.y, targetCurrentData.z,
@@ -310,8 +317,9 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         static void WriteCrossSection(int section, Vector3 centre, Vector3 right, Vector3 up,
-                                      float halfWidth, float longitudinal, float speed,
-                                      float seamWeight, float endSelector,
+                                      float halfWidth, float bakeLongitudinal,
+                                      float metricLongitudinal, float speed, float seamWeight,
+                                      float endSelector,
                                       Matrix4x4 worldToLocal,
                                       Matrix4x4 normalWorldToLocal, Vector3[] vertices,
                                       Vector3[] normals, Vector4[] tangents, Vector2[] uv,
@@ -341,9 +349,9 @@ namespace AbstractOcclusion.WebGpuWater
                 normals[vertexIndex] = localUp;
                 tangents[vertexIndex] = tangent;
                 uv[vertexIndex] = new Vector2(Mathf.Lerp(LeftBankUv, RightBankUv, lateral01),
-                                              longitudinal);
+                                              bakeLongitudinal);
                 currentData[vertexIndex] = new Vector4(
-                    lateralMeters, longitudinal, speed, seamWeight);
+                    lateralMeters, metricLongitudinal, speed, seamWeight);
                 endBlendData[vertexIndex] = new Vector2(endSelector, 0f);
             }
             crossSectionUps[section] = up;

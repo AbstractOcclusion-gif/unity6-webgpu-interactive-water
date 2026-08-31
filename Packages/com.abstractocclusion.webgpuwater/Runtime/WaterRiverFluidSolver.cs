@@ -1,4 +1,10 @@
 // WebGpuWater - deterministic KWS1-style settled fluid solve in ribbon texture space.
+// The authored spline current is the BASE FLOW and passes through the solve untouched:
+// advection, viscosity, forcing, the deadband and the pressure projection all act on the
+// PERTURBATION (velocity minus base flow). Solving the full field instead dragged slow
+// upstream water into fast reaches and let the projection erase the authored row-to-row
+// speed profile, so every varying-knot bake settled below its spline speeds - the knots
+// are the source of truth; the solve only adds obstacle deflection, wakes and foam.
 using System;
 using UnityEngine;
 
@@ -15,11 +21,12 @@ namespace AbstractOcclusion.WebGpuWater
         internal readonly float Vorticity;
         internal readonly float FoamThreshold;
         internal readonly float FoamStrength;
+        internal readonly float BankFoamStrength;
 
         internal WaterRiverFluidSolveSettings(
             int iterations, float deltaTime, float viscosity, float pressure,
             float force, float velocityDecay, float vorticity,
-            float foamThreshold, float foamStrength)
+            float foamThreshold, float foamStrength, float bankFoamStrength)
         {
             Iterations = iterations;
             DeltaTime = deltaTime;
@@ -30,6 +37,7 @@ namespace AbstractOcclusion.WebGpuWater
             Vorticity = vorticity;
             FoamThreshold = foamThreshold;
             FoamStrength = foamStrength;
+            BankFoamStrength = bankFoamStrength;
         }
     }
 
@@ -60,16 +68,12 @@ namespace AbstractOcclusion.WebGpuWater
         internal const int MinimumIterations = 1;
         const float MinimumPositiveValue = 0.0001f;
         const float MinimumDensity = 0.5f;
+        // Density is a soft pressure surrogate; without a ceiling it accumulated without
+        // bound upstream of solid cells and the density-gradient force fed back into the
+        // velocity until the solve overflowed to NaN. The ceiling keeps stalls bounded.
+        const float MaximumDensity = 2f;
         const float VelocityDeadband = 0.0001f;
         const int PressureIterations = 12;
-        // Settled-foam transport constants - mirror the live sim's foam contract
-        // (WaterSim.compute: generate -> advect -> diffuse -> decay) so the bake reaches
-        // the same look. Survival sets the streak length: advected foam survives about
-        // 1/(1-survival) steps, so 0.97 leaves ~33-cell trails behind obstacles.
-        const float FoamSurvivalPerStep = 0.97f;
-        // Fraction of each cell's foam blended toward its neighbour average per step -
-        // softens the single-cell speckle a raw shear term prints.
-        const float FoamSpreadFraction = 0.15f;
         // Swirl adds foam where eddies spin even when net shear is small (behind obstacles).
         const float VorticityFoamWeight = 0.5f;
         // Converging flow packs surface foam together (hydraulic-jump style accumulation).
@@ -78,20 +82,25 @@ namespace AbstractOcclusion.WebGpuWater
         // radius reads the velocity CONTRAST across an obstacle's whole shadow instead of a
         // one-cell ring, so the foam response is a soft band rather than a thin halo.
         const int FoamShearRadiusCells = 2;
+        // Obstacle-driven foam is generated only inside this physical neighbourhood. The
+        // projected velocity remains global for current motion, but its long pressure wake
+        // must not become a fresh foam source at every downstream cell.
+        const float ObstacleFoamInfluenceMeters = 0.5f;
 
         struct Cell
         {
             internal Vector2 Velocity;
             internal float Density;
             internal float Vorticity;
-            internal float Foam;
         }
 
         internal static WaterRiverFluidSolveResult Solve(
             int width, int height, bool[] fluidMask, float[] downstreamSpeed,
+            float[] lateralCellSize, float longitudinalCellSize,
             WaterRiverFluidSolveSettings settings)
         {
-            Validate(width, height, fluidMask, downstreamSpeed, settings);
+            Validate(width, height, fluidMask, downstreamSpeed, lateralCellSize,
+                     longitudinalCellSize, settings);
             int count = checked(width * height);
             var source = new Cell[count];
             var target = new Cell[count];
@@ -99,14 +108,24 @@ namespace AbstractOcclusion.WebGpuWater
             var divergence = new float[count];
             var pressure = new float[count];
             var pressureTarget = new float[count];
+            float[] obstacleFoamInfluence = BuildObstacleFoamInfluence(
+                fluidMask, width, height, lateralCellSize, longitudinalCellSize);
+            bool[] bowFaceMask = BuildBowFaceMask(fluidMask, width, height,
+                                                  lateralCellSize, longitudinalCellSize);
             Initialize(source, width, height, fluidMask, downstreamSpeed);
 
             for (int iteration = 0; iteration < settings.Iterations; iteration++)
             {
-                Step(source, target, width, height, fluidMask, downstreamSpeed, settings,
+                Step(source, target, width, height, fluidMask, downstreamSpeed,
+                     lateralCellSize, longitudinalCellSize, settings,
                      divergence, pressure, pressureTarget);
                 (source, target) = (target, source);
             }
+
+            GenerateFoamSnapshot(
+                source, foam, width, height, fluidMask, obstacleFoamInfluence,
+                bowFaceMask, downstreamSpeed, lateralCellSize,
+                longitudinalCellSize, settings);
 
             var velocity = new Vector2[count];
             float maximumSpeed = MinimumPositiveValue;
@@ -114,7 +133,6 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 velocity[index] = fluidMask[index] ? source[index].Velocity : Vector2.zero;
                 maximumSpeed = Mathf.Max(maximumSpeed, velocity[index].magnitude);
-                foam[index] = fluidMask[index] ? Mathf.Clamp01(source[index].Foam) : 0f;
             }
             return new WaterRiverFluidSolveResult(
                 velocity, foam, (bool[])fluidMask.Clone(), width, height, maximumSpeed);
@@ -138,11 +156,16 @@ namespace AbstractOcclusion.WebGpuWater
 
         static void Step(Cell[] source, Cell[] target, int width, int height,
                          bool[] fluidMask, float[] downstreamSpeed,
+                         float[] lateralCellSize, float longitudinalCellSize,
                          WaterRiverFluidSolveSettings settings, float[] divergence,
                          float[] pressure, float[] pressureTarget)
         {
             for (int row = 0; row < height; row++)
             {
+                float lateralStep = lateralCellSize[row];
+                float inverseLateralStep = 1f / lateralStep;
+                float inverseLongitudinalStep = 1f / longitudinalCellSize;
+                Vector2 desiredFlow = new Vector2(0f, downstreamSpeed[row]);
                 for (int column = 0; column < width; column++)
                 {
                     int index = row * width + column;
@@ -164,16 +187,41 @@ namespace AbstractOcclusion.WebGpuWater
                     Vector2 densityGradient = new Vector2(
                         (right.Density - left.Density) * 0.5f,
                         (up.Density - down.Density) * 0.5f);
-                    Vector2 laplacian = left.Velocity + right.Velocity + down.Velocity +
-                                        up.Velocity - centre.Velocity * 4f;
+                    // Viscosity diffuses the PERTURBATION only: the base flow's row-to-row
+                    // change is an authored speed profile, not shear to be smoothed away.
+                    Vector2 centrePerturbation = centre.Velocity - desiredFlow;
+                    Vector2 perturbationLeft = ReadPerturbation(
+                        source, fluidMask, downstreamSpeed, width, height,
+                        column - 1, row, centrePerturbation);
+                    Vector2 perturbationRight = ReadPerturbation(
+                        source, fluidMask, downstreamSpeed, width, height,
+                        column + 1, row, centrePerturbation);
+                    Vector2 perturbationDown = ReadPerturbation(
+                        source, fluidMask, downstreamSpeed, width, height,
+                        column, row - 1, centrePerturbation);
+                    Vector2 perturbationUp = ReadPerturbation(
+                        source, fluidMask, downstreamSpeed, width, height,
+                        column, row + 1, centrePerturbation);
+                    Vector2 laplacian = perturbationLeft + perturbationRight +
+                                        perturbationDown + perturbationUp -
+                                        centrePerturbation * 4f;
 
+                    Vector2 gridVelocity = new Vector2(
+                        centre.Velocity.x * inverseLateralStep,
+                        centre.Velocity.y * inverseLongitudinalStep);
                     Vector2 backtrace = new Vector2(column, row) -
-                                        centre.Velocity * (2f * settings.DeltaTime);
+                                        gridVelocity * settings.DeltaTime;
                     Cell advected = Sample(source, fluidMask, width, height, backtrace);
-                    Vector2 desiredFlow = new Vector2(0f, downstreamSpeed[row]);
-                    Vector2 velocity = advected.Velocity + settings.DeltaTime *
-                        (settings.Viscosity * laplacian - settings.Pressure * densityGradient +
-                         settings.Force * (desiredFlow - advected.Velocity));
+                    // Advect the perturbation, not the full field: subtract the base flow
+                    // AT THE SAMPLED ROW and re-anchor on this row's authored speed, so a
+                    // fast reach never inherits its slower upstream neighbour's base speed.
+                    Vector2 advectedPerturbation = advected.Velocity - new Vector2(
+                        0f, SampleDownstreamSpeed(downstreamSpeed, height, backtrace.y));
+                    Vector2 velocity = desiredFlow + advectedPerturbation +
+                        settings.DeltaTime *
+                        (settings.Viscosity * laplacian -
+                         settings.Pressure * densityGradient -
+                         settings.Force * advectedPerturbation);
 
                     float curl = (right.Velocity.y - left.Velocity.y -
                                   up.Velocity.x + down.Velocity.x) * 0.5f;
@@ -183,42 +231,59 @@ namespace AbstractOcclusion.WebGpuWater
                     if (curlGradient.sqrMagnitude > MinimumPositiveValue)
                         velocity += curlGradient.normalized * curl * settings.Vorticity;
 
-                    velocity *= settings.VelocityDecay;
+                    // Decay removes perturbation energy, not the authored river current. Damping
+                    // the full velocity made every clear bake settle below its spline speed and
+                    // desynchronised baked foam/current transport from the analytic river motion.
+                    velocity = desiredFlow +
+                               (velocity - desiredFlow) * settings.VelocityDecay;
                     velocity = ApplySolidBoundary(
                         velocity, fluidMask, width, height, column, row);
-                    if (velocity.magnitude < VelocityDeadband) velocity = Vector2.zero;
+                    // The deadband stills tiny PERTURBATIONS so an undisturbed reach stays
+                    // exactly on its authored speed (zeroing tiny full velocities instead
+                    // would freeze a slow river outright).
+                    if ((velocity - desiredFlow).magnitude < VelocityDeadband)
+                        velocity = desiredFlow;
 
                     float velocityDivergence = (right.Velocity.x - left.Velocity.x +
                                                 up.Velocity.y - down.Velocity.y) * 0.5f;
                     target[index] = new Cell
                     {
                         Velocity = velocity,
-                        Density = Mathf.Max(
-                            MinimumDensity,
+                        Density = Mathf.Clamp(
                             advected.Density - settings.DeltaTime *
                             Vector2.Dot(densityGradient, centre.Velocity) -
-                            velocityDivergence * 0.1f),
+                            velocityDivergence * 0.1f,
+                            MinimumDensity, MaximumDensity),
                         Vorticity = curl,
-                        Foam = StepFoam(source, fluidMask, width, height, column, row,
-                                        centre, left, right, down, up, advected.Foam,
-                                        curl, velocityDivergence, settings),
                     };
                 }
             }
 
-            ProjectVelocity(target, width, height, fluidMask,
+            ProjectVelocity(target, width, height, fluidMask, downstreamSpeed,
+                            lateralCellSize, longitudinalCellSize,
                             divergence, pressure, pressureTarget);
             UpdateVorticity(target, width, height, fluidMask);
         }
 
+        // Projection removes divergence from the PERTURBATION, in ribbon metres. Projecting
+        // the full field treated the authored row-to-row speed profile as divergence to
+        // erase, and the old unit-cell stencil ignored that a lateral cell is a different
+        // physical size from a longitudinal one (and varies per row), which invented
+        // lateral flow wherever the width or speed changed.
         static void ProjectVelocity(Cell[] cells, int width, int height, bool[] fluidMask,
+                                    float[] downstreamSpeed, float[] lateralCellSize,
+                                    float longitudinalCellSize,
                                     float[] divergence, float[] pressure,
                                     float[] pressureTarget)
         {
             Array.Clear(pressure, 0, pressure.Length);
             Array.Clear(pressureTarget, 0, pressureTarget.Length);
+            float inverseLongitudinal = 1f / longitudinalCellSize;
+            float longitudinalWeight = inverseLongitudinal * inverseLongitudinal;
             for (int row = 0; row < height; row++)
             {
+                float inverseLateral = 1f / lateralCellSize[row];
+                Vector2 desiredFlow = new Vector2(0f, downstreamSpeed[row]);
                 for (int column = 0; column < width; column++)
                 {
                     int index = row * width + column;
@@ -228,17 +293,22 @@ namespace AbstractOcclusion.WebGpuWater
                         continue;
                     }
 
-                    Vector2 centre = cells[index].Velocity;
-                    Vector2 left = ReadVelocity(
-                        cells, fluidMask, width, height, column - 1, row, centre);
-                    Vector2 right = ReadVelocity(
-                        cells, fluidMask, width, height, column + 1, row, centre);
-                    Vector2 down = ReadVelocity(
-                        cells, fluidMask, width, height, column, row - 1, centre);
-                    Vector2 up = ReadVelocity(
-                        cells, fluidMask, width, height, column, row + 1, centre);
-                    divergence[index] = -0.5f *
-                        (right.x - left.x + up.y - down.y);
+                    Vector2 centrePerturbation = cells[index].Velocity - desiredFlow;
+                    Vector2 left = ReadPerturbation(
+                        cells, fluidMask, downstreamSpeed, width, height,
+                        column - 1, row, centrePerturbation);
+                    Vector2 right = ReadPerturbation(
+                        cells, fluidMask, downstreamSpeed, width, height,
+                        column + 1, row, centrePerturbation);
+                    Vector2 down = ReadPerturbation(
+                        cells, fluidMask, downstreamSpeed, width, height,
+                        column, row - 1, centrePerturbation);
+                    Vector2 up = ReadPerturbation(
+                        cells, fluidMask, downstreamSpeed, width, height,
+                        column, row + 1, centrePerturbation);
+                    divergence[index] =
+                        (right.x - left.x) * 0.5f * inverseLateral +
+                        (up.y - down.y) * 0.5f * inverseLongitudinal;
                 }
             }
 
@@ -246,6 +316,12 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 for (int row = 0; row < height; row++)
                 {
+                    float inverseLateral = 1f / lateralCellSize[row];
+                    float lateralWeight = inverseLateral * inverseLateral;
+                    // Row-to-row lateral-size change bends the grid slightly; the stencil
+                    // uses each row's own weights, which is exact for the lateral pair and
+                    // a first-order approximation across rows.
+                    float inverseStencilSum = 1f / (2f * (lateralWeight + longitudinalWeight));
                     for (int column = 0; column < width; column++)
                     {
                         int index = row * width + column;
@@ -265,7 +341,9 @@ namespace AbstractOcclusion.WebGpuWater
                         float up = ReadPressure(pressure, fluidMask, width, height,
                                                 column, row + 1, centre);
                         pressureTarget[index] =
-                            (divergence[index] + left + right + down + up) * 0.25f;
+                            (lateralWeight * (left + right) +
+                             longitudinalWeight * (down + up) -
+                             divergence[index]) * inverseStencilSum;
                     }
                 }
                 (pressure, pressureTarget) = (pressureTarget, pressure);
@@ -273,6 +351,7 @@ namespace AbstractOcclusion.WebGpuWater
 
             for (int row = 0; row < height; row++)
             {
+                float inverseLateral = 1f / lateralCellSize[row];
                 for (int column = 0; column < width; column++)
                 {
                     int index = row * width + column;
@@ -286,8 +365,9 @@ namespace AbstractOcclusion.WebGpuWater
                                               column, row - 1, centre);
                     float up = ReadPressure(pressure, fluidMask, width, height,
                                             column, row + 1, centre);
-                    Vector2 velocity = cells[index].Velocity -
-                                       new Vector2(right - left, up - down) * 0.5f;
+                    Vector2 velocity = cells[index].Velocity - new Vector2(
+                        (right - left) * 0.5f * inverseLateral,
+                        (up - down) * 0.5f * inverseLongitudinal);
                     cells[index].Velocity = ApplySolidBoundary(
                         velocity, fluidMask, width, height, column, row);
                 }
@@ -326,6 +406,30 @@ namespace AbstractOcclusion.WebGpuWater
             return mask[index] ? cells[index].Velocity : Vector2.zero;
         }
 
+        // Perturbation seen at a neighbour: a solid cell's real velocity is zero, so it
+        // carries the full counter-flow against its row's base; grid edges mirror the
+        // centre so open inlet/outlet rows and banks stay flux-free.
+        static Vector2 ReadPerturbation(Cell[] cells, bool[] mask, float[] downstreamSpeed,
+                                        int width, int height, int column, int row,
+                                        Vector2 centrePerturbation)
+        {
+            if (column < 0 || column >= width || row < 0 || row >= height)
+                return centrePerturbation;
+            int index = row * width + column;
+            Vector2 velocity = mask[index] ? cells[index].Velocity : Vector2.zero;
+            return velocity - new Vector2(0f, downstreamSpeed[row]);
+        }
+
+        // Base-flow speed at a fractional backtrace row, clamped exactly like Sample's
+        // bilinear so (velocity - base) advects as a pure perturbation at the grid ends too.
+        static float SampleDownstreamSpeed(float[] downstreamSpeed, int height, float position)
+        {
+            float y = Mathf.Clamp(position, 0f, height - 1f);
+            int lower = Mathf.FloorToInt(y);
+            int upper = Mathf.Min(lower + 1, height - 1);
+            return Mathf.Lerp(downstreamSpeed[lower], downstreamSpeed[upper], y - lower);
+        }
+
         static float ReadPressure(float[] pressure, bool[] mask, int width, int height,
                                   int column, int row, float solidFallback)
         {
@@ -348,48 +452,219 @@ namespace AbstractOcclusion.WebGpuWater
             return velocity;
         }
 
-        // Per-step foam update: generation from local turbulence, transport by the SAME
-        // backtrace the velocity advection already computed, neighbour diffusion, decay.
-        // The old one-shot shear snapshot only lit cells TOUCHING an obstacle; transporting
-        // foam through the settled field is what draws the downstream streaks, bank lines
-        // and accumulation the live sim gets for free.
-        static float StepFoam(Cell[] source, bool[] mask, int width, int height,
-                              int column, int row, Cell centre, Cell left, Cell right,
-                              Cell down, Cell up, float advectedFoam, float curl,
-                              float velocityDivergence,
-                              WaterRiverFluidSolveSettings settings)
+        // Velocity iterations are convergence work, not elapsed foam time. Foam is therefore
+        // extracted once from the final settled field; carrying foam inside Step repeatedly
+        // injected the same obstacle source and painted a steady band to the river outlet.
+        static void GenerateFoamSnapshot(
+            Cell[] cells, float[] foam, int width, int height, bool[] mask,
+            float[] obstacleInfluence, bool[] bowFaceMask, float[] downstreamSpeed,
+            float[] lateralCellSize, float longitudinalCellSize,
+            WaterRiverFluidSolveSettings settings)
         {
-            Vector2 shearLeft = ReadShearVelocity(source, mask, width, height,
-                                                  column - FoamShearRadiusCells, row, centre);
-            Vector2 shearRight = ReadShearVelocity(source, mask, width, height,
-                                                   column + FoamShearRadiusCells, row, centre);
-            Vector2 shearDown = ReadShearVelocity(source, mask, width, height,
-                                                  column, row - FoamShearRadiusCells, centre);
-            Vector2 shearUp = ReadShearVelocity(source, mask, width, height,
-                                                column, row + FoamShearRadiusCells, centre);
-            float shear = Mathf.Max((shearRight - shearLeft).magnitude,
-                                    (shearUp - shearDown).magnitude);
-            float swirl = Mathf.Abs(curl) * VorticityFoamWeight;
-            float convergence = Mathf.Max(0f, -velocityDivergence) * ConvergenceFoamWeight;
-            float activity = shear + swirl + convergence;
-            float generation =
-                Mathf.Clamp01((activity - settings.FoamThreshold) * settings.FoamStrength);
-            float transported = advectedFoam * FoamSurvivalPerStep +
-                                generation * settings.DeltaTime;
-            float neighbourFoam = (left.Foam + right.Foam + down.Foam + up.Foam) * 0.25f;
-            return Mathf.Clamp01(
-                Mathf.Lerp(transported, neighbourFoam, FoamSpreadFraction));
+            for (int row = 0; row < height; row++)
+            {
+                float lateralStep = lateralCellSize[row];
+                float inverseLateralStep = 1f / lateralStep;
+                float inverseLongitudinalStep = 1f / longitudinalCellSize;
+                for (int column = 0; column < width; column++)
+                {
+                    int index = row * width + column;
+                    if (!mask[index])
+                    {
+                        foam[index] = 0f;
+                        continue;
+                    }
+
+                    Cell centre = cells[index];
+                    Cell left = ReadNeighbour(
+                        cells, mask, width, height, column - 1, row, centre);
+                    Cell right = ReadNeighbour(
+                        cells, mask, width, height, column + 1, row, centre);
+                    Cell down = ReadNeighbour(
+                        cells, mask, width, height, column, row - 1, centre);
+                    Cell up = ReadNeighbour(
+                        cells, mask, width, height, column, row + 1, centre);
+                    float curl =
+                        (right.Velocity.y - left.Velocity.y) *
+                            0.5f * inverseLateralStep -
+                        (up.Velocity.x - down.Velocity.x) *
+                            0.5f * inverseLongitudinalStep;
+                    float velocityDivergence =
+                        (right.Velocity.x - left.Velocity.x) *
+                            0.5f * inverseLateralStep +
+                        (up.Velocity.y - down.Velocity.y) *
+                            0.5f * inverseLongitudinalStep;
+                    foam[index] = CalculateFoamGeneration(
+                        cells, mask, width, height, column, row,
+                        obstacleInfluence[index], bowFaceMask[index],
+                        downstreamSpeed[row], centre, curl, velocityDivergence,
+                        lateralStep, longitudinalCellSize, settings);
+                }
+            }
         }
 
-        // Shear-specific neighbour read. Lateral out-of-bounds is the river BANK - a solid
-        // wall, so it shears against the flow (bank foam). Longitudinal out-of-bounds is the
-        // inlet/outlet - open flow, NOT a wall - so it mirrors the centre; treating it as
-        // solid would print a foam bar across both river ends.
+        static float CalculateFoamGeneration(
+            Cell[] cells, bool[] mask, int width, int height, int column, int row,
+            float obstacleInfluence, bool bowFace, float downstreamSpeed, Cell centre,
+            float curl, float velocityDivergence, float lateralCellSize,
+            float longitudinalCellSize, WaterRiverFluidSolveSettings settings)
+        {
+            Vector2 shearLeft = ReadShearVelocity(cells, mask, width, height,
+                                                  column - FoamShearRadiusCells, row, centre);
+            Vector2 shearRight = ReadShearVelocity(cells, mask, width, height,
+                                                   column + FoamShearRadiusCells, row, centre);
+            Vector2 shearDown = ReadShearVelocity(cells, mask, width, height,
+                                                  column, row - FoamShearRadiusCells, centre);
+            Vector2 shearUp = ReadShearVelocity(cells, mask, width, height,
+                                                column, row + FoamShearRadiusCells, centre);
+            float lateralSpan = 2f * FoamShearRadiusCells * lateralCellSize;
+            float longitudinalSpan = 2f * FoamShearRadiusCells * longitudinalCellSize;
+            float lateralShear = (shearRight - shearLeft).magnitude / lateralSpan;
+            float longitudinalShear = (shearUp - shearDown).magnitude / longitudinalSpan;
+            // A solid just DOWNSTREAM makes this cell a bow face: water decelerating into
+            // an obstruction piles up smoothly instead of churning, so the deceleration-
+            // driven terms (longitudinal shear, convergence) must not print a foam bar
+            // UPSTREAM of every rock - real whitewater lives beside and behind it. Ribbon
+            // flow is always +row, so downstream needs no vector test. Cascade foam is
+            // generated by its dedicated river-slope path, outside this fluid contributor.
+            float shear = Mathf.Max(lateralShear, bowFace ? 0f : longitudinalShear);
+            float swirl = Mathf.Abs(curl) * VorticityFoamWeight;
+            float convergence = bowFace
+                ? 0f
+                : Mathf.Max(0f, -velocityDivergence) * ConvergenceFoamWeight;
+            float obstacleActivity = (shear + swirl + convergence) * obstacleInfluence;
+            float bankActivity = CalculateBankActivity(
+                column, width, downstreamSpeed, lateralSpan, settings.BankFoamStrength);
+            float activity = Mathf.Max(obstacleActivity, bankActivity);
+            return Mathf.Clamp01(
+                (activity - settings.FoamThreshold) * settings.FoamStrength);
+        }
+
+        static float CalculateBankActivity(int column, int width, float downstreamSpeed,
+                                           float lateralSpan, float bankFoamStrength)
+        {
+            if (bankFoamStrength <= 0f) return 0f;
+
+            bool samplesLeftBank = column - FoamShearRadiusCells < 0;
+            bool samplesRightBank = column + FoamShearRadiusCells >= width;
+            if (!samplesLeftBank && !samplesRightBank) return 0f;
+
+            Vector2 baseVelocity = new Vector2(0f, downstreamSpeed);
+            Vector2 leftVelocity = samplesLeftBank
+                ? Vector2.Lerp(baseVelocity, Vector2.zero, bankFoamStrength)
+                : baseVelocity;
+            Vector2 rightVelocity = samplesRightBank
+                ? Vector2.Lerp(baseVelocity, Vector2.zero, bankFoamStrength)
+                : baseVelocity;
+            return (rightVelocity - leftVelocity).magnitude / lateralSpan;
+        }
+
+        static float[] BuildObstacleFoamInfluence(bool[] fluidMask, int width, int height,
+                                                   float[] lateralCellSize,
+                                                   float longitudinalCellSize)
+        {
+            var influence = new float[fluidMask.Length];
+            int probeRows = Mathf.CeilToInt(
+                ObstacleFoamInfluenceMeters / longitudinalCellSize);
+            for (int row = 0; row < height; row++)
+            {
+                int probeColumns = Mathf.CeilToInt(
+                    ObstacleFoamInfluenceMeters / lateralCellSize[row]);
+                for (int column = 0; column < width; column++)
+                {
+                    int index = row * width + column;
+                    if (!fluidMask[index]) continue;
+                    influence[index] = FindObstacleFoamInfluence(
+                        fluidMask, width, height, column, row, probeColumns, probeRows,
+                        lateralCellSize[row], longitudinalCellSize);
+                }
+            }
+            return influence;
+        }
+
+        static float FindObstacleFoamInfluence(bool[] mask, int width, int height,
+                                                int column, int row, int probeColumns,
+                                                int probeRows, float lateralCellSize,
+                                                float longitudinalCellSize)
+        {
+            float nearestDistance = float.PositiveInfinity;
+            for (int rowOffset = -probeRows; rowOffset <= probeRows; rowOffset++)
+            {
+                int probeRow = row + rowOffset;
+                if (probeRow < 0 || probeRow >= height) continue;
+                float longitudinalDistance = rowOffset * longitudinalCellSize;
+                for (int columnOffset = -probeColumns;
+                     columnOffset <= probeColumns; columnOffset++)
+                {
+                    int probeColumn = column + columnOffset;
+                    if (probeColumn < 0 || probeColumn >= width) continue;
+                    if (mask[probeRow * width + probeColumn]) continue;
+
+                    float lateralDistance = columnOffset * lateralCellSize;
+                    float distance = Mathf.Sqrt(
+                        lateralDistance * lateralDistance +
+                        longitudinalDistance * longitudinalDistance);
+                    nearestDistance = Mathf.Min(nearestDistance, distance);
+                }
+            }
+
+            return Mathf.InverseLerp(
+                ObstacleFoamInfluenceMeters, 0f, nearestDistance);
+        }
+
+        // Marks every fluid cell holding a solid within ObstacleFoamInfluenceMeters downstream,
+        // inside the same reach as a lateral window - the diagonal shoulders of a rounded
+        // obstacle stagnate too, not just its centre column. Built ONCE per solve (the mask
+        // never changes between iterations) so the per-cell probe cost never multiplies by
+        // the iteration count. Rows past the grid are the open outlet and columns past the
+        // banks are open, so neither counts as solid.
+        static bool[] BuildBowFaceMask(bool[] fluidMask, int width, int height,
+                                       float[] lateralCellSize, float longitudinalCellSize)
+        {
+            var bowFace = new bool[fluidMask.Length];
+            int probeRows = Mathf.Max(FoamShearRadiusCells,
+                Mathf.CeilToInt(ObstacleFoamInfluenceMeters / longitudinalCellSize));
+            for (int row = 0; row < height; row++)
+            {
+                int probeColumns = Mathf.Max(FoamShearRadiusCells,
+                    Mathf.CeilToInt(ObstacleFoamInfluenceMeters / lateralCellSize[row]));
+                for (int column = 0; column < width; column++)
+                {
+                    int index = row * width + column;
+                    if (!fluidMask[index]) continue;
+                    bowFace[index] = HasSolidInProbe(fluidMask, width, height, column, row,
+                                                     probeColumns, probeRows);
+                }
+            }
+            return bowFace;
+        }
+
+        static bool HasSolidInProbe(bool[] mask, int width, int height, int column, int row,
+                                    int probeColumns, int probeRows)
+        {
+            for (int rowOffset = 1; rowOffset <= probeRows; rowOffset++)
+            {
+                int probeRow = row + rowOffset;
+                if (probeRow >= height) return false;
+                for (int columnOffset = -probeColumns; columnOffset <= probeColumns;
+                     columnOffset++)
+                {
+                    int probeColumn = column + columnOffset;
+                    if (probeColumn < 0 || probeColumn >= width) continue;
+                    if (!mask[probeRow * width + probeColumn]) return true;
+                }
+            }
+            return false;
+        }
+
+        // Domain bounds mirror the channel velocity because bank generation is a separate,
+        // author-controlled contributor. Interior solid cells remain zero so obstacle shear
+        // is still measured inside the local influence field.
         static Vector2 ReadShearVelocity(Cell[] cells, bool[] mask, int width, int height,
                                          int column, int row, Cell centre)
         {
-            if (column < 0 || column >= width) return Vector2.zero;
-            if (row < 0 || row >= height) return centre.Velocity;
+            if (column < 0 || column >= width || row < 0 || row >= height)
+                return centre.Velocity;
             int index = row * width + column;
             return mask[index] ? cells[index].Velocity : Vector2.zero;
         }
@@ -416,7 +691,6 @@ namespace AbstractOcclusion.WebGpuWater
                 Velocity = Vector2.Lerp(first.Velocity, second.Velocity, value),
                 Density = Mathf.Lerp(first.Density, second.Density, value),
                 Vorticity = Mathf.Lerp(first.Vorticity, second.Vorticity, value),
-                Foam = Mathf.Lerp(first.Foam, second.Foam, value),
             };
         }
 
@@ -441,6 +715,7 @@ namespace AbstractOcclusion.WebGpuWater
                mask[row * width + column];
 
         static void Validate(int width, int height, bool[] fluidMask, float[] downstreamSpeed,
+                             float[] lateralCellSize, float longitudinalCellSize,
                              WaterRiverFluidSolveSettings settings)
         {
             if (width < MinimumResolution) throw new ArgumentOutOfRangeException(nameof(width));
@@ -451,6 +726,10 @@ namespace AbstractOcclusion.WebGpuWater
             if (downstreamSpeed == null || downstreamSpeed.Length != height)
                 throw new ArgumentException("Downstream speed must contain one value per row.",
                                             nameof(downstreamSpeed));
+            if (lateralCellSize == null || lateralCellSize.Length != height)
+                throw new ArgumentException("Lateral cell size must contain one value per row.",
+                                            nameof(lateralCellSize));
+            ValidatePositive(longitudinalCellSize, nameof(longitudinalCellSize));
             if (settings.Iterations < MinimumIterations)
                 throw new ArgumentOutOfRangeException(nameof(settings.Iterations));
             ValidatePositive(settings.DeltaTime, nameof(settings.DeltaTime));
@@ -463,8 +742,14 @@ namespace AbstractOcclusion.WebGpuWater
             ValidateNonNegative(settings.Vorticity, nameof(settings.Vorticity));
             ValidateNonNegative(settings.FoamThreshold, nameof(settings.FoamThreshold));
             ValidateNonNegative(settings.FoamStrength, nameof(settings.FoamStrength));
+            if (!float.IsFinite(settings.BankFoamStrength) ||
+                settings.BankFoamStrength < 0f || settings.BankFoamStrength > 1f)
+                throw new ArgumentOutOfRangeException(nameof(settings.BankFoamStrength));
             for (int row = 0; row < downstreamSpeed.Length; row++)
+            {
                 ValidateNonNegative(downstreamSpeed[row], nameof(downstreamSpeed));
+                ValidatePositive(lateralCellSize[row], nameof(lateralCellSize));
+            }
         }
 
         static void ValidatePositive(float value, string name)

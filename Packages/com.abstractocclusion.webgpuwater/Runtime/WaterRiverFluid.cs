@@ -22,8 +22,9 @@ namespace AbstractOcclusion.WebGpuWater
         const float DefaultForce = 0.4f;
         const float DefaultVelocityDecay = 0.9999f;
         const float DefaultVorticity = 0.13f;
-        const float DefaultFoamThreshold = 0.05f;
-        const float DefaultFoamStrength = 5f;
+        const float DefaultFoamThreshold = 0.25f;
+        const float DefaultFoamStrength = 0.65f;
+        const float DefaultBankFoamStrength = 0f;
         const float EnabledFeature = 1f;
         const float DisabledFeature = 0f;
 
@@ -46,6 +47,8 @@ namespace AbstractOcclusion.WebGpuWater
         [Min(0f)] [SerializeField] internal float vorticity = DefaultVorticity;
         [Min(0f)] [SerializeField] internal float foamThreshold = DefaultFoamThreshold;
         [Min(0f)] [SerializeField] internal float foamStrength = DefaultFoamStrength;
+        [Tooltip("How strongly river banks behave as no-slip foam-producing walls. Set to zero to suppress edge-only foam.")]
+        [Range(0f, 1f)] [SerializeField] internal float bankFoamStrength = DefaultBankFoamStrength;
 
         WaterRiverSurface _surface;
 
@@ -97,7 +100,8 @@ namespace AbstractOcclusion.WebGpuWater
         internal WaterRiverFluidSolveSettings CreateSolveSettings()
             => new WaterRiverFluidSolveSettings(
                 iterations, deltaTime, viscosity, pressure, flowForce,
-                velocityDecay, vorticity, foamThreshold, foamStrength);
+                velocityDecay, vorticity, foamThreshold, foamStrength,
+                bankFoamStrength);
 
         internal void AssignBakeData(WaterRiverFluidBakeData data)
         {
@@ -128,6 +132,7 @@ namespace AbstractOcclusion.WebGpuWater
             vorticity = Mathf.Max(0f, vorticity);
             foamThreshold = Mathf.Max(0f, foamThreshold);
             foamStrength = Mathf.Max(0f, foamStrength);
+            bankFoamStrength = Mathf.Clamp01(bankFoamStrength);
         }
     }
 }

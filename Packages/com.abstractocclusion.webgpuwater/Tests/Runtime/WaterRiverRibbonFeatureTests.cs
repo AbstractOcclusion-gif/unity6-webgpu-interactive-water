@@ -151,7 +151,7 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         }
 
         [Test]
-        public void Populate_SharedSourceBoundaryCopiesTheUpstreamTerminalRowVerbatim()
+        public void Populate_SharedSourceBoundaryResetsBakeDistanceButContinuesMetricDistance()
         {
             GameObject splineHost = CreateSpline(StraightKnots(), out WaterRiverSpline spline);
             var meshHost = new GameObject(MeshHostName);
@@ -181,9 +181,10 @@ namespace AbstractOcclusion.WebGpuWater.Tests
                         lateralMeters, upstreamLongitudinalMeters, Speed, 1f);
                 }
 
-                WaterRiverRibbonMeshGenerator.Populate(
-                    mesh, spline, meshHost.transform, SamplesPerSegment, default, default,
-                    boundary);
+                WaterRiverRibbonMeshGenerator.RibbonMetrics metrics =
+                    WaterRiverRibbonMeshGenerator.Populate(
+                        mesh, spline, meshHost.transform, SamplesPerSegment, default, default,
+                        boundary);
 
                 var currentData = new List<Vector4>();
                 mesh.GetUVs(1, currentData);
@@ -192,12 +193,20 @@ namespace AbstractOcclusion.WebGpuWater.Tests
                     AssertVector3(mesh.vertices[column], boundary.WorldPositions[column]);
                     AssertVector3(mesh.normals[column], boundary.WorldNormals[column]);
                     Assert.That(mesh.tangents[column], Is.EqualTo(boundary.WorldTangents[column]));
-                    Assert.That(mesh.uv[column], Is.EqualTo(boundary.Uv[column]));
+                    Assert.That(mesh.uv[column].x,
+                                Is.EqualTo(boundary.Uv[column].x).Within(FloatTolerance));
+                    Assert.That(mesh.uv[column].y, Is.Zero.Within(FloatTolerance));
                     Assert.That(currentData[column], Is.EqualTo(boundary.CurrentData[column]));
                 }
                 int secondRow = columns;
+                Assert.That(mesh.uv[secondRow].y, Is.GreaterThan(0f),
+                            "the local bake coordinate advances from this river's source");
                 Assert.That(currentData[secondRow].y, Is.GreaterThan(upstreamLongitudinalMeters),
                             "the downstream ribbon continues the upstream phase coordinate");
+                Assert.That(currentData[secondRow].y - mesh.uv[secondRow].y,
+                            Is.EqualTo(upstreamLongitudinalMeters).Within(FloatTolerance));
+                Assert.That(metrics.SourceLongitudinalMeters,
+                            Is.EqualTo(upstreamLongitudinalMeters).Within(FloatTolerance));
             }
             finally
             {
