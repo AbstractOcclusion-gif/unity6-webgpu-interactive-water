@@ -44,6 +44,30 @@ float _ShoreSwashDepositGain;  // FOAM-5: >0 = persistent swash deposits live in
 // Skip all foam texture work below this mask level (nothing would be visible).
 #define FOAM_MASK_EPSILON   0.005
 #define RIVER_FOAM_SAFE_DENOMINATOR 1e-4
+
+// Surface-pass terrain mask, extending OceanTerrainSwashVisible with the persistent foam deposit
+// hold. Every surface pass uses this one test so the beauty sheet, signed depth, after-fog foam and
+// fog occluder agree on the swash silhouette instead of one of them cutting the film away.
+float OceanTerrainSurfaceVisible(float3 worldPosition, float3 poolPosition, float2 sourceXZ)
+{
+    float depth;
+    if (!TryOceanTerrainDepth(worldPosition.xz, depth)) return 1.0;
+
+    ShoreData shore = ShoreSample(sourceXZ);
+    float2 swash = EvaluateSurfSwash(sourceXZ, shore.toShore, shore.slopeTan,
+                                     shore.influence, _SurfBeatTime);
+    float shoreKeep = max(swash.x, swash.y);
+    if (_ShoreSwashDepositGain > 0.0)
+    {
+        float2 depositUV = (_SimWindowed < 0.5)
+            ? (poolPosition.xz * 0.5 + 0.5)
+            : (WorldToSim(float3(sourceXZ.x, _ShoreWaterLevel, sourceXZ.y)).xz * 0.5 + 0.5);
+        float depositHold = smoothstep(FOAM_MASK_EPSILON, SURF_DEPOSIT_HOLD_FULL,
+                                       SampleFoamMaskWindowed(depositUV));
+        shoreKeep = lerp(shoreKeep, max(shoreKeep, -depth), depositHold);
+    }
+    return depth + SHORE_CLIP_BIAS + shoreKeep > 0.0 ? 1.0 : 0.0;
+}
 // Flow-phased pattern drift: how far the foam pattern is dragged along the
 // local surface flow (UV units per phase) and how fast the two phases cycle.
 // Two half-offset phases cross-faded by a seesaw weight hide the reset jump

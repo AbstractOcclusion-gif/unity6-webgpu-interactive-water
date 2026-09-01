@@ -198,9 +198,11 @@ namespace AbstractOcclusion.WebGpuWater
         // ---- WaterSimulation.cs <-> WaterUniformPublisher.cs ----
         internal const string BedTexName = "_BedTex";
         internal const string UseBedDepthName = "_UseBedDepth";
+        internal const string ClipOceanToTerrainName = "_ClipOceanToTerrain";
 
         internal static readonly int BedTex = Shader.PropertyToID(BedTexName);
         internal static readonly int UseBedDepth = Shader.PropertyToID(UseBedDepthName);
+        internal static readonly int ClipOceanToTerrain = Shader.PropertyToID(ClipOceanToTerrainName);
 
         // ---- WaterBuildKit.cs <-> WaterFoamProfile.cs ----
         internal const string ParticleTexName = "_ParticleTex";

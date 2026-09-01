@@ -46,6 +46,7 @@
 // attenuation trade over one shared band instead of two competing depth thresholds.
 #define SHORE_BAND_INNER_FRACTION     0.35
 #define SHORE_GREEN_MIN_DEPTH         0.05 // metres; depth floor under the Green's-law divide
+#define SHORE_CLIP_BIAS               0.02 // metres of surface retained past the still waterline
 #define SHORE_GREEN_EXPONENT          0.25 // Green's law: amplitude ~ depth^(-1/4)
 #define SHORE_WARP_REACH_MIN          1.0  // metres; floor on _ShoreWarpReach (degenerate publish)
 #define SHORE_MIN_GREENS              1.0  // _ShoreGreens floor: a growth CAP below 1 would attenuate

@@ -167,6 +167,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterCausticProjection"
             // uninitialised memory - the same two guards this block spelled out separately before.
             bool insideDryVolume = InsideExclusion(worldPos) || IsInsideMeshExclusion(uv, rawDepth);
             underwaterMask = (!isSky && belowSurface && !insideDryVolume) ? map.footprint : 0.0;
+            underwaterMask *= OceanTerrainFootprintWet(worldPos.xz);
 
             // Occluder lit factor, computed ONCE here so both passes shade the identical shadow:
             // four extra explicit-LOD taps = the shared distance-grown PCF penumbra (WaterShared);

@@ -106,6 +106,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 "Bed Depth (terrain floor)", _showBedSource, Prop(WaterVolumePropertyPaths.UseBedDepth), () =>
             {
                 DrawFields(WaterVolumePropertyPaths.BedTerrain);
+                DrawFieldsIf(IsOcean, WaterVolumePropertyPaths.ClipOceanToTerrain);
                 EditorGUILayout.HelpBox(BedSourceHelp, MessageType.None);
             });
         }
@@ -174,7 +175,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const string BedSourceHelp =
             "The terrain read as this body's floor. What the bed DRIVES is drawn where it belongs: " +
             "deep colour + clarity in Volume, surf fronts in Motion, bake resolution in Budget - each " +
-            "greyed out until this is on.";
+            "greyed out until this is on. On an Ocean, Clip Ocean To Terrain also removes dry island " +
+            "columns while retaining below-level marshes and channels.";
     }
 }
 #endif

@@ -1609,7 +1609,6 @@ float3 ShorelineStage(v2f i, WaterGeomStage g, float3 outColor, float3 refracted
         // positive bias keeps a hair of water right at the waterline (no shimmer gap).
         // The swash keeps fragments alive up to the wet line (current film OR still-drying
         // sand), so the film and the glaze have geometry to render on.
-        const float SHORE_CLIP_BIAS = 0.02; // metres of water kept past the waterline
         // FOAM-5: keep the beach fragment alive wherever a persistent swash deposit still lives in
         // the foam buffer, so it renders + DISSOLVES on the sand instead of being clipped away when
         // the drying wet line recedes below it (matches the vertex's foam-aware lift, same coord).

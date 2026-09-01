@@ -196,13 +196,14 @@ namespace AbstractOcclusion.WebGpuWater
         // band is the REST water column: pool y in [-1, 0] (surface at rest = 0, floor = -1).
         // Wave crests above rest level are deliberately not part of the box - the buoyancy
         // intent's above-point surface search owns that case - so two bodies stacked at the
-        // same XZ (a pond over a sewer) resolve by elevation alone. An unbounded ocean has no
-        // horizontal footprint; its column spans everywhere between bed extent and rest level.
+        // same XZ (a pond over a sewer) resolve by elevation alone. An unbounded ocean normally
+        // spans everywhere between bed extent and rest level; its optional signed-terrain
+        // footprint removes dry columns and stops wet columns at the sampled terrain floor.
         internal bool ContainsPointXYZ(Vector3 world)
         {
             Vector3 p = WorldToPool(world);
             bool insideColumn = p.y >= -1f && p.y <= 0f;
-            if (IsOceanClipmap) return insideColumn;
+            if (IsOceanClipmap) return insideColumn && OceanTerrainContainsPoint(world, 0f);
             return insideColumn && p.x >= -1f && p.x <= 1f && p.z >= -1f && p.z <= 1f;
         }
 
@@ -217,22 +218,44 @@ namespace AbstractOcclusion.WebGpuWater
                                          boundaryMarginMeters / e.z);
             Vector3 p = WorldToPool(world);
             bool insideColumn = p.y >= -1f - margin.y && p.y <= margin.y;
-            if (IsOceanClipmap) return insideColumn;
+            if (IsOceanClipmap)
+                return insideColumn && OceanTerrainContainsPoint(world, boundaryMarginMeters);
             return insideColumn &&
                    p.x >= -1f - margin.x && p.x <= 1f + margin.x &&
                    p.z >= -1f - margin.z && p.z <= 1f + margin.z;
         }
 
         // World point -> pool for the surface QUERIES (height/submersion/flow). Same as WorldToPoolXZ, except
-        // an unbounded ocean has no footprint edge - its surface spans everywhere (clipmap to the horizon) -
-        // so points beyond the bounded extent are accepted. Without this a floater (or the boat's propulsion,
-        // which gates on IsSubmerged) cuts out at the extent edge. BodyContaining still uses the strict
-        // footprint so per-body membership stays bounded.
+        // an unbounded ocean has no rectangular footprint edge - its surface spans to the horizon - so
+        // points beyond the bounded extent are accepted. The optional signed-terrain footprint is the
+        // one exception: its in-field dry columns contain no queryable surface. Without the unbounded
+        // path a floater (or the boat's propulsion, which gates on IsSubmerged) cuts out at the extent edge.
         bool QueryPoolXZ(Vector3 world, out float poolX, out float poolZ)
         {
             Vector3 p = WorldToPool(world);
             poolX = p.x; poolZ = p.z;
-            return IsOceanClipmap || (poolX >= -1f && poolX <= 1f && poolZ >= -1f && poolZ <= 1f);
+            if (IsOceanClipmap) return OceanSurfaceExistsAt(world.x, world.z);
+            return poolX >= -1f && poolX <= 1f && poolZ >= -1f && poolZ <= 1f;
+        }
+
+        // The terrain field covers the authored island, not the entire unbounded ocean. A missing
+        // sample therefore means open ocean, while an in-field signed depth is authoritative.
+        // This is the CPU twin of OceanTerrainFootprintWet in WaterShore.hlsl.
+        internal bool OceanSurfaceExistsAt(float worldX, float worldZ)
+        {
+            if (!ClipOceanToTerrainActive) return true;
+            if (!ShoreDepth.TrySampleDepth(worldX, worldZ, out float columnDepth)) return true;
+            return columnDepth > 0f;
+        }
+
+        bool OceanTerrainContainsPoint(Vector3 world, float boundaryMarginMeters)
+        {
+            if (!ClipOceanToTerrainActive) return true;
+            if (!ShoreDepth.TrySampleDepth(world.x, world.z, out float columnDepth)) return true;
+            if (columnDepth <= 0f) return false;
+
+            float terrainFloorY = ShoreDepth.FieldWaterLevel - columnDepth;
+            return world.y >= terrainFloorY - boundaryMarginMeters;
         }
 
         // Intersect a camera ray with the (possibly tilted) surface plane through the

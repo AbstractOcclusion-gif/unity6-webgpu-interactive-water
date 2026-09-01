@@ -22,9 +22,14 @@ namespace AbstractOcclusion.WebGpuWater
             [Tooltip("Use the baked terrain bed height for real water-column depth (shoreline " +
                      "gradient). Off = flat-floor behaviour.")]
             public bool useBedDepth = false;
+            [Tooltip("For an infinite ocean, use the baked signed terrain depth as its wet/dry " +
+                     "footprint. Terrain below the water level stays wet (including marshes and " +
+                     "channels); terrain at or above it contains no ocean. Outside the terrain " +
+                     "field remains open ocean. Off preserves the legacy infinite half-space.")]
+            public bool clipOceanToTerrain = false;
             [Tooltip("Terrain whose heightmap defines the lake bed. Auto-resolves to the active " +
-                     "Terrain if empty. Baked once at startup; call RebakeBed() (or the context-menu " +
-                     "item) if the terrain changes.")]
+                     "Terrain if empty. Baked once at startup; use the Rebake Bed and Rebake Shore " +
+                     "Depth context-menu items if the terrain changes.")]
             public Terrain bedTerrain;
             [Tooltip("Resolution of the baked pool-space bed-height map.")]
             [Range(WaterBedBaker.MinResolution, WaterBedBaker.MaxResolution)] public int bedResolution = 256;
@@ -191,6 +196,8 @@ namespace AbstractOcclusion.WebGpuWater
 
         // Same-named forwarding accessors keep every reader unchanged (WaterBedBaker, the publisher).
         internal bool useBedDepth => bedDepthSettings.useBedDepth;
+        internal bool ClipOceanToTerrainActive
+            => IsOceanClipmap && useBedDepth && bedDepthSettings.clipOceanToTerrain;
         internal Terrain bedTerrain => bedDepthSettings.bedTerrain;
         internal int bedResolution => bedDepthSettings.bedResolution;
         internal Color deepWaterColor => bedDepthSettings.deepWaterColor;

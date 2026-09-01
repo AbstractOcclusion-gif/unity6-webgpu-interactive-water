@@ -85,6 +85,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
         // Bed depth / shoreline / clarity block.
         internal const string UseBedDepth = "bedDepthSettings.useBedDepth";
+        internal const string ClipOceanToTerrain = "bedDepthSettings.clipOceanToTerrain";
         internal const string BedTerrain = "bedDepthSettings.bedTerrain";
         internal const string ShoreShoalDepth = "bedDepthSettings.shoreShoalDepth";
         internal const string ShoreRefraction = "bedDepthSettings.shoreRefraction";

@@ -1150,6 +1150,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             bool hasRiverFogSegment = RiverFogSegment(
                 uv, sceneWorld, pathLen, deepestY, surfaceRefY, wetStart);
             if (hasRiverFogSegment) armWeight = 1.0;
+            else armWeight *= OceanTerrainFootprintWet(sceneWorld.xz);
             if (!hasRiverFogSegment && _RiverFogExternalOnly > 0.5)
             {
                 depthAttenuation = float3(1.0, 1.0, 1.0);

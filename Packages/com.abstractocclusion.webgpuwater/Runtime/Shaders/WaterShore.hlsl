@@ -38,6 +38,10 @@ float _ShoreSDFDebug;     // 1 = visualize the SDF on the surface (debug only)
 // body that opted into bed depth consumes the shore field, so another body overlapping the field's
 // rectangle (a pond next to the terrain lake) can never catch its shoal/surf/swash.
 float _ShoreBodyGate;
+// Opt-in topology rule for an infinite ocean. The signed depth field is authoritative only inside
+// its rectangle: positive depth is a real water column; zero/negative is dry terrain. Outside the
+// field remains ocean so a finite island terrain can sit in an otherwise unbounded sea.
+float _ClipOceanToTerrain;
 
 // P1 shoal-transform knob published alongside the field. Its siblings (_ShoreShoalDepth,
 // _ShoreCompression, _ShoreGreens, _ShoreWarpReach) moved to WaterShoreMath.hlsl with the
@@ -49,6 +53,28 @@ float _ShoreRefraction;   // 0..1: how hard shoaling waves bend toward the shore
 float2 ShoreFieldUV(float2 worldXZ)
 {
     return ShoreFieldUVFrom(worldXZ, _ShoreDepthCenter.xy, _ShoreDepthSize.xy);
+}
+
+bool TryOceanTerrainDepth(float2 worldXZ, out float depth)
+{
+    depth = SHORE_DEEP_SENTINEL;
+#ifdef WATER_STRIP_SHORE
+    return false;
+#endif
+    if (_ClipOceanToTerrain < 0.5 || _ShoreDepthValid < 0.5 || _ShoreBodyGate < 0.5)
+        return false;
+
+    float2 uv = ShoreFieldUV(worldXZ);
+    if (any(uv < 0.0) || any(uv > 1.0)) return false;
+    depth = tex2Dlod(_ShoreDepthTex, float4(saturate(uv), 0, 0)).r;
+    return true;
+}
+
+float OceanTerrainFootprintWet(float2 worldXZ)
+{
+    float depth;
+    if (!TryOceanTerrainDepth(worldXZ, depth)) return 1.0;
+    return depth > 0.0 ? 1.0 : 0.0;
 }
 
 // One-stop shore fetch. Off-field or unbaked returns the inert ShoreData (deep, no direction,

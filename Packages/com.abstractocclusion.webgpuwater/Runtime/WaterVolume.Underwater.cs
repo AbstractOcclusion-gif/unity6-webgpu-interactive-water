@@ -543,17 +543,26 @@ namespace AbstractOcclusion.WebGpuWater
                 // Envelope ceiling - see fogArmCeilingY above.
                 if (corner.y < fogArmCeilingY) cornersNearOrUnder++;
             }
-            _fogNearSurface = cornersNearOrUnder > 0;
-
             // Footprint: bounded bodies fog (and draw their waterline) only with the camera roughly
-            // over them; an ocean clipmap spans everywhere.
-            bool inFootprint = IsOceanClipmap || _externalSurfaceOverride;
+            // over them. An ocean is infinite outside its terrain field, but an opted-in signed
+            // terrain footprint makes dry island columns real air for the camera state as well.
+            Vector3 cameraPosition = cam.transform.position;
+            bool inFootprint = _externalSurfaceOverride ||
+                               (IsOceanClipmap && OceanSurfaceExistsAt(
+                                   cameraPosition.x, cameraPosition.z));
             if (!inFootprint)
             {
-                Vector3 pool = WorldToPool(cam.transform.position);
-                inFootprint = Mathf.Abs(pool.x) <= UnderwaterFootprintMargin
-                           && Mathf.Abs(pool.z) <= UnderwaterFootprintMargin;
+                if (!IsOceanClipmap)
+                {
+                    Vector3 pool = WorldToPool(cameraPosition);
+                    inFootprint = Mathf.Abs(pool.x) <= UnderwaterFootprintMargin
+                               && Mathf.Abs(pool.z) <= UnderwaterFootprintMargin;
+                }
             }
+            // The arming band is meaningful only where this camera can actually occupy the body's
+            // water. Without this gate a camera under dry island terrain still armed the ocean's
+            // unbounded fullscreen fog merely because its Y was below sea level.
+            _fogNearSurface = inFootprint && cornersNearOrUnder > 0;
 
             // The waterline CAN cross the screen while the near plane has corners on both
             // sides of the envelope band - a superset of every crossing the surface can
@@ -568,7 +577,7 @@ namespace AbstractOcclusion.WebGpuWater
             // a screen edge. Keep the broad envelope and straddle tests above for early arming; only
             // the camera position decides which medium contains the lens.
             bool eyeUnderSurface = inFootprint
-                                && cam.transform.position.y < surfaceY + hysteresis;
+                                && cameraPosition.y < surfaceY + hysteresis;
             _wasCameraSubmerged = eyeUnderSurface;
             return eyeUnderSurface;
         }

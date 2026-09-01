@@ -48,6 +48,22 @@ float _LargeWaveEdgeFeather;  // metres of edge feather on a BOUNDED body: the w
                               // 0 via _LargeBody anyway; the publisher forces 0 for unbounded oceans,
                               // whose clipmap has no border to guard).
 
+// Render-only extension of the strict ocean terrain footprint. Gameplay water still stops at the
+// still-water shoreline, while the visible surface may survive just far enough onto dry terrain for
+// the analytic swash film and its wet line. This keeps topology and beach presentation separate.
+float OceanTerrainSwashVisible(float2 worldXZ)
+{
+    float depth;
+    if (!TryOceanTerrainDepth(worldXZ, depth)) return 1.0;
+    if (depth + SHORE_CLIP_BIAS > 0.0) return 1.0;
+
+    ShoreData shore = ShoreSample(worldXZ);
+    float2 swash = EvaluateSurfSwash(worldXZ, shore.toShore, shore.slopeTan,
+                                     shore.influence, _SurfBeatTime);
+    float shoreKeep = max(swash.x, swash.y);
+    return depth + SHORE_CLIP_BIAS + shoreKeep > 0.0 ? 1.0 : 0.0;
+}
+
 // Edge-guard weight for the whole open-water wave field: 1 in the body's interior, falling to 0 at
 // the footprint border (|pool.xz| = 1). Metres-true on rectangular footprints (each axis' pool
 // distance is scaled back by its own extent) and rotation-correct via the shared volume frame.

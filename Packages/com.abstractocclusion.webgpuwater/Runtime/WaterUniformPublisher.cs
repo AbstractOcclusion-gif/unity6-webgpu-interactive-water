@@ -92,6 +92,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_BedValid = Shader.PropertyToID("_BedValid");
         static readonly int ID_UseBedDepth = WaterShaderProps.UseBedDepth;
         static readonly int ID_ShoreBodyGate = Shader.PropertyToID("_ShoreBodyGate");
+        static readonly int ID_ClipOceanToTerrain = WaterShaderProps.ClipOceanToTerrain;
         static readonly int ID_DeepWaterColor = Shader.PropertyToID("_DeepWaterColor");
         static readonly int ID_ShorelineScale = Shader.PropertyToID("_ShorelineDepthScale");
         static readonly int ID_ShorelineStrength = Shader.PropertyToID("_ShorelineStrength");
@@ -928,6 +929,7 @@ namespace AbstractOcclusion.WebGpuWater
             // frame and every shoal/surf knob must stay together or two shore-enabled bodies would
             // sample whichever one last wrote the old graphics globals.
             sink.SetFloat(ID_ShoreBodyGate, _body.useBedDepth ? 1f : 0f);
+            sink.SetFloat(ID_ClipOceanToTerrain, _body.ClipOceanToTerrainActive ? 1f : 0f);
             _body.ShoreDepth.WriteUniforms(sink);
             _body.SeaStateFetch.WriteUniforms(sink);
             WriteOceanAperiodicUniforms(sink);

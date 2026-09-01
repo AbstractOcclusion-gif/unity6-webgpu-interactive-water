@@ -200,6 +200,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 // discards only the visible sheet; fog and volume ownership remain untouched.
                 if (_IsRiver < 0.5 && MouthOutflowOceanOwnership(i.largeWaveSourceXZ) > 0.5)
                     discard;
+                if (OceanTerrainSurfaceVisible(i.worldPos, i.position, i.largeWaveSourceXZ) < 0.5)
+                    discard;
 
                 // The near-field patch already owns these pixels (see PatchCoversBaseSheet).
                 // Coincident sheets at different tessellations, so whichever wins the depth test
@@ -383,6 +385,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             {
                 if (_IsRiver < 0.5 && MouthOutflowOceanOwnership(i.largeWaveSourceXZ) > 0.5)
                     discard;
+                if (OceanTerrainSurfaceVisible(i.worldPos, i.position, i.largeWaveSourceXZ) < 0.5)
+                    discard;
 
                 // The near-field patch already owns these pixels (see PatchCoversBaseSheet).
                 // Coincident sheets at different tessellations, so whichever wins the depth test
@@ -495,6 +499,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             {
                 if (_IsRiver < 0.5 && MouthOutflowOceanOwnership(i.largeWaveSourceXZ) > 0.5)
                     discard;
+                if (OceanTerrainSurfaceVisible(i.worldPos, i.position, i.largeWaveSourceXZ) < 0.5)
+                    discard;
 
                 // The near-field patch already owns these pixels (see PatchCoversBaseSheet).
                 // Coincident sheets at different tessellations, so whichever wins the depth test
@@ -581,6 +587,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             float fragFogOccluderDepth(v2f i, bool isFrontFace : SV_IsFrontFace) : SV_Target
             {
                 if (_IsRiver < 0.5 && MouthOutflowOceanOwnership(i.largeWaveSourceXZ) > 0.5)
+                    discard;
+                if (OceanTerrainSurfaceVisible(i.worldPos, i.position, i.largeWaveSourceXZ) < 0.5)
                     discard;
 
                 if (PatchCoversBaseSheet(i.position)) discard;

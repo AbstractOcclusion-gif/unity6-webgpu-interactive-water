@@ -690,6 +690,7 @@ namespace AbstractOcclusion.WebGpuWater
             _propertyBlock.SetFloat(WaterShaderProps.PatchCoverActive, DisabledFeature);
             _propertyBlock.SetFloat(WaterShaderProps.SurfActive, DisabledFeature);
             _propertyBlock.SetFloat(WaterShaderProps.UseBedDepth, DisabledFeature);
+            _propertyBlock.SetFloat(WaterShaderProps.ClipOceanToTerrain, DisabledFeature);
             _propertyBlock.SetFloat(WaterShaderProps.RiverFoamActive, DisabledFeature);
             _propertyBlock.SetFloat(
                 WaterShaderProps.RiverFoamOverallStrength, EnabledFeature);

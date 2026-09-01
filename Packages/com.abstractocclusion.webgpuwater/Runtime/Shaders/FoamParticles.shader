@@ -432,6 +432,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 uint slot = vid / 6;
                 FoamParticle particle = _Particles[slot];
                 if (particle.life <= 0.0 || particle.age >= particle.life) return Dead();
+                if (OceanTerrainSwashVisible(particle.worldPos.xz) < 0.5) return Dead();
                 // Kind filter (two-pass split): a foam-only pass drops spray, a spray-only pass
                 // drops foam, so each can be drawn with its own material. 0 = draw both.
                 bool isSpray = (particle.kind == KIND_SPRAY);

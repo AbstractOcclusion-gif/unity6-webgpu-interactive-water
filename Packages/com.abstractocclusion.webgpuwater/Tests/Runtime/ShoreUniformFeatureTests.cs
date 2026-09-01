@@ -15,12 +15,31 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         const float LongFetchNormalized = 0.5f;
         const float RippleWavelengthMeters = 1f;
         const float LongWaveWavelengthMeters = 20f;
+        const float OceanSurfaceLevel = 10f;
+        const float WetColumnDepth = 2f;
+        const float DryColumnDepth = -1f;
+        const float WetSampleX = -0.99f;
+        const float DrySampleX = 0.99f;
+        const float SampleZ = 0f;
+        const float AboveTerrainY = 9f;
+        const float BelowTerrainY = 7f;
+        const float OutsideFieldX = 3f;
+        const int TestFieldResolution = 2;
         const BindingFlags InstancePrivate = BindingFlags.Instance | BindingFlags.NonPublic;
         const string BedDepthSettingsFieldName = "bedDepthSettings";
+        const string OceanSettingsFieldName = "ocean";
+        const string WindowedFieldName = "_windowed";
+        const string DepthBakedFieldName = "_depthBaked";
+        const string CpuDepthFieldName = "_cpuDepth";
+        const string FieldCenterFieldName = "_center";
+        const string FieldHalfSizeFieldName = "_halfSize";
+        const string FieldWaterLevelFieldName = "_waterLevel";
+        const string FieldResolutionFieldName = "_res";
         static readonly int ShoreRefractionProperty = Shader.PropertyToID("_ShoreRefraction");
         static readonly int SurfPeriodProperty = Shader.PropertyToID("_SurfPeriod");
         static readonly int ShoreDepthValidProperty = Shader.PropertyToID("_ShoreDepthValid");
         static readonly int ShoreDepthTextureProperty = Shader.PropertyToID("_ShoreDepthTex");
+        static readonly int ClipOceanToTerrainProperty = WaterShaderProps.ClipOceanToTerrain;
 
         [Test]
         public void ShoreUniforms_WriteDistinctBodyValuesThroughIndependentSinks()
@@ -77,6 +96,56 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             Assert.That(ripple, Is.GreaterThan(longWave));
         }
 
+        [Test]
+        public void OceanTerrainFootprint_DefaultsOffAndPublishesOnlyForAnOptedInOcean()
+        {
+            GameObject gameObject = CreateInactiveVolume("Ocean Terrain Footprint", out WaterVolume volume);
+            try
+            {
+                var properties = new MaterialPropertyBlock();
+                new WaterUniformPublisher(volume).WriteBodyProps(properties);
+                Assert.That(properties.GetFloat(ClipOceanToTerrainProperty), Is.Zero);
+
+                ConfigureOceanTerrainFootprint(volume);
+                new WaterUniformPublisher(volume).WriteBodyProps(properties);
+                Assert.That(properties.GetFloat(ClipOceanToTerrainProperty), Is.EqualTo(1f));
+            }
+            finally
+            {
+                Object.DestroyImmediate(gameObject);
+            }
+        }
+
+        [Test]
+        public void OceanTerrainFootprint_RejectsDryAndBelowTerrainButKeepsWetAndOffFieldOcean()
+        {
+            GameObject gameObject = CreateInactiveVolume("Ocean Terrain Domain", out WaterVolume volume);
+            try
+            {
+                ConfigureOceanTerrainFootprint(volume);
+                volume.transform.position = new Vector3(0f, OceanSurfaceLevel, 0f);
+                volume.volumeExtent = new Vector3(1f, OceanSurfaceLevel, 1f);
+                InjectSignedDepthField(volume.ShoreDepth);
+
+                Assert.That(volume.OceanSurfaceExistsAt(WetSampleX, SampleZ), Is.True);
+                Assert.That(volume.OceanSurfaceExistsAt(DrySampleX, SampleZ), Is.False);
+                Assert.That(volume.OceanSurfaceExistsAt(OutsideFieldX, SampleZ), Is.True,
+                            "outside the finite terrain field must remain unbounded ocean");
+
+                Assert.That(volume.ContainsPointXYZ(
+                    new Vector3(WetSampleX, AboveTerrainY, SampleZ)), Is.True);
+                Assert.That(volume.ContainsPointXYZ(
+                    new Vector3(WetSampleX, BelowTerrainY, SampleZ)), Is.False,
+                    "the ocean column must stop at the sampled terrain floor");
+                Assert.That(volume.ContainsPointXYZ(
+                    new Vector3(DrySampleX, AboveTerrainY, SampleZ)), Is.False);
+            }
+            finally
+            {
+                Object.DestroyImmediate(gameObject);
+            }
+        }
+
         static GameObject CreateInactiveVolume(string objectName, out WaterVolume volume)
         {
             var gameObject = new GameObject(objectName);
@@ -92,6 +161,44 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             var settings = (WaterVolume.BedDepthSettings)settingsField.GetValue(volume);
             settings.shoreRefraction = refraction;
             settings.surfPeriod = period;
+        }
+
+        static void ConfigureOceanTerrainFootprint(WaterVolume volume)
+        {
+            FieldInfo bedField = typeof(WaterVolume).GetField(BedDepthSettingsFieldName, InstancePrivate);
+            Assert.That(bedField, Is.Not.Null);
+            var bedSettings = (WaterVolume.BedDepthSettings)bedField.GetValue(volume);
+            bedSettings.useBedDepth = true;
+            bedSettings.clipOceanToTerrain = true;
+
+            FieldInfo oceanField = typeof(WaterVolume).GetField(OceanSettingsFieldName, InstancePrivate);
+            Assert.That(oceanField, Is.Not.Null);
+            var oceanSettings = (WaterVolume.OceanSettings)oceanField.GetValue(volume);
+            oceanSettings.openWater = true;
+            oceanSettings.unboundedOcean = true;
+            SetPrivateField(volume, WindowedFieldName, true);
+        }
+
+        static void InjectSignedDepthField(WaterShoreDepthField shoreDepth)
+        {
+            float[] depths =
+            {
+                WetColumnDepth, DryColumnDepth,
+                WetColumnDepth, DryColumnDepth
+            };
+            SetPrivateField(shoreDepth, DepthBakedFieldName, true);
+            SetPrivateField(shoreDepth, CpuDepthFieldName, depths);
+            SetPrivateField(shoreDepth, FieldCenterFieldName, Vector2.zero);
+            SetPrivateField(shoreDepth, FieldHalfSizeFieldName, Vector2.one);
+            SetPrivateField(shoreDepth, FieldWaterLevelFieldName, OceanSurfaceLevel);
+            SetPrivateField(shoreDepth, FieldResolutionFieldName, TestFieldResolution);
+        }
+
+        static void SetPrivateField<TTarget, TValue>(TTarget target, string fieldName, TValue value)
+        {
+            FieldInfo field = typeof(TTarget).GetField(fieldName, InstancePrivate);
+            Assert.That(field, Is.Not.Null, $"{typeof(TTarget).Name}.{fieldName} must remain available.");
+            field.SetValue(target, value);
         }
 
         sealed class CapturingUniformSink : WaterUniformPublisher.IUniformSink
