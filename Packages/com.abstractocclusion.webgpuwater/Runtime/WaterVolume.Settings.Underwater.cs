@@ -346,6 +346,7 @@ namespace AbstractOcclusion.WebGpuWater
             WaterSplashEmitter.ResetStaticState();
             WaterFogTransparent.ResetStaticState();
             WaterReflections.ResetStaticState();
+            WaterRuntimeRelevance.ResetStaticState();
             WaterUniformPublisher.ResetStaticState();
             WaterSurfaceProviders.ResetStaticState();
             WaterRiverSurface.ResetStaticState();

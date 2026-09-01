@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
+using Unity.Profiling;
 
 namespace AbstractOcclusion.WebGpuWater
 {
@@ -17,6 +18,8 @@ namespace AbstractOcclusion.WebGpuWater
     [AddComponentMenu("Abstract Occlusion/WebGpuWater/River Surface")]
     public sealed class WaterRiverSurface : MonoBehaviour
     {
+        static readonly ProfilerMarker PublicationMarker =
+            new ProfilerMarker("WebGpuWater.River.PublishRenderer");
         internal const int DefaultSamplesPerSegment = 16;
         // Gameplay water column below the ribbon surface. Rivers have no volumetric extent of
         // their own (the ribbon is a surface), so the domain resolver needs an authored depth to
@@ -629,6 +632,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         void PublishRendererProperties()
         {
+            using var marker = PublicationMarker.Auto();
             if (_meshRenderer == null) return;
             _propertyBlock ??= new MaterialPropertyBlock();
             if (waterVolume != null && waterVolume.isActiveAndEnabled)

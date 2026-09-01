@@ -35,19 +35,26 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         {
             Assert.That(WaterQuality.Default.MaxSimulatedBodies, Is.EqualTo(4),
                         "default budget must reproduce the scheduler's original constant");
+            Assert.That(WaterQuality.Default.MaxCausticProjectionBodies, Is.EqualTo(4),
+                        "caustic projection starts from the established multi-body budget");
 
             var tier = new WaterQuality.Tier(256, 1024, 24, true, true, 16, 5, 1f, true, 0,
                                              1, 1, 1, 128, 65536,
                                              WaterQuality.UnderwaterMode.Full, 1f,
-                                             maxSimulatedBodies: 999);
+                                             maxSimulatedBodies: 999,
+                                             maxCausticProjectionBodies: 999);
             Assert.That(tier.MaxSimulatedBodies, Is.EqualTo(WaterQuality.MaxSimulatedBodiesCap));
+            Assert.That(tier.MaxCausticProjectionBodies,
+                        Is.EqualTo(WaterQuality.MaxCausticProjectionBodiesCap));
 
             var floorTier = new WaterQuality.Tier(256, 1024, 24, true, true, 16, 5, 1f, true, 0,
                                                   1, 1, 1, 128, 65536,
                                                   WaterQuality.UnderwaterMode.Full, 1f,
-                                                  maxSimulatedBodies: -3);
+                                                  maxSimulatedBodies: -3,
+                                                  maxCausticProjectionBodies: -3);
             Assert.That(floorTier.MaxSimulatedBodies, Is.Zero,
                         "a zero budget (no sims) is a legal authored choice; negatives clamp to it");
+            Assert.That(floorTier.MaxCausticProjectionBodies, Is.Zero);
         }
     }
 }

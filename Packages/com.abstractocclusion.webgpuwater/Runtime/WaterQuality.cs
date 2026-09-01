@@ -54,6 +54,11 @@ namespace AbstractOcclusion.WebGpuWater
         // budget WaterSimScheduler shipped hardcoded; per-tier it becomes a platform knob.
         const int DefaultMaxSimulatedBodies = 4;
         internal const int MaxSimulatedBodiesCap = 16;
+        // Until per-tier profiling establishes different values, caustic projection starts at the
+        // only shipped multi-body budget. It is deliberately configurable instead of hardcoded in
+        // the render pass, where the previous unbounded loop lived.
+        const int DefaultMaxCausticProjectionBodies = 4;
+        internal const int MaxCausticProjectionBodiesCap = 16;
 
         // Sanitisation bounds for the low-end knobs.
         const float MinRenderScale = 0.25f;
@@ -86,13 +91,15 @@ namespace AbstractOcclusion.WebGpuWater
             public readonly UnderwaterMode UnderwaterFog; // fullscreen underwater fog cost mode
             public readonly float FogSolveScale;   // fog solve target resolution fraction (1 = full res)
             public readonly int MaxSimulatedBodies; // scheduler budget: bodies running the GPU sim at once
+            public readonly int MaxCausticProjectionBodies; // fullscreen caustic projections per camera
 
             public Tier(int simResolution, int causticResolution, int godRaySteps, bool godRays,
                         bool richReflections, int maxWaveCount, int refineSteps,
                         float renderScale, bool realRefraction, int meshDetail,
                         int causticInterval, int readbackInterval, int oceanFftInterval,
                         int oceanFftResolution, int maxFoamParticles, UnderwaterMode underwaterFog,
-                        float fogSolveScale, int maxSimulatedBodies)
+                        float fogSolveScale, int maxSimulatedBodies,
+                        int maxCausticProjectionBodies = DefaultMaxCausticProjectionBodies)
             {
                 SimResolution = SanitizeResolution(simResolution);
                 CausticResolution = Mathf.Max(MinCausticResolution, causticResolution);
@@ -112,6 +119,8 @@ namespace AbstractOcclusion.WebGpuWater
                 UnderwaterFog = underwaterFog;
                 FogSolveScale = Mathf.Clamp(fogSolveScale, MinFogSolveScale, 1f);
                 MaxSimulatedBodies = Mathf.Clamp(maxSimulatedBodies, 0, MaxSimulatedBodiesCap);
+                MaxCausticProjectionBodies = Mathf.Clamp(
+                    maxCausticProjectionBodies, 0, MaxCausticProjectionBodiesCap);
             }
 
             // Round to the nearest valid grid size rather than fail, keeping a floor of one group.
@@ -140,7 +149,8 @@ namespace AbstractOcclusion.WebGpuWater
                                                DefaultCausticInterval, DefaultReadbackInterval,
                                                DefaultOceanFftInterval, DefaultOceanFftResolution,
                                                DefaultMaxFoamParticles, DefaultUnderwaterMode,
-                                               DefaultFogSolveScale, DefaultMaxSimulatedBodies);
+                                               DefaultFogSolveScale, DefaultMaxSimulatedBodies,
+                                               DefaultMaxCausticProjectionBodies);
 
         /// <summary>The asset a body uses when none is assigned. A default-constructed instance
         /// carries this class's serialized defaults, and every high* default IS the matching
@@ -212,6 +222,9 @@ namespace AbstractOcclusion.WebGpuWater
         [Range(MinFogSolveScale, 1f)] [SerializeField] float highFogSolveScale = DefaultFogSolveScale;
         [Tooltip("Bodies allowed to run the interactive GPU ripple sim at once - the nearest ones win, the rest pause and keep their last surface. 4 = the original budget.")]
         [Range(0, MaxSimulatedBodiesCap)] [SerializeField] int highMaxSimulatedBodies = DefaultMaxSimulatedBodies;
+        [Tooltip("Bodies allowed to project screen-space caustics per camera. Each grant is one fullscreen draw for caustic light and optionally one for refracted shadows.")]
+        [Range(0, MaxCausticProjectionBodiesCap)]
+        [SerializeField] int highMaxCausticProjectionBodies = DefaultMaxCausticProjectionBodies;
 
         [Header("Tier: Medium")]
         [Min(ThreadGroupSize)] [SerializeField] int mediumSimResolution = 128;
@@ -247,6 +260,9 @@ namespace AbstractOcclusion.WebGpuWater
         [Range(MinFogSolveScale, 1f)] [SerializeField] float mediumFogSolveScale = DefaultFogSolveScale;
         [Tooltip("Bodies allowed to run the interactive GPU ripple sim at once - the nearest ones win, the rest pause and keep their last surface. 4 = the original budget.")]
         [Range(0, MaxSimulatedBodiesCap)] [SerializeField] int mediumMaxSimulatedBodies = DefaultMaxSimulatedBodies;
+        [Tooltip("Bodies allowed to project screen-space caustics per camera.")]
+        [Range(0, MaxCausticProjectionBodiesCap)]
+        [SerializeField] int mediumMaxCausticProjectionBodies = DefaultMaxCausticProjectionBodies;
 
         [Header("Tier: Low (WebGPU / mobile)")]
         [Min(ThreadGroupSize)] [SerializeField] int lowSimResolution = 128;
@@ -301,6 +317,9 @@ namespace AbstractOcclusion.WebGpuWater
         [Range(MinFogSolveScale, 1f)] [SerializeField] float lowFogSolveScale = DefaultFogSolveScale;
         [Tooltip("Bodies allowed to run the interactive GPU ripple sim at once - the nearest ones win, the rest pause and keep their last surface. 4 = the original budget.")]
         [Range(0, MaxSimulatedBodiesCap)] [SerializeField] int lowMaxSimulatedBodies = DefaultMaxSimulatedBodies;
+        [Tooltip("Bodies allowed to project screen-space caustics per camera.")]
+        [Range(0, MaxCausticProjectionBodiesCap)]
+        [SerializeField] int lowMaxCausticProjectionBodies = DefaultMaxCausticProjectionBodies;
 
         /// <summary>Where a body's underwater fog quality comes from. FollowTier = the resolved
         /// tier's fog fields (the original behaviour, bit-identical default). Override = the two
@@ -340,44 +359,47 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>The active tier: the forced one, or the capability-probed one under Auto.</summary>
         public Tier Resolve()
         {
-            switch (selection)
+            switch (ResolveSelection())
             {
                 case Selection.ForceLow: return Low;
                 case Selection.ForceMedium: return Medium;
-                case Selection.ForceHigh: return High;
-                default: return Probe();
+                default: return High;
             }
+        }
+
+        internal Selection ResolveSelection()
+        {
+            if (selection != Selection.Auto) return selection;
+            bool constrained = Application.platform == RuntimePlatform.WebGLPlayer
+                               || Application.isMobilePlatform
+                               || !SystemInfo.supportsAsyncGPUReadback;
+            if (constrained) return Selection.ForceLow;
+            if (SystemInfo.graphicsMemorySize < MidGraphicsMemoryMB)
+                return Selection.ForceMedium;
+            return Selection.ForceHigh;
         }
 
         Tier High => new Tier(highSimResolution, highCausticResolution, highGodRaySteps, highGodRays,
                               highRichReflections, highMaxWaveCount, highRefineSteps,
                               highRenderScale, highRealRefraction, highMeshDetail,
                               highCausticInterval, highReadbackInterval, highOceanFftInterval,
-                              highOceanFftResolution, highMaxFoamParticles, highUnderwaterFog,
-                              highFogSolveScale, highMaxSimulatedBodies);
+                               highOceanFftResolution, highMaxFoamParticles, highUnderwaterFog,
+                               highFogSolveScale, highMaxSimulatedBodies,
+                               highMaxCausticProjectionBodies);
         Tier Medium => new Tier(mediumSimResolution, mediumCausticResolution, mediumGodRaySteps, mediumGodRays,
                                 mediumRichReflections, mediumMaxWaveCount, mediumRefineSteps,
                                 mediumRenderScale, mediumRealRefraction, mediumMeshDetail,
                                 mediumCausticInterval, mediumReadbackInterval, mediumOceanFftInterval,
-                                mediumOceanFftResolution, mediumMaxFoamParticles, mediumUnderwaterFog,
-                                mediumFogSolveScale, mediumMaxSimulatedBodies);
+                                 mediumOceanFftResolution, mediumMaxFoamParticles, mediumUnderwaterFog,
+                                 mediumFogSolveScale, mediumMaxSimulatedBodies,
+                                 mediumMaxCausticProjectionBodies);
         Tier Low => new Tier(lowSimResolution, lowCausticResolution, lowGodRaySteps, lowGodRays,
                              lowRichReflections, lowMaxWaveCount, lowRefineSteps,
                              lowRenderScale, lowRealRefraction, lowMeshDetail,
                              lowCausticInterval, lowReadbackInterval, lowOceanFftInterval,
-                             lowOceanFftResolution, lowMaxFoamParticles, lowUnderwaterFog,
-                             lowFogSolveScale, lowMaxSimulatedBodies);
+                              lowOceanFftResolution, lowMaxFoamParticles, lowUnderwaterFog,
+                              lowFogSolveScale, lowMaxSimulatedBodies,
+                              lowMaxCausticProjectionBodies);
 
-        // Pick a tier from the running hardware. The web player is how Unity ships WebGPU
-        // builds, and async readback (buoyancy) is often unavailable there - both force Low.
-        Tier Probe()
-        {
-            bool constrained = Application.platform == RuntimePlatform.WebGLPlayer
-                               || Application.isMobilePlatform
-                               || !SystemInfo.supportsAsyncGPUReadback;
-            if (constrained) return Low;
-            if (SystemInfo.graphicsMemorySize < MidGraphicsMemoryMB) return Medium;
-            return High;
-        }
     }
 }

@@ -16,6 +16,7 @@ namespace AbstractOcclusion.WebGpuWater
     public partial class WaterVolume
     {
         bool HasRequiredWiring() => simCompute != null && causticsShader != null && waterMesh != null;
+        internal bool HasRequiredWiringForDiagnostics => HasRequiredWiring();
 
         // Fail fast on the required wiring (play mode); a missing piece would otherwise surface
         // later as a confusing downstream error (broken caustic material, per-frame DrawMesh errors).

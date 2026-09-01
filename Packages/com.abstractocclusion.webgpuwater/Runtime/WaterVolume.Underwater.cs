@@ -91,36 +91,29 @@ namespace AbstractOcclusion.WebGpuWater
         static bool QualifiesForRefractedShadowProjection(WaterVolume body)
             => QualifiesForCausticProjection(body) && body.CausticOccluderActive;
 
+        internal bool WantsCausticLightProjection => QualifiesForCausticLightProjection(this);
+        internal bool WantsRefractedShadowProjection
+            => QualifiesForRefractedShadowProjection(this);
+        internal bool WantsAnyCausticProjection
+            => WantsCausticLightProjection || WantsRefractedShadowProjection;
+
         /// <summary>True when at least one active body should project screen-space caustics this frame
         /// (the feature's cheap CPU gate before it enqueues the pass).</summary>
-        internal static bool AnyCausticProjectionWork(bool includeCaustics, bool includeRefractedShadows)
-        {
-            for (int i = 0; i < Bodies.Count; i++)
-            {
-                WaterVolume body = Bodies[i];
-                if (includeCaustics && QualifiesForCausticLightProjection(body)) return true;
-                if (includeRefractedShadows && QualifiesForRefractedShadowProjection(body)) return true;
-            }
-            return false;
-        }
+        internal static bool AnyCausticProjectionWork(Camera camera, bool includeCaustics,
+                                                       bool includeRefractedShadows)
+            => WaterRuntimeRelevance.AnyCausticProjectionWork(
+                camera, includeCaustics, includeRefractedShadows);
 
         /// <summary>Build the independent body sets that contribute visible caustic light and valid
         /// refracted shadows this frame.</summary>
-        internal static void CollectCausticProjectionBodies(List<WaterVolume> causticBodies,
+        internal static void CollectCausticProjectionBodies(Camera camera,
+                                                             List<WaterVolume> causticBodies,
                                                              List<WaterVolume> refractedShadowBodies,
                                                              bool includeCaustics,
                                                              bool includeRefractedShadows)
-        {
-            causticBodies.Clear();
-            refractedShadowBodies.Clear();
-            for (int i = 0; i < Bodies.Count; i++)
-            {
-                WaterVolume body = Bodies[i];
-                if (includeCaustics && QualifiesForCausticLightProjection(body)) causticBodies.Add(body);
-                if (includeRefractedShadows && QualifiesForRefractedShadowProjection(body))
-                    refractedShadowBodies.Add(body);
-            }
-        }
+            => WaterRuntimeRelevance.CollectCausticProjectionBodies(
+                camera, causticBodies, refractedShadowBodies,
+                includeCaustics, includeRefractedShadows);
 
         // Pond-foam overlay (the after-fog surface-foam redraw): a body qualifies when its sim
         // foam is on or it receives a river-mouth source. Chunk bodies are excluded - their disc
@@ -132,29 +125,17 @@ namespace AbstractOcclusion.WebGpuWater
                (body.Foam || body.HasLiveExternalFoamRenderer ||
                 body.RiverMouthOutflowCount > 0) && !body.IsChunk;
 
+        internal bool WantsFoamOverlay => QualifiesForFoamOverlay(this);
+
         /// <summary>True when at least one body needs the after-fog pond-foam overlay (the
         /// feature's cheap CPU gate before it enqueues the after-fog pass).</summary>
-        internal static bool AnyFoamOverlayBody()
-        {
-            for (int i = 0; i < Bodies.Count; i++)
-                if (QualifiesForFoamOverlay(Bodies[i])) return true;
-            return false;
-        }
+        internal static bool AnyFoamOverlayBody(Camera camera)
+            => WaterRuntimeRelevance.AnyFoamOverlayBody(camera);
 
         /// <summary>Fill <paramref name="into"/> with every ABOVE-water surface renderer whose
         /// pond foam the after-fog overlay should re-draw this frame.</summary>
-        internal static void CollectFoamOverlayRenderers(List<Renderer> into)
-        {
-            into.Clear();
-            for (int i = 0; i < Bodies.Count; i++)
-            {
-                WaterVolume body = Bodies[i];
-                if (!QualifiesForFoamOverlay(body)) continue;
-                if (body.Foam || body.RiverMouthOutflowCount > 0)
-                    body.CollectAboveSurfaceRenderers(into);
-                body.CollectExternalFoamRenderers(into);
-            }
-        }
+        internal static void CollectFoamOverlayRenderers(Camera camera, List<Renderer> into)
+            => WaterRuntimeRelevance.CollectFoamOverlayRenderers(camera, into);
 
         // Refresh the underwater fog gate at the START of the target camera's render. WHY here and not
         // in Update: Update runs at DefaultExecutionOrder -50, before the OrbitCamera moves the camera

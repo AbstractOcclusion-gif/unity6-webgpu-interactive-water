@@ -9,6 +9,7 @@
 // Ocean-only: constructed by WaterVolume solely when IsOceanClipmap and the compute is wired, so pools
 // and bounded bodies stay byte-for-byte unaffected. Mirrors WaterSimulation's ownership/dispose pattern.
 using UnityEngine;
+using UnityEngine.Profiling;
 using UnityEngine.Rendering;
 
 namespace AbstractOcclusion.WebGpuWater
@@ -258,6 +259,15 @@ namespace AbstractOcclusion.WebGpuWater
         RenderTexture _h0, _specX, _specY, _specZ, _displacement, _normal, _preview;
         RenderTexture _heightField;
         RenderTexture _foamHistA, _foamHistB; // ping-pong accumulated-foam history (one slice per cascade)
+
+        internal long ApproximateGpuBytes
+            => RuntimeMemory(_h0) + RuntimeMemory(_specX) + RuntimeMemory(_specY)
+             + RuntimeMemory(_specZ) + RuntimeMemory(_displacement) + RuntimeMemory(_normal)
+             + RuntimeMemory(_preview) + RuntimeMemory(_heightField)
+             + RuntimeMemory(_foamHistA) + RuntimeMemory(_foamHistB);
+
+        static long RuntimeMemory(Object resource)
+            => resource != null ? Profiler.GetRuntimeMemorySizeLong(resource) : 0L;
         float _lastDispatchTime;              // wave time at the previous dispatch, for the foam delta time
         bool _hasLastDispatchTime;            // false until the first dispatch runs (history not yet valid)
         Texture2D _butterfly;

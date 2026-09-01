@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using NUnit.Framework;
@@ -13,9 +14,7 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         const int TestCubemapSize = 1;
         const float StaleRefreshTime = 120f;
         const string SplashObjectName = "Fast Enter Play Splash";
-        const string ReflectionBudgetFrameField = "_budgetFrame";
-        const string ReflectionCandidatesField = "_candidates";
-        const string ReflectionGrantedField = "_granted";
+        const string RuntimeCameraSnapshotsField = "CameraSnapshots";
         const string SceneLightsField = "s_SceneLights";
         const string SceneLightRefreshField = "s_SceneLightCacheRefreshAt";
         const string SkyboxCubeField = "_skyboxCube";
@@ -47,24 +46,18 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             var staleCubemap = new Cubemap(TestCubemapSize, TextureFormat.RGBA32, false);
             try
             {
-                SetPrivateStaticField(typeof(WaterReflections), ReflectionBudgetFrameField, StaleFrame);
-                PrivateStaticField<List<WaterVolume>>(typeof(WaterReflections), ReflectionCandidatesField)
-                    .Add(null);
-                PrivateStaticField<HashSet<WaterVolume>>(typeof(WaterReflections), ReflectionGrantedField)
-                    .Add(null);
+                WaterRuntimeRelevance.GetSnapshot(null);
+                IList runtimeCameraSnapshots = PrivateStaticField<IList>(
+                    typeof(WaterRuntimeRelevance), RuntimeCameraSnapshotsField);
                 PrivateStaticField<List<Light>>(typeof(WaterUniformPublisher), SceneLightsField).Add(null);
                 SetPrivateStaticField(typeof(WaterUniformPublisher), SceneLightRefreshField, StaleRefreshTime);
                 SetPrivateStaticField(typeof(WaterUniformPublisher), SkyboxCubeField, staleCubemap);
                 SetPrivateStaticField(typeof(WaterUniformPublisher), SkyboxFrameField, StaleFrame);
 
+                Assert.That(runtimeCameraSnapshots, Is.Not.Empty);
                 WaterVolume.ResetStaticState();
 
-                Assert.That(PrivateStaticField<int>(typeof(WaterReflections), ReflectionBudgetFrameField),
-                            Is.EqualTo(InvalidFrame));
-                Assert.That(PrivateStaticField<List<WaterVolume>>(
-                                typeof(WaterReflections), ReflectionCandidatesField), Is.Empty);
-                Assert.That(PrivateStaticField<HashSet<WaterVolume>>(
-                                typeof(WaterReflections), ReflectionGrantedField), Is.Empty);
+                Assert.That(runtimeCameraSnapshots, Is.Empty);
                 Assert.That(PrivateStaticField<List<Light>>(
                                 typeof(WaterUniformPublisher), SceneLightsField), Is.Empty);
                 Assert.That(PrivateStaticField<float>(

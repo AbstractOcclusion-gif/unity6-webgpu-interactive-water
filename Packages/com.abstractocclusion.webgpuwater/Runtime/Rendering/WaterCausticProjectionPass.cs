@@ -25,6 +25,7 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.RenderGraphModule;
 using UnityEngine.Rendering.Universal;
+using Unity.Profiling;
 
 namespace AbstractOcclusion.WebGpuWater
 {
@@ -37,6 +38,8 @@ namespace AbstractOcclusion.WebGpuWater
 
         readonly Material _material;
         readonly ProfilingSampler _sampler = new ProfilingSampler("WaterCausticProjection");
+        static readonly ProfilerMarker BodyPublicationMarker =
+            new ProfilerMarker("WebGpuWater.CausticProjection.PublishBody");
 
         // Reused each frame so the per-body loop allocates no garbage (mirrors WaterChunkDepthPass).
         readonly MaterialPropertyBlock _block = new MaterialPropertyBlock();
@@ -72,7 +75,9 @@ namespace AbstractOcclusion.WebGpuWater
             // Build independent body sets because caustic light and the refracted occluder channel
             // have independent strengths. A zero-light ocean must not pay either fullscreen pass,
             // while a pool may still need its shadow with caustic intensity at zero.
-            WaterVolume.CollectCausticProjectionBodies(s_CausticBodies, s_RefractedShadowBodies,
+            UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
+            WaterVolume.CollectCausticProjectionBodies(cameraData.camera,
+                                                        s_CausticBodies, s_RefractedShadowBodies,
                                                         renderCaustics, renderRefractedShadow);
             if (s_CausticBodies.Count == 0 && s_RefractedShadowBodies.Count == 0) return;
 
@@ -117,7 +122,8 @@ namespace AbstractOcclusion.WebGpuWater
                     // Overwrite the block with THIS body's uniforms (frame + _CausticTex + _WaterTex +
                     // _CausticDepthFade + occluder flag), so the fullscreen projection reprojects through this
                     // body's caustics - exactly how WaterMembership relights a floater with its own lake.
-                    body.WriteBodyProps(d.block);
+                    using (BodyPublicationMarker.Auto())
+                        body.WriteBodyProps(d.block);
                     // Per-body intensity: scales the feature's global Caustic Strength for THIS
                     // body's projection (the slider next to the Screen-Space Caustics opt-in).
                     d.block.SetFloat(ID_ScreenCausticIntensity, body.screenCausticIntensity);

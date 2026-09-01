@@ -232,6 +232,7 @@ namespace AbstractOcclusion.WebGpuWater
                 Primary = this;
             }
             if (!Bodies.Contains(this)) Bodies.Add(this);
+            WaterRuntimeRelevance.InvalidateRegistrations();
             _mpb = new MaterialPropertyBlock();
             AssignSurfaceLayers(); // water on the "Water" layer so the planar reflection excludes it
             ApplyReflections();
@@ -274,6 +275,7 @@ namespace AbstractOcclusion.WebGpuWater
                 // init every tick. Unregister unconditionally before bailing.
                 if (Primary == this) Primary = FindNextPrimary(this);
                 Bodies.Remove(this);
+                WaterRuntimeRelevance.InvalidateRegistrations();
                 return;
             }
 
@@ -289,6 +291,7 @@ namespace AbstractOcclusion.WebGpuWater
 
             if (Primary == this) Primary = FindNextPrimary(this);
             Bodies.Remove(this);
+            WaterRuntimeRelevance.InvalidateRegistrations();
             // Last body out (scene teardown / File > New Scene): the static fog gate and the
             // underwater globals it mirrors are only ever WRITTEN by a live primary body, so
             // without this reset they keep the LAST scene's values - and the fullscreen

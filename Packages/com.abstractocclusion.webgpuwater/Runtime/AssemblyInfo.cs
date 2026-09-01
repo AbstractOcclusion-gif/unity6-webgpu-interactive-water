@@ -5,3 +5,4 @@ using System.Runtime.CompilerServices;
 
 [assembly: InternalsVisibleTo("AbstractOcclusion.WebGpuWater.Editor")]
 [assembly: InternalsVisibleTo("AbstractOcclusion.WebGpuWater.Tests")]
+[assembly: InternalsVisibleTo("AbstractOcclusion.WebGpuWater.EditorTests")]

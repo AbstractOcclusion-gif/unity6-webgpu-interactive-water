@@ -1,0 +1,21 @@
+{
+    "name": "AbstractOcclusion.WebGpuWater.EditorTests",
+    "rootNamespace": "AbstractOcclusion.WebGpuWater.Tests",
+    "references": [
+        "AbstractOcclusion.WebGpuWater"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false,
+    "optionalUnityReferences": [
+        "TestAssemblies"
+    ]
+}

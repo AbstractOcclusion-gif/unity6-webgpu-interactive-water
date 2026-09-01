@@ -163,6 +163,7 @@ namespace AbstractOcclusion.WebGpuWater
             _underwaterFogMode = source.ResolveFogMode(in tier);
             _fogSolveScale = source.ResolveFogSolveScale(in tier);
             _maxSimulatedBodies = tier.MaxSimulatedBodies;
+            _maxCausticProjectionBodies = tier.MaxCausticProjectionBodies;
 
             // One line per enable so a DEVELOPMENT build's console shows exactly which knobs landed -
             // tier mismatches (stale build cache, wrong asset, missing serialized fields) are

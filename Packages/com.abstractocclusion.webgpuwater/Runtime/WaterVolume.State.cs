@@ -10,6 +10,8 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Serialization;
+using Unity.Profiling;
+using UnityEngine.Profiling;
 
 namespace AbstractOcclusion.WebGpuWater
 {
@@ -52,13 +54,50 @@ namespace AbstractOcclusion.WebGpuWater
         WaterQuality.UnderwaterMode _underwaterFogMode = WaterQuality.Default.UnderwaterFog;
         float _fogSolveScale = WaterQuality.Default.FogSolveScale;
         int _maxSimulatedBodies = WaterQuality.Default.MaxSimulatedBodies;
+        int _maxCausticProjectionBodies = WaterQuality.Default.MaxCausticProjectionBodies;
         /// <summary>Tier-resolved scheduler budget (see WaterSimScheduler.ResolveActiveSimBudget).</summary>
         internal int MaxSimulatedBodies => _maxSimulatedBodies;
+        /// <summary>Tier-resolved fullscreen caustic projection budget.</summary>
+        internal int MaxCausticProjectionBodies => _maxCausticProjectionBodies;
         /// <summary>Tier cap on the GPU foam-particle pool (WaterFoamParticles clamps to it).</summary>
         internal int FoamParticleBudget => _maxFoamParticles;
         /// <summary>Tier-resolved FFT ocean cascade grid side. Read once at OceanFftModule.Initialize
         /// (ApplyQuality runs first), so like the sim resolutions it is fixed for the session.</summary>
         internal int OceanFftResolution => _oceanFftResolution;
+        const string ProbedFallbackQualityName = "Probed fallback";
+        internal WaterBodyType BodyTypeForDiagnostics => bodyType;
+        internal string AssignedQualityName
+            => quality != null ? quality.name : ProbedFallbackQualityName;
+        internal WaterQuality.Selection AssignedQualitySelection
+            => quality != null ? quality.selection : WaterQuality.Selection.Auto;
+        internal WaterQuality.Selection ResolvedQualitySelection
+            => (quality != null ? quality : WaterQuality.Fallback).ResolveSelection();
+        internal bool IsInitializedForDiagnostics => _initialized;
+        internal bool IsPausedForDiagnostics => _paused;
+        internal bool RetainsPausedResources
+            => _initialized && (_paused || !_simulate);
+        internal float ActivationDistanceForDiagnostics => activationDistance;
+        internal long ApproximateOwnedGpuBytes
+        {
+            get
+            {
+                long bytes = 0L;
+                if (_water != null)
+                {
+                    // The public trio is one side of three ping-pong pairs.
+                    bytes += 2L * RuntimeMemory(_water.Texture);
+                    bytes += 2L * RuntimeMemory(_water.FoamTexture);
+                    bytes += 2L * RuntimeMemory(_water.HorizontalFlowTexture);
+                }
+                bytes += RuntimeMemory(CausticTexture);
+                bytes += RuntimeMemory(PlanarReflectionTexture);
+                if (_oceanFft != null) bytes += _oceanFft.ApproximateGpuBytes;
+                return bytes;
+            }
+        }
+
+        static long RuntimeMemory(UnityEngine.Object resource)
+            => resource != null ? Profiler.GetRuntimeMemorySizeLong(resource) : 0L;
         // Per-body surface material instances so reflection keywords don't leak across bodies
         // that share the source material. Created at OnEnable (play mode only) and destroyed at
         // OnDisable, which also restores the renderer's original shared material so an
@@ -70,6 +109,10 @@ namespace AbstractOcclusion.WebGpuWater
         Mesh _lowDetailGrid;
         Mesh _surfaceAboveOriginalMesh, _surfaceUnderOriginalMesh;
         MaterialPropertyBlock _mpb; // per-body uniforms pushed to this body's renderers
+        static readonly ProfilerMarker BodyPublicationMarker =
+            new ProfilerMarker("WebGpuWater.Body.PublishRenderers");
+        static readonly ProfilerMarker GlobalPublicationMarker =
+            new ProfilerMarker("WebGpuWater.Body.PublishGlobals");
 
         // Round (disc) surface footprint for a CHUNK body: ApplyMeshDetail rebuilds the play-mode
         // surface as a disc instead of the square grid, so a sphere/round chunk reads circular.

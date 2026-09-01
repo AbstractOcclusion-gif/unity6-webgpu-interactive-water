@@ -94,7 +94,9 @@ namespace AbstractOcclusion.WebGpuWater
             if (_pass == null) return; // shader unassigned / not created
             bool renderCaustics = causticStrength > 0f;
             bool renderRefractedShadows = projectRefractedShadows && refractedShadowStrength > 0f;
-            if (!WaterVolume.AnyCausticProjectionWork(renderCaustics, renderRefractedShadows)) return;
+            Camera camera = renderingData.cameraData.camera;
+            if (!WaterVolume.AnyCausticProjectionWork(
+                    camera, renderCaustics, renderRefractedShadows)) return;
             ApplyMaterialParameters();
             _pass.renderCaustics = renderCaustics;
             _pass.renderRefractedShadow = renderRefractedShadows;

@@ -730,6 +730,9 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("Bodies whose centre is farther than this from the camera pause their simulation " +
                  "(they hold their last state). Matches the camera far clip by default.")]
         [SerializeField] internal float activationDistance = CameraFarClip;
+        [Tooltip("Keep this body ahead of ordinary bodies in shared runtime relevance ranking. " +
+                 "Use for the water currently owned by gameplay, such as the active fishing spot.")]
+        [SerializeField] private bool runtimeImportancePin;
 
         /// <summary>Quality tier asset scaling sim/caustic resolution and god-ray steps.
         /// Read at startup; assign before the body enables.</summary>
@@ -738,5 +741,13 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>Pause this body's simulation and rendering when off-screen or beyond the
         /// activation distance.</summary>
         public bool EnableCulling { get => enableCulling; set => enableCulling = value; }
+
+        /// <summary>Prioritise this body in per-camera runtime budgets. Runtime gameplay may set
+        /// this without changing simulation resolution or reallocating resources.</summary>
+        public bool RuntimeImportancePin
+        {
+            get => runtimeImportancePin;
+            set => runtimeImportancePin = value;
+        }
     }
 }
