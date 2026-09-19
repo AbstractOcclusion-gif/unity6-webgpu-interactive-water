@@ -3,16 +3,27 @@
 // + parent-volume link + ports), which today only the Connected Waters demo rig documents.
 //
 // Deliberately orchestration-only (reuse-never-rewrite): every setting keeps living on the
-// component that consumes it - the facade fills wiring gaps, keeps the parent-volume link and the
-// generated seam objects consistent, and validates loudly. RequireComponent guarantees the
-// spline/current/surface trio exists; WaterRiverFluid and WaterRiverFoam stay optional add-ons
-// (their own RequireComponent chains handle their dependencies).
+// component that consumes it - the facade OWNS the wiring between the trio (spline / current
+// field / surface references and the parent-volume link are written by it, always, so there is
+// one source of truth), keeps the generated seam objects consistent, and validates loudly.
+// RequireComponent guarantees the spline/current/surface trio exists; WaterRiverFluid,
+// WaterRiverFoam and WaterRiverDisturbance stay optional add-ons (their own RequireComponent
+// chains handle their dependencies). The consolidated inspector (Editor/WaterRiverEditor.*)
+// edits every sibling through this component.
 //
 // Each river end can name a receiving/feeding WaterVolume. A source can instead name an upstream
 // river, whose mouth row is copied into this ribbon. The facade derives
 // the port pair from the spline's terminal frame and owns the generated WaterConnectionPort /
 // WaterConnection objects THROUGH SERIALIZED REFERENCES - regeneration reuses them, so their
-// GUID-once portIds (the persistent identity streaming/saves key on) never change.
+// GUID-once portIds (the persistent identity streaming/saves key on) never change. The
+// generated objects are hidden from the hierarchy (they are derived data, not authoring) and
+// follow the spline and the end bodies automatically: the facade listens to the spline's
+// Changed event, and the editor's change router forwards end-body moves.
+//
+// ExecuteAlways: the seam objects must follow knot and body edits in edit mode too, which needs
+// the spline subscription and LateUpdate alive there. Edit-mode side effects are the same ones
+// OnValidate already performed on every inspector nudge; console warnings stay play-mode only
+// because the inspector shows them while editing.
 using System;
 using System.Collections.Generic;
 using UnityEngine;
@@ -59,6 +70,7 @@ namespace AbstractOcclusion.WebGpuWater
             !IsGenerated && (riverPort != null || targetPort != null || connection != null);
     }
 
+    [ExecuteAlways]
     [AddComponentMenu("Abstract Occlusion/WebGpuWater/Water River")]
     [DisallowMultipleComponent]
     [RequireComponent(typeof(WaterRiverSpline), typeof(WaterRiverCurrentField),
@@ -78,6 +90,8 @@ namespace AbstractOcclusion.WebGpuWater
         const float DefaultMouthFoamEdgeFeather = 0f;
         const float DefaultMouthFoamCoreCut = 0f;
         const int MouthProfileSampleCount = 5;
+        // Time.frameCount is never negative, so -1 can never collide with a stamped frame.
+        const int InvalidFrame = -1;
 
         const string SourceRiverPortName = "Port - River Source";
         const string MouthRiverPortName = "Port - River Mouth";
@@ -114,7 +128,14 @@ namespace AbstractOcclusion.WebGpuWater
         [Min(0f)]
         [SerializeField] internal float mouthOutflowFoamStrength = DefaultMouthOutflowStrength;
 
+        // Generated ports/connections are derived data: hidden by default so the hierarchy shows
+        // only what was authored. The inspector's "Show generated objects" toggle flips this and
+        // the facade re-applies it on every enable, so scenes saved before the flag existed get
+        // their children hidden the next time they load.
+        [SerializeField] internal bool showGeneratedObjects;
+
         WaterRiverSpline _spline;
+        WaterRiverSpline _subscribedSpline;
         WaterRiverCurrentField _currentField;
         WaterRiverSurface _surface;
         WaterRiverFluid _fluid;
@@ -124,6 +145,16 @@ namespace AbstractOcclusion.WebGpuWater
         WaterVolume _currentFieldHost;
         WaterVolume _mouthCurrentFieldHost;
         WaterVolume _mouthOutflowHost;
+        // TryBuildMouthOutflow runs several times per frame in play (our LateUpdate, the host
+        // body's RefreshRiverMouthOutflowShaderData, the surface's own publish) on inputs that
+        // settle before LateUpdate, so one build per frame is exact. Edit mode has no advancing
+        // frame stamp, so it never takes the cache; the dirty flag covers the in-frame edits
+        // (OnValidate, spline/bake/seam changes) that would otherwise be served stale in play.
+        int _mouthOutflowFrame = InvalidFrame;
+        bool _mouthOutflowValid;
+        WaterRiverMouthOutflow _mouthOutflowCached;
+        bool _mouthOutflowDirty = true;
+        WaterRiverFluid _subscribedFluid;
 
         public WaterRiverSpline Spline => _spline != null ? _spline : GetComponent<WaterRiverSpline>();
         public WaterRiverSurface Surface => _surface != null ? _surface : GetComponent<WaterRiverSurface>();
@@ -146,14 +177,21 @@ namespace AbstractOcclusion.WebGpuWater
         {
             CacheSiblings();
             ApplyWiring();
+            RebindSplineEvents();
+            RebindFluidEvents();
+            ApplyGeneratedObjectVisibility();
             SyncSeams();
             AttachCurrentFieldToParent();
             SyncMouthOutflowRegistration();
-            WarnOnInvalidSetup();
+            // Edit mode surfaces the same findings in the Connections tab; the console is the
+            // play-mode channel (a scene load in the editor must not spam per river).
+            if (Application.isPlaying) WarnOnInvalidSetup();
         }
 
         void OnDisable()
         {
+            UnsubscribeSplineEvents();
+            UnsubscribeFluidEvents();
             DetachCurrentFieldFromParent();
             UnregisterMouthOutflow();
         }
@@ -176,16 +214,70 @@ namespace AbstractOcclusion.WebGpuWater
                 mouthOutflowFoamLengthMeters, WaterConnection.MinTransitionRadiusMeters,
                 mouthOutflowLengthMeters);
             mouthOutflowFoamStrength = Mathf.Max(0f, mouthOutflowFoamStrength);
+            _mouthOutflowDirty = true;
             CacheSiblings();
             ApplyWiring();
-            // Transform-only refresh: OnValidate must never create or destroy objects (Unity
-            // lifecycle), so spline edits re-aim the EXISTING generated ports and nothing more.
-            // Mesh rebuilds are established OnValidate practice here (see RequestRebuild's own
-            // callers), so refreshing the terminal conformance is safe from this path too.
+            // A disabled facade must not listen: OnDisable already dropped its subscription and
+            // would have no chance to drop this one.
+            if (isActiveAndEnabled)
+            {
+                RebindSplineEvents();
+                RebindFluidEvents();
+            }
+            SyncGeneratedConnections();
+        }
+
+        /// <summary>Transform-only refresh of everything derived from the spline and the end
+        /// targets. Never creates or destroys objects (Unity forbids that from OnValidate, and
+        /// creation stays an editor gesture), so it only re-aims the EXISTING generated ports,
+        /// re-pushes the seam descriptors and re-registers the mouth outflow. Mesh rebuilds are
+        /// established OnValidate practice here (see RequestRebuild's own callers).</summary>
+        internal void SyncGeneratedConnections()
+        {
+            _mouthOutflowDirty = true;
             SyncGeneratedConnectionAnchors();
             SyncSeams();
             SyncMouthOutflowRegistration();
         }
+
+        // The surface rebuilds its mesh from the same event; the facade re-aims the ports so the
+        // seam plane and the apron never lag behind a knot drag.
+        void RebindSplineEvents()
+        {
+            if (_subscribedSpline == _spline) return;
+            UnsubscribeSplineEvents();
+            _subscribedSpline = _spline;
+            if (_subscribedSpline != null) _subscribedSpline.Changed += SyncGeneratedConnections;
+        }
+
+        void UnsubscribeSplineEvents()
+        {
+            if (_subscribedSpline != null) _subscribedSpline.Changed -= SyncGeneratedConnections;
+            _subscribedSpline = null;
+        }
+
+        // A bake assignment (WaterRiverFluid.AssignBakeData) changes the mouth profile the
+        // outflow samples; same subscription shape WaterRiverFoam uses for its refresh.
+        void RebindFluidEvents()
+        {
+            if (_subscribedFluid == _fluid) return;
+            UnsubscribeFluidEvents();
+            _subscribedFluid = _fluid;
+            if (_subscribedFluid != null) _subscribedFluid.ConfigurationChanged += MarkMouthOutflowDirty;
+        }
+
+        void UnsubscribeFluidEvents()
+        {
+            if (_subscribedFluid != null) _subscribedFluid.ConfigurationChanged -= MarkMouthOutflowDirty;
+            _subscribedFluid = null;
+        }
+
+        void MarkMouthOutflowDirty() => _mouthOutflowDirty = true;
+
+        /// <summary>True when this river's source or mouth targets the body - the editor's change
+        /// router uses it to re-aim ports after the body moves.</summary>
+        internal bool HasEndBody(WaterVolume body)
+            => body != null && (sourceEnd.body == body || mouthEnd.body == body);
 
         void CacheSiblings()
         {
@@ -196,15 +288,23 @@ namespace AbstractOcclusion.WebGpuWater
             if (_foam == null) _foam = GetComponent<WaterRiverFoam>();
         }
 
-        // Fill-null wiring between the trio, then push the facade's parent link. The facade field
-        // is the authority for the parent (Reset adopted it from the surface first), so clearing
-        // it here deliberately clears the surface link too - that is how a river goes standalone.
+        // The facade is the single source for the trio's wiring: the sibling spline is assigned
+        // ALWAYS (not fill-null), so the three spline copies (facade, surface, current field) and
+        // the current field's fluid link cannot drift once a facade is present. Sub-components
+        // used without a facade (tests, hand rigs) keep their own references untouched. The
+        // facade field is the authority for the parent too (Reset adopted it from the surface
+        // first), so clearing it here deliberately clears the surface link - that is how a river
+        // goes standalone.
         internal void ApplyWiring()
         {
+            // Re-resolve first: the inspector calls this right after adding an optional sibling
+            // (fluid) so the current field picks the new component up without a re-enable.
+            CacheSiblings();
             if (_spline == null || _currentField == null || _surface == null) return;
 
-            if (_currentField.spline == null) _currentField.Configure(_spline);
-            if (_surface.Spline == null)
+            if (_currentField.spline != _spline) _currentField.Configure(_spline);
+            _currentField.fluid = _fluid;
+            if (_surface.Spline != _spline)
             {
                 _surface.spline = _spline;
                 _surface.RequestRebuild();
@@ -279,6 +379,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         void SyncMouthOutflowRegistration()
         {
+            _mouthOutflowDirty = true;
             CacheSiblings();
             WaterVolume target = ConnectedMouthBody;
             if (_mouthOutflowHost != target)
@@ -304,6 +405,26 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         internal bool TryBuildMouthOutflow(out WaterRiverMouthOutflow outflow)
+        {
+            if (!_mouthOutflowDirty && Application.isPlaying &&
+                _mouthOutflowFrame == Time.frameCount)
+            {
+                outflow = _mouthOutflowCached;
+                return _mouthOutflowValid;
+            }
+            return CacheMouthOutflow(BuildMouthOutflow(out outflow), outflow);
+        }
+
+        bool CacheMouthOutflow(bool valid, in WaterRiverMouthOutflow outflow)
+        {
+            _mouthOutflowCached = outflow;
+            _mouthOutflowValid = valid;
+            _mouthOutflowFrame = Time.frameCount;
+            _mouthOutflowDirty = false;
+            return valid;
+        }
+
+        bool BuildMouthOutflow(out WaterRiverMouthOutflow outflow)
         {
             outflow = default;
             CacheSiblings();
@@ -375,7 +496,7 @@ namespace AbstractOcclusion.WebGpuWater
                 ? mouthEnd.transitionRadiusMeters : 0f;
             outflow = new WaterRiverMouthOutflow(
                 seam.Centre, seam.Downstream, foamRight,
-                terminal.Width * 0.5f, mouthOutflowLengthMeters,
+                terminal.HalfWidth, mouthOutflowLengthMeters,
                 mouthOutflowSpreadPerMeter, speed, foamCoverage,
                 Mathf.Min(mouthOutflowFoamLengthMeters, mouthOutflowLengthMeters),
                 mouthOutflowCurrentStrength, mouthOutflowFoamStrength,
@@ -461,17 +582,38 @@ namespace AbstractOcclusion.WebGpuWater
             return target + up * Vector3.Dot(ocean.VolumeCenter - target, up);
         }
 
-        // See MaxKnotInsetWarnMeters. Only called from explicit (re)generation - OnValidate-path
-        // syncs stay silent, or every inspector nudge would spam the console.
+        /// <summary>The border contract check (see MaxKnotInsetWarnMeters): true when the anchor
+        /// sits deeper inside the body's footprint than the contract tolerates, with the inset in
+        /// world metres. Shared by the generation-time console warning and the inspector.</summary>
+        internal static bool IsAnchorDeepInsideFootprint(WaterVolume body, Vector3 anchor,
+                                                         out float insetMeters)
+        {
+            insetMeters = 0f;
+            Vector3 pool = body.WorldToPool(new Vector3(anchor.x, body.VolumeCenter.y, anchor.z));
+            if (Mathf.Abs(pool.x) >= 1f || Mathf.Abs(pool.z) >= 1f) return false; // outside: fine
+            Vector3 extent = body.VolumeExtentSafe;
+            insetMeters = Mathf.Min((1f - Mathf.Abs(pool.x)) * extent.x,
+                                    (1f - Mathf.Abs(pool.z)) * extent.z);
+            return insetMeters > MaxKnotInsetWarnMeters;
+        }
+
+        /// <summary>The inset check for one end against its assigned body, from the spline's
+        /// current terminal frame. False for unconnected ends and unbounded oceans (no border).</summary>
+        internal bool IsEndKnotDeepInsideBody(WaterRiverEndKind endKind, out float insetMeters)
+        {
+            insetMeters = 0f;
+            WaterRiverEndConnection end = EndFor(endKind);
+            if (end.body == null || IsUnboundedOcean(end.body)) return false;
+            if (!TryGetEndFrame(endKind, out Vector3 anchor, out _, out _)) return false;
+            return IsAnchorDeepInsideFootprint(end.body, anchor, out insetMeters);
+        }
+
+        // Only called from explicit (re)generation - OnValidate-path syncs stay silent, or every
+        // inspector nudge would spam the console.
         static void WarnIfAnchorDeepInsideFootprint(WaterRiverEndKind endKind, WaterVolume body,
                                                     Vector3 anchor)
         {
-            Vector3 pool = body.WorldToPool(new Vector3(anchor.x, body.VolumeCenter.y, anchor.z));
-            if (Mathf.Abs(pool.x) >= 1f || Mathf.Abs(pool.z) >= 1f) return; // outside: fine
-            Vector3 extent = body.VolumeExtentSafe;
-            float insetMeters = Mathf.Min((1f - Mathf.Abs(pool.x)) * extent.x,
-                                          (1f - Mathf.Abs(pool.z)) * extent.z);
-            if (insetMeters <= MaxKnotInsetWarnMeters) return;
+            if (!IsAnchorDeepInsideFootprint(body, anchor, out float insetMeters)) return;
             Debug.LogWarning(
                 $"WaterRiver: the {endKind} terminal knot sits {insetMeters:0.0} m inside " +
                 $"'{body.name}'s footprint. Surface-to-surface seams connect at the footprint " +
@@ -520,14 +662,12 @@ namespace AbstractOcclusion.WebGpuWater
             end.riverPort = EnsureChildPort(end.riverPort, riverPortName);
             end.riverPort.river = _surface;
             end.riverPort.body = null;
-            end.riverPort.authoredFlowRate = flowRate;
 
             string targetName = end.body != null ? end.body.name : end.upstreamRiver.name;
             end.targetPort = EnsureChildPort(
                 end.targetPort, TargetPortNamePrefix + targetName);
             end.targetPort.body = end.body;
             end.targetPort.river = end.upstreamRiver != null ? end.upstreamRiver.Surface : null;
-            end.targetPort.authoredFlowRate = flowRate;
 
             end.connection = EnsureChildConnection(
                 end.connection, ConnectionNamePrefix + targetName);
@@ -540,6 +680,7 @@ namespace AbstractOcclusion.WebGpuWater
             end.connection.authoredFlowRate = flowRate;
 
             PlaceEndTransforms(end, endKind, anchor, downstream);
+            ApplyGeneratedObjectVisibility();
             SyncSeams();
             SyncMouthOutflowRegistration();
         }
@@ -552,6 +693,7 @@ namespace AbstractOcclusion.WebGpuWater
         // ocean shader relinquishes only that coincident surface strip.
         void SyncSeams()
         {
+            _mouthOutflowDirty = true; // the seam frame is the outflow's origin and direction
             CacheSiblings();
             if (_surface == null) return;
             _surface.ConfigureBodySeams(
@@ -627,6 +769,7 @@ namespace AbstractOcclusion.WebGpuWater
             if (!TryGetEndFrame(endKind, out Vector3 anchor, out Vector3 downstream, out _)) return;
             PlaceEndTransforms(end, endKind, anchor, downstream);
             end.connection.transitionRadiusMeters = end.transitionRadiusMeters;
+            _mouthOutflowDirty = true; // the port anchor is the seam centre
             _mouthOutflowHost?.InvalidateRiverMouthOutflows();
         }
 
@@ -719,6 +862,40 @@ namespace AbstractOcclusion.WebGpuWater
             return child;
         }
 
+        // ---- generated-object visibility ---------------------------------------------------
+        // HideInHierarchy only: the objects still serialize with the scene (they carry the
+        // persistent portIds) and stay selectable through the inspector's Select buttons.
+
+        /// <summary>Editor entry point for the "Show generated objects" toggle. The caller owns
+        /// Undo registration of the facade and the children.</summary>
+        internal void SetGeneratedObjectsVisible(bool visible)
+        {
+            showGeneratedObjects = visible;
+            ApplyGeneratedObjectVisibility();
+        }
+
+        void ApplyGeneratedObjectVisibility()
+        {
+            ApplyGeneratedObjectVisibility(sourceEnd);
+            ApplyGeneratedObjectVisibility(mouthEnd);
+        }
+
+        void ApplyGeneratedObjectVisibility(WaterRiverEndConnection end)
+        {
+            ApplyGeneratedObjectVisibility(end.riverPort);
+            ApplyGeneratedObjectVisibility(end.targetPort);
+            ApplyGeneratedObjectVisibility(end.connection);
+        }
+
+        void ApplyGeneratedObjectVisibility(Component generated)
+        {
+            if (generated == null) return;
+            HideFlags flags = showGeneratedObjects
+                ? generated.gameObject.hideFlags & ~HideFlags.HideInHierarchy
+                : generated.gameObject.hideFlags | HideFlags.HideInHierarchy;
+            if (generated.gameObject.hideFlags != flags) generated.gameObject.hideFlags = flags;
+        }
+
         // ---- validation (fail loud at the authoring boundary) ------------------------------
 
         void WarnOnInvalidSetup()
@@ -737,6 +914,19 @@ namespace AbstractOcclusion.WebGpuWater
             WarnOnHalfGeneratedEnd(mouthEnd, WaterRiverEndKind.Mouth);
             WarnOnAmbiguousEnd(sourceEnd, WaterRiverEndKind.Source);
             WarnOnAmbiguousEnd(mouthEnd, WaterRiverEndKind.Mouth);
+            WarnOnUngeneratedEnd(sourceEnd, WaterRiverEndKind.Source);
+            WarnOnUngeneratedEnd(mouthEnd, WaterRiverEndKind.Mouth);
+        }
+
+        // A target that was assigned by script (the inspector generates on assignment) but never
+        // generated is the silent failure mode: no ports, no seam, no apron, no outflow.
+        void WarnOnUngeneratedEnd(WaterRiverEndConnection end, WaterRiverEndKind endKind)
+        {
+            if (end.WantsConnection && !end.HasAmbiguousTarget && !end.IsGenerated &&
+                !end.IsPartiallyGenerated)
+                Debug.LogWarning($"WaterRiver: the {endKind} end has a target but no generated " +
+                                 "connection. Regenerate it from the Water River inspector " +
+                                 "(Connections tab).", this);
         }
 
         void WarnOnHalfGeneratedEnd(WaterRiverEndConnection end, WaterRiverEndKind endKind)

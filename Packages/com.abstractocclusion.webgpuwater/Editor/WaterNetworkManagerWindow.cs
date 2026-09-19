@@ -1,4 +1,5 @@
-// WebGpuWater - read-only multi-body runtime observability window.
+// WebGpuWater - read-only multi-body runtime observability window, plus the connected-
+// components helper (WaterNetworkComponents) it shares with the wizard's Water System status.
 using System;
 using System.Collections.Generic;
 using UnityEditor;
@@ -6,10 +7,118 @@ using UnityEngine;
 
 namespace AbstractOcclusion.WebGpuWater.Editor
 {
+    // Which bodies are joined into one water network: union-find over the wired connections,
+    // labelled 1..N in first-seen order. Bodies are addressed by index into the caller's list so
+    // the window's snapshot rows and the wizard's scene scan both label without copying.
+    internal static class WaterNetworkComponents
+    {
+        internal const int UnassignedComponent = 0;
+        internal const int FirstComponentLabel = 1;
+        const int MissingBodyIndex = -1;
+
+        // The live topology (play mode: every enabled WaterConnection registers itself).
+        internal static void CollectTopologyConnections(List<WaterConnection> into)
+        {
+            if (into == null) throw new ArgumentNullException(nameof(into));
+            into.Clear();
+            for (int i = 0; i < WaterTopology.ConnectionCount; i++)
+                into.Add(WaterTopology.GetConnection(i));
+        }
+
+        // Edit mode: WaterConnection is not ExecuteAlways, so the topology is empty and the
+        // authored connections are read off the open scene instead.
+        internal static void CollectSceneConnections(List<WaterConnection> into)
+        {
+            if (into == null) throw new ArgumentNullException(nameof(into));
+            into.Clear();
+            into.AddRange(UnityEngine.Object.FindObjectsByType<WaterConnection>(FindObjectsSortMode.None));
+        }
+
+        internal static int[] BuildComponentLabels(IReadOnlyList<WaterVolume> bodies,
+                                                   IReadOnlyList<WaterConnection> connections)
+            => BuildComponentLabels(BuildComponentRoots(bodies, connections));
+
+        internal static int[] BuildComponentRoots(IReadOnlyList<WaterVolume> bodies,
+                                                  IReadOnlyList<WaterConnection> connections)
+        {
+            if (bodies == null) throw new ArgumentNullException(nameof(bodies));
+            if (connections == null) throw new ArgumentNullException(nameof(connections));
+            int[] roots = new int[bodies.Count];
+            for (int i = 0; i < roots.Length; i++) roots[i] = i;
+            for (int connectionIndex = 0; connectionIndex < connections.Count; connectionIndex++)
+            {
+                WaterConnection connection = connections[connectionIndex];
+                if (connection == null || !connection.IsWired) continue;
+                int indexA = FindBody(bodies, BodyOf(connection.PortA));
+                int indexB = FindBody(bodies, BodyOf(connection.PortB));
+                if (indexA >= 0 && indexB >= 0) Union(roots, indexA, indexB);
+            }
+            for (int i = 0; i < roots.Length; i++) roots[i] = FindRoot(roots, i);
+            return roots;
+        }
+
+        internal static int[] BuildComponentLabels(int[] roots)
+        {
+            if (roots == null) throw new ArgumentNullException(nameof(roots));
+            int[] labels = new int[roots.Length];
+            int nextLabel = FirstComponentLabel;
+            for (int i = 0; i < roots.Length; i++)
+            {
+                int existingLabel = UnassignedComponent;
+                for (int previous = 0; previous < i; previous++)
+                {
+                    if (roots[previous] != roots[i]) continue;
+                    existingLabel = labels[previous];
+                    break;
+                }
+                labels[i] = existingLabel != UnassignedComponent ? existingLabel : nextLabel++;
+            }
+            return labels;
+        }
+
+        // The body behind a port: its live provider while the water is enabled (a river port
+        // answers with its parent body), else the serialized body reference - so an edit-mode
+        // scan still joins body ports whose water is not live.
+        internal static WaterVolume BodyOf(WaterConnectionPort port)
+        {
+            if (port == null) return null;
+            IWaterSurfaceProvider provider = port.ResolveProvider();
+            if (provider != null && provider.Body != null) return provider.Body;
+            return port.body;
+        }
+
+        static int FindBody(IReadOnlyList<WaterVolume> bodies, WaterVolume body)
+        {
+            if (body == null) return MissingBodyIndex;
+            for (int i = 0; i < bodies.Count; i++)
+                if (bodies[i] == body) return i;
+            return MissingBodyIndex;
+        }
+
+        static int FindRoot(int[] roots, int index)
+        {
+            while (roots[index] != index)
+            {
+                roots[index] = roots[roots[index]];
+                index = roots[index];
+            }
+            return index;
+        }
+
+        static void Union(int[] roots, int left, int right)
+        {
+            int leftRoot = FindRoot(roots, left);
+            int rightRoot = FindRoot(roots, right);
+            if (leftRoot != rightRoot) roots[rightRoot] = leftRoot;
+        }
+    }
+
     internal sealed class WaterNetworkManagerWindow : EditorWindow
     {
         const string WindowTitle = "Water Network Manager";
-        const string MenuPath = "Window/Abstract Occlusion/Water Network Manager";
+        // Same leaf name, now under the shared MenuRoot (it hung off a "Window/Abstract Occlusion/"
+        // root of its own - one of three roots this assembly used to spell).
+        const string MenuPath = WaterBuildKit.MenuRoot + WindowTitle;
         const string NoCameraLabel = "No camera";
         const string NoBodiesMessage = "No registered WaterVolumes are currently available.";
         const string SelectLabel = "Select";
@@ -56,14 +165,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const string PercentageFormat = "0.0";
         const string MemoryFormat = "0.0";
         const string ConnectedComponentPrefix = "Component ";
-        const int UnassignedComponent = 0;
-        const int FirstComponentLabel = 1;
-        const int MissingBodyIndex = -1;
         const float MinimumWindowWidth = 900f;
         const float MinimumWindowHeight = 300f;
         const float ToolbarHeight = 22f;
         const float RowHeight = 21f;
-        const float TableWidth = 2360f;
         const float ActionsWidth = 112f;
         const float ActionButtonWidth = 54f;
         const float BodyWidth = 180f;
@@ -84,10 +189,19 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const float ActivationWidth = 80f;
         const float MemoryWidth = 95f;
         const float ValidationWidth = 360f;
+        // The scroll content width IS the sum of the columns, so a new column cannot leave the
+        // rows narrower (or the scroll wider) than the headers; the hand-summed literal that sat
+        // here had already drifted from the columns it claimed to total.
+        const float TableWidth = ActionsWidth + BodyWidth + TypeWidth + RoleWidth + NetworkWidth +
+                                 AssignedQualityWidth + ResolvedQualityWidth + RankWidth + VisibilityWidth +
+                                 DistanceWidth + CoverageWidth + SimulationWidth + PlanarWidth + CausticWidth +
+                                 FoamWidth + FogWidth + ActivationWidth + MemoryWidth + ValidationWidth;
         const float PercentageMultiplier = 100f;
         const float MegabyteBytes = 1024f * 1024f;
 
         readonly List<Row> _rows = new List<Row>();
+        readonly List<WaterVolume> _bodies = new List<WaterVolume>();
+        readonly List<WaterConnection> _connections = new List<WaterConnection>();
         readonly RowComparer _rowComparer = new RowComparer();
         Vector2 _tableScroll;
         SortColumn _sortColumn = SortColumn.RelevanceRank;
@@ -152,8 +266,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             _rows.Clear();
             int primaryCount = CountPrimaries(snapshot);
-            int[] componentRoots = BuildComponentRoots(snapshot);
-            int[] componentLabels = BuildComponentLabels(componentRoots);
+            CollectBodies(snapshot, _bodies);
+            WaterNetworkComponents.CollectTopologyConnections(_connections);
+            int[] componentLabels = WaterNetworkComponents.BuildComponentLabels(_bodies, _connections);
             for (int i = 0; i < snapshot.Count; i++)
             {
                 WaterRuntimeBodySnapshot state = snapshot[i];
@@ -165,13 +280,21 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     State = state,
                     Component = componentLabels[i],
                     Validation = WaterRuntimeValidation.ValidateBody(body, primaryCount)
-                               | ConnectionWarningsForBody(body),
+                               | ConnectionWarningsForBody(body, _connections),
                     ApproximateGpuBytes = body.ApproximateOwnedGpuBytes,
                 });
             }
             _rowComparer.Column = _sortColumn;
             _rowComparer.Ascending = _sortAscending;
             _rows.Sort(_rowComparer);
+        }
+
+        // Snapshot rows and body indices stay aligned (a null body keeps its slot) so the
+        // component label for row i is labels[i].
+        static void CollectBodies(IReadOnlyList<WaterRuntimeBodySnapshot> snapshot, List<WaterVolume> into)
+        {
+            into.Clear();
+            for (int i = 0; i < snapshot.Count; i++) into.Add(snapshot[i].Body);
         }
 
         static int CountPrimaries(IReadOnlyList<WaterRuntimeBodySnapshot> snapshot)
@@ -182,93 +305,34 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             return count;
         }
 
-        static int[] BuildComponentRoots(IReadOnlyList<WaterRuntimeBodySnapshot> snapshot)
-        {
-            int[] roots = new int[snapshot.Count];
-            for (int i = 0; i < roots.Length; i++) roots[i] = i;
-            for (int connectionIndex = 0;
-                 connectionIndex < WaterTopology.ConnectionCount; connectionIndex++)
-            {
-                WaterConnection connection = WaterTopology.GetConnection(connectionIndex);
-                if (connection == null || !connection.IsWired) continue;
-                WaterVolume bodyA = connection.PortA.ResolveProvider()?.Body;
-                WaterVolume bodyB = connection.PortB.ResolveProvider()?.Body;
-                int indexA = FindBody(snapshot, bodyA);
-                int indexB = FindBody(snapshot, bodyB);
-                if (indexA >= 0 && indexB >= 0) Union(roots, indexA, indexB);
-            }
-            for (int i = 0; i < roots.Length; i++) roots[i] = FindRoot(roots, i);
-            return roots;
-        }
-
-        static int[] BuildComponentLabels(int[] roots)
-        {
-            int[] labels = new int[roots.Length];
-            int nextLabel = FirstComponentLabel;
-            for (int i = 0; i < roots.Length; i++)
-            {
-                int existingLabel = UnassignedComponent;
-                for (int previous = 0; previous < i; previous++)
-                {
-                    if (roots[previous] != roots[i]) continue;
-                    existingLabel = labels[previous];
-                    break;
-                }
-                labels[i] = existingLabel != UnassignedComponent ? existingLabel : nextLabel++;
-            }
-            return labels;
-        }
-
-        static int FindBody(IReadOnlyList<WaterRuntimeBodySnapshot> snapshot, WaterVolume body)
-        {
-            for (int i = 0; i < snapshot.Count; i++)
-                if (snapshot[i].Body == body) return i;
-            return MissingBodyIndex;
-        }
-
         static int CountUnwiredConnections()
         {
             int count = 0;
             for (int i = 0; i < WaterTopology.ConnectionCount; i++)
             {
                 WaterConnection connection = WaterTopology.GetConnection(i);
-                if (connection == null || connection.IsWired) continue;
-                count++;
+                if (connection == null) continue;
+                if (WaterRuntimeValidation.ValidateConnection(connection) != WaterRuntimeValidationFlags.None)
+                    count++;
             }
             return count;
         }
 
-        static WaterRuntimeValidationFlags ConnectionWarningsForBody(WaterVolume body)
+        // The runtime rule (ValidateConnection) applied to every connection touching this body.
+        static WaterRuntimeValidationFlags ConnectionWarningsForBody(WaterVolume body,
+                                                                     IReadOnlyList<WaterConnection> connections)
         {
-            for (int i = 0; i < WaterTopology.ConnectionCount; i++)
+            WaterRuntimeValidationFlags flags = WaterRuntimeValidationFlags.None;
+            for (int i = 0; i < connections.Count; i++)
             {
-                WaterConnection connection = WaterTopology.GetConnection(i);
-                if (connection == null || connection.IsWired) continue;
-                WaterVolume bodyA = connection.PortA != null
-                    ? connection.PortA.ResolveProvider()?.Body : null;
-                WaterVolume bodyB = connection.PortB != null
-                    ? connection.PortB.ResolveProvider()?.Body : null;
-                if (bodyA == body || bodyB == body)
-                    return WaterRuntimeValidationFlags.UnwiredConnection;
+                WaterConnection connection = connections[i];
+                if (connection == null) continue;
+                WaterVolume bodyA = WaterNetworkComponents.BodyOf(connection.PortA);
+                WaterVolume bodyB = WaterNetworkComponents.BodyOf(connection.PortB);
+                if (bodyA != body && bodyB != body) continue;
+                flags |= WaterRuntimeValidation.ValidateConnection(connection);
             }
-            return WaterRuntimeValidationFlags.None;
-        }
-
-        static int FindRoot(int[] roots, int index)
-        {
-            while (roots[index] != index)
-            {
-                roots[index] = roots[roots[index]];
-                index = roots[index];
-            }
-            return index;
-        }
-
-        static void Union(int[] roots, int left, int right)
-        {
-            int leftRoot = FindRoot(roots, left);
-            int rightRoot = FindRoot(roots, right);
-            if (leftRoot != rightRoot) roots[rightRoot] = leftRoot;
+            return flags;
         }
 
         void DrawTable()

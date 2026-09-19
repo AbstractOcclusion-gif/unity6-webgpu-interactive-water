@@ -65,6 +65,9 @@ struct WaterGeomStage
     ShoreData shore;     // hoisted shore-substrate sample (inert off surf bodies)
     SurfWaveSample surf; // hoisted surf-front sample (inert off surf bodies)
     float surfGeomFoam;  // geometry foam from the surface's own Jacobian/slope
+    // Hoisted FFT cascade sum at largeWaveSourceXZ with the hoisted shore (zero off FFT bodies):
+    // tilt for the normal, pinch for the geometry foam + crest glow, foam for the whitecaps.
+    OceanFftCascadeSum fft;
 };
 
 // One foam layer's contribution: coverage alpha + lit colour.
@@ -131,31 +134,43 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
     // Same end-anchored grid target as the vertex height, or normal and height desynchronise.
     float2 gridWaveSample = RiverEndWindWaveSampleXZ(
         i.position.xz, i.largeWaveSourceXZ, i.riverBakeUv.w);
-    float2 outflowWorldXZ = MouthOutflowDriftedWorldXZ(i.largeWaveSourceXZ);
-    float2 outflowPoolXZ = WorldToPool(
-        float3(outflowWorldXZ.x, i.worldPos.y, outflowWorldXZ.y)).xz;
-    float2 outflowWaveSample = RiverEndWindWaveSampleXZ(
-        outflowPoolXZ, outflowWorldXZ, i.riverBakeUv.w);
-    float outflowInfluence = MouthOutflowCurrentInfluence(i.largeWaveSourceXZ);
-    float2 gridWindSlope = lerp(
-        WaveSlope(gridWaveSample), WaveSlope(outflowWaveSample), outflowInfluence);
+    float2 gridWindSlope = WaveSlope(gridWaveSample);
+    // Mouth-outflow drift twin: only a body with a connected river mouth publishes outflows, and
+    // with none EvaluateMouthOutflow returns influence 0 / velocity 0 - the twin then collapses to
+    // the grid sample and the lerp to identity. WaveSlope is a 16-sinusoid loop, so it is skipped
+    // on that UNIFORM count rather than evaluated and multiplied by zero; the per-pixel influence
+    // stays inside. Pure ALU throughout (derivative-safe under the branch).
+    [branch]
+    if (_MouthOutflowCount > 0.5)
+    {
+        float2 outflowWorldXZ = MouthOutflowDriftedWorldXZ(i.largeWaveSourceXZ);
+        float2 outflowPoolXZ = WorldToPool(
+            float3(outflowWorldXZ.x, i.worldPos.y, outflowWorldXZ.y)).xz;
+        float2 outflowWaveSample = RiverEndWindWaveSampleXZ(
+            outflowPoolXZ, outflowWorldXZ, i.riverBakeUv.w);
+        float outflowInfluence = MouthOutflowCurrentInfluence(i.largeWaveSourceXZ);
+        gridWindSlope = lerp(gridWindSlope, WaveSlope(outflowWaveSample), outflowInfluence);
+    }
     gridWindSlope *= oceanMouthWaveWeight;
-    float2 riverWaveSampleA;
-    float2 riverWaveSampleB;
-    float riverWavePhaseBlend;
-    RiverCurrentWaveSampleXZ(
-        riverCurrentData, riverWaveSampleA, riverWaveSampleB,
-        riverWavePhaseBlend);
-    float2 riverWaveSlope = lerp(
-        WaveSlope(riverWaveSampleA), WaveSlope(riverWaveSampleB),
-        riverWavePhaseBlend);
     // Match the vertex stage: blend sampled slopes, never the
-    // coordinates (coordinate lerp = phase sweep = the washboard band). Uniform branch.
-    float2 windSlope;
+    // coordinates (coordinate lerp = phase sweep = the washboard band). Uniform branch: the two
+    // river phase evaluations (another two WaveSlope loops) exist only inside it - pools, lakes
+    // and oceans keep the single grid evaluation.
+    float2 windSlope = gridWindSlope;
+    [branch]
     if (_IsRiver > 0.5)
+    {
+        float2 riverWaveSampleA;
+        float2 riverWaveSampleB;
+        float riverWavePhaseBlend;
+        RiverCurrentWaveSampleXZ(
+            riverCurrentData, riverWaveSampleA, riverWaveSampleB,
+            riverWavePhaseBlend);
+        float2 riverWaveSlope = lerp(
+            WaveSlope(riverWaveSampleA), WaveSlope(riverWaveSampleB),
+            riverWavePhaseBlend);
         windSlope = lerp(gridWindSlope, riverWaveSlope, riverWeight);
-    else
-        windSlope = gridWindSlope;
+    }
     windSlope *= _WaveNormalStrength;
     // POOL convention, kept as the foam flow / relief input (g.nxz) so foam is unchanged by this.
     float2 nxz = info.ba - windSlope;
@@ -209,13 +224,30 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
     // Jacobian pinch + slope - glued to the rendered waves by
     // construction, so foam can never detach from what the eye tracks.
     float surfGeomFoam = 0.0;
+    // ---- ONE FFT cascade sum per pixel, at the source xz with the hoisted shore, shared by the
+    // normal tilt + geometry-foam pinch here, the crest glow (EvaluateCrestGlow) and - where its
+    // shore sample provably matches - the whitecap coverage (OceanWhitecapCoverage). Each of those
+    // used to re-run the 4-cascade sum (with aperiodic tiling, 12 array taps + 48 Loads each) for
+    // one channel of the struct the previous call had already fetched. Gated on the same uniform
+    // every consumer gates on, so non-FFT bodies never touch the arrays. ----
+    OceanFftCascadeSum fftSum = OceanFftCascadeSumInert();
+    if (_OceanFftActive > 0.5)
+        fftSum = OceanFftNormalSumShore(i.largeWaveSourceXZ, shoreFrag);
     if (_LargeBody > 0.5)
     {
         // Large-body waves are evaluated in world XZ. For a ribbon, ask the established wave
         // function for its world-XZ tilt relative to world-up, then express that same tilt in the
         // transported width/flow frame. The pool/lake/ocean input and result remain unchanged.
         float3 largeWaveBaseNormal = normalize(lerp(normal, float3(0.0, 1.0, 0.0), riverWeight));
-        float4 normalFoam = ApplyLargeBodyWaveNormalFoamShore(largeWaveBaseNormal,
+        // Uniform path pick (the same one ApplyLargeBodyWaveNormalFoamShore makes), spelled out
+        // here so the FFT half reads the hoisted sum instead of summing the cascades again.
+        float4 normalFoam;
+        if (_OceanFftActive > 0.5)
+            normalFoam = ApplyOceanFftNormalFoamSum(largeWaveBaseNormal, i.largeWaveSourceXZ,
+                                                    _WaveNormalStrength, shoreFrag, surfFrag,
+                                                    fftSum);
+        else
+            normalFoam = ApplyLargeBodyWaveNormalFoamAnalytic(largeWaveBaseNormal,
                                                               i.largeWaveSourceXZ,
                                                               _WaveNormalStrength,
                                                               shoreFrag, surfFrag);
@@ -274,12 +306,20 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
             // of this uniform branch, so quad derivatives stay uniform; the ribbon interior keeps
             // the transported-frame detail exactly (weight 1), and pools never enter this branch.
             float2 riverTilt = RiverDetailNormalTilt(riverCurrentData, viewDistWorld);
-            float2 bodyBaseTilt = DetailNormalTilt(i.largeWaveSourceXZ, viewDistWorld);
-            float2 bodyOutflowTilt = DetailNormalTilt(
-                MouthOutflowDriftedWorldXZ(i.largeWaveSourceXZ), viewDistWorld);
-            float2 bodyTilt = lerp(
-                bodyBaseTilt, bodyOutflowTilt,
-                MouthOutflowCurrentInfluence(i.largeWaveSourceXZ));
+            float2 bodyTilt = DetailNormalTilt(i.largeWaveSourceXZ, viewDistWorld);
+            // Mouth-outflow drift twin (4 more tex2Dgrad taps): skipped on the UNIFORM outflow
+            // count - with no outflow the drifted xz IS the source xz and the influence is 0, so
+            // the lerp was the identity. Analytic gradients (tex2Dgrad) + a uniform branch keep
+            // the WGSL derivative contract.
+            [branch]
+            if (_MouthOutflowCount > 0.5)
+            {
+                float2 bodyOutflowTilt = DetailNormalTilt(
+                    MouthOutflowDriftedWorldXZ(i.largeWaveSourceXZ), viewDistWorld);
+                bodyTilt = lerp(
+                    bodyTilt, bodyOutflowTilt,
+                    MouthOutflowCurrentInfluence(i.largeWaveSourceXZ));
+            }
             float3 riverDetailTilt = slopeAxisX * riverTilt.x + slopeAxisZ * riverTilt.y;
             float3 bodyDetailTilt = float3(bodyTilt.x, 0.0, bodyTilt.y);
             detailTiltWorld = lerp(bodyDetailTilt, riverDetailTilt, riverWeight);
@@ -287,12 +327,17 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
         else
         {
             // The original unrotated-pool detail path, byte-for-byte.
-            float2 detailBaseTilt = DetailNormalTilt(i.largeWaveSourceXZ, viewDistWorld);
-            float2 detailOutflowTilt = DetailNormalTilt(
-                MouthOutflowDriftedWorldXZ(i.largeWaveSourceXZ), viewDistWorld);
-            float2 detailTilt = lerp(
-                detailBaseTilt, detailOutflowTilt,
-                MouthOutflowCurrentInfluence(i.largeWaveSourceXZ));
+            float2 detailTilt = DetailNormalTilt(i.largeWaveSourceXZ, viewDistWorld);
+            // Same outflow-twin gate as the river path above (see that comment).
+            [branch]
+            if (_MouthOutflowCount > 0.5)
+            {
+                float2 detailOutflowTilt = DetailNormalTilt(
+                    MouthOutflowDriftedWorldXZ(i.largeWaveSourceXZ), viewDistWorld);
+                detailTilt = lerp(
+                    detailTilt, detailOutflowTilt,
+                    MouthOutflowCurrentInfluence(i.largeWaveSourceXZ));
+            }
             detailTiltWorld = float3(detailTilt.x, 0.0, detailTilt.y);
         }
         normal = normalize(normal + detailTiltWorld * detailNormalStrength);
@@ -309,6 +354,7 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
     g.shore = shoreFrag;
     g.surf = surfFrag;
     g.surfGeomFoam = surfGeomFoam;
+    g.fft = fftSum;
     return g;
 }
 
@@ -356,12 +402,21 @@ float OceanWhitecapCoverage(v2f i, WaterGeomStage g, float2 foamWorldDdx, float2
     float coverage = 0.0;
     if (_OceanFftActive > 0.5)
     {
+        // The hoisted cascade sum (g.fft) was taken with the hoisted shore sample, which is
+        // inert unless surf is on; OceanFftFoam samples the shore whenever a field is BAKED.
+        // The two are the same value when surf is on (both = ShoreSample at this xz) or no
+        // field is baked (both inert) - so only the remaining case, a baked shore with the
+        // surf layer off, still pays the wrapper's own shore tap + cascade sum. Uniform pick.
+        float fftFoam;
+        if (_SurfActive > 0.5 || _ShoreDepthValid < 0.5)
+            fftFoam = OceanFftFoamFromSum(g.fft, i.largeWaveSourceXZ);
+        else
+            fftFoam = OceanFftFoam(i.largeWaveSourceXZ);
         // The surf band is the surf system's territory: the FFT foam ACCUMULATOR
         // is depth-blind (its small cascades still whitecap at 2 m of water), so
         // accumulated ocean whitecaps fade out where the fronts/whitewash own the
         // shallows. Inert off surf bodies (the gate is 0 there).
-        coverage = OceanFftFoam(i.largeWaveSourceXZ)
-                 * (1.0 - LbwFoamOwnershipGate(shoreFrag));
+        coverage = fftFoam * (1.0 - LbwFoamOwnershipGate(shoreFrag));
     }
     else if (_LbwGeomFoamFloor > 0.0)
     {
@@ -1043,7 +1098,6 @@ float3 ReflectionStage(v2f i, WaterGeomStage g, out float fresnel)
 float EvaluateCrestGlow(v2f i, WaterGeomStage g)
 {
     float3 incomingRay = g.incomingRay;
-    ShoreData shoreFrag = g.shore;
     SurfWaveSample surfFrag = g.surf;
     // ---- Wave-crest subsurface glow: steep crests scatter sunlight toward the viewer,
     // brightest looking INTO the sun. Crest steepness is the TRUE displacement-Jacobian fold
@@ -1058,8 +1112,9 @@ float EvaluateCrestGlow(v2f i, WaterGeomStage g)
     if (_SssEnabled > 0.5 && _OceanFftActive > 0.5)
     {
         // Shore-attenuated fold: no crest glow from waves the depth field has
-        // flattened (shoreFrag is inert off surf bodies - deep ocean unchanged).
-        float fold = OceanFftJacobianShore(i.largeWaveSourceXZ, shoreFrag) * lbwEdge;
+        // flattened (the hoisted sum was taken with the hoisted shore sample, inert off surf
+        // bodies - deep ocean unchanged). Same sum the normal tilt read - no second fetch.
+        float fold = OceanFftJacobianFromSum(g.fft) * lbwEdge;
         float ramp = saturate((fold - _SssPinchMin)
                               / max(_SssPinchMax - _SssPinchMin, SSS_AMPLITUDE_EPSILON));
         float pinch = pow(ramp, _SssPinchFalloff);
@@ -1376,13 +1431,67 @@ float PondFoamCoverage(v2f i)
         MouthOutflowFoamCoverage(i.largeWaveSourceXZ));
 }
 
-FoamLayer PondFoamLayer(v2f i, WaterGeomStage g)
+// The pond-foam LOOK from a coverage the caller has already evaluated (PondFoamCoverage at this
+// fragment): Pass 0 pays that coverage lazily inside its gate (PondFoamLayer below); the overlay
+// pass early-clips on it before building the geometry stage and hands the same value in here,
+// instead of re-running its taps (contact depth + 4 foam-mask + the mouth loop) a second time.
+FoamLayer PondFoamLayerFromCoverage(v2f i, WaterGeomStage g, float coverage)
 {
     float3 normal = g.normal;
     float2 nxz = g.nxz;
     float pondFoamAlpha = 0.0;
     float3 pondFoamLook = float3(0.0, 0.0, 0.0);
 
+    // Windowed bodies read the foam buffer in the window frame too - at the
+    // SOURCE xz (undisplaced), like the whitecap path. Sampling at the displaced
+    // worldPos misses foam under horizontally-displaced geometry: the hero wave's
+    // crest is thrown metres forward by lean + curl, so its fragments were reading
+    // the buffer ahead of where the lip foam was injected (empty crest head). FFT
+    // chop caused the same error at a smaller, invisible scale.
+    float mask = coverage;
+    // THE SURF BAND BELONGS TO THE WHITEWASH PIPELINE. The ocean whitecaps have stood down here
+    // since 2026-07-28; the ripple/turbulence foam never did, so the shore band drew BOTH - the
+    // sim buffer's low-frequency, decayed, advected copy through the pond pattern AND the
+    // analytic whitewash through the whitecap pattern, max()ed together. Same weight, same
+    // contour, one more consumer.
+    //
+    // Applied HERE and not in PondFoamCoverage: the overlay pass early-clips on that function
+    // BEFORE it builds the geometry stage, and that hoist is only legal because coverage takes
+    // no WaterGeomStage. Both draw points call THIS function, so both are covered anyway, and
+    // the early clip stays a conservative superset (this can only lower the mask).
+    mask *= 1.0 - LbwFoamOwnershipGate(g.shore);
+
+    // Capture body, outflow and river coordinates independently before the mask branch.
+    // EvaluateTransportedPondFoam blends sampled results, never unrelated UV frames.
+    PondFoamSamples foamSamples = BuildPondFoamSamples(i, normal, nxz);
+
+    if (mask > FOAM_MASK_EPSILON)
+    {
+        float foamDist = distance(i.worldPos.xz, _WorldSpaceCameraPos.xz);
+        float2 bodyFlow = nxz;
+        PondFoamEvaluation foam = EvaluateTransportedPondFoam(
+            foamSamples, bodyFlow, mask, foamDist);
+
+        // ---- Foam relief: tilt the lighting normal by the foam's own
+        // normal map so the lace shades three-dimensionally. ----
+        float3 foamNormal = ApplyPondFoamTiltToNormal(i, normal, foam.tilt);
+
+        // ---- Lit foam: wrapped diffuse from the sun over an ambient
+        // floor, so foam shades with the waves instead of flat white. ----
+        float wrapped = FoamWrappedDiffuse(foamNormal, _LightDir);
+        float3 albedo = _FoamColor.rgb * lerp(
+            foam.pattern, float3(1.0, 1.0, 1.0), foam.core * FOAM_CORE_WHITEN);
+        pondFoamLook = FoamLitColor(albedo, _SunColor, wrapped);
+        pondFoamAlpha = foam.alpha;
+    }
+    FoamLayer layer;
+    layer.alpha = pondFoamAlpha;
+    layer.look = pondFoamLook;
+    return layer;
+}
+
+FoamLayer PondFoamLayer(v2f i, WaterGeomStage g)
+{
     // ---- Interactive/pond foam look: advected buffer + shoreline border + contact ----
     //
     // Fog-armed frames with the camera in AIR: skip - the fullscreen underwater fog
@@ -1391,9 +1500,9 @@ FoamLayer PondFoamLayer(v2f i, WaterGeomStage g)
     // cancelling the fog by mask coverage punched clear holes through dense fog instead
     // (the mask is low-frequency, the drawn foam is mask x pattern texture). The foam is
     // re-drawn AFTER the fog by WaterSurface's PondFoamOverlay pass, which defines
-    // WATER_FOAM_OVERLAY_PASS and calls THIS function - one look, two draw points, so
-    // the two can never drift; the skip and the overlay key on the SAME published
-    // globals, so exactly one of them shows the foam each frame.
+    // WATER_FOAM_OVERLAY_PASS and calls the same PondFoamLayerFromCoverage body - one
+    // look, two draw points, so the two can never drift; the skip and the overlay key on
+    // the SAME published globals, so exactly one of them shows the foam each frame.
     // Exceptions that keep the queue-time draw: a submerged camera (the fog is IN FRONT
     // of the foam there) and chunk bodies (their disc footprint clips are Pass-0 state
     // the overlay pass does not replicate; the C# collector excludes them the same way).
@@ -1405,54 +1514,11 @@ FoamLayer PondFoamLayer(v2f i, WaterGeomStage g)
                                  && _ChunkSphereClip < 0.5 && _ChunkBoxClip < 0.5
                                  && _ChunkUseMesh < 0.5;
 #endif
-    if ((_FoamEnabled > 0.5 || _MouthOutflowCount > 0.5) && !foamDeferredToOverlay)
-    {
-        // Windowed bodies read the foam buffer in the window frame too - at the
-        // SOURCE xz (undisplaced), like the whitecap path. Sampling at the displaced
-        // worldPos misses foam under horizontally-displaced geometry: the hero wave's
-        // crest is thrown metres forward by lean + curl, so its fragments were reading
-        // the buffer ahead of where the lip foam was injected (empty crest head). FFT
-        // chop caused the same error at a smaller, invisible scale.
-        float mask = PondFoamCoverage(i);
-        // THE SURF BAND BELONGS TO THE WHITEWASH PIPELINE. The ocean whitecaps have stood down here
-        // since 2026-07-28; the ripple/turbulence foam never did, so the shore band drew BOTH - the
-        // sim buffer's low-frequency, decayed, advected copy through the pond pattern AND the
-        // analytic whitewash through the whitecap pattern, max()ed together. Same weight, same
-        // contour, one more consumer.
-        //
-        // Applied HERE and not in PondFoamCoverage: the overlay pass early-clips on that function
-        // BEFORE it builds the geometry stage, and that hoist is only legal because coverage takes
-        // no WaterGeomStage. Both draw points call THIS function, so both are covered anyway, and
-        // the early clip stays a conservative superset (this can only lower the mask).
-        mask *= 1.0 - LbwFoamOwnershipGate(g.shore);
-
-        // Capture body, outflow and river coordinates independently before the mask branch.
-        // EvaluateTransportedPondFoam blends sampled results, never unrelated UV frames.
-        PondFoamSamples foamSamples = BuildPondFoamSamples(i, normal, nxz);
-
-        if (mask > FOAM_MASK_EPSILON)
-        {
-            float foamDist = distance(i.worldPos.xz, _WorldSpaceCameraPos.xz);
-            float2 bodyFlow = nxz;
-            PondFoamEvaluation foam = EvaluateTransportedPondFoam(
-                foamSamples, bodyFlow, mask, foamDist);
-
-            // ---- Foam relief: tilt the lighting normal by the foam's own
-            // normal map so the lace shades three-dimensionally. ----
-            float3 foamNormal = ApplyPondFoamTiltToNormal(i, normal, foam.tilt);
-
-            // ---- Lit foam: wrapped diffuse from the sun over an ambient
-            // floor, so foam shades with the waves instead of flat white. ----
-            float wrapped = FoamWrappedDiffuse(foamNormal, _LightDir);
-            float3 albedo = _FoamColor.rgb * lerp(
-                foam.pattern, float3(1.0, 1.0, 1.0), foam.core * FOAM_CORE_WHITEN);
-            pondFoamLook = FoamLitColor(albedo, _SunColor, wrapped);
-            pondFoamAlpha = foam.alpha;
-        }
-    }
     FoamLayer layer;
-    layer.alpha = pondFoamAlpha;
-    layer.look = pondFoamLook;
+    layer.alpha = 0.0;
+    layer.look = float3(0.0, 0.0, 0.0);
+    if ((_FoamEnabled > 0.5 || _MouthOutflowCount > 0.5) && !foamDeferredToOverlay)
+        layer = PondFoamLayerFromCoverage(i, g, PondFoamCoverage(i));
     return layer;
 }
 
@@ -2014,18 +2080,27 @@ float3 FinalCompositeStage(v2f i, WaterGeomStage g, float3 outColor,
             float2 huv = saturate(horizonUV);
             float perAzimuthSky;
             float3 perAzimuth = SampleHorizonSky(huv, perAzimuthSky);
-            // Same kernel for the centre column, not a single tap: the centre band sets the colour of
-            // the WHOLE far ocean whenever the per-azimuth sample hands over, so one mast crossing
-            // one pixel must not swing it. Sharing the helper also keeps its colour and its
-            // confidence consistent with each other - a 5-tap confidence over a 1-tap colour would
-            // report "mostly sky" while delivering the mast.
-            float centreSky;
-            float3 centreBand = SampleHorizonSky(float2(0.5, huv.y), centreSky);
 
             // Two independent reasons to stop trusting the per-azimuth sample - the projection is
             // unusable, or its taps are not sky. Take whichever is stronger; both are smooth, so the
             // handover is too.
             float useCentre = max(toCentre, 1.0 - perAzimuthSky);
+            // Same kernel for the centre column, not a single tap: the centre band sets the colour of
+            // the WHOLE far ocean whenever the per-azimuth sample hands over, so one mast crossing
+            // one pixel must not swing it. Sharing the helper also keeps its colour and its
+            // confidence consistent with each other - a 5-tap confidence over a 1-tap colour would
+            // report "mostly sky" while delivering the mast.
+            // Sampled only where it can contribute: on an open horizon every per-azimuth tap is sky
+            // and the projection is trusted, so useCentre is EXACTLY 0 (both smoothstep products
+            // saturate, the blur weights sum to 1) and the lerps below return the per-azimuth value
+            // untouched - the second 5 opaque + 5 depth taps bought nothing there. Per-pixel branch,
+            // but every fetch in SampleHorizonSky is explicit-LOD (SampleLevel / _LOD), so it is
+            // WGSL-legal; where the branch is skipped the substitutes make the lerps the identity.
+            float3 centreBand = perAzimuth;
+            float centreSky = perAzimuthSky;
+            [branch]
+            if (useCentre > 0.0)
+                centreBand = SampleHorizonSky(float2(0.5, huv.y), centreSky);
             float3 opaqueSky = lerp(perAzimuth, centreBand, useCentre);
             // How much of the sample finally chosen is really sky. Zero when the horizon row carries
             // geometry all the way across - a hull filling the frame, a coastline - and zero when the

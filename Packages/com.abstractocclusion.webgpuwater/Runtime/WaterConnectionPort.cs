@@ -25,10 +25,6 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("The river ribbon this port belongs to. Takes precedence over Body when both are set.")]
         [SerializeField] internal WaterRiverSurface river;
 
-        [Tooltip("Authored volumetric flow through this port, cubic metres per second. Sign " +
-                 "convention: positive flows OUT of this port along the transform's forward.")]
-        [SerializeField] internal float authoredFlowRate;
-
         // Test seam: lets topology tests wire a fake provider without scene water. Never set in
         // production code paths.
         internal IWaterSurfaceProvider providerOverride;
@@ -43,7 +39,6 @@ namespace AbstractOcclusion.WebGpuWater
         public Vector3 Anchor => transform.position;
         /// <summary>Authored downstream direction (the transform's forward, normalized).</summary>
         public Vector3 FlowDirection => transform.forward;
-        public float AuthoredFlowRate => authoredFlowRate;
 
         /// <summary>The provider this port attaches to, or null while its water is not live.</summary>
         public IWaterSurfaceProvider ResolveProvider()

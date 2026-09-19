@@ -146,7 +146,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             if (AssetDatabase.LoadAssetAtPath<ComputeShader>(FoamParticleComputePath) == null ||
                 Shader.Find(ShaderFoamParticles) == null)
             {
-                Debug.LogWarning("WebGpuWater: foam particle compute/shader missing; skipping particle setup.");
+                Debug.LogWarning(LogPrefix + "foam particle compute/shader missing; skipping particle setup.");
                 return null;
             }
 
@@ -168,7 +168,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var shader = Shader.Find(ShaderFoamParticles);
             if (compute == null || shader == null)
             {
-                Debug.LogWarning("WebGpuWater: foam particle compute/shader missing; foam assets not wired.");
+                Debug.LogWarning(LogPrefix + "foam particle compute/shader missing; foam assets not wired.");
                 return;
             }
 

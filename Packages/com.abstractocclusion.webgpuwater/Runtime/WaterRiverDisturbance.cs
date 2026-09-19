@@ -36,7 +36,6 @@ namespace AbstractOcclusion.WebGpuWater
         const float DefaultFullSurfaceUp = 0.5f;
         const float MinimumDistanceMeters = 0.001f;
         const float SurfaceOwnershipInsetMeters = 0.01f;
-        const float HalfWidth = 0.5f;
         const float EnabledFeature = 1f;
         const float DisabledFeature = 0f;
 
@@ -344,7 +343,7 @@ namespace AbstractOcclusion.WebGpuWater
             WaterRiverSpline spline = _surface.Spline;
             if (spline == null || !spline.TryProjectPoint(worldPoint, out sample, out _)) return false;
             lateralMeters = Vector3.Dot(worldPoint - sample.Position, sample.Right);
-            if (Mathf.Abs(lateralMeters) > sample.Width * HalfWidth) return false;
+            if (Mathf.Abs(lateralMeters) > sample.HalfWidth) return false;
 
             Vector3 ownershipPoint = sample.Position + sample.Right * lateralMeters -
                                      sample.Up * SurfaceOwnershipInsetMeters;

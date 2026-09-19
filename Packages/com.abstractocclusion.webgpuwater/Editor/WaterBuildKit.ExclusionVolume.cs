@@ -13,19 +13,35 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // Standalone dry rooms (underwater houses, caves): a SCENE-OBJECT creator, so it lives
         // on the GameObject menu like Unity's own primitives - the Window/ MenuRoot hosts tool
         // windows, not scene objects. Boats get theirs automatically via CreateBoat.
-        const string ExclusionVolumeMenuPath = "GameObject/AbstractOcclusion/Water Exclusion Volume";
+        const string ExclusionVolumeMenuPath = GameObjectMenuRoot + "Water Exclusion Volume";
         const string ExclusionVolumeObjectName = "Water Exclusion Volume";
         const int ExclusionVolumeMenuPriority = 10; // Unity's standard create-menu priority band
         static readonly Vector3 ExclusionVolumeDefaultSize = new Vector3(4f, 3f, 4f); // a small room
 
         [MenuItem(ExclusionVolumeMenuPath, false, ExclusionVolumeMenuPriority)]
-        static void CreateExclusionVolume(MenuCommand command)
+        static void CreateExclusionVolumeFromMenu(MenuCommand command)
         {
-            var go = NewUndoableGameObject(ExclusionVolumeObjectName);
+            WaterExclusionVolume volume = CreateExclusionVolume(null, ExclusionVolumeObjectName,
+                                                                WaterExclusionVolume.Shape.Box, Vector3.zero,
+                                                                ExclusionVolumeDefaultSize);
             // Parent under the right-clicked object (context menu) like Unity's built-in creators.
-            GameObjectUtility.SetParentAndAlign(go, command.context as GameObject);
-            go.AddComponent<WaterExclusionVolume>().size = ExclusionVolumeDefaultSize;
-            Selection.activeGameObject = go;
+            GameObjectUtility.SetParentAndAlign(volume.gameObject, command.context as GameObject);
+            Selection.activeGameObject = volume.gameObject;
+        }
+
+        // The one exclusion-volume recipe, shared by the menu entry and the Water System plan
+        // (which places carves at authored world positions under the system root or a body).
+        internal static WaterExclusionVolume CreateExclusionVolume(Transform parent, string name,
+                                                                   WaterExclusionVolume.Shape shape,
+                                                                   Vector3 center, Vector3 size)
+        {
+            var go = NewUndoableGameObject(name);
+            if (parent != null) go.transform.SetParent(parent);
+            go.transform.position = center;
+            var volume = go.AddComponent<WaterExclusionVolume>();
+            volume.shape = shape;
+            volume.size = size;
+            return volume;
         }
 
     }

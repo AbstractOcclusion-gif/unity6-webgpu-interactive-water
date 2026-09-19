@@ -7,11 +7,12 @@ namespace AbstractOcclusion.WebGpuWater
 {
     internal static class WaterSimScheduler
     {
+        // Never equal to a Time.frameCount, so the first EnsureSchedule after a reset always runs.
         const int InvalidFrame = -1;
-        static int _scheduleFrame = -1;
+        static int _scheduleFrame = InvalidFrame;
 
         // Cleared by WaterVolume.ResetStaticState for Fast Enter Play Mode (no domain reload).
-        internal static void ResetStaticState() => _scheduleFrame = -1;
+        internal static void ResetStaticState() => _scheduleFrame = InvalidFrame;
 
         // Decide (once per frame, for every body) which bodies draw and which run the
         // heavy GPU sim.

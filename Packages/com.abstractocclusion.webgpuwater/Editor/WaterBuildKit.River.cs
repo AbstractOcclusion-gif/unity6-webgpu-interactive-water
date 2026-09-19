@@ -1,8 +1,9 @@
 // WebGpuWater build kit - one-click RIVER creation (river harmonization round, 2026-08-29).
 //
-// THE river authoring recipe lives here once (reuse-never-rewrite): the GameObject-menu creator
-// and the Connected Waters test rig both build through CreateRiverRig, so the demo documents the
-// exact path a user's one-click river takes. The rig is the facade way: spline + current field +
+// THE river authoring recipe lives here once (reuse-never-rewrite): the GameObject-menu creator,
+// the Connected Waters test rig and the wizard's Water System section all build through
+// CreateConnectedRiver (rig + connect-at-each-end over CreateRiverRig), so the demo documents
+// the exact path a user's one-click river takes. The rig is the facade way: spline + current field +
 // ribbon surface + the WaterRiver facade that owns wiring and connect-to-body.
 using System.Collections.Generic;
 using UnityEditor;
@@ -13,7 +14,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 {
     internal static partial class WaterBuildKit
     {
-        const string RiverMenuPath = "GameObject/AbstractOcclusion/River";
+        const string RiverMenuPath = GameObjectMenuRoot + "River";
         const int RiverMenuPriority = 12; // right under the Connected Waters rig
         const string RiverGameObjectName = "River (spline ribbon)";
 
@@ -38,29 +39,84 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 ? Selection.activeGameObject.GetComponentInParent<WaterVolume>() : null;
             if (parentVolume == null) parentVolume = WaterVolume.Resolve();
 
-            // Asset half only (materials/quality) - creating a river in an EXISTING scene must
-            // not rig a camera or sun the way the demo builders do.
-            if (!TryBuildSharedAssets(CreateUniqueWaterFolder(), buildPoolMaterial: false,
-                                      out BuildContext ctx))
+            if (!TryResolveRiverMaterials(parentVolume, out Material above, out Material under))
             {
                 Undo.RevertAllDownToGroup(undoGroup);
                 return;
             }
 
+            // THE connected-river recipe: a parented river arrives already ported into its body
+            // at the mouth, at the connection's own default seam radius; a standalone river
+            // (no parent) simply has no mouth target.
             Vector3 basePoint = parentVolume != null ? parentVolume.VolumeCenter : Vector3.zero;
-            WaterRiver river = CreateRiverRig(null, parentVolume, ctx.MatAbove, ctx.MatUnder,
-                                              DefaultKnots(basePoint));
-
-            // The "connect to body" half of one-click: a parented river arrives already ported
-            // into its body at the mouth.
-            if (parentVolume != null)
-            {
-                river.mouthEnd.body = parentVolume;
-                WaterRiverEditor.GenerateEnd(river, WaterRiverEndKind.Mouth);
-            }
+            WaterRiver river = CreateConnectedRiver(null, RiverGameObjectName, DefaultKnots(basePoint),
+                                                    parentVolume, above, under, sourceBody: null,
+                                                    mouthBody: parentVolume, upstreamRiver: null,
+                                                    transitionRadiusMeters: WaterConnection.DefaultTransitionRadiusMeters,
+                                                    withProceduralFoam: false);
 
             Selection.activeGameObject = river.gameObject;
             Undo.CollapseUndoOperations(undoGroup);
+        }
+
+        // A river shares its PARENT body's surface materials (one look, one folder - the demo
+        // rig has always passed the same two materials to bodies and rivers). Only a parentless
+        // river, or a hand-built parent without materials, gets its own folder; that used to
+        // happen for EVERY menu river, leaving a fresh 'Waters/Water N' per river.
+        static bool TryResolveRiverMaterials(WaterVolume parentVolume, out Material above, out Material under)
+        {
+            if (TryResolveBodyMaterials(parentVolume, out above, out under)) return true;
+
+            // Asset half only (materials/quality) - creating a river in an EXISTING scene must
+            // not rig a camera or sun the way the demo builders do.
+            if (!TryBuildSharedAssets(CreateUniqueWaterFolder(), buildPoolMaterial: false,
+                                      out BuildContext ctx))
+                return false;
+            above = ctx.MatAbove;
+            under = ctx.MatUnder;
+            return true;
+        }
+
+        // One connected river: THE recipe (facade-owned wiring), then connect to a target at each
+        // named end. The explicit parent body supplies animated uniforms and the underwater
+        // medium; both halves of a river-to-river stitch intentionally share it. The source is
+        // ported into a body OR sewn onto an upstream river's mouth (the facade rejects both);
+        // the upstream river's mouth must already be generated - its row is what the source copies.
+        internal static WaterRiver CreateConnectedRiver(Transform parent, string riverName,
+                                                        List<WaterRiverKnot> knots, WaterVolume parentBody,
+                                                        Material surfaceMaterial, Material underSurfaceMaterial,
+                                                        WaterVolume sourceBody, WaterVolume mouthBody,
+                                                        WaterRiver upstreamRiver, float transitionRadiusMeters,
+                                                        bool withProceduralFoam)
+        {
+            WaterRiver river = CreateRiverRig(parent, parentBody, surfaceMaterial, underSurfaceMaterial, knots);
+            river.gameObject.name = riverName;
+            if (withProceduralFoam) AddProceduralRiverFoam(river);
+
+            if (sourceBody != null || upstreamRiver != null)
+            {
+                river.sourceEnd.body = sourceBody;
+                river.sourceEnd.upstreamRiver = upstreamRiver;
+                river.sourceEnd.transitionRadiusMeters = transitionRadiusMeters;
+                WaterRiverEditor.GenerateEnd(river, WaterRiverEndKind.Source);
+            }
+            if (mouthBody != null)
+            {
+                river.mouthEnd.body = mouthBody;
+                river.mouthEnd.transitionRadiusMeters = transitionRadiusMeters;
+                WaterRiverEditor.GenerateEnd(river, WaterRiverEndKind.Mouth);
+            }
+            return river;
+        }
+
+        // Procedural bank/whitewater foam: the fluid solver plus the foam pass that reads it.
+        static void AddProceduralRiverFoam(WaterRiver river)
+        {
+            if (river == null) throw new System.ArgumentNullException(nameof(river));
+            if (river.GetComponent<WaterRiverFluid>() == null)
+                Undo.AddComponent<WaterRiverFluid>(river.gameObject);
+            if (river.GetComponent<WaterRiverFoam>() == null)
+                Undo.AddComponent<WaterRiverFoam>(river.gameObject);
         }
 
         static List<WaterRiverKnot> DefaultKnots(Vector3 basePoint) => new List<WaterRiverKnot>
@@ -88,6 +144,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             var currentField = riverGO.AddComponent<WaterRiverCurrentField>();
             currentField.Configure(spline);
+            // Serialized so the link is visible in the saved scene; APPEND, never assign - the
+            // parent may carry other authored current fields (the facade repeats this rule for
+            // its play-mode attach). Must come BEFORE the facade: WaterRiver is [ExecuteAlways],
+            // so AddComponent runs its OnEnable at once and that appends the field IN MEMORY
+            // (no Undo) - writing the Undo-recorded link first makes the facade's append the no-op.
+            AppendCurrentFieldSerialized(parentVolume, currentField);
 
             var surface = riverGO.AddComponent<WaterRiverSurface>();
             // The under material is the body's cull-front twin: a submerged camera looking up
@@ -97,12 +159,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             var facade = riverGO.AddComponent<WaterRiver>();
             facade.parentVolume = parentVolume;
-            facade.ApplyWiring();
-
-            // Serialized so the link is visible in the saved scene; APPEND, never assign - the
-            // parent may carry other authored current fields (the facade repeats this rule for
-            // its play-mode attach).
-            AppendCurrentFieldSerialized(parentVolume, currentField);
+            facade.ApplyWiring(); // redundant on an active rig (OnEnable wired it); needed for inactive parents
             return facade;
         }
 

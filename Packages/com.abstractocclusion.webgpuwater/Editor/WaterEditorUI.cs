@@ -262,6 +262,48 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             EditorGUIUtility.PingObject(created);
         }
 
+        // ---- component rows + readouts (shared by the river inspector) -----------------------
+
+        /// <summary>One row for a sibling/child component: its presence, a Select button that
+        /// opens its own inspector, and - only when <paramref name="onAdd"/> is given and the
+        /// component is absent - an Add button. Discovery stays read-only; adding is always an
+        /// explicit click, never a side effect of drawing.</summary>
+        internal static void ComponentRow(string label, Component component, Action onAdd = null,
+                                          bool addEnabled = true)
+        {
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.LabelField(
+                    label, component == null ? Style.NoneLabel : component.gameObject.name);
+                if (component != null)
+                {
+                    if (GUILayout.Button(Style.SelectLabel, EditorStyles.miniButton,
+                                         RowButtonWidth))
+                        SelectAndPing(component);
+                    return;
+                }
+                if (onAdd == null) return;
+                using (new EditorGUI.DisabledScope(!addEnabled))
+                    if (GUILayout.Button(Style.AddLabel, EditorStyles.miniButton, RowButtonWidth))
+                        onAdd.Invoke();
+            }
+        }
+
+        /// <summary>A read-only "label: value" line in the small readout style used for derived
+        /// figures (counts, lengths, status) that are computed from the target, never edited.</summary>
+        internal static void Readout(string label, string value)
+            => EditorGUILayout.LabelField(label, value, EditorStyles.miniLabel);
+
+        /// <summary>Select an object and flash it in the hierarchy / project window.</summary>
+        internal static void SelectAndPing(UnityEngine.Object target)
+        {
+            if (target == null) return;
+            Selection.activeObject = target;
+            EditorGUIUtility.PingObject(target);
+        }
+
+        static readonly GUILayoutOption RowButtonWidth = GUILayout.Width(Style.RowButtonWidth);
+
         // ---- footer text (resolved package version, no hardcoded number) ---------------------
 
         private static string _footerText;
@@ -313,6 +355,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             public const float TabBottomSpacing = 6f;
 
             public const string FooterPrefix = "AbstractOcclusion  ·  WebGPU Water";
+
+            // Component rows (shared with WaterVolumeEditor.Interaction's local row).
+            public const float RowButtonWidth = 60f;
+            public const string NoneLabel = "none";
+            public const string SelectLabel = "Select";
+            public const string AddLabel = "Add";
         }
     }
 }

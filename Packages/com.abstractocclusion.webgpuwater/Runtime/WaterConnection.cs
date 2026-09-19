@@ -21,11 +21,17 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("Downstream-side port.")]
         [SerializeField] internal WaterConnectionPort portB;
 
+        // WaterTopology reads this field at query time, so a facade-generated connection keeps its
+        // own copy; the facade end's Transition Radius is the authored value and overwrites it on
+        // every sync. Hand-authored (lake-to-lake) connections edit it here directly.
         [Tooltip("Half-width of the transition zone around the seam plane, metres. Queries " +
-                 "inside it blend the two providers' surfaces for a continuous handoff.")]
+                 "inside it blend the two providers' surfaces for a continuous handoff. On a " +
+                 "river-generated connection this is driven by the Water River end.")]
         [Min(MinTransitionRadiusMeters)]
         [SerializeField] internal float transitionRadiusMeters = DefaultTransitionRadiusMeters;
 
+        // The ONE authored flow figure in the topology layer (ports carry none): DownstreamPort
+        // derives the flow sign from it, and river-generated connections write width x speed here.
         [Tooltip("Authored flow across the connection, cubic metres per second, positive from " +
                  "Port A toward Port B. Advisory data for gameplay; the renderer ignores it.")]
         [SerializeField] internal float authoredFlowRate;

@@ -36,7 +36,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 return false;
             }
 
-            if (shaders.Obstacle == null) Debug.LogWarning($"[WebGpuWater] Shader '{ShaderObstacle}' not found; object->water displacement will be disabled.");
+            if (shaders.Obstacle == null) Debug.LogWarning(LogPrefix + $"Shader '{ShaderObstacle}' not found; object->water displacement will be disabled.");
             return true;
         }
 

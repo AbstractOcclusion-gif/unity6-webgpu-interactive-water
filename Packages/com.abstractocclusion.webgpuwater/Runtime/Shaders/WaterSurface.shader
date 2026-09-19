@@ -529,18 +529,22 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 // it costs nothing.
                 if (_FoamEnabled < 0.5) discard;
 
-                // COVERAGE FIRST. Below FOAM_MASK_EPSILON, PondFoamLayer leaves alpha at its 0.0
-                // initialiser and the clip at the bottom rejects the fragment anyway - so reject it
-                // HERE instead, before the ~52 dependent texture fetches of EvaluateSurfaceGeometry.
-                // Strictly a subset of what already gets clipped, so nothing that survives today
-                // changes. Coverage takes no WaterGeomStage input, which is what makes the hoist
-                // legal; the alpha does (the normal nudges the pattern UV), so alpha canNOT be
-                // tested early. This pass runs with AllowPassCulling(false) over every collected
-                // above-surface renderer, so the fragments rejected here are not frustum-bounded.
-                clip(PondFoamCoverage(i) - FOAM_MASK_EPSILON);
+                // COVERAGE FIRST. Below FOAM_MASK_EPSILON, PondFoamLayerFromCoverage leaves alpha at
+                // its 0.0 initialiser and the clip at the bottom rejects the fragment anyway - so
+                // reject it HERE instead, before the ~52 dependent texture fetches of
+                // EvaluateSurfaceGeometry. Strictly a subset of what already gets clipped, so nothing
+                // that survives today changes. Coverage takes no WaterGeomStage input, which is what
+                // makes the hoist legal; the alpha does (the normal nudges the pattern UV), so alpha
+                // canNOT be tested early. This pass runs with AllowPassCulling(false) over every
+                // collected above-surface renderer, so the fragments rejected here are not
+                // frustum-bounded. The surviving fragment reuses this same coverage for its look
+                // (Pass 0's foam-or-outflow gate is implied here: the pass already discarded on
+                // _FoamEnabled above), so the coverage taps are paid once, not twice.
+                float pondFoamCoverage = PondFoamCoverage(i);
+                clip(pondFoamCoverage - FOAM_MASK_EPSILON);
 
                 WaterGeomStage geom = EvaluateSurfaceGeometry(i);
-                FoamLayer foam = PondFoamLayer(i, geom);
+                FoamLayer foam = PondFoamLayerFromCoverage(i, geom, pondFoamCoverage);
                 clip(foam.alpha - FOAM_OVERLAY_MIN_ALPHA);
                 UNITY_APPLY_FOG(i.fogCoord, foam.look);
                 return fixed4(foam.look, foam.alpha);

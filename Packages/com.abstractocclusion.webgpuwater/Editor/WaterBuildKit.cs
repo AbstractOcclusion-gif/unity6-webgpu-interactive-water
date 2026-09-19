@@ -18,9 +18,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // User-facing product name and log prefix. Define them ONCE here: inlining per call site
         // (four different spellings at one point) is how the pre-rebrand name survived into dialog
         // titles and the generated-asset folder long after the namespaces were renamed.
-        // HONESTY NOTE (2026-07-31 audit): ~37 call sites across this assembly still inline the
-        // literal instead of routing through these consts. New code must use them; migrating the
-        // legacy sites is open (docs/WebGpuWater_Standards_Audit_2026-07-31.md).
+        // 2026-09-02: the wizard, scene builder, network window and every kit partial now route
+        // through LogPrefix (the "WebGpuWater: " spelling included); inspectors/converters outside
+        // those files are the remaining legacy sites.
         internal const string ProductName = "WebGPU Water";
         internal const string LogPrefix = "[WebGpuWater] ";
 
@@ -62,8 +62,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         internal const string MainCameraTag = "MainCamera";
 
         // Menu root for every editor entry point (Asset Store guideline 2.5.1.a forbids custom
-        // top-level menus, so everything lives under Window/).
+        // top-level menus, so everything lives under Window/). ONE root: the Network Manager and
+        // the stress-scene builder used to hang off two differently spelled roots of their own.
         internal const string MenuRoot = "Window/AbstractOcclusion/WebGpuWater/";
+        // Scene-object creators live on the GameObject menu like Unity's own primitives (the
+        // Window/ root hosts tool windows, not scene objects).
+        internal const string GameObjectMenuRoot = "GameObject/AbstractOcclusion/";
 
         internal static string GridMeshPath => DefaultMeshesRoot + "/WaterGrid.asset";
         internal static string PoolMeshPath => DefaultMeshesRoot + "/Pool.asset";

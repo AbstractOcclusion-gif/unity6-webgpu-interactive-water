@@ -7,6 +7,9 @@ namespace AbstractOcclusion.WebGpuWater.Tests
     {
         const int LowOceanFftInterval = 2;
         const int LowFoamParticleBudget = 1024;
+        const int AuthoredGridDetail = 200;
+        const int AuthoredGridSideVertexCount = AuthoredGridDetail + 1;
+        const int AuthoredGridVertexCount = AuthoredGridSideVertexCount * AuthoredGridSideVertexCount;
 
         [Test]
         public void QualityTier_SanitisesUnsafeValues()
@@ -93,6 +96,22 @@ namespace AbstractOcclusion.WebGpuWater.Tests
             {
                 Object.DestroyImmediate(gameObject);
             }
+        }
+
+        [Test]
+        public void FiniteWindowBaseSewing_ResolvesTheAuthoredGridDetail()
+        {
+            int detail = WaterVolume.GridDetailFromVertexCount(AuthoredGridVertexCount);
+
+            Assert.That(detail, Is.EqualTo(AuthoredGridDetail));
+        }
+
+        [TestCase(0)]
+        [TestCase(3)]
+        [TestCase(10)]
+        public void FiniteWindowBaseSewing_RejectsNonGridVertexCounts(int vertexCount)
+        {
+            Assert.That(WaterVolume.GridDetailFromVertexCount(vertexCount), Is.Zero);
         }
     }
 }

@@ -19,11 +19,13 @@ namespace AbstractOcclusion.WebGpuWater
         Renderer _patchRenderer;
         Mesh _patchGrid;
         MaterialPropertyBlock _patchMpb;
+        // These two are the patch's OWN (WriteBodyUniforms never writes them, so the block's
+        // publisher cache does not track them and setting them after the pass is legitimate).
+        // The patch rect itself (_PatchPoolCenter/_PatchPoolHalf) is published by
+        // WriteBodyUniforms to EVERY renderer of the body and is not repeated here.
         static readonly int ID_IsPatch = Shader.PropertyToID("_IsPatch");
-        static readonly int ID_PatchPoolCenter = Shader.PropertyToID("_PatchPoolCenter");
-        static readonly int ID_PatchPoolHalf = Shader.PropertyToID("_PatchPoolHalf");
         static readonly int ID_PatchDepthBias = Shader.PropertyToID("_PatchDepthBias");
-        const float PatchDepthBiasMeters = 0.02f;   // view-space nudge toward the camera so the dense patch wins the
+        const float PatchDepthBiasMeters = 0.02f;   // view-space-equivalent depth bias so the dense patch wins the
                                                     // overlap (beats the coplanar far plane AND the coarser ocean
                                                     // clipmap). World metres, so it can't draw over opaque at distance.
         const string PatchObjectName = "Sim Window Patch";
@@ -32,6 +34,7 @@ namespace AbstractOcclusion.WebGpuWater
         // the per-pixel normal/refine reads - only the geometric displacement mesh stops
         // scaling quadratically with the sim.
         const int MaxPatchGridResolution = 256;
+        const int MinimumSquareGridSideVertexCount = 2;
         // Underside twin of the near-field patch: the SAME dense grid drawn with the under-water
         // material, so the submerged near field is sampled as finely as the above one and the two line
         // up vertex-for-vertex at the waterline (a coarse underside would show through the fine top).
@@ -65,6 +68,33 @@ namespace AbstractOcclusion.WebGpuWater
 
         internal Vector4 PatchPoolHalf => new Vector4(SimHorizontalExtent / VolumeExtentSafe.x,
                                                       SimHorizontalExtent / VolumeExtentSafe.z, 0f, 0f);
+
+        internal int FiniteWindowBaseGridDetail
+        {
+            get
+            {
+                if (!openWater || !_windowed || IsOceanClipmap || discSurface) return 0;
+                return ResolveBaseSurfaceGridDetail();
+            }
+        }
+
+        int ResolveBaseSurfaceGridDetail()
+        {
+            if (_meshDetail > 0) return _meshDetail;
+            return waterMesh != null ? GridDetailFromVertexCount(waterMesh.vertexCount) : 0;
+        }
+
+        internal static int GridDetailFromVertexCount(int vertexCount)
+        {
+            int minimumVertexCount = MinimumSquareGridSideVertexCount
+                                   * MinimumSquareGridSideVertexCount;
+            if (vertexCount < minimumVertexCount) return 0;
+
+            int sideVertexCount = Mathf.RoundToInt(Mathf.Sqrt(vertexCount));
+            return (long)sideVertexCount * sideVertexCount == vertexCount
+                ? sideVertexCount - 1
+                : 0;
+        }
 
         // The hole is shrunk by this much so the patch OVERLAPS its rim instead of meeting it exactly:
         // two surfaces that end on the same line leave a rasterised seam showing the sky through the
@@ -105,8 +135,6 @@ namespace AbstractOcclusion.WebGpuWater
             // the patch twin matching the eye's medium wins its coincident-depth pixels.
             block.SetFloat(ID_PatchDepthBias,
                            PatchDepthBiasMeters + MediumMatchedTwinExtraBias(isUnderTwin));
-            block.SetVector(ID_PatchPoolCenter, PatchPoolCenter);
-            block.SetVector(ID_PatchPoolHalf, PatchPoolHalf);
             patch.SetPropertyBlock(block);
 
             Transform t = patch.transform;

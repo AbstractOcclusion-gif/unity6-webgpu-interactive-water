@@ -312,7 +312,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var shader = Shader.Find(ShaderSplashParticles);
             if (shader == null)
             {
-                Debug.LogWarning($"WebGpuWater: shader '{ShaderSplashParticles}' missing; splash material not created.");
+                Debug.LogWarning(LogPrefix + $"shader '{ShaderSplashParticles}' missing; splash material not created.");
                 return null;
             }
 

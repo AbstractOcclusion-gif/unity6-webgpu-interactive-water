@@ -12,6 +12,8 @@
 // the Create click, naming the missing path instead of NRE-ing anonymously.
 using UnityEditor;
 using UnityEngine;
+// The body kind enum lives on the kit (shared with the Water System plan).
+using WaterKind = AbstractOcclusion.WebGpuWater.Editor.WaterBuildKit.WaterKind;
 
 namespace AbstractOcclusion.WebGpuWater.Editor
 {
@@ -220,7 +222,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             SerializedProperty property = serialized.FindProperty(path);
             if (property == null)
                 throw new System.InvalidOperationException(
-                    "[WebGpuWater] Wizard ocean defaults: serialized path '" + path +
+                    WaterBuildKit.LogPrefix + "Wizard ocean defaults: serialized path '" + path +
                     "' not found on WaterVolume (field renamed?).");
             return property;
         }

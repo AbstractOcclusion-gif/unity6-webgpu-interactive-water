@@ -13,10 +13,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 {
     internal static partial class WaterBuildKit
     {
-        const string StressRigMenuPath =
-            "GameObject/AbstractOcclusion/Multi-Body Water Stress Test Rig";
-        const string StressSceneMenuPath =
-            "Tools/Abstract Occlusion/Water/Create Multi-Body Stress Test Scene";
+        const string StressRigMenuPath = GameObjectMenuRoot + "Multi-Body Water Stress Test Rig";
+        // Same leaf name as before, now under the one Window/ MenuRoot (it lived on a Tools/ root
+        // of its own, the third menu root in this assembly).
+        const string StressSceneMenuPath = MenuRoot + "Create Multi-Body Stress Test Scene";
         const int StressRigMenuPriority = 13;
         const int StressSceneMenuPriority = 40;
         const string StressRigRootName = "Multi-Body Water Stress Test Rig";
@@ -28,13 +28,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const string StressConcreteMaterialName = "/Stress Concrete.mat";
         const string StressConcreteShaderName = "Universal Render Pipeline/Lit";
         const string StressConcreteMissingMessage =
-            "WebGpuWater: URP Lit shader is required for stress-test basin geometry.";
+            LogPrefix + "URP Lit shader is required for stress-test basin geometry.";
         const string StressBuildFailureMessage =
-            "WebGpuWater: multi-body stress-test scene could not be built.";
+            LogPrefix + "multi-body stress-test scene could not be built.";
         const string StressSettingsMissingMessage =
             "Water stress builder could not find reflection/caustic settings.";
-        const string StressBuildSuccessPrefix =
-            "[WebGpuWater] Multi-body stress test built at ";
+        const string StressBuildSuccessPrefix = LogPrefix + "Multi-body stress test built at ";
         const string StressBuildInstructions =
             ". Play, use 1/2/3/4 for 1/5/15/30 bodies, Space to pause the deterministic camera, " +
             "R to restart its route, and profile the same route for every tier.";
@@ -259,7 +258,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 Vector3 tangent = (mouth - source).normalized * StressRiverTangentMeters;
                 string riverName = StressRiverNamePrefix
                                  + (sourceIndex + BodyNumberOffset).ToString(BodyNumberFormat);
-                CreateConnectedRiver(parent, context, riverName,
+                // The demo rig's seam radius and procedural foam, as before the recipe took
+                // them as parameters.
+                CreateConnectedRiver(parent, riverName,
                     new List<WaterRiverKnot>
                     {
                         new WaterRiverKnot(source, tangent, StressRiverWidthMeters,
@@ -269,7 +270,9 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                         new WaterRiverKnot(mouth, tangent, StressRiverWidthMeters,
                                            StressRiverSpeedMetersPerSecond),
                     },
-                    parentBody: sourceBody, sourceBody: sourceBody, mouthBody: mouthBody);
+                    sourceBody, context.MatAbove, context.MatUnder,
+                    sourceBody: sourceBody, mouthBody: mouthBody, upstreamRiver: null,
+                    transitionRadiusMeters: SeamTransitionRadiusMeters, withProceduralFoam: true);
                 CreateRiverBanks(parent, source, mouth, concreteMaterial);
             }
         }

@@ -43,6 +43,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
             #pragma vertex vert
             #pragma fragment frag
             #pragma target 4.0
+            // The fog tier's Simple fork, as the SAME global keyword the fullscreen fog and the
+            // god rays fork on (PublishUnderwater enables it beside the _UnderwaterFogSimple
+            // float; multi_compile because every fog consumer is a runtime material). It used
+            // to be a uniform branch here (2026-09-02), which left the three-evaluation chop
+            // inversion and the analytic surface height in the Simple module, sizing its
+            // registers; the keyword removes them. Output-identical: same fact, same forks.
+            #pragma multi_compile_fragment _ WATER_FOG_SIMPLE
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
             #include "WaterFog.hlsl"       // WaterInscatterColor + DownwellingAttenuation + fog globals
@@ -66,9 +73,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
             // the water behind the veil AFTER transparents - the wall must NOT self-complete or its
             // opaque backdrop would hide the correctly fogged scene (bounded lakes seen from above).
             float _UnderwaterFogArmed;
-            // 1 = the quality tier's Simple fog mode (flat waterline): the wall then uses the
-            // same CPU-published height as the fog itself.
-            float _UnderwaterFogSimple;
+            // (The quality tier's Simple fog mode - flat waterline, the same CPU-published
+            // height as the fog itself - is the WATER_FOG_SIMPLE keyword above, not a uniform.)
             // The rest of the fog's own gate state, read here so this wall can work out how much
             // of each pixel the fullscreen pass will actually paint (see FogCoverageAtPixel).
             float _UnderwaterUnbounded; // 1 = ocean half-space, 0 = bounded body (fog never masked)
@@ -134,15 +140,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
                 // cheaper vertical query here shifts the wall/fog ownership boundary on waves.
                 float gap;
                 float gapSmooth;
-                if (_UnderwaterFogSimple > 0.5)
-                {
-                    gap = classifyPoint.y - _UnderwaterSurfaceY;
-                    gapSmooth = gap;
-                }
-                else
-                {
-                    gap = SurfaceSignedGapChopInvertedPair(classifyPoint, gapSmooth);
-                }
+#ifdef WATER_FOG_SIMPLE
+                gap = classifyPoint.y - _UnderwaterSurfaceY;
+                gapSmooth = gap;
+#else
+                gap = SurfaceSignedGapChopInvertedPair(classifyPoint, gapSmooth);
+#endif
                 float overCover = (_CameraDryVolume > 0.5) ? WATERLINE_CARVE_OVER_COVER_PIXELS : 0.0;
                 return WaterlineCoverage(gap, fwidth(gapSmooth), overCover);
             }
@@ -155,9 +158,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
 
             float WallSurfaceHeight(float2 worldXZ)
             {
-                return (_UnderwaterFogSimple > 0.5)
-                     ? _VolumeCenter.y
-                     : SurfaceHeightAtXZ(worldXZ);
+#ifdef WATER_FOG_SIMPLE
+                return _VolumeCenter.y;
+#else
+                return SurfaceHeightAtXZ(worldXZ);
+#endif
             }
 
             // The wall normally shades the ray's ENTRY face and prices the dry chord ahead of it.

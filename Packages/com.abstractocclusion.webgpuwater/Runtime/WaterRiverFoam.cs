@@ -11,6 +11,10 @@ namespace AbstractOcclusion.WebGpuWater
     public sealed class WaterRiverFoam : MonoBehaviour, IWaterRiverRendererPropertySource
     {
         const float DefaultStrength = 1f;
+        // Every strength/cut slider is a unit multiplier: full strength IS the ceiling, which is
+        // why the defaults happen to equal it. Named separately so a default can move without
+        // silently narrowing the slider.
+        const float MaximumUnitStrength = 1f;
         const float DefaultPatternSize = 2f;
         const float DefaultEdgeFeather = 0.15f;
         const float DefaultCoreCut = 0.5f;
@@ -36,15 +40,15 @@ namespace AbstractOcclusion.WebGpuWater
         const float DisabledFeature = 0f;
 
         [Tooltip("Final intensity applied to contact, cascade and baked turbulence foam.")]
-        [Range(0f, DefaultStrength)]
+        [Range(0f, MaximumUnitStrength)]
         [SerializeField] internal float overallStrength = DefaultStrength;
-        [Range(0f, DefaultStrength)]
+        [Range(0f, MaximumUnitStrength)]
         [SerializeField] internal float strength = DefaultStrength;
-        [Range(0f, DefaultContactStrength)]
+        [Range(0f, MaximumUnitStrength)]
         [SerializeField] internal float contactStrength = DefaultContactStrength;
         [Min(MinimumContactDepth)]
         [SerializeField] internal float contactDepth = DefaultContactDepth;
-        [Range(0f, DefaultCascadeStrength)]
+        [Range(0f, MaximumUnitStrength)]
         [SerializeField] internal float cascadeStrength = DefaultCascadeStrength;
         [Range(0f, MaximumCascadeStartAngle)]
         [SerializeField] internal float cascadeStartAngle = DefaultCascadeStartAngle;
@@ -59,7 +63,7 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] internal float patternSize = DefaultPatternSize;
         [Range(0f, MaximumEdgeFeather)]
         [SerializeField] internal float edgeFeather = DefaultEdgeFeather;
-        [Range(0f, DefaultStrength)]
+        [Range(0f, MaximumUnitStrength)]
         [SerializeField] internal float coreCut = DefaultCoreCut;
 
         WaterRiverSurface _surface;
@@ -71,16 +75,8 @@ namespace AbstractOcclusion.WebGpuWater
         float _cascadeTransportLength;
         float _transportedCascadeAtMouth;
 
-        internal Texture2D BakedTexture => ActiveData?.PackedTexture;
-        internal float RiverLength => ActiveData?.RiverLength ?? 0f;
         internal float TransportLength => _cascadeTransportLength;
         internal float TransportedCascadeAtMouth => _transportedCascadeAtMouth;
-        WaterRiverFluidBakeData ActiveData
-            => _fluid != null && _fluid.isActiveAndEnabled &&
-               _fluid.BakeData != null && _fluid.BakeData.IsValid
-                ? _fluid.BakeData
-                : null;
-
         internal float EvaluateCascadeCoverage(Vector3 worldNormal)
         {
             if (!WaterSurfaceKinematics.IsFinite(worldNormal) || worldNormal.sqrMagnitude <= 0f)
@@ -137,15 +133,8 @@ namespace AbstractOcclusion.WebGpuWater
             if (isActiveAndEnabled) Refresh();
         }
 
-        public void RequestRebuild() => Refresh();
-
-        internal void Configure(float maskStrength)
-        {
-            if (!float.IsFinite(maskStrength) || maskStrength < 0f || maskStrength > DefaultStrength)
-                throw new ArgumentOutOfRangeException(nameof(maskStrength));
-            strength = maskStrength;
-            Refresh();
-        }
+        // Tests drive the transport rebuild directly; internal is the package's visibility for that.
+        internal void RequestRebuild() => Refresh();
 
         void IWaterRiverRendererPropertySource.WriteRendererProperties(
             MaterialPropertyBlock properties)

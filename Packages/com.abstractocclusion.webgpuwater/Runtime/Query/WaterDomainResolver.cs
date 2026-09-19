@@ -35,6 +35,21 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly ProfilerMarker ResolveMarker =
             new ProfilerMarker(ProfilerCategory.Scripts, ResolveMarkerName);
 
+        /// <summary>The provider a resolve picked for a point, before its surface is sampled
+        /// (see <see cref="TrySelectProvider"/>). Carries the containment answer the selection
+        /// already computed and - for the vertical-search intents, which must sample every
+        /// candidate to rank it - the winner's height sample, so <see cref="TryFillSample"/>
+        /// never asks the same provider the same question twice.</summary>
+        internal struct SelectedProvider
+        {
+            public IWaterSurfaceProvider Provider;
+            public bool InsideDomain;
+            /// <summary>True when HeightSample holds a WaterQueryFields.Height sample of Provider
+            /// at the query point (taken with the options' wavelength/ripple settings).</summary>
+            public bool HasHeightSample;
+            public WaterSample HeightSample;
+        }
+
         /// <summary>Resolve one point. True only when the sample is Valid; on false the sample's
         /// Validity says why (dry land, excluded space, bad hint, out of range).</summary>
         public static bool Resolve(Vector3 worldPoint, in WaterDomainQueryOptions options,
@@ -49,18 +64,52 @@ namespace AbstractOcclusion.WebGpuWater
                     return false;
                 }
 
-                switch (options.Intent)
+                if (TrySelectProvider(worldPoint, in options, out SelectedProvider selected,
+                                      out WaterDomainValidity failure))
+                    return TryFillSample(in selected, worldPoint, in options, out sample);
+
+                // Rule 6 reproduces the legacy Primary fallback for an EMPTY SEARCH only: a bad
+                // explicit hint is a caller bug, and handing it Primary would hide the bug.
+                if (failure == WaterDomainValidity.MissingHint)
                 {
-                    case WaterQueryIntent.ExplicitBody:
-                        return ResolveExplicit(worldPoint, in options, ref sample);
-                    case WaterQueryIntent.BuoyancySurface:
-                        return ResolveBuoyancy(worldPoint, in options, ref sample);
-                    case WaterQueryIntent.RayInteraction:
-                    case WaterQueryIntent.NearestWithinVerticalLimits:
-                        return ResolveNearestSurface(worldPoint, in options, ref sample);
-                    default:
-                        return ResolveContaining(worldPoint, in options, ref sample);
+                    sample.Validity = failure;
+                    return false;
                 }
+                return ApplyFallback(worldPoint, in options, failure, ref sample);
+            }
+        }
+
+        /// <summary>The selection half of <see cref="Resolve"/>: which provider answers for the
+        /// point under the intent (rules 1-4 and 7), WITHOUT sampling its surface or applying
+        /// the exclusion veto and seam blend - those are <see cref="TryFillSample"/>. Split out for
+        /// the caller that wants the domain decision but its own surface read (WaterSplashEmitter:
+        /// a volume body's droplets ride the legacy TryGetSurface drift, so the resolver's full
+        /// sample would only be thrown away). The point must be finite. On false, failure says
+        /// why and no fallback has been applied.</summary>
+        internal static bool TrySelectProvider(Vector3 worldPoint, in WaterDomainQueryOptions options,
+                                               out SelectedProvider selected,
+                                               out WaterDomainValidity failure)
+        {
+            selected = default;
+            failure = WaterDomainValidity.Valid;
+            // Same boundary guard as Resolve: a NaN/Inf point must never reach a provider's
+            // containment test, and direct callers of this entry bypass Resolve's check.
+            if (!WaterSurfaceKinematics.IsFinite(worldPoint))
+            {
+                failure = WaterDomainValidity.NoContainingBody;
+                return false;
+            }
+            switch (options.Intent)
+            {
+                case WaterQueryIntent.ExplicitBody:
+                    return SelectExplicit(worldPoint, in options, ref selected, ref failure);
+                case WaterQueryIntent.BuoyancySurface:
+                    return SelectBuoyancy(worldPoint, in options, ref selected, ref failure);
+                case WaterQueryIntent.RayInteraction:
+                case WaterQueryIntent.NearestWithinVerticalLimits:
+                    return SelectNearestSurface(worldPoint, in options, ref selected, ref failure);
+                default:
+                    return SelectContainingVolume(worldPoint, in options, ref selected, ref failure);
             }
         }
 
@@ -107,49 +156,70 @@ namespace AbstractOcclusion.WebGpuWater
 
         // ---- intent implementations --------------------------------------------------------
 
-        static bool ResolveExplicit(Vector3 point, in WaterDomainQueryOptions options,
-                                    ref WaterDomainSample sample)
+        static bool SelectExplicit(Vector3 point, in WaterDomainQueryOptions options,
+                                   ref SelectedProvider selected, ref WaterDomainValidity failure)
         {
-            IWaterSurfaceProvider provider = options.BodyHint;
-            if (provider == null || options.BodyHint == null) // Unity fake-null on the component
+            // The interface compare cannot see a destroyed component; the typed field can.
+            if (options.BodyHint == null)
             {
-                sample.Validity = WaterDomainValidity.MissingHint;
+                failure = WaterDomainValidity.MissingHint;
                 return false;
             }
-            return FillSample(provider, point, in options, provider.ContainsPoint(point), ref sample);
+            IWaterSurfaceProvider provider = options.BodyHint;
+            selected.Provider = provider;
+            selected.InsideDomain = provider.ContainsPoint(point);
+            return true;
         }
 
-        static bool ResolveContaining(Vector3 point, in WaterDomainQueryOptions options,
-                                      ref WaterDomainSample sample)
+        static bool SelectContainingVolume(Vector3 point, in WaterDomainQueryOptions options,
+                                           ref SelectedProvider selected,
+                                           ref WaterDomainValidity failure)
+        {
+            IWaterSurfaceProvider winner = SelectContaining(point, options.PreviousBodyId);
+            if (winner == null)
+            {
+                failure = WaterDomainValidity.NoContainingBody;
+                return false;
+            }
+            selected.Provider = winner;
+            selected.InsideDomain = true;
+            return true;
+        }
+
+        static bool SelectBuoyancy(Vector3 point, in WaterDomainQueryOptions options,
+                                   ref SelectedProvider selected, ref WaterDomainValidity failure)
         {
             IWaterSurfaceProvider winner = SelectContaining(point, options.PreviousBodyId);
             if (winner != null)
-                return FillSample(winner, point, in options, insideDomain: true, ref sample);
-            return ApplyFallback(point, in options, WaterDomainValidity.NoContainingBody, ref sample);
-        }
-
-        static bool ResolveBuoyancy(Vector3 point, in WaterDomainQueryOptions options,
-                                    ref WaterDomainSample sample)
-        {
-            IWaterSurfaceProvider winner = SelectContaining(point, options.PreviousBodyId);
-            if (winner != null)
-                return FillSample(winner, point, in options, insideDomain: true, ref sample);
+            {
+                selected.Provider = winner;
+                selected.InsideDomain = true;
+                return true;
+            }
 
             // Not inside any water: a floater above the surface still needs the surface BELOW
             // it - and ONLY below: an object buried under a body's floor must not snap upward.
-            winner = SelectSurfaceInRange(point, in options, surfaceBelowPointOnly: true, out _);
-            if (winner != null)
-                return FillSample(winner, point, in options, insideDomain: false, ref sample);
-            return ApplyFallback(point, in options, WaterDomainValidity.NoSurfaceInRange, ref sample);
+            // Every candidate above just answered "does not contain", so InsideDomain is known.
+            if (!SelectSurfaceInRange(point, in options, surfaceBelowPointOnly: true, ref selected))
+            {
+                failure = WaterDomainValidity.NoSurfaceInRange;
+                return false;
+            }
+            selected.InsideDomain = false;
+            return true;
         }
 
-        static bool ResolveNearestSurface(Vector3 point, in WaterDomainQueryOptions options,
-                                          ref WaterDomainSample sample)
+        static bool SelectNearestSurface(Vector3 point, in WaterDomainQueryOptions options,
+                                         ref SelectedProvider selected,
+                                         ref WaterDomainValidity failure)
         {
-            IWaterSurfaceProvider winner = SelectSurfaceInRange(point, in options, surfaceBelowPointOnly: false, out _);
-            if (winner != null)
-                return FillSample(winner, point, in options, winner.ContainsPoint(point), ref sample);
-            return ApplyFallback(point, in options, WaterDomainValidity.NoSurfaceInRange, ref sample);
+            if (!SelectSurfaceInRange(point, in options, surfaceBelowPointOnly: false, ref selected))
+            {
+                failure = WaterDomainValidity.NoSurfaceInRange;
+                return false;
+            }
+            selected.InsideDomain = selected.Provider.ContainsPoint(point);
+            return true;
         }
 
         // ---- candidate selection -----------------------------------------------------------
@@ -212,16 +282,19 @@ namespace AbstractOcclusion.WebGpuWater
         // Nearest surface by vertical gap within the caller's reach. surfaceBelowPointOnly
         // restricts to surfaces at or below the point (the buoyancy fall-through: the water a
         // falling object is heading for). The previous body wins unless a rival is closer by
-        // more than the switch margin (rule 4 for surface intents).
-        static IWaterSurfaceProvider SelectSurfaceInRange(Vector3 point,
-                                                          in WaterDomainQueryOptions options,
-                                                          bool surfaceBelowPointOnly, out float bestGap)
+        // more than the switch margin (rule 4 for surface intents). Ranking needs every
+        // candidate's height, so the winner's sample travels out in selected.HeightSample
+        // rather than being taken a second time by TryFillSample.
+        static bool SelectSurfaceInRange(Vector3 point, in WaterDomainQueryOptions options,
+                                         bool surfaceBelowPointOnly, ref SelectedProvider selected)
         {
             float reach = options.MaxVerticalDistance > 0f
                 ? options.MaxVerticalDistance : DefaultVerticalSearchMeters;
             IWaterSurfaceProvider best = null;
-            bestGap = float.PositiveInfinity;
+            WaterSample bestSurface = default;
+            float bestGap = float.PositiveInfinity;
             IWaterSurfaceProvider previous = null;
+            WaterSample previousSurface = default;
             float previousGap = float.PositiveInfinity;
 
             int count = WaterSurfaceProviders.CandidateCount;
@@ -241,21 +314,27 @@ namespace AbstractOcclusion.WebGpuWater
                 if (options.PreviousBodyId != 0 && candidate.BodyId == options.PreviousBodyId)
                 {
                     previous = candidate;
+                    previousSurface = surface;
                     previousGap = gap;
                 }
                 if (gap < bestGap || (gap == bestGap && best != null && candidate.BodyId < best.BodyId))
                 {
                     best = candidate;
+                    bestSurface = surface;
                     bestGap = gap;
                 }
             }
 
+            if (best == null) return false;
             if (previous != null && best != previous && previousGap - bestGap < DomainSwitchMarginMeters)
             {
-                bestGap = previousGap;
-                return previous;
+                best = previous;
+                bestSurface = previousSurface;
             }
-            return best;
+            selected.Provider = best;
+            selected.HasHeightSample = true;
+            selected.HeightSample = bestSurface;
+            return true;
         }
 
         // Bounded providers rank by their axis-aligned bounds volume; an unbounded ocean reports
@@ -270,17 +349,28 @@ namespace AbstractOcclusion.WebGpuWater
 
         // ---- sample assembly ---------------------------------------------------------------
 
-        static bool FillSample(IWaterSurfaceProvider provider, Vector3 point,
-                               in WaterDomainQueryOptions options, bool insideDomain,
-                               ref WaterDomainSample sample)
+        /// <summary>The sampling half of <see cref="Resolve"/>: the selected provider's surface at
+        /// the point (rules 5 and the seam handoff), the exact fields the options ask for. False
+        /// with the Validity set when the provider cannot answer or the point is carved dry.</summary>
+        internal static bool TryFillSample(in SelectedProvider selected, Vector3 point,
+                                           in WaterDomainQueryOptions options,
+                                           out WaterDomainSample sample)
         {
+            IWaterSurfaceProvider provider = selected.Provider;
+            sample = default;
             sample.BodyId = provider.BodyId;
             sample.Body = provider.Body;
             sample.Provider = provider;
-            sample.InsideDomain = insideDomain;
+            sample.InsideDomain = selected.InsideDomain;
 
-            if (!provider.TrySampleSurface(point, options.Fields, options.MinimumWaveLength,
-                                           options.ExcludeInteractiveRipples, out WaterSample surface))
+            // The ranking search's height sample IS the requested sample when the caller wants
+            // nothing more than height (GameplayBodyAt and every membership-style caller); any
+            // other field set has to be asked for.
+            WaterSample surface;
+            if (selected.HasHeightSample && options.Fields == WaterQueryFields.Height)
+                surface = selected.HeightSample;
+            else if (!provider.TrySampleSurface(point, options.Fields, options.MinimumWaveLength,
+                                                options.ExcludeInteractiveRipples, out surface))
             {
                 sample.Validity = WaterDomainValidity.NoContainingBody;
                 return false;
@@ -321,7 +411,8 @@ namespace AbstractOcclusion.WebGpuWater
                 sample.Validity = failure;
                 return false;
             }
-            return FillSample(fallback, point, in options, insideDomain: false, ref sample);
+            var selected = new SelectedProvider { Provider = fallback, InsideDomain = false };
+            return TryFillSample(in selected, point, in options, out sample);
         }
     }
 }

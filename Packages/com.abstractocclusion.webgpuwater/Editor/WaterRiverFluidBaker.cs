@@ -17,7 +17,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const string ProgressTitle = "Bake River Fluid";
         const string SamplingProgress = "Rasterizing river and obstacle colliders";
         const string SolvingProgress = "Settling obstacle-aware velocity and foam";
-        const float HalfWidth = 0.5f;
+        // Grid samples sit at cell CENTRES (never on a shared edge, which would double-count
+        // obstacles between neighbours).
+        const float CellCentreFraction = 0.5f;
+        // Signed velocity in [-1, 1] packs into a [0, 1] texel: x * 0.5 + 0.5 (decode mirrors
+        // it in WaterRiverFluidBakeData.TrySample).
+        const float SignedToUnitScale = 0.5f;
         const float CellRadiusFraction = 0.45f;
         const float MinimumLength = 0.001f;
         const long MaximumSolveCellIterations = 20_000_000L;
@@ -34,6 +39,28 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 NormalizedT = normalizedT;
                 Distance = distance;
                 SplineSample = splineSample;
+            }
+        }
+
+        /// <summary>Arc length of the spline as the bake measures it (same sampling as the bake,
+        /// so the inspector's staleness check compares like with like). False when the spline
+        /// cannot be evaluated.</summary>
+        internal static bool TryMeasureRiverLength(WaterRiverSpline spline, int samplesPerSegment,
+                                                   out float riverLength)
+        {
+            riverLength = 0f;
+            if (spline == null || spline.SegmentCount < 1 ||
+                samplesPerSegment < WaterRiverRibbonMeshGenerator.MinimumSamplesPerSegment)
+                return false;
+            try
+            {
+                ArcSample[] arcSamples = BuildArcSamples(spline, samplesPerSegment);
+                riverLength = arcSamples[arcSamples.Length - 1].Distance;
+                return float.IsFinite(riverLength) && riverLength >= MinimumLength;
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
             }
         }
 
@@ -114,7 +141,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             for (int row = 0; row < height; row++)
             {
-                float normalizedDistance = (row + HalfWidth) / height;
+                float normalizedDistance = (row + CellCentreFraction) / height;
                 float normalizedT = DistanceToParameter(
                     arcSamples, normalizedDistance * riverLength);
                 if (!spline.TryEvaluate(normalizedT, out WaterRiverSplineSample sample))
@@ -129,9 +156,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 for (int column = 0; column < width; column++)
                 {
                     int index = row * width + column;
-                    float lateralU = (column + HalfWidth) / width;
+                    float lateralU = (column + CellCentreFraction) / width;
+                    // Unit lateral -> centreline-relative metres (the centreline is at half width).
                     Vector3 point = sample.Position + sample.Right *
-                        ((lateralU - HalfWidth) * sample.Width);
+                        ((lateralU - WaterRiverSpline.HalfWidthFraction) * sample.Width);
                     bool blocked = Physics.CheckSphere(
                         point, contactRadius, fluid.obstacleLayers,
                         QueryTriggerInteraction.Ignore);
@@ -221,8 +249,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             float inverseSpeed = 1f / result.MaximumSpeed;
             for (int index = 0; index < pixels.Length; index++)
             {
-                Vector2 encoded = result.Velocity[index] * inverseSpeed * HalfWidth +
-                                  Vector2.one * HalfWidth;
+                Vector2 encoded = result.Velocity[index] * inverseSpeed * SignedToUnitScale +
+                                  Vector2.one * SignedToUnitScale;
                 pixels[index] = new Color(
                     Mathf.Clamp01(encoded.x), Mathf.Clamp01(encoded.y),
                     Mathf.Clamp01(result.Foam[index]), result.FluidMask[index] ? 1f : 0f);

@@ -15,9 +15,7 @@
 
 #include "WaterShared.hlsl" // OCEAN_FFT_* cascade layout (shared with the computes)
 #include "WaterSeaStateFetch.hlsl"
-#if !defined(WATER_DISABLE_OCEAN_APERIODIC)
 #include "WaterOceanAperiodic.hlsl"
-#endif
 // Footprint frame for the bounded-body edge feather (LbwEdgeWeight). Include-guarded, so consumers
 // that already pulled WaterVolume.hlsl themselves (all of them today) see it exactly once.
 #include "WaterVolume.hlsl"
@@ -366,11 +364,9 @@ float  _OceanFftActive;        // 1 when the FFT pass drives this body; 0 -> ana
 float4 _OceanFoamColor;        // whitecap tint (rgb) + master opacity (a); default opaque white
 float  _OceanFoamTileSize;     // metres per foam-pattern tile on the ocean surface
 float  _OceanFoamFeather;      // black-point dissolve softness (0..1) for the foam texture
-#if !defined(WATER_DISABLE_OCEAN_APERIODIC)
 Texture2D<float4> _OceanDirectionMap;
 float4 _OceanAperiodicParams;    // x = enabled, y = tile scale, z = direction strength
 float4 _OceanDirectionMapFrame; // xy = world centre, z = inverse world size
-#endif
 
 // OCEAN_FFT_MAX_CASCADES / OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION live in WaterShared.hlsl
 // (included above), shared with OceanFft.compute and WaterFoamParticles.compute.
@@ -383,7 +379,6 @@ float OceanCascadeShoalWeight(int c, ShoreData shore)
     return lerp(1.0, ShoalWeight(shore.depth, wavelength), shore.influence);
 }
 
-#if !defined(WATER_DISABLE_OCEAN_APERIODIC)
 // Bilinear tap of the direction map. TWO implementations, and which one a shader gets is a
 // SAMPLER REGISTER decision, not a taste one.
 //
@@ -491,7 +486,42 @@ float4 OceanAperiodicNormal(float2 worldXZ, float domain, float slice, float lod
                     + float2(tap2.y, tap2.w) * tileTriangle.weights.z;
     return float4(tilt.x, coverage.x, tilt.y, coverage.y);
 }
-#endif
+
+// Per-cascade addressing + weight factors, computed ONCE per cascade and shared by the periodic and
+// aperiodic tap arms of the two sums below. The factors are kept SEPARATE (not pre-multiplied): each
+// sum composes them in its own historical order, so the uniform [branch] rewrite of the aperiodic
+// ternary left every value bit-identical - reassociating a float product is not free.
+struct OceanFftCascadeTerms
+{
+    float  active;      // 1 for a cascade below the active count, else 0
+    float  slice;       // array slice, clamped so it never indexes past the array depth
+    float  domain;      // metres per cascade tile
+    float2 uv;          // periodic tile coordinate (wave-space xz / domain)
+    float  fade;        // cubic distance fade (the band-limit)
+    float  shoalWeight; // shore depth attenuation of this cascade's wavelength
+    float  fetch;       // sea-state fetch weight at this cascade's wavelength
+};
+
+OceanFftCascadeTerms OceanFftCascadeTermsAt(int c, float2 worldXZ, float2 waveXZ, float camDist,
+                                            ShoreData shore)
+{
+    OceanFftCascadeTerms t;
+    t.active = (c < (int)_OceanFftCascadeCount) ? 1.0 : 0.0;
+    t.slice = min((float)c, _OceanFftCascadeCount - 1.0);
+    t.domain = max(_OceanFftDomainSizes[c], 1e-3);
+    t.uv = waveXZ / t.domain;
+    t.fade = OceanCascadeDistanceFade(camDist, _OceanFftVisibleAreas[c]);
+    t.shoalWeight = OceanCascadeShoalWeight(c, shore);
+    // Fetch/fade stay on the geographic xz (the wave-space uv above drifts with the current).
+    t.fetch = SeaStateFetchWeight(worldXZ, t.domain * OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION);
+    return t;
+}
+
+// Displacement weight of one cascade - the exact historical product order.
+float OceanFftDisplacementCascadeWeight(OceanFftCascadeTerms t)
+{
+    return t.active * t.fade * t.shoalWeight * t.fetch;
+}
 
 // Sum the (x, height, z) displacement across the active cascades at a world xz, each cascade
 // attenuated by the shore depth (pass an inert ShoreData - influence 0 - for open water) and by the
@@ -508,30 +538,36 @@ float4 OceanAperiodicNormal(float2 worldXZ, float domain, float slice, float lod
 //
 // The displacement array carries NO mips (only the normal target does), so the fade IS the band-limit
 // here - there is no coarser level to drop to.
+//
+// Aperiodic tiling is chosen by a UNIFORM [branch] AROUND the cascade loop, not a ternary inside it:
+// an HLSL ternary may evaluate both lanes, and the aperiodic lane is 3 array taps + a 12-Load
+// direction-map bilinear + 3 atan2/sincos per cascade - paid for nothing on every ocean with the
+// tiling off. Both arms are explicit-LOD fetches, so the branch is WGSL-legal in every stage.
 float3 OceanFftDisplacementShore(float2 worldXZ, ShoreData shore)
 {
     float camDist = distance(worldXZ, _WorldSpaceCameraPos.xz);
     // Wave-space coordinate drifts with the current; fetch/fade stay on the geographic xz.
     float2 waveXZ = OceanCurrentDrift(worldXZ);
     float3 sum = float3(0.0, 0.0, 0.0);
-    for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
+    [branch]
+    if (_OceanAperiodicParams.x > 0.5)
     {
-        float active = (c < (int)_OceanFftCascadeCount) ? 1.0 : 0.0;
-        float slice = min((float)c, _OceanFftCascadeCount - 1.0);   // never index past the array depth
-        float domain = max(_OceanFftDomainSizes[c], 1e-3);
-        float2 uv = waveXZ / domain;
-        float fade = OceanCascadeDistanceFade(camDist, _OceanFftVisibleAreas[c]);
-        float fetch = SeaStateFetchWeight(worldXZ,
-            max(_OceanFftDomainSizes[c], 1e-3) * OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION);
-#if defined(WATER_DISABLE_OCEAN_APERIODIC)
-        float3 tap = _OceanFftDisplacement.SampleLevel(
-            sampler_OceanFftDisplacement, float3(uv, slice), 0).xyz;
-#else
-        float3 tap = _OceanAperiodicParams.x > 0.5
-            ? OceanAperiodicDisplacement(waveXZ, domain, slice)
-            : _OceanFftDisplacement.SampleLevel(sampler_OceanFftDisplacement, float3(uv, slice), 0).xyz;
-#endif
-        sum += (active * fade * OceanCascadeShoalWeight(c, shore) * fetch) * tap;
+        for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
+        {
+            OceanFftCascadeTerms t = OceanFftCascadeTermsAt(c, worldXZ, waveXZ, camDist, shore);
+            sum += OceanFftDisplacementCascadeWeight(t)
+                 * OceanAperiodicDisplacement(waveXZ, t.domain, t.slice);
+        }
+    }
+    else
+    {
+        for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
+        {
+            OceanFftCascadeTerms t = OceanFftCascadeTermsAt(c, worldXZ, waveXZ, camDist, shore);
+            sum += OceanFftDisplacementCascadeWeight(t)
+                 * _OceanFftDisplacement.SampleLevel(
+                       sampler_OceanFftDisplacement, float3(t.uv, t.slice), 0).xyz;
+        }
     }
     return sum;
 }
@@ -564,36 +600,66 @@ struct OceanFftCascadeSum
     float  foam;   // whitecap coverage       - fades to zero with the drawn wave
 };
 
+// Zero sum: what a non-FFT body holds in the shared geometry stage (every consumer multiplies or
+// saturates it, so it is inert there).
+OceanFftCascadeSum OceanFftCascadeSumInert()
+{
+    OceanFftCascadeSum sum;
+    sum.tilt = float2(0.0, 0.0);
+    sum.pinch = 0.0;
+    sum.foam = 0.0;
+    return sum;
+}
+
+// Farther -> coarser mip (distance anti-aliasing). Explicit LOD, so the sum is vertex-legal too.
+float OceanFftNormalCascadeLod(OceanFftCascadeTerms t, float camDist)
+{
+    return log2(1.0 + camDist / t.domain);
+}
+
+// ONE accumulation for both tap arms (the shared-weight rule above, now also across the periodic /
+// aperiodic split). 'shoal' is the historical active * shoal * fetch product, in that order.
+void OceanFftAccumulateNormalTap(inout OceanFftCascadeSum sum, int c, OceanFftCascadeTerms t,
+                                 float4 tap)
+{
+    float shoal = t.active * t.shoalWeight * t.fetch;
+    sum.tilt  += (shoal * max(t.fade, OceanFftFarSlopeFloor[c])) * tap.xz;
+    sum.pinch += (shoal * t.fade) * tap.y;
+    sum.foam  += (shoal * t.fade) * tap.w;
+}
+
+// The surface fragment evaluates this ONCE per pixel (EvaluateSurfaceGeometry) and hands the struct
+// to the normal tilt, the geometry-foam pinch and the crest-glow pinch; it used to be re-run by each
+// of them (3-4 x 4 array taps, and with aperiodic tiling 3-4 x 48 taps + 192 Loads) for the two
+// channels the previous call had already fetched and thrown away.
 OceanFftCascadeSum OceanFftNormalSumShore(float2 worldXZ, ShoreData shore)
 {
     float camDist = distance(worldXZ, _WorldSpaceCameraPos.xz);
     // Wave-space coordinate drifts with the current; fetch/fade stay on the geographic xz.
     float2 waveXZ = OceanCurrentDrift(worldXZ);
-    OceanFftCascadeSum sum;
-    sum.tilt = float2(0.0, 0.0);
-    sum.pinch = 0.0;
-    sum.foam = 0.0;
-    for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
+    OceanFftCascadeSum sum = OceanFftCascadeSumInert();
+    // Uniform [branch] around the loop instead of a per-cascade ternary - see
+    // OceanFftDisplacementShore for the cost story. Explicit-LOD fetches on both arms.
+    [branch]
+    if (_OceanAperiodicParams.x > 0.5)
     {
-        float active = (c < (int)_OceanFftCascadeCount) ? 1.0 : 0.0;
-        float slice = min((float)c, _OceanFftCascadeCount - 1.0);
-        float domain = max(_OceanFftDomainSizes[c], 1e-3);
-        float2 uv = waveXZ / domain;
-        float fade = OceanCascadeDistanceFade(camDist, _OceanFftVisibleAreas[c]);
-        float lod = log2(1.0 + camDist / domain); // farther -> coarser mip (distance anti-aliasing)
-        float fetch = SeaStateFetchWeight(worldXZ,
-            domain * OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION);
-        float shoal = active * OceanCascadeShoalWeight(c, shore) * fetch;
-#if defined(WATER_DISABLE_OCEAN_APERIODIC)
-        float4 tap = _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod);
-#else
-        float4 tap = _OceanAperiodicParams.x > 0.5
-            ? OceanAperiodicNormal(waveXZ, domain, slice, lod)
-            : _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(uv, slice), lod);
-#endif
-        sum.tilt  += (shoal * max(fade, OceanFftFarSlopeFloor[c])) * tap.xz;
-        sum.pinch += (shoal * fade) * tap.y;
-        sum.foam  += (shoal * fade) * tap.w;
+        for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
+        {
+            OceanFftCascadeTerms t = OceanFftCascadeTermsAt(c, worldXZ, waveXZ, camDist, shore);
+            float4 tap = OceanAperiodicNormal(waveXZ, t.domain, t.slice,
+                                              OceanFftNormalCascadeLod(t, camDist));
+            OceanFftAccumulateNormalTap(sum, c, t, tap);
+        }
+    }
+    else
+    {
+        for (int c = 0; c < OCEAN_FFT_MAX_CASCADES; c++)
+        {
+            OceanFftCascadeTerms t = OceanFftCascadeTermsAt(c, worldXZ, waveXZ, camDist, shore);
+            float4 tap = _OceanFftNormal.SampleLevel(sampler_OceanFftNormal, float3(t.uv, t.slice),
+                                                     OceanFftNormalCascadeLod(t, camDist));
+            OceanFftAccumulateNormalTap(sum, c, t, tap);
+        }
     }
     // Gust/slick modulation rides the SAME sum for tilt, pinch and foam (the shared-weight rule
     // above: roughness, crest glow and whitecaps must tell one story or foam sits on glassy water).
@@ -628,28 +694,41 @@ float2 OceanFftNormalTilt(float2 worldXZ)
 // horizon exactly like the ripple detail it rides on. The compute silences cascade 0 and damps cascade 1,
 // so this just gathers what the temporal accumulation already shaped. Saturated: overlapping cascades can
 // sum past 1 on a hard break, but foam coverage is a 0..1 mask.
+// Foam from a PRE-SUMMED cascade read (the surface fragment's hoisted sum).
+float OceanFftFoamFromSum(OceanFftCascadeSum sum, float2 worldXZ)
+{
+    // Edge guard: no whitecaps on the flattened border band (foam over visibly calm water reads
+    // as detached from the waves - the "patches corresponding to nothing" rule).
+    return saturate(sum.foam) * LbwEdgeWeight(worldXZ);
+}
+
 float OceanFftFoam(float2 worldXZ)
 {
     // Shore attenuation keeps whitecaps off water the depth field has already flattened (the
-    // surf whitewash layer owns the foam story there instead).
+    // surf whitewash layer owns the foam story there instead). NOTE this samples the shore
+    // field whenever it is BAKED, whereas the surface fragment's hoisted shore sample is inert
+    // unless the surf layer is also on - the two agree only when surf is active or no field is
+    // baked, which is why the fragment falls back to this wrapper in the remaining case.
     ShoreData shore = ShoreSample(worldXZ);
-    float foam = OceanFftNormalSumShore(worldXZ, shore).foam;
-    // Edge guard: no whitecaps on the flattened border band (foam over visibly calm water reads
-    // as detached from the waves - the "patches corresponding to nothing" rule).
-    return saturate(foam) * LbwEdgeWeight(worldXZ);
+    return OceanFftFoamFromSum(OceanFftNormalSumShore(worldXZ, shore), worldXZ);
 }
 
 // Sample the TRUE wave-crest "pinch" - the raw displacement-Jacobian fold, saturate(1 - J), written to
 // _OceanFftNormal.y by the FFT compute. Peaks on steep / breaking crests (the same fold that seeds foam),
 // so it drives the subsurface glow exactly where the surface is folding, rather than proxying it with
 // wave height. Same distance fade + mip LOD as the foam/tilt so it anti-aliases identically.
+// Per-cascade shore attenuation matches the DISPLACEMENT's: a wave the depth field has
+// flattened must not keep emitting its full-strength pinch signal, or foam/glow appears
+// over water that visibly carries no wave ("patches corresponding to nothing").
+float OceanFftJacobianFromSum(OceanFftCascadeSum sum)
+{
+    return saturate(sum.pinch);
+}
+
+// Standalone twin (own cascade sum) for callers without a hoisted sum, like OceanFftNormalTilt.
 float OceanFftJacobianShore(float2 worldXZ, ShoreData shore)
 {
-    // Per-cascade shore attenuation matches the DISPLACEMENT's: a wave the depth field has
-    // flattened must not keep emitting its full-strength pinch signal, or foam/glow appears
-    // over water that visibly carries no wave ("patches corresponding to nothing").
-    float pinch = OceanFftNormalSumShore(worldXZ, shore).pinch;
-    return saturate(pinch);
+    return OceanFftJacobianFromSum(OceanFftNormalSumShore(worldXZ, shore));
 }
 
 // Shortest wavelength the mesh can resolve at this world xz: grows with distance from the camera
@@ -777,36 +856,42 @@ float LbwFoamOwnershipGate(ShoreData shore)
 // Shore-aware normal + GEOMETRY FOAM: xyz = tilted world normal, w = breaker foam (0..1) derived
 // from the composite surface's own slope + displacement Jacobian. The caller has already sampled
 // the shore substrate + surf-front layer at the source xz (the fragment hoists ONE sample and
-// shares it between the normal, the foam, the crest glow and the swash).
-float4 ApplyLargeBodyWaveNormalFoamShore(float3 worldNormal, float2 sourceXZ, float strength,
-                                         ShoreData shore, SurfWaveSample surf)
+// shares it between the normal, the foam, the crest glow and the swash). Three functions: the
+// FFT half, the analytic half, and the uniform path pick that composes them.
+//
+// FFT path from a PRE-SUMMED cascade read at sourceXZ (the surface fragment hoists one sum per
+// pixel and shares it with the crest glow): the cascade normals already encode the surface tilt;
+// blend their xz and lean the base normal by it. Shore-attenuated + ambient-faded like the
+// height, plus the surf fronts' own slope so breaker faces catch the light. A height gradient g
+// contributes normal.xz = -g. Geometry foam = the cascades' TRUE Jacobian pinch + the front
+// layer's own face steepness.
+float4 ApplyOceanFftNormalFoamSum(float3 worldNormal, float2 sourceXZ, float strength,
+                                  ShoreData shore, SurfWaveSample surf, OceanFftCascadeSum fft)
 {
     float foamGate = LbwGeometryFoamGate(shore);
     // Edge guard: the border band renders a flattened surface, so its normal tilt and its
     // breaker foam must flatten with it (same weight the height/chop composition used).
     float edge = LbwEdgeWeight(sourceXZ);
-
-    // FFT path: the cascade normals already encode the surface tilt; blend their xz and lean the base
-    // normal by it. Shore-attenuated + ambient-faded like the height, plus the surf fronts' own
-    // slope so breaker faces catch the light. A height gradient g contributes normal.xz = -g.
-    // Geometry foam = the cascades' TRUE Jacobian pinch + the front layer's own face steepness.
-    if (_OceanFftActive > 0.5)
+    float2 fftTilt = (fft.tilt * SurfAmbientWeight(surf.mask) - surf.slopeXZ) * edge;
+    float geomFoam = 0.0;
+    if (foamGate > 0.0)
     {
-        float2 fftTilt = (OceanFftNormalTiltShore(sourceXZ, shore) * SurfAmbientWeight(surf.mask)
-                       - surf.slopeXZ) * edge;
-        float geomFoam = 0.0;
-        if (foamGate > 0.0)
-        {
-            // Shore-attenuated + ambient-faded pinch: only waves that are actually RENDERED at
-            // this depth may whiten (the raw Jacobian made foam patches over flattened water).
-            float pinch = OceanFftJacobianShore(sourceXZ, shore)
-                        * (LBW_PINCH_GAIN * SurfAmbientWeight(surf.mask));
-            float steep = smoothstep(LBW_BREAK_SLOPE_MIN, LBW_BREAK_SLOPE_MAX, length(fftTilt));
-            geomFoam = saturate(max(pinch, steep)) * foamGate * edge;
-        }
-        return float4(normalize(worldNormal + float3(fftTilt.x, 0.0, fftTilt.y) * strength), geomFoam);
+        // Shore-attenuated + ambient-faded pinch: only waves that are actually RENDERED at
+        // this depth may whiten (the raw Jacobian made foam patches over flattened water).
+        float pinch = OceanFftJacobianFromSum(fft)
+                    * (LBW_PINCH_GAIN * SurfAmbientWeight(surf.mask));
+        float steep = smoothstep(LBW_BREAK_SLOPE_MIN, LBW_BREAK_SLOPE_MAX, length(fftTilt));
+        geomFoam = saturate(max(pinch, steep)) * foamGate * edge;
     }
+    return float4(normalize(worldNormal + float3(fftTilt.x, 0.0, fftTilt.y) * strength), geomFoam);
+}
 
+// Analytic (Gerstner band) path - bounded open water and oceans without the FFT pass.
+float4 ApplyLargeBodyWaveNormalFoamAnalytic(float3 worldNormal, float2 sourceXZ, float strength,
+                                            ShoreData shore, SurfWaveSample surf)
+{
+    float foamGate = LbwGeometryFoamGate(shore);
+    float edge = LbwEdgeWeight(sourceXZ);
     LargeBodyWaveField f = EvaluateLargeBodyWaveShore(sourceXZ, LargeBodyWaveMinWavelength(sourceXZ),
                                                       shore, surf);
     float q = _LargeWaveChoppiness;
@@ -831,6 +916,17 @@ float4 ApplyLargeBodyWaveNormalFoamShore(float3 worldNormal, float2 sourceXZ, fl
         geomFoamA = saturate(max(pinch, steep)) * foamGate * edge;
     }
     return float4(normalize(worldNormal + float3(tilt.x, 0.0, tilt.y) * strength), geomFoamA);
+}
+
+// Path pick on the per-body uniform. Callers that already hold the cascade sum (the surface
+// fragment) call the two halves directly; this wrapper sums the cascades itself.
+float4 ApplyLargeBodyWaveNormalFoamShore(float3 worldNormal, float2 sourceXZ, float strength,
+                                         ShoreData shore, SurfWaveSample surf)
+{
+    if (_OceanFftActive > 0.5)
+        return ApplyOceanFftNormalFoamSum(worldNormal, sourceXZ, strength, shore, surf,
+                                          OceanFftNormalSumShore(sourceXZ, shore));
+    return ApplyLargeBodyWaveNormalFoamAnalytic(worldNormal, sourceXZ, strength, shore, surf);
 }
 
 // Normal-only wrapper (kept for callers that don't consume the geometry foam).

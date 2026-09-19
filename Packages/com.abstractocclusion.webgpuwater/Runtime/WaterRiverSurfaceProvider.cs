@@ -12,9 +12,11 @@
 // Perf (river round, 2026-08-29): a full projection costs ~17 samples x segments + 6 bisections
 // of cubic Bezier evaluation, and the resolver's candidate scan hits EVERY live provider for
 // EVERY gameplay query - so a coarse XZ bounds reject runs first, and a frame-stamped memo
-// collapses the resolver's ContainsPoint + TrySampleSurface pair (same point, same frame) into
-// one projection. Both caches are bypassed outside play mode so editor tooling and edit-mode
-// tests never read a stale frame stamp.
+// collapses every question the resolver asks about one point in one frame (ContainsPoint,
+// the widened ContainsPointWithin of the hysteresis band, then TrySampleSurface) into one
+// projection: the memo holds the projection, which does not depend on the caller's boundary
+// margin - only the lateral test applied on top does. Both caches are bypassed outside play
+// mode so editor tooling and edit-mode tests never read a stale frame stamp.
 using UnityEngine;
 
 namespace AbstractOcclusion.WebGpuWater
@@ -23,8 +25,7 @@ namespace AbstractOcclusion.WebGpuWater
     public sealed class WaterRiverSurfaceProvider : IWaterSurfaceProvider
     {
         // Lateral acceptance matches WaterRiverCurrentField's bound so the surface and the
-        // current agree about where the river ends.
-        const float HalfWidth = 0.5f;
+        // current agree about where the river ends (both via WaterRiverSpline.HalfWidthFraction).
         const float DomainBoundaryTolerance = 1e-4f;
         const int InvalidFrameStamp = -1;
 
@@ -34,9 +35,9 @@ namespace AbstractOcclusion.WebGpuWater
         Bounds _cachedBounds;
         int _boundsFrameStamp = InvalidFrameStamp;
 
+        // The memoised PROJECTION of one point (margin-independent, see the header).
         Vector3 _memoPoint;
-        float _memoMargin;
-        bool _memoHit;
+        bool _memoProjected;
         WaterRiverSplineSample _memoSample;
         float _memoLateral;
         int _memoFrameStamp = InvalidFrameStamp;
@@ -153,23 +154,24 @@ namespace AbstractOcclusion.WebGpuWater
             // questions (ContainsPointWithin applies the vertical column itself).
             if (!WithinBoundsXZ(worldPoint, boundaryMarginMeters)) return false;
 
+            bool projected;
             if (Application.isPlaying && _memoFrameStamp == Time.frameCount &&
-                _memoPoint == worldPoint && _memoMargin == boundaryMarginMeters)
+                _memoPoint == worldPoint)
             {
+                projected = _memoProjected;
                 sample = _memoSample;
                 lateralDistance = _memoLateral;
-                return _memoHit;
             }
-
-            bool hit = ProjectUncached(spline, worldPoint, boundaryMarginMeters,
-                                       out sample, out lateralDistance);
-            _memoPoint = worldPoint;
-            _memoMargin = boundaryMarginMeters;
-            _memoHit = hit;
-            _memoSample = sample;
-            _memoLateral = lateralDistance;
-            _memoFrameStamp = Time.frameCount;
-            return hit;
+            else
+            {
+                projected = ProjectUncached(spline, worldPoint, out sample, out lateralDistance);
+                _memoPoint = worldPoint;
+                _memoProjected = projected;
+                _memoSample = sample;
+                _memoLateral = lateralDistance;
+                _memoFrameStamp = Time.frameCount;
+            }
+            return projected && WithinLateralBand(lateralDistance, sample.Width, boundaryMarginMeters);
         }
 
         bool WithinBoundsXZ(Vector3 worldPoint, float boundaryMarginMeters)
@@ -181,9 +183,10 @@ namespace AbstractOcclusion.WebGpuWater
                    worldPoint.z <= bounds.max.z + boundaryMarginMeters;
         }
 
-        bool ProjectUncached(WaterRiverSpline spline, Vector3 worldPoint,
-                             float boundaryMarginMeters, out WaterRiverSplineSample sample,
-                             out float lateralDistance)
+        // The centreline projection itself: the nearest spline frame and the point's lateral
+        // offset from it. False when the spline cannot answer (too few knots, non-finite frame).
+        static bool ProjectUncached(WaterRiverSpline spline, Vector3 worldPoint,
+                                    out WaterRiverSplineSample sample, out float lateralDistance)
         {
             sample = default;
             lateralDistance = float.PositiveInfinity;
@@ -192,7 +195,14 @@ namespace AbstractOcclusion.WebGpuWater
 
             Vector3 centreToPoint = worldPoint - sample.Position;
             lateralDistance = Mathf.Abs(Vector3.Dot(centreToPoint, sample.Right));
-            float halfWidth = sample.Width * HalfWidth + boundaryMarginMeters;
+            return true;
+        }
+
+        // The bank test on top of a projection: inside the ribbon's half-width plus the caller's
+        // boundary margin (0 for strict containment, the resolver's switch margin for hysteresis).
+        static bool WithinLateralBand(float lateralDistance, float width, float boundaryMarginMeters)
+        {
+            float halfWidth = width * WaterRiverSpline.HalfWidthFraction + boundaryMarginMeters;
             return float.IsFinite(lateralDistance) &&
                    lateralDistance <= halfWidth + DomainBoundaryTolerance;
         }

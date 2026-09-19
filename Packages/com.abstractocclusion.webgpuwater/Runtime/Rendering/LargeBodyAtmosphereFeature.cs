@@ -50,7 +50,9 @@ namespace AbstractOcclusion.WebGpuWater
             // draw"). With the camera provably dry and the from-air veil off, every march pixel
             // early-outs and the composite multiplies the scene by 1 - yet the frame still paid
             // the half-res march target, its history copy, and a full-res composite whose
-            // coverage mask costs ~6 surface fetches per pixel, on every ABOVE-water ocean
+            // coverage mask is a full waterline classification per pixel (a LOAD of the fog's
+            // classify RT when that chain recorded one, otherwise up to three analytic field
+            // evaluations - see LargeBodyGodRays.shader's composite), on every ABOVE-water ocean
             // frame. Skip enqueueing instead. The envelope is the SAME derivation the fog's arm
             // gate uses (SurfaceHeightEnvelope), so the two reject heights cannot drift.
             // Temporal history is safe: the skip zone sits strictly ABOVE the envelope, so a

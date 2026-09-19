@@ -23,6 +23,8 @@ namespace AbstractOcclusion.WebGpuWater
         public Vector3 LocalTangent => localTangent;
         /// <summary>Full bank-to-bank width in world metres.</summary>
         public float Width => width;
+        /// <summary>Centreline-to-bank distance (see WaterRiverSpline.HalfWidthFraction).</summary>
+        internal float HalfWidth => width * WaterRiverSpline.HalfWidthFraction;
         /// <summary>Target downstream current in world metres per second.</summary>
         public float Speed => speed;
 
@@ -47,6 +49,8 @@ namespace AbstractOcclusion.WebGpuWater
         public float NormalizedT { get; internal set; }
         public int SegmentIndex { get; internal set; }
         public float SegmentT { get; internal set; }
+        /// <summary>Centreline-to-bank distance (see WaterRiverSpline.HalfWidthFraction).</summary>
+        internal float HalfWidth => Width * WaterRiverSpline.HalfWidthFraction;
     }
 
     [AddComponentMenu("Abstract Occlusion/WebGpuWater/River Spline")]
@@ -60,6 +64,10 @@ namespace AbstractOcclusion.WebGpuWater
         internal const float DefaultSegmentLength = 10f;
         internal const float BezierHandleLengthFraction = 1f / 3f;
         internal const int MinimumKnotCount = 2;
+        // Knot width is authored bank-to-bank (what an author measures on a map); every consumer
+        // that walks from the centreline to a bank needs the half. ONE definition, so the ribbon,
+        // current domain, disturbance ownership, scene gizmo and mouth plume cannot disagree.
+        internal const float HalfWidthFraction = 0.5f;
         const float MinimumTangentLengthSquared = 1e-6f;
 
         static readonly Vector3 DefaultSegment = Vector3.forward * DefaultSegmentLength;

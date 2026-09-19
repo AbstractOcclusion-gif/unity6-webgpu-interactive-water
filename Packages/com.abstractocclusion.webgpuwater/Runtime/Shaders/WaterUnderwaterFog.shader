@@ -13,7 +13,8 @@
 //   1 Inscatter: scene += fog * (1 - pathTransmittance) * depthAttenuation   (Blend One One, loads _WaterFogSolveInscatter)
 // Driven by WaterUnderwaterFogFeature (gated on WaterVolume.UnderwaterFogActive: ocean = submerged
 // only, pond = whenever Water Fog is on). U2: per-pixel wave-aware waterline - the surface crossing follows crests/troughs.
-// U3: quality-tier Simple mode (_UnderwaterFogSimple, a uniform so every pixel takes the same branch):
+// U3: quality-tier Simple mode (the WATER_FOG_SIMPLE keyword - a compile-time fence, see the note
+// above RefineSurfaceCrossing; the _UnderwaterFogSimple uniform survives only for the debug view):
 // the closed-form flat waterline at _UnderwaterSurfaceY replaces the per-pixel crossing march - the
 // budget path for WebGPU/mobile tiers. Same absorption/inscatter/darkening either way.
 Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
@@ -33,8 +34,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // hottest classification read; beauty frames now pay it once in WaterFogClassify, while
         // debug/fallback frames retain the established direct solve.
         //
-        // The APERIODIC SHAPE ITSELF STAYS. Compiling it out here (WATER_DISABLE_OCEAN_APERIODIC,
-        // as LargeBodyCaustics.shader:38 does) was tried on 2026-08-12 and REVERTED: it desynced
+        // The APERIODIC SHAPE ITSELF STAYS. Compiling the aperiodic shape out of this pass was
+        // tried on 2026-08-12 and REVERTED: it desynced
         // the fog transition from the visible under/above-water boundary. The reasoning that it
         // would be invisible - that OceanRenderedCoverage multiplies the analytic term by
         // (1 - ownership.g), so the rendered prepass owns every pixel the sheet drew - was wrong in
@@ -75,10 +76,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         TEXTURE2D(_OceanSurfaceEyeDepth);
         TEXTURE2D(_OceanSurfaceOwnership); SAMPLER(sampler_OceanSurfaceOwnership);
 #ifdef WATER_FOG_CLASSIFY_RT
-        // Full-resolution, point-loaded classification shared by the two fog composites and the
-        // meniscus. RG32F keeps centimetre-scale precision across the full arming band without
-        // filtering opposite signs together at the waterline.
+        // Point-loaded classification shared by the solve, the meniscus and the god-ray
+        // composite. RG32F keeps centimetre-scale precision across the full arming band without
+        // filtering opposite signs together at the waterline. Allocated at the SOLVE scale while
+        // the solve is its only reader (B5, 2026-09-02) and at full res while the meniscus is
+        // armed; the fraction actually applied is published so the pixel LOAD below can never
+        // disagree with the allocation (the _OceanSurfacePrepassScale doctrine, 1 = shipped).
         TEXTURE2D(_WaterFogClassifyRT);
+        float _WaterFogClassifyScale;
 #endif
         // C1 single-solve intermediates (2026-08-13): written by the "WaterFogSolve" MRT pass,
         // loaded by the absorb/inscatter blend passes. Alpha carries the debug-view flag (1 = a
@@ -93,6 +98,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         float _RiverFogDepthValid;
         float _RiverFogExternalOnly;
         float _VisibleWaterSurfaceDepthValid;
+        // Fraction of camera resolution _VisibleWaterSurfaceDepth was allocated at (published by
+        // WaterUnderwaterFogPass beside the validity flag, from the scale ACTUALLY applied - the
+        // _OceanSurfacePrepassScale doctrine). Pixel LOADs multiply through it.
+        float _VisibleWaterSurfaceDepthScale;
         #define VISIBLE_WATER_SURFACE_DEPTH_EPSILON 0.01
         // Half-res fog solve (the C1 unlock, 2026-08-29): fraction of camera resolution the solve
         // targets were allocated at (1 = full res, the shipped default). Published by
@@ -201,7 +210,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             return o;
         }
 
-        float3 SceneWorldPos(float2 uv)
+        // Also hands back the raw depth it reconstructed from, so the one caller that needs the
+        // eye depth too (the scaled solve's upsample key) does not sample the depth texture again.
+        float3 SceneWorldPos(float2 uv, out float rawDepth)
         {
             // Use the RESOLVED scene depth (_CameraDepthTexture) rather than the raw depth-stencil
             // attachment: on the WebGPU/Dawn backend a depth-stencil resource sampled as a colour
@@ -209,14 +220,16 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // and tiled the ocean fog. This is the same depth source the (correct) god-ray pass uses.
             // The wavy waterline no longer relies on post-transparent depth - it is computed analytically
             // in SurfaceHeightAtXZ below - so the pre-transparent opaque depth here is fine.
-            float rawDepth = SampleSceneDepth(uv);
+            rawDepth = SampleSceneDepth(uv);
             return ComputeWorldSpacePosition(uv, rawDepth, UNITY_MATRIX_I_VP);
         }
 
+        // Same pixel derivation as OceanSurfacePrepassPixel, against this RT's own scale.
         float VisibleWaterSurfaceEyeDepth(float2 uv)
         {
-            int2 pixelMax = max(int2(_ScaledScreenParams.xy) - int2(1, 1), int2(0, 0));
-            int2 pixel = clamp(int2(uv * _ScaledScreenParams.xy), int2(0, 0), pixelMax);
+            float2 rtSize = _ScaledScreenParams.xy * _VisibleWaterSurfaceDepthScale;
+            int2 pixelMax = max(int2(rtSize) - int2(1, 1), int2(0, 0));
+            int2 pixel = clamp(int2(uv * rtSize), int2(0, 0), pixelMax);
             return _VisibleWaterSurfaceDepth.Load(int3(pixel, 0)).r;
         }
 
@@ -242,8 +255,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             // farther than this ribbon volume's exit, it owns the pixel and the late fog must not
             // repaint through it. This covers both the ribbon's own top and any connected body or
             // river drawn in front, while negative (underwater-facing) sheets deliberately leave
-            // the volume responsible. Full-resolution R32 depth keeps the comparison exact at
-            // seams; the small metric allowance only absorbs raster precision at coincident tops.
+            // the volume responsible. R32 depth at the prepass scale (B1, 2026-09-02): the
+            // comparison is wave-scale, so a coarser texel only moves a one-texel silhouette
+            // row at a sheet edge; the small metric allowance absorbs raster precision at
+            // coincident tops.
             if (_VisibleWaterSurfaceDepthValid > 0.5)
             {
                 float waterSurfaceEyeDepth = VisibleWaterSurfaceEyeDepth(uv);
@@ -994,10 +1009,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
 #endif
 
 #ifdef WATER_FOG_CLASSIFY_RT
+        // Same pixel derivation as OceanSurfacePrepassPixel, against the classify RT's own scale.
+        // On a scaled solve the RT shares the solve's resolution, so this is one texel per solve
+        // pixel and the gapSmooth derivative in ArmWeight stays a real per-pixel slope.
         float2 LoadWaterFogClassification(float2 uv)
         {
-            int2 pixelMax = max(int2(_ScaledScreenParams.xy) - int2(1, 1), int2(0, 0));
-            int2 pixel = clamp(int2(uv * _ScaledScreenParams.xy), int2(0, 0), pixelMax);
+            float2 rtSize = _ScaledScreenParams.xy * _WaterFogClassifyScale;
+            int2 pixelMax = max(int2(rtSize) - int2(1, 1), int2(0, 0));
+            int2 pixel = clamp(int2(uv * rtSize), int2(0, 0), pixelMax);
             return LOAD_TEXTURE2D(_WaterFogClassifyRT, pixel).rg;
         }
 #endif
@@ -1134,15 +1153,21 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // purpose: point-light scatter does not respect exclusion volumes in this increment
         // (documented on the knob), so handing it the carved span would fake half an awareness
         // the feature does not have. The absorb pass passes dummies.
+        // sceneWorldOut / sceneRawDepthOut: the scene point this solve integrated to and the raw
+        // depth it came from (B7, 2026-09-02) - the solve pass's in-scatter view direction and
+        // scaled-upsample key used to re-sample the depth texture and re-run the matrix multiply
+        // for numbers this function already had. Reported on every return path.
         float3 UnderwaterFog(float2 uv, out float3 depthAttenuation, out float sunVisibility,
                              out float armWeight, out float4 debugColor,
-                             out float3 wetStartOut, out float wetSpanOut)
+                             out float3 wetStartOut, out float wetSpanOut,
+                             out float3 sceneWorldOut, out float sceneRawDepthOut)
         {
             // FIRST, ahead of every per-pixel march below: the waterline mask takes a screen
             // derivative and must be evaluated in uniform control flow.
             float classifyPushDist;
             armWeight = ArmWeight(uv, classifyPushDist);
-            float3 sceneWorld = SceneWorldPos(uv);
+            float3 sceneWorld = SceneWorldPos(uv, sceneRawDepthOut);
+            sceneWorldOut = sceneWorld;
             float pathLen;
             float deepestY;
             float surfaceRefY;
@@ -1569,9 +1594,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 float4 debugColor;
                 float3 wetStart;
                 float wetSpanLen;
+                float3 sceneWorld;
+                float sceneRawDepth;
                 float3 pathTransmittance = UnderwaterFog(input.uv, depthAttenuation, sunVisibility,
                                                          armWeight, debugColor,
-                                                         wetStart, wetSpanLen);
+                                                         wetStart, wetSpanLen,
+                                                         sceneWorld, sceneRawDepth);
                 SolveOutputs output;
                 if (debugColor.a > 0.5)
                 {
@@ -1594,8 +1622,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                     absorb = float3(1.0, 1.0, 1.0);
                 // Lit in-scatter target: the same WaterInscatterColor the surface uses, so the fog
                 // colour seen from below matches the water colour seen from above (continuous
-                // across the waterline). The view ray is surface->camera, from the scene depth.
-                float3 sceneWorld = SceneWorldPos(input.uv);
+                // across the waterline). The view ray is surface->camera, from the scene point
+                // the solve above already reconstructed (B7: one depth sample per pixel).
                 float3 viewDirWS = normalize(_WorldSpaceCameraPos - sceneWorld);
                 // Sun colour attenuated by the exclusion-volume sun visibility: only the DIRECT
                 // term darkens (WaterInscatterColor's ambient term ignores sunColor), so the
@@ -1634,7 +1662,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 // debug-flag lane the single-pixel loads test with > 0.5 (half precision holds
                 // metre-scale depth well enough for a RELATIVE-tolerance compare).
                 float upsampleDepth = _WaterFogSolveScale < 0.999
-                    ? LinearEyeDepth(SampleSceneDepth(input.uv), _ZBufferParams)
+                    ? LinearEyeDepth(sceneRawDepth, _ZBufferParams)
                     : 0.0;
                 output.absorb = half4(absorb, upsampleDepth);
                 output.inscatter = half4(total, 0.0);

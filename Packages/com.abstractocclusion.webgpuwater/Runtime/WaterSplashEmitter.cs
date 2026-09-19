@@ -324,15 +324,20 @@ namespace AbstractOcclusion.WebGpuWater
         // keeps it there, so it stays settled without tracking persistent flags.
         void DriftOnSurface(ref ParticleSystem.Particle droplet, float dt)
         {
+            // The pop window needs no surface at all, so it is decided BEFORE the domain query:
+            // a fresh burst is all popping droplets, and each one used to pay a full resolve
+            // for an answer the age test then discarded.
+            float age = droplet.startLifetime - droplet.remainingLifetime;
+            bool stillPopping = age < popDuration;
+            if (stillPopping) return; // popping upward: let the system integrate it
+
             Vector3 position = droplet.position;
             if (!TryResolveDriftSurface(position, out float surfaceY, out Vector2 surfaceDrift))
                 return; // outside the pool or no readback yet: stay ballistic
 
-            float age = droplet.startLifetime - droplet.remainingLifetime;
-            bool stillPopping = age < popDuration;
             bool reachedSurface = position.y <= surfaceY + SurfaceContactBand;
-            if (stillPopping || !reachedSurface)
-                return; // popping upward or still falling: let the system integrate it
+            if (!reachedSurface)
+                return; // still falling: let the system integrate it
 
             // Settled: ride the live waterline (bobs as waves pass) and get carried by
             // the local flow, damped so droplets ease into the surface motion.
@@ -352,6 +357,13 @@ namespace AbstractOcclusion.WebGpuWater
         // use that API: its parent volume is only the shader-state owner and may be kilometres
         // away from the spline point. The resolved provider already supplies the ribbon's real
         // height and physical current, so keep that identity all the way to the particle.
+        //
+        // The domain DECISION stays per droplet: one emitter serves every body in the scene
+        // (WaterVolume.ResolveSplashEmitter falls back to any emitter in the scene), so bursts on
+        // two bodies can be alive in this one system at once and a per-emitter body would carry
+        // a river's droplets on the lake's plane. The decision is the cheap half; the surface
+        // SAMPLE is what used to be paid twice (the resolver's, thrown away, then TryGetSurface),
+        // so the resolver is asked for the provider only and each droplet is sampled once.
         internal static bool TryResolveDriftSurface(Vector3 worldPoint, out float surfaceY,
                                                      out Vector2 surfaceDrift)
         {
@@ -361,15 +373,23 @@ namespace AbstractOcclusion.WebGpuWater
             WaterDomainQueryOptions options =
                 WaterDomainQueryOptions.ForIntent(WaterQueryIntent.BuoyancySurface);
             options.Fields = WaterQueryFields.Height | WaterQueryFields.Velocity;
-            if (!WaterDomainResolver.Resolve(worldPoint, in options, out WaterDomainSample domain))
+            if (!WaterDomainResolver.TrySelectProvider(worldPoint, in options,
+                                                       out WaterDomainResolver.SelectedProvider selected,
+                                                       out _))
                 return false;
 
-            if (UsesVolumeParticleDomain(domain.Provider, domain.Body))
+            WaterVolume body = selected.Provider.Body;
+            if (UsesVolumeParticleDomain(selected.Provider, body))
             {
-                return domain.Body.TryGetSurface(worldPoint.x, worldPoint.z,
-                                                 out surfaceY, out surfaceDrift);
+                // Rule 5 (dry wins) is TryFillSample's job; this path skips that sample, so it
+                // applies the same veto itself - droplets must not ride a carved-dry surface.
+                if (WaterExclusionVolume.ContainsPoint(worldPoint)) return false;
+                return body.TryGetSurface(worldPoint.x, worldPoint.z, out surfaceY, out surfaceDrift);
             }
 
+            if (!WaterDomainResolver.TryFillSample(in selected, worldPoint, in options,
+                                                   out WaterDomainSample domain))
+                return false;
             surfaceY = domain.SurfaceHeight;
             surfaceDrift = new Vector2(domain.Velocity.x, domain.Velocity.z);
             return true;

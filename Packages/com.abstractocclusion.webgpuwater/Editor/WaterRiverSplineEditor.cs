@@ -1,4 +1,6 @@
-// WebGpuWater - focused Scene authoring for WaterRiverSpline.
+// WebGpuWater - Scene-view authoring for WaterRiverSpline: knot / tangent / width handles and
+// the bank gizmo. The inspector body is a stub - knots are listed and edited on the Water River
+// inspector's Path tab, which also calls the knot add/remove helpers below.
 #if UNITY_EDITOR
 using UnityEditor;
 using UnityEngine;
@@ -6,26 +8,23 @@ using UnityEngine;
 namespace AbstractOcclusion.WebGpuWater.Editor
 {
     [CustomEditor(typeof(WaterRiverSpline))]
-    public sealed class WaterRiverSplineEditor : UnityEditor.Editor
+    internal sealed class WaterRiverSplineEditor : UnityEditor.Editor
     {
         const string KnotsPropertyName = "knots";
         const string LocalPositionPropertyName = "localPosition";
         const string LocalTangentPropertyName = "localTangent";
         const string WidthPropertyName = "width";
         const string SpeedPropertyName = "speed";
-        const string AddKnotLabel = "Add Knot";
-        const string RemoveKnotLabel = "Remove Last";
+        internal const string AddKnotLabel = "Add Knot";
+        internal const string RemoveKnotLabel = "Remove Last";
         const string AddKnotUndoName = "Add River Knot";
         const string RemoveKnotUndoName = "Remove River Knot";
-        const string InspectorHelp =
-            "Blue spheres move knots, cyan spheres shape mirrored tangents, and yellow sliders edit " +
-            "bank-to-bank width. The spline supports descending 3D paths for waterfalls.";
+        const string ComponentLabel = "River Spline";
         const int GizmoSamplesPerSegment = 12;
         const float KnotHandleSizeFactor = 0.07f;
         const float TangentHandleSizeFactor = 0.055f;
         const float WidthHandleSizeFactor = 0.08f;
         const float MinimumHandleSize = 0.02f;
-        const float HalfWidth = 0.5f;
         const float FullWidth = 2f;
         const float CurveThickness = 3f;
         const string SpeedLabelFormat = "{0:0.##} m/s";
@@ -37,29 +36,21 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         static readonly Color WidthColor = new Color(1f, 0.8f, 0.2f, 1f);
 
         public override void OnInspectorGUI()
-        {
-            serializedObject.Update();
-            EditorGUILayout.HelpBox(InspectorHelp, MessageType.None);
-            EditorGUILayout.PropertyField(serializedObject.FindProperty(KnotsPropertyName), true);
-            serializedObject.ApplyModifiedProperties();
+            => WaterRiverEditor.DrawSubComponentStub(
+                (Component)target, WaterRiverEditor.InspectorTab.Path, ComponentLabel);
 
-            var spline = (WaterRiverSpline)target;
-            EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button(AddKnotLabel))
-            {
-                Undo.RecordObject(spline, AddKnotUndoName);
-                spline.AddKnot();
-                EditorUtility.SetDirty(spline);
-            }
-            EditorGUI.BeginDisabledGroup(spline.KnotCount <= WaterRiverSpline.MinimumKnotCount);
-            if (GUILayout.Button(RemoveKnotLabel))
-            {
-                Undo.RecordObject(spline, RemoveKnotUndoName);
-                spline.RemoveLastKnot();
-                EditorUtility.SetDirty(spline);
-            }
-            EditorGUI.EndDisabledGroup();
-            EditorGUILayout.EndHorizontal();
+        internal static void AddKnotWithUndo(WaterRiverSpline spline)
+        {
+            Undo.RecordObject(spline, AddKnotUndoName);
+            spline.AddKnot();
+            EditorUtility.SetDirty(spline);
+        }
+
+        internal static void RemoveLastKnotWithUndo(WaterRiverSpline spline)
+        {
+            Undo.RecordObject(spline, RemoveKnotUndoName);
+            spline.RemoveLastKnot();
+            EditorUtility.SetDirty(spline);
         }
 
         void OnSceneGUI()
@@ -141,7 +132,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             Vector3 tangent = spline.LocalDirectionToWorld(tangentProperty.vector3Value);
             Vector3 right = WaterRiverSplineEvaluator.CalculateRight(
                 tangent.normalized, spline.transform.rotation * Vector3.forward);
-            float halfWidth = Mathf.Max(WaterRiverSpline.MinimumWidth, widthProperty.floatValue) * HalfWidth;
+            float halfWidth = Mathf.Max(WaterRiverSpline.MinimumWidth, widthProperty.floatValue) *
+                             WaterRiverSpline.HalfWidthFraction;
             Vector3 rightBank = worldPosition + right * halfWidth;
             Vector3 leftBank = worldPosition - right * halfWidth;
             Handles.color = WidthColor;
@@ -163,16 +155,16 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             {
                 if (!spline.TryEvaluateSegment(segmentIndex, 0f, out WaterRiverSplineSample previous))
                     continue;
-                Vector3 previousLeft = previous.Position - previous.Right * (previous.Width * HalfWidth);
-                Vector3 previousRight = previous.Position + previous.Right * (previous.Width * HalfWidth);
+                Vector3 previousLeft = previous.Position - previous.Right * previous.HalfWidth;
+                Vector3 previousRight = previous.Position + previous.Right * previous.HalfWidth;
                 for (int step = 1; step <= GizmoSamplesPerSegment; step++)
                 {
                     float segmentT = step / (float)GizmoSamplesPerSegment;
                     if (!spline.TryEvaluateSegment(
                             segmentIndex, segmentT, out WaterRiverSplineSample current))
                         continue;
-                    Vector3 currentLeft = current.Position - current.Right * (current.Width * HalfWidth);
-                    Vector3 currentRight = current.Position + current.Right * (current.Width * HalfWidth);
+                    Vector3 currentLeft = current.Position - current.Right * current.HalfWidth;
+                    Vector3 currentRight = current.Position + current.Right * current.HalfWidth;
                     Gizmos.DrawLine(previous.Position, current.Position);
                     Gizmos.DrawLine(previousLeft, currentLeft);
                     Gizmos.DrawLine(previousRight, currentRight);

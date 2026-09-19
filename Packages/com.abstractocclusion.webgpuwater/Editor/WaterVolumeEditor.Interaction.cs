@@ -17,7 +17,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             _showPointerInteraction = WaterEditorUI.Section(
                 "Pointer Interaction", _showPointerInteraction, () =>
-                    DrawFields("rippleSettings.pointerWaterInteraction"));
+                    DrawFields("rippleSettings.pointerWaterInteraction", "rippleSettings.demoKeyboardShortcuts"));
         }
 
         void DrawObjectInteractionSection()

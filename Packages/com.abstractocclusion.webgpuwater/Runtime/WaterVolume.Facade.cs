@@ -332,6 +332,17 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>True when this body's renderers draw this frame (frustum cull).</summary>
         public bool IsVisibleToCamera => _visible;
 
+        /// <summary><see cref="WriteBodyProps(MaterialPropertyBlock)"/> with the caller's
+        /// substitutions for ids this body derives, applied INSIDE the publisher's cached pass so
+        /// the block and its cache agree (a river ribbon drawn with its parent's uniforms; see
+        /// WaterUniformPublisher.IBodyUniformOverride for the rule this exists to honour).</summary>
+        internal void WriteBodyProps(MaterialPropertyBlock mpb,
+                                     WaterUniformPublisher.IBodyUniformOverride overrides)
+        {
+            if (mpb == null) throw new System.ArgumentNullException(nameof(mpb));
+            Publisher.WriteBodyProps(mpb, overrides);
+        }
+
         /// <summary>Push this body's placement-frame uniforms (volume + sim window) onto a
         /// compute shader so GPU consumers can include WaterVolume.hlsl and share the exact
         /// same pool/window/world transforms as the render side.</summary>

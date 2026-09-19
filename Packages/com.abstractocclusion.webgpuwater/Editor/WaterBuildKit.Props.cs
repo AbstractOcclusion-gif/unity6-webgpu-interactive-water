@@ -39,7 +39,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             {
                 if (customMesh == null)
                 {
-                    Debug.LogError("[WebGpuWater] Assign a mesh to create a custom-mesh floater.");
+                    Debug.LogError(LogPrefix + "Assign a mesh to create a custom-mesh floater.");
                     return null;
                 }
                 go = NewUndoableGameObject(BuoyantObjectName);

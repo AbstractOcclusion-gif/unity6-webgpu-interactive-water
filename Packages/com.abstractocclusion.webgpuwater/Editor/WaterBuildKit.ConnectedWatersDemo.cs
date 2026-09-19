@@ -13,9 +13,11 @@
 //   - an EXCLUSION box carved into the lake (no float/splash/ripples inside),
 //   - buoyant crates dropped over each case.
 // A scene-object creator, so it lives on the GameObject menu beside the exclusion-volume
-// creator (the Window/ MenuRoot hosts tool windows). Reuses the wizard's generators end to end.
+// creator (the Window/ MenuRoot hosts tool windows). The waters are a WaterSystemPlan
+// (ConnectedWatersDemoPlan - the wizard's "Load Connected Waters demo plan" fills its list from
+// the same constants) executed by BuildWaterSystem; only the coastal Terrain, the floor and the
+// crates are rig-specific extras added around that build.
 using System;
-using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 using AbstractOcclusion.WebGpuWater;
@@ -24,9 +26,28 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 {
     internal static partial class WaterBuildKit
     {
-        const string ConnectedDemoMenuPath = "GameObject/AbstractOcclusion/Connected Waters Test Rig";
+        const string ConnectedDemoMenuPath = GameObjectMenuRoot + "Connected Waters Test Rig";
         const int ConnectedDemoMenuPriority = 11; // right under the exclusion-volume creator
-        const string ConnectedDemoRootName = "Connected Waters Test Rig";
+        internal const string ConnectedDemoRootName = "Connected Waters Test Rig";
+
+        // ---- plan order. Rivers reference bodies (and the lower river its upstream river) by
+        // these indices, so the plan below and the terrain hook in the rig agree by name.
+        const int LakeBodyIndex = 0;
+        const int PondBodyIndex = 1;
+        const int SewerBodyIndex = 2;
+        const int ReservoirBodyIndex = 3;
+        const int OceanBodyIndex = 4;
+        const int UpperRiverIndex = 0;
+        const string LakeName = "Lake";
+        const string PondName = "Pond (stacked above)";
+        const string SewerName = "Sewer (stacked below)";
+        const string ReservoirName = "Reservoir (uplands)";
+        const string OceanName = "Ocean (unbounded)";
+        const string UpperRiverName = "Upper River (reservoir to junction)";
+        const string LowerRiverName = "Lower River (junction to lake)";
+        const string SpillwayName = "Spillway (pond to lake)";
+        const string CoastalRiverName = "Coastal River (lake to ocean)";
+        const string CarveName = "Lake Carve (dry room)";
 
         // ---- lake (primary, the chain's receiving body) ----
         static readonly Vector3 LakeCenter = Vector3.zero;
@@ -151,100 +172,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 return;
             }
 
-            // Bodies stay lean (no pool walls, god rays or particle foam). Each river receives
-            // procedural surface foam below so this rig also exercises the stitched render path.
-            WaterVolume lake = CreateWaterBody(ctx, root.transform, "Lake", LakeCenter, LakeExtent,
-                                               primary: true, withPool: false, withGodRays: false,
-                                               withFoamParticles: false, withSplash: true);
-            WaterVolume pond = CreateWaterBody(ctx, root.transform, "Pond (stacked above)", PondCenter,
-                                               StackedExtent, primary: false, withPool: false,
-                                               withGodRays: false, withFoamParticles: false,
-                                               withSplash: true);
-            WaterVolume sewer = CreateWaterBody(ctx, root.transform, "Sewer (stacked below)",
-                            SewerCenter, StackedExtent, primary: false, withPool: false,
-                            withGodRays: false, withFoamParticles: false, withSplash: true);
-            WaterVolume reservoir = CreateWaterBody(ctx, root.transform, "Reservoir (uplands)",
-                                                    ReservoirCenter, ReservoirExtent,
-                                                    primary: false, withPool: false,
-                                                    withGodRays: false, withFoamParticles: false,
-                                                    withSplash: true);
-            WaterVolume ocean = CreateWaterBody(ctx, root.transform, "Ocean (unbounded)",
-                                                OceanCenter, OceanExtent, primary: false,
-                                                withPool: false, withGodRays: false,
-                                                withFoamParticles: false, withSplash: true);
-            Terrain coastTerrain = CreateCoastalTerrain(root.transform, ctx.WaterFolder);
-            ConfigureUnboundedOcean(ocean, coastTerrain);
-
-            // Freshly created bodies default Water Fog OFF; this rig demos the underwater
-            // CONNECTION (check 8), so every body is a fog medium. Fullscreen volume fog is
-            // already on by default - only the master toggle needs flipping.
-            EnableUnderwaterFog(lake, pond, sewer, reservoir, ocean);
-
-            // The main run is deliberately two meshes. The lower source copies the upper mouth
-            // row verbatim, so this is the regression case for RAM-style river sewing rather
-            // than two ribbons hidden under one another.
-            WaterRiver upperRiver = CreateConnectedRiver(
-                root.transform, ctx, "Upper River (reservoir to junction)",
-                new List<WaterRiverKnot>
-                {
-                    new WaterRiverKnot(RiverKnotHigh, RiverKnotTangent, RiverWidthMeters,
-                                       RiverSpeedMetersPerSecond),
-                    new WaterRiverKnot(RiverKnotUpperMid, RiverKnotTangent, RiverWidthMeters,
-                                       RiverSpeedMetersPerSecond),
-                    new WaterRiverKnot(RiverKnotJunction, RiverKnotTangent, RiverWidthMeters,
-                                       RiverSpeedMetersPerSecond),
-                },
-                parentBody: lake, sourceBody: reservoir, mouthBody: null);
-            WaterRiver lowerRiver = CreateConnectedRiver(
-                root.transform, ctx, "Lower River (junction to lake)",
-                new List<WaterRiverKnot>
-                {
-                    new WaterRiverKnot(RiverKnotJunction, RiverKnotTangent, RiverWidthMeters,
-                                       RiverSpeedMetersPerSecond),
-                    new WaterRiverKnot(RiverKnotLowerMid, RiverKnotTangent, RiverWidthMeters,
-                                       RiverSpeedMetersPerSecond),
-                    new WaterRiverKnot(RiverKnotMouth, RiverKnotTangent, RiverWidthMeters,
-                                       RiverSpeedMetersPerSecond),
-                },
-                parentBody: lake, sourceBody: null, mouthBody: lake);
-            lowerRiver.sourceEnd.upstreamRiver = upperRiver;
-            lowerRiver.sourceEnd.transitionRadiusMeters = SeamTransitionRadiusMeters;
-            WaterRiverEditor.GenerateEnd(lowerRiver, WaterRiverEndKind.Source);
-
-            CreateConnectedRiver(root.transform, ctx, "Spillway (pond to lake)",
-                new List<WaterRiverKnot>
-                {
-                    new WaterRiverKnot(SpillKnotTop, SpillKnotTangent, SpillwayWidthMeters,
-                                       SpillwaySpeedMetersPerSecond),
-                    new WaterRiverKnot(SpillKnotMid, SpillKnotTangent, SpillwayWidthMeters,
-                                       SpillwaySpeedMetersPerSecond),
-                    new WaterRiverKnot(SpillKnotMouth, SpillKnotTangent, SpillwayWidthMeters,
-                                       SpillwaySpeedMetersPerSecond),
-                },
-                parentBody: lake, sourceBody: pond, mouthBody: lake);
-
-            CreateConnectedRiver(root.transform, ctx, "Coastal River (lake to ocean)",
-                new List<WaterRiverKnot>
-                {
-                    new WaterRiverKnot(CoastKnotSource, CoastKnotTangent,
-                                       CoastRiverWidthMeters,
-                                       CoastRiverSpeedMetersPerSecond),
-                    new WaterRiverKnot(CoastKnotMid, CoastKnotTangent,
-                                       CoastRiverWidthMeters,
-                                       CoastRiverSpeedMetersPerSecond),
-                    new WaterRiverKnot(CoastKnotMouth, CoastKnotTangent,
-                                       CoastRiverWidthMeters,
-                                       CoastRiverSpeedMetersPerSecond),
-                },
-                // The ribbon inherits its upstream inland water. Parenting it to the ocean would
-                // publish _LargeBody without a river shore field, applying unshoaled FFT waves to
-                // the entire channel; the ocean remains the authored receiving body at the mouth.
-                parentBody: lake, sourceBody: lake, mouthBody: ocean);
-
-            var carve = NewUndoableGameObject("Lake Carve (dry room)");
-            carve.transform.SetParent(root.transform);
-            carve.transform.position = CarvePosition;
-            carve.AddComponent<WaterExclusionVolume>().size = CarveSize;
+            // The coast is a real Unity Terrain because the shore field bakes Terrain.SampleHeight;
+            // it is the ocean's bed, so it exists before the plan's ocean body is configured.
+            WaterSystemPlan plan = ConnectedWatersDemoPlan();
+            plan.bodies[OceanBodyIndex].bedTerrain = CreateCoastalTerrain(root.transform, ctx.WaterFolder);
+            BuildWaterSystem(plan, ctx, root.transform);
 
             CreateFloorCollider(root.transform, FloorCenter, FloorSize);
             for (int i = 0; i < CrateDropPositions.Length; i++)
@@ -252,65 +184,118 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             Selection.activeGameObject = root;
             Undo.CollapseUndoOperations(undoGroup);
-            Debug.Log("[WebGpuWater] Connected Waters Test Rig built (multi-body chain). Press " +
-                      "Play and check: " +
-                      "(1) the main river has no height/flow step at its flush reservoir border, " +
-                      "exact shared-row mid-air junction, or flush lake border, " +
-                      "(2) the pond crate floats at the POND's surface, never the sewer's, " +
-                      "(3) the air-gap crate falls until it reaches the sewer's water, " +
-                      "(4) the crate over the carve sinks silently - no splash, no ripples, no lift, " +
-                      "(5) the reservoir crate floats at 4.2 - a third elevation, " +
-                      "(6) the spillway crate lands ON the chute and rides its slope into the lake, " +
-                      "(7) WaterTopology.ConnectionsOf(lake) enumerates 3 connections (7 total), " +
-                      "(8) dive INTO the mid-gap river: the fog must ride the river, not cut off " +
-                      "where the parent body's box ends, " +
-                      "(9) from a DRY camera, look across and below both river ribbons: their " +
-                      "water columns are foggy, terrain truncates the fog, and no glass wall or " +
-                      "plain shell is visible, " +
-                      "(10) river banks show contact foam and sloped reaches show whitewater; " +
-                      "both remain continuous through the sewn junctions, " +
-                      "(11) the coastal river crosses into the unbounded ocean without a rectangular " +
-                      "ocean-border seam, double surface, or wave wall; its current and foam continue " +
-                      "downstream over the ocean, " +
-                      "(12) the coastal Terrain leaves the estuary open, clips the infinite ocean from " +
-                      "the dry banks, and shoals ocean waves before they can run up the river.");
+            Debug.Log(LogPrefix + ConnectedDemoBuiltMessage + ConnectedDemoChecklist);
         }
 
-        // One connected river: THE recipe (facade-owned wiring), then connect to bodies at each
-        // named end. The explicit parent body supplies animated uniforms and the underwater
-        // medium; both halves of a river-to-river stitch intentionally share it.
-        static WaterRiver CreateConnectedRiver(Transform parent, BuildContext ctx, string riverName,
-                                               List<WaterRiverKnot> knots, WaterVolume parentBody,
-                                               WaterVolume sourceBody,
-                                               WaterVolume mouthBody)
-        {
-            WaterRiver river = CreateRiverRig(parent, parentBody, ctx.MatAbove, ctx.MatUnder,
-                                              knots);
-            river.gameObject.name = riverName;
-            AddProceduralRiverFoam(river);
+        internal const string ConnectedDemoBuiltMessage =
+            "Connected Waters Test Rig built (multi-body chain). Press Play and check: ";
 
-            if (sourceBody != null)
+        // The rig's acceptance list, logged by the menu build AND by the wizard when it builds
+        // the demo plan, so both entry points hand the user the same eyeball checks.
+        internal const string ConnectedDemoChecklist =
+            "(1) the main river has no height/flow step at its flush reservoir border, " +
+            "exact shared-row mid-air junction, or flush lake border, " +
+            "(2) the pond crate floats at the POND's surface, never the sewer's, " +
+            "(3) the air-gap crate falls until it reaches the sewer's water, " +
+            "(4) the crate over the carve sinks silently - no splash, no ripples, no lift, " +
+            "(5) the reservoir crate floats at 4.2 - a third elevation, " +
+            "(6) the spillway crate lands ON the chute and rides its slope into the lake, " +
+            "(7) WaterTopology.ConnectionsOf(lake) enumerates 3 connections (7 total), " +
+            "(8) dive INTO the mid-gap river: the fog must ride the river, not cut off " +
+            "where the parent body's box ends, " +
+            "(9) from a DRY camera, look across and below both river ribbons: their " +
+            "water columns are foggy, terrain truncates the fog, and no glass wall or " +
+            "plain shell is visible, " +
+            "(10) river banks show contact foam and sloped reaches show whitewater; " +
+            "both remain continuous through the sewn junctions, " +
+            "(11) the coastal river crosses into the unbounded ocean without a rectangular " +
+            "ocean-border seam, double surface, or wave wall; its current and foam continue " +
+            "downstream over the ocean, " +
+            "(12) the coastal Terrain leaves the estuary open, clips the infinite ocean from " +
+            "the dry banks, and shoals ocean waves before they can run up the river.";
+
+        // The rig's waters as a plan: the SAME names, positions, extents, knots and seam radii
+        // the hard-coded recipe used, in the same order. Bodies stay lean (no pool walls, god
+        // rays or particle foam); every body is a fog medium because the rig demos the underwater
+        // CONNECTION (check 8); each river gets procedural surface foam so the stitched render
+        // path is exercised too. The ocean's bed Terrain is a scene object the rig creates and
+        // assigns after this returns (the wizard leaves it for the user to assign).
+        internal static WaterSystemPlan ConnectedWatersDemoPlan()
+        {
+            var plan = new WaterSystemPlan
             {
-                river.sourceEnd.body = sourceBody;
-                river.sourceEnd.transitionRadiusMeters = SeamTransitionRadiusMeters;
-                WaterRiverEditor.GenerateEnd(river, WaterRiverEndKind.Source);
-            }
-            if (mouthBody != null)
+                systemName = ConnectedDemoRootName,
+                primaryBodyIndex = LakeBodyIndex,
+                fogOnAllBodies = true,
+                splash = true,
+                qualitySource = WaterQualitySource.PackageDefault,
+            };
+            plan.bodies.Add(DemoBody(LakeName, WaterKind.SurfaceOnly, LakeCenter, LakeExtent));
+            plan.bodies.Add(DemoBody(PondName, WaterKind.SurfaceOnly, PondCenter, StackedExtent));
+            plan.bodies.Add(DemoBody(SewerName, WaterKind.SurfaceOnly, SewerCenter, StackedExtent));
+            plan.bodies.Add(DemoBody(ReservoirName, WaterKind.SurfaceOnly, ReservoirCenter, ReservoirExtent));
+            plan.bodies.Add(DemoBody(OceanName, WaterKind.OpenWaterOcean, OceanCenter, OceanExtent));
+
+            // The main run is deliberately two meshes. The lower source copies the upper mouth
+            // row verbatim, so this is the regression case for RAM-style river sewing rather
+            // than two ribbons hidden under one another.
+            plan.rivers.Add(DemoRiver(UpperRiverName, LakeBodyIndex,
+                new[] { RiverKnotHigh, RiverKnotUpperMid, RiverKnotJunction }, RiverKnotTangent,
+                RiverWidthMeters, RiverSpeedMetersPerSecond,
+                sourceBodyIndex: ReservoirBodyIndex, upstreamRiverIndex: NoPlanIndex,
+                mouthBodyIndex: NoPlanIndex));
+            plan.rivers.Add(DemoRiver(LowerRiverName, LakeBodyIndex,
+                new[] { RiverKnotJunction, RiverKnotLowerMid, RiverKnotMouth }, RiverKnotTangent,
+                RiverWidthMeters, RiverSpeedMetersPerSecond,
+                sourceBodyIndex: NoPlanIndex, upstreamRiverIndex: UpperRiverIndex,
+                mouthBodyIndex: LakeBodyIndex));
+            plan.rivers.Add(DemoRiver(SpillwayName, LakeBodyIndex,
+                new[] { SpillKnotTop, SpillKnotMid, SpillKnotMouth }, SpillKnotTangent,
+                SpillwayWidthMeters, SpillwaySpeedMetersPerSecond,
+                sourceBodyIndex: PondBodyIndex, upstreamRiverIndex: NoPlanIndex,
+                mouthBodyIndex: LakeBodyIndex));
+            // The coastal ribbon inherits its upstream inland water. Parenting it to the ocean
+            // would publish _LargeBody without a river shore field, applying unshoaled FFT waves
+            // to the entire channel; the ocean remains the authored receiving body at the mouth.
+            plan.rivers.Add(DemoRiver(CoastalRiverName, LakeBodyIndex,
+                new[] { CoastKnotSource, CoastKnotMid, CoastKnotMouth }, CoastKnotTangent,
+                CoastRiverWidthMeters, CoastRiverSpeedMetersPerSecond,
+                sourceBodyIndex: LakeBodyIndex, upstreamRiverIndex: NoPlanIndex,
+                mouthBodyIndex: OceanBodyIndex));
+
+            plan.exclusions.Add(new WaterSystemExclusionPlan
             {
-                river.mouthEnd.body = mouthBody;
-                river.mouthEnd.transitionRadiusMeters = SeamTransitionRadiusMeters;
-                WaterRiverEditor.GenerateEnd(river, WaterRiverEndKind.Mouth);
-            }
+                name = CarveName,
+                bodyIndex = NoPlanIndex, // under the rig root, as the hand-written rig placed it
+                shape = WaterExclusionVolume.Shape.Box,
+                center = CarvePosition,
+                size = CarveSize,
+            });
+            return plan;
+        }
+
+        static WaterSystemBodyPlan DemoBody(string name, WaterKind kind, Vector3 center, Vector3 extent)
+            => new WaterSystemBodyPlan { name = name, kind = kind, center = center, extent = extent };
+
+        static WaterSystemRiverPlan DemoRiver(string name, int parentBodyIndex, Vector3[] points,
+                                              Vector3 tangent, float widthMeters, float speedMetersPerSecond,
+                                              int sourceBodyIndex, int upstreamRiverIndex, int mouthBodyIndex)
+        {
+            var river = new WaterSystemRiverPlan
+            {
+                name = name,
+                parentBodyIndex = parentBodyIndex,
+                sourceBodyIndex = sourceBodyIndex,
+                upstreamRiverIndex = upstreamRiverIndex,
+                mouthBodyIndex = mouthBodyIndex,
+                tangent = tangent,
+                widthMeters = widthMeters,
+                speedMetersPerSecond = speedMetersPerSecond,
+                transitionRadiusMeters = SeamTransitionRadiusMeters,
+                proceduralFoam = true,
+            };
+            river.points.AddRange(points);
             return river;
-        }
-
-        static void AddProceduralRiverFoam(WaterRiver river)
-        {
-            if (river == null) throw new ArgumentNullException(nameof(river));
-            if (river.GetComponent<WaterRiverFluid>() == null)
-                Undo.AddComponent<WaterRiverFluid>(river.gameObject);
-            if (river.GetComponent<WaterRiverFoam>() == null)
-                Undo.AddComponent<WaterRiverFoam>(river.gameObject);
         }
 
         static Terrain CreateCoastalTerrain(Transform parent, string waterFolder)
@@ -438,41 +423,6 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             float fan = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(
                 CoastKnotMouth.z, EstuaryFanEndZ, worldZ));
             return Mathf.Lerp(EstuaryBankFeather, EstuaryFanFeather, fan);
-        }
-
-        static void ConfigureUnboundedOcean(WaterVolume ocean, Terrain coastTerrain)
-        {
-            if (ocean == null) throw new ArgumentNullException(nameof(ocean));
-            if (coastTerrain == null) throw new ArgumentNullException(nameof(coastTerrain));
-            var serialized = new SerializedObject(ocean);
-            serialized.FindProperty(WaterVolumePropertyPaths.BodyType).enumValueIndex =
-                (int)WaterVolume.WaterBodyType.Ocean;
-            serialized.FindProperty(WaterVolumePropertyPaths.OpenWater).boolValue = true;
-            serialized.FindProperty(WaterVolumePropertyPaths.UnboundedOcean).boolValue = true;
-            serialized.FindProperty(WaterVolumePropertyPaths.EnableLargeBodyWindow).boolValue = true;
-            serialized.FindProperty(WaterVolumePropertyPaths.UseBedDepth).boolValue = true;
-            serialized.FindProperty(WaterVolumePropertyPaths.BedTerrain).objectReferenceValue =
-                coastTerrain;
-            // This diagnostic needs calm shoaling, not an added breaker train obscuring the seam.
-            serialized.FindProperty(WaterVolumePropertyPaths.SurfEnabled).boolValue = false;
-            serialized.ApplyModifiedPropertiesWithoutUndo();
-            EditorUtility.SetDirty(ocean);
-        }
-
-        // The wizard's tuned baseline, not the class default: WaterFogSettings ships
-        // fogDensity = 2, which reads as a solid murk WALL right at the surface of a bounded
-        // body (their fog volume deliberately renders from any angle). 0.2 is the value the
-        // full wizard has authored since 2026-07-25.
-        const float RigFogDensity = 0.2f;
-
-        static void EnableUnderwaterFog(params WaterVolume[] bodies)
-        {
-            foreach (WaterVolume body in bodies)
-            {
-                if (body == null) continue;
-                body.FogSettings.waterFog = true;
-                body.FogSettings.fogDensity = RigFogDensity;
-            }
         }
 
         // A crate with the wizard's full floatable set (defaults; no preset table needed here):

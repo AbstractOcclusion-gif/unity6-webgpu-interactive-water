@@ -6,9 +6,17 @@
 //
     // The shader reconstructs the scene from the resolved _CameraDepthTexture. Full-tier beauty
     // frames classify the analytic wavy waterline once into _WaterFogClassifyRT and share it across
-    // both composites plus the meniscus; Simple and automatic fallback paths stay direct/flat.
+    // the solve, the meniscus AND the god-ray composite (LargeBodyAtmospherePass, via
+    // TryGetClassifyRt); Simple and automatic fallback paths stay direct/flat.
 // The former DepthHandoff sub-pass that published one (_WaterFogSceneDepth) was dead weight: the
 // shader declared the texture but never sampled it, so the handoff was removed (U3).
+//
+// Chain recorded per camera (Full tier, ocean fog source), in order:
+//   river front/back depth (external river fog only) -> _VisibleWaterSurfaceDepth (river fog or a
+//   BOUNDED fog source only, prepass scale) -> ocean ownership prepass (prepass scale) ->
+//   height RT -> lens height RT -> WaterFogClassify (full res while the meniscus is armed, else
+//   the solve scale) -> WaterFogSolve MRT (solve scale) -> absorb + inscatter blend (one raster
+//   pass) -> waterline copy (only with the camera within reach of the line) -> meniscus.
 //
 // Runs before post so bloom/tonemapping treat the fogged scene as the final image.
 #if WEBGPUWATER_URP
@@ -47,6 +55,10 @@ namespace AbstractOcclusion.WebGpuWater
         const string VisibleWaterSurfaceDepthName = "_VisibleWaterSurfaceDepth";
         const string VisibleWaterSurfaceDepthBufferName = "VisibleWaterSurfaceDepthBuffer";
         const string VisibleWaterSurfaceDepthValidName = "_VisibleWaterSurfaceDepthValid";
+        const string VisibleWaterSurfaceDepthScaleName = "_VisibleWaterSurfaceDepthScale";
+        // Fraction of camera resolution the classify RT was allocated at this frame (B5,
+        // 2026-09-02). Read by the fog solve's pixel LOAD the way _OceanSurfacePrepassScale is.
+        const string ClassifyScalePropertyName = "_WaterFogClassifyScale";
         const string RiverFogFrontDepthPassName = "RiverFogFrontDepth";
         const string RiverFogBackDepthPassName = "RiverFogBackDepth";
         const GraphicsFormat SolveRtFormat = GraphicsFormat.R16G16B16A16_SFloat;
@@ -131,6 +143,15 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_RiverFogExternalOnly = Shader.PropertyToID("_RiverFogExternalOnly");
         static readonly int ID_VisibleWaterSurfaceDepthValid =
             Shader.PropertyToID(VisibleWaterSurfaceDepthValidName);
+        static readonly int ID_VisibleWaterSurfaceDepthScale =
+            Shader.PropertyToID(VisibleWaterSurfaceDepthScaleName);
+        static readonly int ID_WaterFogClassifyScale = Shader.PropertyToID(ClassifyScalePropertyName);
+        // Full-res classification is the only kind the full-res consumers (meniscus, god-ray
+        // composite) may LOAD: at any smaller scale neighbouring pixels share a texel and the
+        // screen derivative of gapSmooth - the feather width - collapses to 0 / spikes. Those
+        // consumers keep their analytic path on scaled frames; the scaled solve reads the RT
+        // at its own resolution, texel for texel.
+        const float ClassifyFullResScale = 1f;
 
         readonly Material _material;
         readonly Material _heightRtMaterial;
@@ -261,8 +282,20 @@ namespace AbstractOcclusion.WebGpuWater
             // segment owners. River fog uses it against the ribbon exit; bounded lake/pond fog
             // uses it when the ray enters through the top. Tying this prepass to river work alone
             // left a connected river invisible to the lake branch at their overlap.
+            // NOT for an unbounded ocean fog source (B1, 2026-09-02): the shader's two readers are
+            // RiverFogSegment (gated on _RiverFogDepthValid) and ArmWeight's bounded-body branch,
+            // which sits AFTER the `_UnderwaterUnbounded > 0.5` return. An ocean frame without an
+            // external river therefore re-drew every above-surface sheet of every body through the
+            // full displacement vertex stage into a camera-sized R32F + Depth32 and read none of it
+            // - the same dead-prepass pattern the Simple-tier note below diagnosed for the ownership
+            // prepass. Validity stays 0 when skipped: the state every ocean frame already shipped
+            // on the Simple tier, so the shader gains no new case.
+            bool visibleWaterSurfaceDepthWanted =
+                riverFogRecorded
+                || (WaterVolume.UnderwaterFogActive && fogSource != null
+                    && !fogSource.IsOceanClipmap);
             bool visibleWaterSurfaceDepthRecorded =
-                (riverFogRecorded || WaterVolume.UnderwaterFogActive) &&
+                visibleWaterSurfaceDepthWanted &&
                 RecordVisibleWaterSurfaceDepth(renderGraph, cameraColor);
             Shader.SetGlobalFloat(
                 ID_VisibleWaterSurfaceDepthValid,
@@ -276,9 +309,10 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalFloat(
                 ID_RiverFogExternalOnly,
                 riverFogExternalOnly ? 1f : 0f);
-            // NOT ON THE SIMPLE TIER - it has no reader there. UnderwaterSegment tests
-            // _UnderwaterFogSimple BEFORE _OceanSurfaceDepthValid (WaterUnderwaterFog.shader), so a
-            // Simple frame takes OceanFlatPath and _OceanSurfaceEyeDepth is sampled NOWHERE: its
+            // NOT ON THE SIMPLE TIER - it has no reader there. The Simple fork is the WATER_FOG_SIMPLE
+            // keyword (WaterUnderwaterFog.shader compiles the whole prepass/wavy module out under
+            // it; _UnderwaterFogSimple survives only as the debug view's uniform), so a Simple
+            // frame takes OceanFlatPath and _OceanSurfaceEyeDepth is sampled NOWHERE: its
             // only consumer in the package is OceanPrepassPath. Recording it anyway re-drew every
             // ocean surface renderer a second time - base + under + near-field patch + patch under +
             // two per clipmap level, each through the full displacement vertex stage - into a
@@ -320,7 +354,7 @@ namespace AbstractOcclusion.WebGpuWater
                 Shader.SetGlobalVector(ID_WaterHeightRTFrame, Vector4.zero);
 
             // Full-tier beauty frames share the expensive analytic waterline classification through
-            // one full-resolution RG32F target. Debug views deliberately retain the direct path: they
+            // one RG32F target. Debug views deliberately retain the direct path: they
             // stamp branch-local state that this two-channel first increment does not carry. A missing
             // shader pass or unsupported render format automatically leaves every consumer on the
             // established analytic variant; no manual fallback switch can be forgotten in a build.
@@ -339,9 +373,29 @@ namespace AbstractOcclusion.WebGpuWater
                 RecordLensHeightRt(renderGraph, cameraData, fogSource.VolumeCenter.y);
             else
                 Shader.SetGlobalVector(ID_WaterLensHeightRTFrame, Vector4.zero);
+            // Half-res solve (the C1 unlock): the scale is the fog source's tier knob, probe-
+            // writable like the fog mode. Debug views force full res - they ride the solve
+            // alpha flags, which the scaled path repurposes for eye depth, and a view is read
+            // by exact colour purity that no upsample filter may touch.
+            float solveScale = (fogSource != null && !WaterDebugView.FogViewActive)
+                ? fogSource.FogSolveScale : 1f;
+            // Classify RT at the SOLVE scale (B5, 2026-09-02) - but only while the solve is its
+            // only reader. The meniscus is full res and wants exact gaps in its few-pixel band, so
+            // whenever it is armed the RT stays full res and both read it as before; a scaled RT
+            // would have sent the meniscus back to its three-evaluation analytic path at full res,
+            // costing more in the straddle band than the scaled classify saves. Deep frames (line
+            // off screen) are where the scaled solve was paying a full-res classify for nothing.
+            float classifyScale = WaterVolume.WaterlineActive ? ClassifyFullResScale : solveScale;
+            float appliedClassifyScale = ClassifyFullResScale;
             TextureHandle classifyRt = classifyRtRecorded
-                ? RecordClassifyPass(renderGraph, cameraColor)
+                ? RecordClassifyPass(renderGraph, cameraColor, classifyScale,
+                                     out appliedClassifyScale)
                 : default;
+            // Full-res consumers outside this chain (the god-ray composite) LOAD the RT through
+            // this handoff; see TryGetClassifyRt for why it is stamped with camera + frame.
+            bool classifyRtFullRes = classifyRtRecorded
+                                  && appliedClassifyScale >= ClassifyFullResScale;
+            PublishClassifyRtHandoff(cameraData.camera, classifyRtFullRes ? classifyRt : default);
 
             // Order matters: absorb (scene *= transmittance) then inscatter (scene += fog),
             // then the waterline meniscus ON TOP of the fogged scene (it darkens the final
@@ -350,12 +404,6 @@ namespace AbstractOcclusion.WebGpuWater
             // independently (a straddling near plane arms the line before the eye submerges).
             if (WaterVolume.UnderwaterFogActive || riverFogRecorded)
             {
-                // Half-res solve (the C1 unlock): the scale is the fog source's tier knob, probe-
-                // writable like the fog mode. Debug views force full res - they ride the solve
-                // alpha flags, which the scaled path repurposes for eye depth, and a view is read
-                // by exact colour purity that no upsample filter may touch.
-                float solveScale = (fogSource != null && !WaterDebugView.FogViewActive)
-                    ? fogSource.FogSolveScale : 1f;
                 RecordFogPass(renderGraph, resources, cameraColor, "WaterUnderwaterFog",
                               classifyRt, solveScale);
             }
@@ -363,8 +411,47 @@ namespace AbstractOcclusion.WebGpuWater
             // debug view exists to show - so it stands down while one is selected. The absorb and
             // inscatter passes above are NOT gated: they ARE the view (absorb wipes, inscatter
             // writes), which is also why a view only appears while the fog is armed.
+            // Handed the RT only at full res (by construction above whenever it is armed, but the
+            // gate is on the scale ACTUALLY applied so the two can never disagree).
             if (WaterVolume.WaterlineActive && !WaterDebugView.FogViewActive)
-                RecordWaterlinePass(renderGraph, resources, cameraColor, classifyRt);
+                RecordWaterlinePass(renderGraph, resources, cameraColor,
+                                    classifyRtFullRes ? classifyRt : default);
+        }
+
+        // ---- Classify RT handoff to passes outside this chain -----------------------------
+        // The god-ray composite (LargeBodyAtmospherePass, one injection slot later in the SAME
+        // camera's graph) masks its shafts with the identical waterline pair this chain already
+        // classified. It reaches the handle through here rather than through the global texture
+        // alone so it can declare the read (UseTexture) exactly as this file's own consumers do.
+        // Stamped with the camera AND the frame because the two passes gate independently: the
+        // god-ray pass can enqueue on a frame this pass did not (waterFog off, camera tilt), and a
+        // TextureHandle from an earlier graph must never be handed to a later one. URP records
+        // and executes one camera's graph before the next, so a same-camera same-frame stamp is
+        // exactly "recorded earlier in this graph".
+        static TextureHandle s_ClassifyRtHandoff;
+        static Camera s_ClassifyRtCamera;
+        static int s_ClassifyRtFrame = -1;
+
+        static void PublishClassifyRtHandoff(Camera camera, TextureHandle classifyRt)
+        {
+            s_ClassifyRtHandoff = classifyRt;
+            s_ClassifyRtCamera = camera;
+            s_ClassifyRtFrame = Time.frameCount;
+        }
+
+        /// <summary>The full-resolution classify RT this chain recorded earlier in
+        /// <paramref name="camera"/>'s current graph, if any. False (and an invalid handle) on
+        /// every other frame, so a consumer falls back to its analytic classification. Consumed
+        /// ONCE: a handle belongs to the graph that created it, so it is never handed out a
+        /// second time (a same-camera re-render in the same frame is a new graph).</summary>
+        internal static bool TryGetClassifyRt(Camera camera, out TextureHandle classifyRt)
+        {
+            bool sameRecord = s_ClassifyRtFrame == Time.frameCount
+                           && s_ClassifyRtCamera == camera
+                           && camera != null;
+            classifyRt = sameRecord ? s_ClassifyRtHandoff : default;
+            s_ClassifyRtHandoff = default;
+            return sameRecord && classifyRt.IsValid();
         }
 
         bool RecordRiverFogDepthPrepassIfNeeded(RenderGraph renderGraph, TextureHandle sizeSource,
@@ -398,6 +485,13 @@ namespace AbstractOcclusion.WebGpuWater
             WaterRiverSurface.AppendActiveSurfaceRenderers(s_VisibleWaterSurfaceRenderers);
             if (s_VisibleWaterSurfaceRenderers.Count == 0) return false;
 
+            // Same fraction of camera resolution as the ownership prepass (B1, 2026-09-02): the
+            // shader compares this eye depth against a river exit / box entry with a 0.01 m
+            // allowance, a wave-scale test that survives half res the way the ownership sign
+            // does; only a one-texel silhouette row at a sheet edge can now land on the other
+            // owner, the same +-2 screen pixel trade PrepassResolutionScale documents. Pixel
+            // LOADs need the scale, so it is published beside the RT from the value ACTUALLY
+            // applied (the _OceanSurfacePrepassScale doctrine).
             TextureDesc colorDesc = renderGraph.GetTextureDesc(sizeSource);
             colorDesc.name = VisibleWaterSurfaceDepthName;
             colorDesc.colorFormat = GraphicsFormat.R32_SFloat;
@@ -405,6 +499,8 @@ namespace AbstractOcclusion.WebGpuWater
             colorDesc.msaaSamples = MSAASamples.None;
             colorDesc.clearBuffer = true;
             colorDesc.clearColor = Color.clear;
+            float appliedScale = ApplyPrepassScale(ref colorDesc);
+            Shader.SetGlobalFloat(ID_VisibleWaterSurfaceDepthScale, appliedScale);
             TextureHandle color = renderGraph.CreateTexture(colorDesc);
 
             TextureDesc depthDesc = renderGraph.GetTextureDesc(sizeSource);
@@ -413,6 +509,7 @@ namespace AbstractOcclusion.WebGpuWater
             depthDesc.depthBufferBits = DepthBits.Depth32;
             depthDesc.msaaSamples = MSAASamples.None;
             depthDesc.clearBuffer = true;
+            ApplyPrepassScale(ref depthDesc);
             TextureHandle depth = renderGraph.CreateTexture(depthDesc);
 
             using var builder = renderGraph.AddRasterRenderPass<PrepassData>(
@@ -457,7 +554,8 @@ namespace AbstractOcclusion.WebGpuWater
             });
         }
 
-        TextureHandle RecordClassifyPass(RenderGraph renderGraph, TextureHandle sizeSource)
+        TextureHandle RecordClassifyPass(RenderGraph renderGraph, TextureHandle sizeSource,
+                                         float scale, out float appliedScale)
         {
             TextureDesc classifyDesc = renderGraph.GetTextureDesc(sizeSource);
             classifyDesc.name = ClassifyRtTextureName;
@@ -465,6 +563,11 @@ namespace AbstractOcclusion.WebGpuWater
             classifyDesc.depthBufferBits = DepthBits.None;
             classifyDesc.msaaSamples = MSAASamples.None;
             classifyDesc.clearBuffer = false;
+            // Published from the scale ACTUALLY applied, like _WaterFogSolveScale: the solve's
+            // pixel LOAD multiplies through it, so uniform and RT can never disagree (scale 1 =
+            // the shipped full-res target, texel for texel).
+            appliedScale = ApplyScale(ref classifyDesc, scale);
+            Shader.SetGlobalFloat(ID_WaterFogClassifyScale, appliedScale);
             TextureHandle classifyRt = renderGraph.CreateTexture(classifyDesc);
 
             using var builder = renderGraph.AddRasterRenderPass<ClassifyPassData>(
@@ -848,19 +951,24 @@ namespace AbstractOcclusion.WebGpuWater
 
         // The waterline meniscus draws over the fogged scene AND (for the KWS-style lens tension)
         // re-samples it at a warped UV - a raster pass cannot read its own colour target, so the
-        // scene is copied to a transient first and handed to the material. The copy costs one
-        // camera-sized blit only during the few straddle frames the waterline is armed.
+        // scene is copied to a transient first and handed to the material. WaterlineActive is
+        // the WIDE envelope band around the rest plane (WaterVolume.ComputeCameraSubmerged: the
+        // near plane straddles rest +- (envelope + pad), metres on an FFT ocean), not the few
+        // frames the line is actually on screen - so the copy has its own, tighter CPU gate.
         void RecordWaterlinePass(RenderGraph renderGraph, UniversalResourceData resources,
                                  TextureHandle cameraColor, TextureHandle classifyRt)
         {
             // The scene copy feeds ONLY the lens-tension warp: the shader samples
             // _WaterlineSceneTex exclusively inside its `_WaterlineWarp > 0` branch, so at
             // warp 0 the camera-sized copy was dead work on every straddle frame. Gated on the
-            // SAME knob that uniform is published from (the fog source's MeniscusWarp,
-            // PublishWaterline); black is bound in its place so no backend ever sees a stale
+            // SAME facts that uniform is published from (the fog source's MeniscusWarp AND
+            // WaterlineWarpCopyWanted - PublishWaterline publishes warp 0 whenever the copy is
+            // not wanted, so the shader takes its no-warp branch on exactly the frames the copy
+            // is skipped); black is bound in its place so no backend ever sees a stale
             // transient on the sampler.
             WaterVolume warpSource = WaterVolume.FogSource;
-            bool warpActive = warpSource != null && warpSource.MeniscusWarp > 0f;
+            bool warpActive = warpSource != null && warpSource.MeniscusWarp > 0f
+                           && WaterVolume.WaterlineWarpCopyWanted;
             TextureHandle sceneCopy = default;
             if (warpActive)
             {

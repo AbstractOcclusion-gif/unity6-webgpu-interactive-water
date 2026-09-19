@@ -54,12 +54,11 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.PropertyToID(MouthEndWaveFramePropertyName);
         static readonly int MouthEndWaveAnchorId =
             Shader.PropertyToID(MouthEndWaveAnchorPropertyName);
-        static readonly int MouthOutflowCountId = Shader.PropertyToID("_MouthOutflowCount");
-        static readonly int MouthOutflowOriginsId = Shader.PropertyToID("_MouthOutflowOrigins");
-        static readonly int MouthOutflowDirectionsId = Shader.PropertyToID("_MouthOutflowDirections");
-        static readonly int MouthOutflowParametersId = Shader.PropertyToID("_MouthOutflowParameters");
-        static readonly int MouthOutflowFoamFramesId =
-            Shader.PropertyToID("_MouthOutflowFoamFrames");
+        static readonly int MouthOutflowCountId = WaterShaderProps.MouthOutflowCount;
+        static readonly int MouthOutflowOriginsId = WaterShaderProps.MouthOutflowOrigins;
+        static readonly int MouthOutflowDirectionsId = WaterShaderProps.MouthOutflowDirections;
+        static readonly int MouthOutflowParametersId = WaterShaderProps.MouthOutflowParameters;
+        static readonly int MouthOutflowFoamFramesId = WaterShaderProps.MouthOutflowFoamFrames;
         static readonly int MouthOutflowFoamAppearanceId =
             WaterShaderProps.MouthOutflowFoamAppearance;
         static readonly List<WaterRiverSurface> LiveSurfaces = new();
@@ -96,6 +95,11 @@ namespace AbstractOcclusion.WebGpuWater
             new Vector4[WaterRiverMouthOutflow.MaximumShaderOutflows];
         readonly Vector4[] _mouthOutflowFoamAppearances =
             new Vector4[WaterRiverMouthOutflow.MaximumShaderOutflows];
+        // The ribbon's substitutions for ids the parent body's publisher derives (see
+        // RefreshTrackedOverrides). Handed INTO the publisher's cached pass, never written on top
+        // of it: the block's cache shadows every tracked id, and an out-of-band rewrite left the
+        // shadow lying (hotfix-d rule, WaterUniformPublisher.WriteBodyProps).
+        readonly TrackedUniformOverrides _trackedOverrides = new();
         float _sourceLongitudinalMeters;
         float _mouthLongitudinalMeters;
         Vector3 _mouthRight;
@@ -220,10 +224,6 @@ namespace AbstractOcclusion.WebGpuWater
                 Debug.LogError($"WaterRiverSurface rebuild failed: {exception.Message}", this);
             }
         }
-
-        internal void Configure(WaterRiverSpline riverSpline, WaterVolume body,
-                                Material surfaceMaterial, int segmentSamples)
-            => Configure(riverSpline, body, surfaceMaterial, null, segmentSamples);
 
         internal void Configure(WaterRiverSpline riverSpline, WaterVolume body,
                                 Material surfaceMaterial, Material underMaterial,
@@ -387,8 +387,10 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         // The current field usually sits beside the spline (WaterRiverCurrentField.Reset), but a
-        // surface-local one wins so a ribbon can carry its own. Re-run by OnValidate through
-        // RequestRebuild's callers when the spline reference changes.
+        // surface-local one wins so a ribbon can carry its own. Resolved ONLY from OnEnable
+        // (OnValidate does not re-run it): under a facade, WaterRiver.ApplyWiring rewrites
+        // `spline` on every enable/validate before this runs, and a standalone surface whose
+        // spline is swapped while enabled keeps the old field until its next enable.
         void ResolveCurrentField()
         {
             _currentField = GetComponent<WaterRiverCurrentField>();
@@ -635,11 +637,16 @@ namespace AbstractOcclusion.WebGpuWater
             using var marker = PublicationMarker.Auto();
             if (_meshRenderer == null) return;
             _propertyBlock ??= new MaterialPropertyBlock();
+            RefreshTrackedOverrides();
             if (waterVolume != null && waterVolume.isActiveAndEnabled)
-                waterVolume.WriteBodyProps(_propertyBlock);
+                waterVolume.WriteBodyProps(_propertyBlock, _trackedOverrides);
             else
+            {
+                // Standalone ribbon: no publisher pass, so nothing shadows the block and the
+                // same values go in directly.
                 _propertyBlock.Clear();
-            PublishMouthOutflowProperties();
+                _trackedOverrides.WriteTo(_propertyBlock);
+            }
             ApplyRiverShaderOverrides();
             PublishEndWaveAnchors();
             for (int i = 0; i < _rendererPropertySources.Count; i++)
@@ -657,7 +664,26 @@ namespace AbstractOcclusion.WebGpuWater
             }
         }
 
-        void PublishMouthOutflowProperties()
+        // The values the ribbon substitutes for ids the parent's publisher derives - every id
+        // here is one WaterUniformPublisher.WriteBodyUniforms (or the shore field it delegates
+        // to) writes, so it MUST travel through the publisher's override hook.
+        void RefreshTrackedOverrides()
+        {
+            // Large bodies create a Play-only dense patch and ask their flat base sheet to discard
+            // underneath it. A ribbon is independent geometry, so inheriting that ownership flag
+            // makes the entire river vanish as soon as the patch is created on entering Play Mode.
+            _trackedOverrides.SetFloat(WaterShaderProps.PatchCoverActive, DisabledFeature);
+            // Features whose coordinates require a rectangular pool or a baked shore field are
+            // inert until the dedicated river baking steps own that data.
+            _trackedOverrides.SetFloat(WaterShaderProps.SurfActive, DisabledFeature);
+            _trackedOverrides.SetFloat(WaterShaderProps.UseBedDepth, DisabledFeature);
+            _trackedOverrides.SetFloat(WaterShaderProps.ClipOceanToTerrain, DisabledFeature);
+            RefreshMouthOutflowOverrides();
+        }
+
+        // The ribbon's OWN mouth outflow (the parent publishes the list of rivers flowing INTO
+        // the parent, which is a different set).
+        void RefreshMouthOutflowOverrides()
         {
             Array.Clear(_mouthOutflowOrigins, 0, _mouthOutflowOrigins.Length);
             Array.Clear(_mouthOutflowDirections, 0, _mouthOutflowDirections.Length);
@@ -673,34 +699,58 @@ namespace AbstractOcclusion.WebGpuWater
                 outflow.WriteShaderData(
                     _mouthOutflowOrigins, _mouthOutflowDirections, _mouthOutflowParameters,
                     _mouthOutflowFoamFrames, _mouthOutflowFoamAppearances, 0);
-            _propertyBlock.SetFloat(MouthOutflowCountId, active ? EnabledFeature : DisabledFeature);
-            _propertyBlock.SetVectorArray(MouthOutflowOriginsId, _mouthOutflowOrigins);
-            _propertyBlock.SetVectorArray(MouthOutflowDirectionsId, _mouthOutflowDirections);
-            _propertyBlock.SetVectorArray(MouthOutflowParametersId, _mouthOutflowParameters);
-            _propertyBlock.SetVectorArray(MouthOutflowFoamFramesId, _mouthOutflowFoamFrames);
-            _propertyBlock.SetVectorArray(
+            _trackedOverrides.SetFloat(MouthOutflowCountId, active ? EnabledFeature : DisabledFeature);
+            _trackedOverrides.SetVectorArray(MouthOutflowOriginsId, _mouthOutflowOrigins);
+            _trackedOverrides.SetVectorArray(MouthOutflowDirectionsId, _mouthOutflowDirections);
+            _trackedOverrides.SetVectorArray(MouthOutflowParametersId, _mouthOutflowParameters);
+            _trackedOverrides.SetVectorArray(MouthOutflowFoamFramesId, _mouthOutflowFoamFrames);
+            _trackedOverrides.SetVectorArray(
                 MouthOutflowFoamAppearanceId, _mouthOutflowFoamAppearances);
         }
 
+        // Ids the parent's publisher never writes, so the block's cache does not track them and
+        // they are set on the block directly (they survive the cache's periodic Clear() because
+        // this runs after every publisher pass).
         void ApplyRiverShaderOverrides()
         {
             // The ribbon shares the established water look, including wind waves, detail normals,
-            // fog and refraction. Only features whose coordinates require a rectangular pool or
-            // baked shore field are inert until the dedicated river baking steps own that data.
+            // fog and refraction; the river-owned foam/fluid layers arm themselves through their
+            // renderer property sources.
             _propertyBlock.SetFloat(RiverModePropertyId, EnabledFeature);
-            // Large bodies create a Play-only dense patch and ask their flat base sheet to discard
-            // underneath it. A ribbon is independent geometry, so inheriting that ownership flag
-            // makes the entire river vanish as soon as the patch is created on entering Play Mode.
-            _propertyBlock.SetFloat(WaterShaderProps.PatchCoverActive, DisabledFeature);
-            _propertyBlock.SetFloat(WaterShaderProps.SurfActive, DisabledFeature);
-            _propertyBlock.SetFloat(WaterShaderProps.UseBedDepth, DisabledFeature);
-            _propertyBlock.SetFloat(WaterShaderProps.ClipOceanToTerrain, DisabledFeature);
             _propertyBlock.SetFloat(WaterShaderProps.RiverFoamActive, DisabledFeature);
             _propertyBlock.SetFloat(
                 WaterShaderProps.RiverFoamOverallStrength, EnabledFeature);
             _propertyBlock.SetFloat(
                 WaterShaderProps.RiverCascadeTransportActive, DisabledFeature);
             _propertyBlock.SetFloat(WaterShaderProps.RiverFluidActive, DisabledFeature);
+        }
+
+        // Id -> value table behind WaterUniformPublisher.IBodyUniformOverride. Dictionaries so
+        // the publisher's per-write lookup is one hash probe; entries are created once (the id
+        // set is fixed) and rewritten in place every publish.
+        sealed class TrackedUniformOverrides : WaterUniformPublisher.IBodyUniformOverride
+        {
+            readonly Dictionary<int, float> _floats = new();
+            readonly Dictionary<int, Vector4[]> _vectorArrays = new();
+
+            public void SetFloat(int id, float value) => _floats[id] = value;
+            public void SetVectorArray(int id, Vector4[] value) => _vectorArrays[id] = value;
+
+            public bool TryOverrideFloat(int id, out float value)
+                => _floats.TryGetValue(id, out value);
+
+            public bool TryOverrideVectorArray(int id, out Vector4[] value)
+                => _vectorArrays.TryGetValue(id, out value);
+
+            /// <summary>Standalone-ribbon path: no publisher pass, so the values are applied to
+            /// the block directly.</summary>
+            public void WriteTo(MaterialPropertyBlock block)
+            {
+                foreach (KeyValuePair<int, float> entry in _floats)
+                    block.SetFloat(entry.Key, entry.Value);
+                foreach (KeyValuePair<int, Vector4[]> entry in _vectorArrays)
+                    block.SetVectorArray(entry.Key, entry.Value);
+            }
         }
 
         // WriteBodyProps above published the parent's wind-wave anchor, which is the wrong

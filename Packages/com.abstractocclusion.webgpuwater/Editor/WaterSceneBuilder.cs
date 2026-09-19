@@ -53,12 +53,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             if (prefab == null)
             {
-                Debug.LogError($"[WebGpuWater] Failed to save the WaterVolume prefab at {WaterVolumePrefabPath}.");
+                Debug.LogError(LogPrefix + $"Failed to save the WaterVolume prefab at {WaterVolumePrefabPath}.");
                 return;
             }
 
             Selection.activeObject = prefab;
-            Debug.Log($"[WebGpuWater] WaterVolume prefab created at {WaterVolumePrefabPath}. " +
+            Debug.Log(LogPrefix + $"WaterVolume prefab created at {WaterVolumePrefabPath}. " +
                       "Drop it into a scene with a camera - it resolves the camera and sun automatically.");
         }
 
@@ -71,12 +71,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var volume = selected != null ? selected.GetComponentInChildren<WaterVolume>() : null;
             if (volume == null)
             {
-                Debug.LogError("[WebGpuWater] Select a GameObject with a WaterVolume first.");
+                Debug.LogError(LogPrefix + "Select a GameObject with a WaterVolume first.");
                 return;
             }
             if (volume.GetComponent<WaterFoamParticles>() != null)
             {
-                Debug.LogWarning("[WebGpuWater] That body already has foam particles.");
+                Debug.LogWarning(LogPrefix + "That body already has foam particles.");
                 return;
             }
             Undo.SetCurrentGroupName("Add Foam Particles");
@@ -92,14 +92,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             }
 
             Selection.activeObject = volume.gameObject;
-            Debug.Log($"[WebGpuWater] Foam particles added to '{volume.name}' and Foam enabled.");
+            Debug.Log(LogPrefix + $"Foam particles added to '{volume.name}' and Foam enabled.");
         }
 
         // Upgrade each body's splash materials to the lit splash shader in place.
         internal static void UpgradeSplashMaterialsMenu()
         {
             UpgradeSplashMaterials();
-            Debug.Log("[WebGpuWater] Splash crowns now use the 4x1 packed chunks; existing " +
+            Debug.Log(LogPrefix + "Splash crowns now use the 4x1 packed chunks; existing " +
                       "emitters received the entry-jet layer where missing.");
         }
 
@@ -111,7 +111,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var volumes = Object.FindObjectsByType<WaterVolume>(FindObjectsSortMode.None);
             if (volumes.Length == 0)
             {
-                Debug.LogError("[WebGpuWater] No WaterVolume in the open scene.");
+                Debug.LogError(LogPrefix + "No WaterVolume in the open scene.");
                 return;
             }
 
@@ -122,7 +122,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 touched += AssignFoamTextures(volume.surfaceUnder);
             }
             AssetDatabase.SaveAssets();
-            Debug.Log($"[WebGpuWater] Foam flipbook + normal map assigned to {touched} water material(s).");
+            Debug.Log(LogPrefix + $"Foam flipbook + normal map assigned to {touched} water material(s).");
         }
 
         static int AssignFoamTextures(Renderer surface)
@@ -155,7 +155,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             var all = Object.FindObjectsByType<WaterVolume>(FindObjectsSortMode.None);
             if (all == null || all.Length == 0)
             {
-                Debug.LogError("[WebGpuWater] Build the scene first (no WaterVolume found).");
+                Debug.LogError(LogPrefix + "Build the scene first (no WaterVolume found).");
                 return;
             }
             WaterVolume primary = System.Array.Find(all, c => c.IsPrimary) ?? all[0];
@@ -189,7 +189,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             EditorUtility.SetDirty(body);
             UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(bodyRoot.scene);
             Undo.CollapseUndoOperations(undoGroup);
-            Debug.Log("[WebGpuWater] Secondary water body added. Move its 'Frame' child to reposition; " +
+            Debug.Log(LogPrefix + "Secondary water body added. Move its 'Frame' child to reposition; " +
                       "edit that WaterVolume's Volume Extent for a different size/shape.");
         }
 

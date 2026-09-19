@@ -52,16 +52,6 @@ namespace AbstractOcclusion.WebGpuWater
             }
         }
 
-        /// <summary>Sample the surface at a world point on whichever body contains it (resolved per point),
-        /// so a hull spanning two bodies floats correctly on each. False + invalid sample when no body
-        /// contains the point.</summary>
-        public static bool SampleHeightAcrossBodies(Vector3 worldPoint, out WaterSample sample, float minimumLength = 0f)
-        {
-            WaterVolume body = BodyContaining(worldPoint);
-            if (body == null) { sample = default; return false; }
-            return body.TrySampleWorld(worldPoint, WaterQueryFields.HeightNormalVelocity, minimumLength, false, out sample);
-        }
-
         // The shared per-point evaluator. Height/normal/wave drift mirror TryGetSurface + TrySampleSubmersion
         // exactly so single-point and batched queries agree. Returns false (and leaves sample invalid) when
         // the point is outside the footprint or a supported readback has not landed yet.

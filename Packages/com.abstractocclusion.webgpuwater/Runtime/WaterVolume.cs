@@ -304,6 +304,8 @@ namespace AbstractOcclusion.WebGpuWater
                 UnderwaterFogActive = false;
                 WaterlineActive = false; // same static-gate pattern: the meniscus pass reads it too
                 CameraSubmerged = false; // same pattern: the after-fog foam overlay reads it
+                WaterlineWarpCopyWanted = false;      // same pattern: the meniscus warp copy gate
+                UnderwaterFogSimplePublished = false; // same pattern: the WATER_FOG_SIMPLE CPU mirror
                 FogSource = null;
                 _globalsSource = null;   // the globals occupant stands down with ClearBodyGlobals below
                 _globalsFrame = -1;

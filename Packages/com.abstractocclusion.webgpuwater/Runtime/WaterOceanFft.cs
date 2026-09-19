@@ -309,7 +309,15 @@ namespace AbstractOcclusion.WebGpuWater
         // briefly covers the physics/render cadence and async landing latency without moving a
         // 256 KiB field across the GPU/CPU boundary for decorative oceans.
         const int ReadbackDemandWindowFrames = 12;
-        int _lastReadbackDemandFrame = -1000;
+        // "Never": far enough in the past that every window test above fails from frame 0.
+        const int NeverStampedFrame = -1000;
+        int _lastReadbackDemandFrame = NeverStampedFrame;
+        // True when the most recent Dispatch ran BakeHeightField. The bake is demand-gated like the
+        // readback, so a readback issued at demand onset must wait for the next Dispatch to bake -
+        // otherwise it would land a field left over from whenever the previous demand lapsed. A
+        // flag, not a frame stamp: a PAUSED body dispatches nothing, and its consumers must keep
+        // re-landing the last bake exactly as before (objects still float on it).
+        bool _bakedAtLastDispatch;
 
         // The debug view shows the readable preview, not the raw signed displacement.
         // Null in release builds: the preview array is a debug aid and is neither allocated nor
@@ -661,25 +669,13 @@ namespace AbstractOcclusion.WebGpuWater
             if (_normal.useMipMap) _normal.GenerateMips();
             (_foamHistA, _foamHistB) = (_foamHistB, _foamHistA); // ping-pong: this frame becomes next frame's prev
 
-            // Bake the camera-centred height field for CPU buoyancy readback.
-            _bakedCenter = cameraXZ;
-            _bakedSize = HeightFieldSize;
-            _bakedTime = waveTime;
-            _cs.SetVector(ID_FieldCenter, new Vector4(cameraXZ.x, cameraXZ.y, 0f, 0f));
-            _cs.SetFloat(ID_FieldSize, HeightFieldSize);
-            _cs.SetInt(ID_FieldRes, HeightFieldRes);
-            _cs.SetFloat(ID_FieldAmplitude, amplitude);
-            _cs.SetTexture(_kBake, ID_Displacement, _displacement);
-            _cs.SetTexture(_kBake, ID_HeightField, _heightField);
-            _cs.SetTexture(_kBake, ID_OceanDirectionMap,
-                aperiodic.DirectionMap ? aperiodic.DirectionMap : Texture2D.grayTexture);
-            _cs.SetVector(ID_OceanAperiodicParams,
-                new Vector4(aperiodic.Enabled ? 1f : 0f, aperiodic.TileScale, aperiodic.DirectionStrength, 0f));
-            _cs.SetVector(ID_OceanDirectionMapFrame,
-                new Vector4(aperiodic.MapCenter.x, aperiodic.MapCenter.y, 1f / aperiodic.MapSize, 0f));
-            fetchField?.BindTo(_cs, _kBake);
-            int bakeGroups = Mathf.CeilToInt(HeightFieldRes / (float)ThreadGroupSize);
-            _cs.Dispatch(_kBake, bakeGroups, bakeGroups, 1);
+            // Bake the camera-centred height field for CPU buoyancy readback - on the SAME demand
+            // window the readback itself is gated on (RequestHeightReadback). The bake is a 128^2
+            // dispatch into a 256 KiB float target whose only consumer is that readback; a
+            // decorative ocean nobody floats on or fog-gates against used to pay it every dispatch.
+            _bakedAtLastDispatch = false;
+            if (ReadbackDemandActive())
+                BakeHeightField(waveTime, amplitude, cameraXZ, fetchField, aperiodic);
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             // Debug-view remap only - a per-frame kernel over all cascades, so it must never run
@@ -700,13 +696,52 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.SetGlobalVector(ID_GlobalVisibleAreas, _visibleAreas);
         }
 
+        // The bake stamps (_bakedCenter/_bakedSize/_bakedTime) are written HERE, inside the gated
+        // call, so they always describe the field the target actually holds: a skipped bake leaves
+        // both the texture and its stamps at the previous bake, and the readback below samples the
+        // landed data against exactly that centre/time.
+        void BakeHeightField(float waveTime, float amplitude, Vector2 cameraXZ,
+                             WaterSeaStateFetchField fetchField, in AperiodicParams aperiodic)
+        {
+            _bakedCenter = cameraXZ;
+            _bakedSize = HeightFieldSize;
+            _bakedTime = waveTime;
+            _bakedAtLastDispatch = true;
+            _cs.SetVector(ID_FieldCenter, new Vector4(cameraXZ.x, cameraXZ.y, 0f, 0f));
+            _cs.SetFloat(ID_FieldSize, HeightFieldSize);
+            _cs.SetInt(ID_FieldRes, HeightFieldRes);
+            _cs.SetFloat(ID_FieldAmplitude, amplitude);
+            _cs.SetTexture(_kBake, ID_Displacement, _displacement);
+            _cs.SetTexture(_kBake, ID_HeightField, _heightField);
+            // The aperiodic tiling uniforms are read by the bake kernel only (OceanBakeDisplacement),
+            // so they travel with it.
+            _cs.SetTexture(_kBake, ID_OceanDirectionMap,
+                aperiodic.DirectionMap ? aperiodic.DirectionMap : Texture2D.grayTexture);
+            _cs.SetVector(ID_OceanAperiodicParams,
+                new Vector4(aperiodic.Enabled ? 1f : 0f, aperiodic.TileScale, aperiodic.DirectionStrength, 0f));
+            _cs.SetVector(ID_OceanDirectionMapFrame,
+                new Vector4(aperiodic.MapCenter.x, aperiodic.MapCenter.y, 1f / aperiodic.MapSize, 0f));
+            fetchField?.BindTo(_cs, _kBake);
+            int bakeGroups = Mathf.CeilToInt(HeightFieldRes / (float)ThreadGroupSize);
+            _cs.Dispatch(_kBake, bakeGroups, bakeGroups, 1);
+        }
+
+        // A CPU consumer (buoyancy, fog gate, displaced injection) sampled the field within the
+        // last window of frames. Gates the bake AND the readback, so neither the dispatch nor the
+        // 256 KiB transfer runs for an ocean nothing reads back.
+        bool ReadbackDemandActive()
+            => Time.frameCount - _lastReadbackDemandFrame <= ReadbackDemandWindowFrames;
+
         // Throttled by the shared channel (one request in flight, like WaterSurfaceSampler);
         // region centre stored BEFORE issue so the landed data is sampled against the centre it
-        // was baked at (the camera moved since).
+        // was baked at (the camera moved since). The bake flag holds requests back only for the
+        // first frames after demand onset (until the next Dispatch bakes) - while demand persists
+        // every Dispatch bakes, and a never-baked target (flag false since construction) is never
+        // transferred at all.
         internal void RequestHeightReadback()
         {
             if (!_ready || !_readback.CanRequest) return;
-            if (Time.frameCount - _lastReadbackDemandFrame > ReadbackDemandWindowFrames) return;
+            if (!ReadbackDemandActive() || !_bakedAtLastDispatch) return;
             _pendingCenter = _bakedCenter;
             _pendingSize = _bakedSize;
             _pendingTime = _bakedTime;

@@ -103,7 +103,7 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("Scatter density of the water walls relative to the open fog. Slightly above 1 " +
                  "makes the carve boundary read denser than the surrounding water (the Crest-style " +
                  "carved presence); 1 blends seamlessly.")]
-        [Range(0.5f, 2f)] public float wallScatterBoost = 1.2f;
+        [Range(0.5f, 2f)] [SerializeField] internal float wallScatterBoost = 1.2f;
 
         [Tooltip("Water-wall shader. Leave empty to resolve the packaged shader by name (works in " +
                  "the editor; a BUILD needs it assigned here or in Always Included Shaders, or the " +
@@ -114,18 +114,18 @@ namespace AbstractOcclusion.WebGpuWater
 
         [Tooltip("Colour the carve-boundary edges shade TOWARD. Black is pure occlusion (the " +
                  "classic look); a deep water tint keeps the edges coloured instead of grey.")]
-        [ColorUsage(false)] public Color edgeColor = Color.black;
+        [ColorUsage(false)] [SerializeField] internal Color edgeColor = Color.black;
 
         [Tooltip("Strength of the boundary occlusion on the carve: 0 = no visible outline, " +
                  "1 = the outline fully saturated toward Edge Color. A Box shades its edges and " +
                  "corners; a Sphere has none, so it shades its silhouette RIM instead - both are " +
                  "the shape's visible outline.")]
-        [Range(0f, 1f)] public float edgeIntensity = DefaultEdgeIntensity;
+        [Range(0f, 1f)] [SerializeField] internal float edgeIntensity = DefaultEdgeIntensity;
 
         [Tooltip("How far the boundary shading reaches in from the outline (spread), as a fraction " +
                  "of the half-extent. One value covers both shapes: a Box measures it across its " +
                  "faces, a Sphere across its silhouette.")]
-        [Range(0.01f, 0.5f)] public float edgeSpread = DefaultEdgeSpread;
+        [Range(0.01f, 0.5f)] [SerializeField] internal float edgeSpread = DefaultEdgeSpread;
 
         // The pre-knob hard-coded look: lerp(0.45, 1, edge) over a 0.12 half-extent band =
         // black edges at intensity 0.55, spread 0.12. Named so the defaults stay honest.
@@ -147,17 +147,17 @@ namespace AbstractOcclusion.WebGpuWater
         [Tooltip("Cull foam, spray and splash particles inside this volume. Turn OFF for a " +
                  "volume that only carves the surface - a room with open windows can let " +
                  "spray blow through its dry interior.")]
-        public bool affectParticles = true;
+        [SerializeField] internal bool affectParticles = true;
 
         [Tooltip("Softness of the particle cut at the volume boundary, as a fraction of the " +
                  "half-extent: sprites dissolve over this shell just inside the surface " +
                  "instead of clipping on a razor edge. 0 = hard clip exactly on the surface.")]
-        [Range(0f, 0.5f)] public float particleFadeBand = DefaultParticleFadeBand;
+        [Range(0f, 0.5f)] [SerializeField] internal float particleFadeBand = DefaultParticleFadeBand;
 
         [Tooltip("How fast simulated foam/spray already inside dies when this volume sweeps " +
                  "over it (a moving hull plowing through its own bow plume). 1 = the stock " +
                  "dissolve; higher snuffs a swept plume quicker, lower lets it linger.")]
-        [Range(0.25f, 4f)] public float particleDissolveSpeed = 1f;
+        [Range(0.25f, 4f)] [SerializeField] internal float particleDissolveSpeed = 1f;
 
         // Thin enough that the dissolve reads as a soft edge, not a hollow shell.
         const float DefaultParticleFadeBand = 0.06f;
@@ -390,14 +390,43 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         /// <summary>World -> unit-local matrix for this volume: the shader's inside test is
-        /// the primitive kernel at LocalHalfExtent (WaterPrimitiveShape.hlsl).</summary>
-        internal Matrix4x4 WorldToShapeMatrix() => ShapeToWorldMatrix().inverse;
+        /// the primitive kernel at LocalHalfExtent (WaterPrimitiveShape.hlsl). Cached: since the
+        /// 2026-08-29 domain resolver every buoyancy body, spray pump, membership object,
+        /// interactor and splash droplet asks <see cref="ContainsPoint"/> every frame, so the
+        /// TRS + inverse is rebuilt only when the pose or Size that feed it have changed.</summary>
+        internal Matrix4x4 WorldToShapeMatrix()
+        {
+            // transform.localToWorldMatrix is one native read that changes whenever position,
+            // rotation, lossyScale or the parent chain does - every input ShapeToWorldMatrix
+            // reads - and, unlike transform.hasChanged, it is not a flag another reader can
+            // reset under us. Size is a public field, so it is part of the key too. The
+            // compares are EXACT on purpose (see WaterUniformPublisher.ExactlyEqual): the
+            // approximate Unity operators would let a slowly drifting hull stay under the
+            // epsilon every frame and the cached matrix would never follow it.
+            Matrix4x4 pose = transform.localToWorldMatrix;
+            if (_worldToShapeValid &&
+                WaterUniformPublisher.ExactlyEqual(in pose, in _worldToShapePose) &&
+                WaterUniformPublisher.ExactlyEqual(size, _worldToShapeSize))
+                return _worldToShape;
+
+            _worldToShape = ShapeToWorldMatrix().inverse;
+            _worldToShapePose = pose;
+            _worldToShapeSize = size;
+            _worldToShapeValid = true;
+            return _worldToShape;
+        }
+
+        // WorldToShapeMatrix cache + the inputs it was built from (see the method).
+        Matrix4x4 _worldToShape;
+        Matrix4x4 _worldToShapePose;
+        Vector3 _worldToShapeSize;
+        bool _worldToShapeValid;
 
         /// <summary>True when <paramref name="worldPoint"/> lies inside any active volume - the
         /// CPU twin of the shader's InsideExclusion (WaterExclusion.hlsl). Input routing uses it
-        /// so clicks and drags never ripple or splash the carved-dry surface. The active list is
-        /// tiny (a handful of rooms), so the per-call matrix inversions are nothing next to the
-        /// raycast that precedes every call.</summary>
+        /// so clicks and drags never ripple or splash the carved-dry surface, and the domain
+        /// resolver applies it as the dry-wins veto on every gameplay sample (rule 5) - which
+        /// is why the world->shape matrix is cached per volume rather than inverted per call.</summary>
         internal static bool ContainsPoint(Vector3 worldPoint)
         {
             for (int i = 0; i < _active.Count; i++)

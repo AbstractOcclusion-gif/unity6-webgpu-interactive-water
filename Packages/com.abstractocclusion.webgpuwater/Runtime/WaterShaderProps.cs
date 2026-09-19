@@ -104,6 +104,24 @@ namespace AbstractOcclusion.WebGpuWater
         internal static readonly int MouthOutflowFoamAppearance =
             Shader.PropertyToID(MouthOutflowFoamAppearanceName);
 
+        // ---- WaterUniformPublisher <-> WaterRiverSurface: the rest of the mouth-outflow list ----
+        // The publisher writes a HOST body's list; the ribbon substitutes its OWN through the
+        // publisher's override hook. Two declarations of these names were a drift the constants
+        // validator cannot see.
+        internal const string MouthOutflowCountName = "_MouthOutflowCount";
+        internal const string MouthOutflowOriginsName = "_MouthOutflowOrigins";
+        internal const string MouthOutflowDirectionsName = "_MouthOutflowDirections";
+        internal const string MouthOutflowParametersName = "_MouthOutflowParameters";
+        internal const string MouthOutflowFoamFramesName = "_MouthOutflowFoamFrames";
+        internal static readonly int MouthOutflowCount = Shader.PropertyToID(MouthOutflowCountName);
+        internal static readonly int MouthOutflowOrigins = Shader.PropertyToID(MouthOutflowOriginsName);
+        internal static readonly int MouthOutflowDirections =
+            Shader.PropertyToID(MouthOutflowDirectionsName);
+        internal static readonly int MouthOutflowParameters =
+            Shader.PropertyToID(MouthOutflowParametersName);
+        internal static readonly int MouthOutflowFoamFrames =
+            Shader.PropertyToID(MouthOutflowFoamFramesName);
+
         // ---- WaterShoreDepthField.cs <-> WaterSimulation.cs ----
         internal const string ShoreShoalDepthName = "_ShoreShoalDepth";
         internal const string ShoreGreenBandDepthName = "_ShoreGreenBandDepth";

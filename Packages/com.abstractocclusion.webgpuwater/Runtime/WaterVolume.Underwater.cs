@@ -42,6 +42,31 @@ namespace AbstractOcclusion.WebGpuWater
         /// Independent of the submerge flag: the line arms BEFORE the eye goes under.</summary>
         internal static bool WaterlineActive { get; private set; }
 
+        /// <summary>True while the meniscus's lens-tension warp can put anything on screen this
+        /// frame, so its camera-colour COPY is worth recording (WaterUnderwaterFogPass). The warp
+        /// re-samples a band a few pixels tall around the crossing, which can only be on screen
+        /// while the eye's own surface height sits within the near plane's vertical reach (plus a
+        /// pad for readback lag and chop); <see cref="WaterlineActive"/> is the metres-wide
+        /// envelope band and arms far more frames than that. PublishWaterline publishes warp 0 on
+        /// the same frames, so the shader's no-warp branch and the skipped copy always agree.
+        /// Fails ARMED when the eye's surface height is not a measurement (FFT readback not yet
+        /// available), so a missing readback can only cost a copy, never the warp.</summary>
+        internal static bool WaterlineWarpCopyWanted { get; private set; }
+
+        /// <summary>CPU mirror of the WATER_FOG_SIMPLE global keyword as last published by
+        /// PublishUnderwater (the fog tier's Simple mode, OR a river-override frame - both flat
+        /// waterlines). The god-ray pass selects its Simple/Full raymarch PASS by this, so the
+        /// shafts and the fog keep agreeing by construction now that the fork is a pass index
+        /// rather than a keyword variant (LargeBodyAtmospherePass).</summary>
+        internal static bool UnderwaterFogSimplePublished { get; private set; }
+
+        // Pad past the near plane's own vertical reach for the warp-copy gate. Covers the
+        // ~1-2 frame readback lag of the eye's surface height (a few tens of centimetres at
+        // wave speed in a heavy sea) and the vertical error of classifying the crossing at the
+        // near-plane xz instead of the eye's (chop x slope, under a metre). Generous on purpose:
+        // over-copying costs one blit, under-copying drops the warp for a frame.
+        const float WaterlineWarpCopyPadMeters = 1.5f;
+
         /// <summary>True while the camera is submerged in the primary body (the CPU mirror of
         /// the _CameraUnderwater global). The after-fog pond-foam overlay reads it: submerged
         /// frames keep the queue-time foam draw (the fog is in front of the foam), so the
@@ -69,9 +94,10 @@ namespace AbstractOcclusion.WebGpuWater
             FogSource = this;
             if (_globalsSource != this || _globalsFrame != Time.frameCount)
                 PublishBodyGlobalsTracked();
+            UnderwaterFogSimplePublished = UnderwaterFogSimple;
             Publisher.PublishUnderwater(
                 0f, VolumeCenter.y, IsOceanClipmap ? 1f : 0f,
-                UnderwaterFogSimple ? 1f : 0f, 0f, 0f);
+                UnderwaterFogSimplePublished ? 1f : 0f, 0f, 0f);
         }
 
         // Screen-space caustic projection runs PER BODY: any active body with a caustic RT and its
@@ -171,6 +197,12 @@ namespace AbstractOcclusion.WebGpuWater
 
         void ClearUnderwaterCameraState()
         {
+            // Cleared BEFORE the early return: every path that leaves the gates below in their
+            // cleared state (this publish, WaterVolume.OnDisable's last-body-out publish) has
+            // already switched the keyword off, so the mirror must read off here too - the
+            // god-ray pass may still run off the Primary body while no body contains the camera.
+            UnderwaterFogSimplePublished = false;
+            WaterlineWarpCopyWanted = false;
             if (!UnderwaterFogActive && !WaterlineActive && !CameraSubmerged && FogSource == null)
                 return;
             UnderwaterFogActive = false;
@@ -322,7 +354,10 @@ namespace AbstractOcclusion.WebGpuWater
             // A secondary FogSource still republishes, which is this refresh's whole purpose.
             if (_globalsSource != this || _globalsFrame != Time.frameCount)
                 PublishBodyGlobalsTracked();
-            bool submerged = ComputeCameraSubmerged(eyeCamera, out float surfaceY, out bool nearPlaneStraddles);
+            bool submerged = ComputeCameraSubmerged(eyeCamera, out float surfaceY,
+                                                    out bool surfaceYMeasured,
+                                                    out bool nearPlaneStraddles,
+                                                    out float nearPlaneVerticalReach);
             // "The fog pass must run" and "the eye is in water" are two DIFFERENT questions, and
             // inside a semi-submerged exclusion volume they have opposite answers: the eye sits in
             // AIR, in a sunken room, below sea level, with water all around it. They used to be one
@@ -374,13 +409,28 @@ namespace AbstractOcclusion.WebGpuWater
             // so the crossing shows a surface-tension line instead of a hard pop. Rides the same tier
             // gate as the fog (it is a pass of the same fullscreen material).
             WaterlineActive = MeniscusEnabled && tierAllowsFog && nearPlaneStraddles;
-            Publisher.PublishWaterline(MeniscusWidthPixels, MeniscusStrength, MeniscusWarp);
+            // The copy gate (B6, 2026-09-02): see WaterlineWarpCopyWanted. The eye's height
+            // against its OWN surface reading is the one CPU number that says whether the
+            // crossing can be on screen; the straddle band above deliberately never reads it
+            // (staleness made that gate flap), which is why the copy gets a separate test whose
+            // failure mode is merely one missing warp frame, never a missing line.
+            float eyeGapToSurface = Mathf.Abs(eyeCamera.transform.position.y - surfaceY);
+            WaterlineWarpCopyWanted = WaterlineActive
+                                   && (!surfaceYMeasured
+                                       || eyeGapToSurface < nearPlaneVerticalReach
+                                                            + WaterlineWarpCopyPadMeters);
+            // Warp 0 whenever the copy is not recorded: the shader's `_WaterlineWarp > 0` branch
+            // is the ONLY reader of the copy, so the published knob and the recorded copy stay
+            // one decision (WaterUnderwaterFogPass.RecordWaterlinePass gates on the same facts).
+            Publisher.PublishWaterline(MeniscusWidthPixels, MeniscusStrength,
+                                       WaterlineWarpCopyWanted ? MeniscusWarp : 0f);
             // The unbounded flag tells the shader to fog the whole below-surface half-space (ocean) vs
             // clip the fog to this body's box (pond / bounded lake = a finite fog volume). Simple mode
             // swaps the shader's per-pixel wavy-waterline march for the closed-form flat waterline at
             // surfaceY (wave-aware at the camera's xz, so the line still rides the local swell).
             bool fogSimple = _underwaterFogMode == WaterQuality.UnderwaterMode.Simple
                           || _externalSurfaceOverride;
+            UnderwaterFogSimplePublished = fogSimple; // the keyword's CPU mirror, same fact
             // fogArmed mirrors UnderwaterFogActive to the GPU: the exclusion wall self-completes
             // (reconstructs the fog behind its veil) ONLY when the fullscreen pass will not paint,
             // and the surface's underside stage skips its own camera-depth downwelling dim (the
@@ -461,10 +511,19 @@ namespace AbstractOcclusion.WebGpuWater
         // pixel; the near-plane corners detect a screen-space waterline for the meniscus; only the
         // camera position says the EYE is submerged. Conflating the latter two switches every
         // _CameraUnderwater consumer while water merely touches a screen edge.
-        bool ComputeCameraSubmerged(Camera cam, out float surfaceY, out bool nearPlaneStraddles)
+        // surfaceYMeasured: false when surfaceY is a placeholder rather than a reading of the
+        // rendered sea (FFT readback not available yet) - callers that gate cheap work on the eye's
+        // gap must fail armed then. nearPlaneVerticalReach: the largest |corner.y - eye.y| of the
+        // near plane, i.e. how far above/below the eye the lens itself extends this frame.
+        bool ComputeCameraSubmerged(Camera cam, out float surfaceY, out bool surfaceYMeasured,
+                                    out bool nearPlaneStraddles, out float nearPlaneVerticalReach)
         {
-            surfaceY = _externalSurfaceOverride ? _externalSurfaceY : SurfaceHeightAtCamera(cam);
+            surfaceYMeasured = true;
+            surfaceY = _externalSurfaceOverride
+                ? _externalSurfaceY
+                : SurfaceHeightAtCamera(cam, out surfaceYMeasured);
             nearPlaneStraddles = false;
+            nearPlaneVerticalReach = 0f;
             _fogNearSurface = false; // recomputed below; the early-outs must not keep a stale band
             if (!waterFog) { _wasCameraSubmerged = false; return false; } // one Water Fog toggle drives both looks
 
@@ -513,6 +572,7 @@ namespace AbstractOcclusion.WebGpuWater
             int straddleUnder = 0;
             int straddleAbove = 0;
             int cornersNearOrUnder = 0;
+            Vector3 cameraPosition = cam.transform.position;
             for (int i = 0; i < NearPlaneCornersViewport.Length; i++)
             {
                 Vector2 viewport = NearPlaneCornersViewport[i];
@@ -523,11 +583,15 @@ namespace AbstractOcclusion.WebGpuWater
                 if (corner.y > waterlineFloorY) straddleAbove++;
                 // Envelope ceiling - see fogArmCeilingY above.
                 if (corner.y < fogArmCeilingY) cornersNearOrUnder++;
+                // The lens's own vertical extent (FOV, aspect, roll and near distance included),
+                // for the warp-copy gate: the crossing can only be on screen within this reach of
+                // the eye's surface height.
+                nearPlaneVerticalReach = Mathf.Max(nearPlaneVerticalReach,
+                                                   Mathf.Abs(corner.y - cameraPosition.y));
             }
             // Footprint: bounded bodies fog (and draw their waterline) only with the camera roughly
             // over them. An ocean is infinite outside its terrain field, but an opted-in signed
             // terrain footprint makes dry island columns real air for the camera state as well.
-            Vector3 cameraPosition = cam.transform.position;
             bool inFootprint = _externalSurfaceOverride ||
                                (IsOceanClipmap && OceanSurfaceExistsAt(
                                    cameraPosition.x, cameraPosition.z));
@@ -609,20 +673,24 @@ namespace AbstractOcclusion.WebGpuWater
         // World-space surface height at the camera's xz. Open water bobs with the large swell (analytic
         // + FFT), the dominant partial-submersion motion; pools / bounded bodies use the rest plane
         // (their wind-wave detail is small and the pond fog is box-clipped anyway).
-        float SurfaceHeightAtCamera() => SurfaceHeightAtCamera(targetCamera);
+        float SurfaceHeightAtCamera() => SurfaceHeightAtCamera(targetCamera, out _);
 
-        float SurfaceHeightAtCamera(Camera cam)
+        // 'measured' is false when the height is a placeholder rather than a reading of the
+        // rendered sea - see SurfaceHeightAtWorldXZ.
+        float SurfaceHeightAtCamera(Camera cam, out bool measured)
         {
+            measured = true;
             if (cam == null) return VolumeCenter.y;
             Vector3 p = cam.transform.position;
-            return SurfaceHeightAtWorldXZ(p.x, p.z);
+            return SurfaceHeightAtWorldXZ(p.x, p.z, out measured);
         }
 
         // World-space surface height at ANY xz (the per-corner form of the gate height: each
         // near-plane corner tests against ITS OWN local surface, KWS-style).
-        float SurfaceHeightAtWorldXZ(float x, float z)
+        float SurfaceHeightAtWorldXZ(float x, float z, out bool measured)
         {
             float y = VolumeCenter.y;
+            measured = true;
             if (!openWater) return y;
             // Fog gate + submerge flip: the FFT height readback, DEAD-RECKONED to the current
             // wave clock (TrySampleHeightPredicted). "~1-2 frames stale is tolerable" was true
@@ -637,6 +705,7 @@ namespace AbstractOcclusion.WebGpuWater
             // analytic sample when the readback isn't available (non-FFT body, first
             // frames, or the point outside the readback region).
             if (OceanFftActive && _oceanFft.TrySampleHeightPredicted(x, z, _waveTime, out float fftHeight))
+            {
                 // Run the extrapolated (current-time) swell through the SAME shore/surf treatment the
                 // readback path (SampleLargeWaveField) and the GPU FFT branch (LargeBodyWaveHeight) use, so
                 // the submerge gate matches the rendered shore surface near shore: shoal attenuation +
@@ -650,8 +719,16 @@ namespace AbstractOcclusion.WebGpuWater
                 // The rate out-param is composed for buoyancy's drag reference; a height-only gate has
                 // no use for it, so it is fed a local that is written and dropped rather than plumbed.
                 y += ApplyShoreToFftHeightOnly(fftHeight, x, z) * LargeWaveEdgeWeight(x, z);
+            }
             else
+            {
+                // An FFT ocean whose readback is not available here (first frames, point outside
+                // the readback region) gets the analytic field WITHOUT the FFT swell: a
+                // placeholder, not a reading - callers gating cheap work on the eye's gap must
+                // treat it as unknown. Non-FFT bodies are exact here.
+                measured = !OceanFftActive;
                 y += SampleLargeWaveField(x, z).x;
+            }
             return y;
         }
 

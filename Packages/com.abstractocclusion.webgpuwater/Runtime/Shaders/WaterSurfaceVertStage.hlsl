@@ -21,7 +21,11 @@
             float  _IsPatch;          // 0 = normal full-plane surface, 1 = the window patch
             float2 _PatchPoolCenter;  // window centre in pool xz
             float2 _PatchPoolHalf;    // window half-size in pool units (per axis)
-            float  _PatchDepthBias;   // view-space metres to pull the patch toward the camera so it wins over the coplanar far plane
+            float  _PatchDepthBias;   // view-space metres converted to depth-only ordering against coincident surfaces
+            // Finite windowed open water keeps a uniformly stretched base grid outside the dense
+            // patch. Its detail lets the patch reproduce the exact triangle-linear base surface at
+            // the rim instead of merely overlapping a differently tessellated displacement.
+            float  _FiniteBaseGridDetail;
             // Chunk fill level as the surface plane's POOL-Y (published per body by WaterVolume.Chunk.cs;
             // 0 = the rest plane, the default for every non-chunk body). Lowers / raises the disc so a
             // chunk can be partly full; the sphere clip below reads the fragment's DISPLACED pool
@@ -46,6 +50,7 @@
             // light stopgap - the real horizon softening is the (future) large-body fog pass.
             float  _HorizonFadeDistance;
             #define HORIZON_FADE_START 0.5   // fraction of the fade distance where the blend to sky begins
+            #define FINITE_PATCH_MORPH_MIN_WIDTH_POOL 1e-5
             // Exponential atmospheric horizon haze (supersedes the smoothstep stopgap above): the far
             // ocean dissolves toward the sky by distance with a physical 1 - exp(-density * dist) falloff.
             // _HorizonHazeColor.a tints the sky toward a fixed atmosphere colour (0 = pure sky, seamless).
@@ -106,7 +111,7 @@
             // ---- RESTORED helpers (uncommitted work wiped by an errant whole-file revert;
             // verify against IDE Local History for a guaranteed-exact copy). ----
             float  _PatchCoverActive; // 1 = punch the base sheet where the near-field patch covers it
-            float2 _PatchCoverMargin; // shrink of the cover test inside the window (pool units, per axis)
+            float  _PatchCoverMargin; // symmetric shrink inside the window, in pool units
 
             // The UV SampleRipple WOULD read for this point - the raw texel address the headroom
             // debug view point-samples; one branch on _SimWindowed so the two never disagree.
@@ -361,32 +366,45 @@
                 // river vertices and pool meshes preserve the parent-anchored path.
                 float2 gridWaveSample = RiverEndWindWaveSampleXZ(
                     poolXZ, worldFlat.xz, riverEndSelector);
-                float2 outflowWorldXZ = MouthOutflowDriftedWorldXZ(worldFlat.xz);
-                float2 outflowPoolXZ = WorldToPool(
-                    float3(outflowWorldXZ.x, worldFlat.y, outflowWorldXZ.y)).xz;
-                float2 outflowWaveSample = RiverEndWindWaveSampleXZ(
-                    outflowPoolXZ, outflowWorldXZ, riverEndSelector);
-                float outflowInfluence = MouthOutflowCurrentInfluence(worldFlat.xz);
-                float gridWaveHeight = lerp(
-                    WaveHeight(gridWaveSample), WaveHeight(outflowWaveSample), outflowInfluence);
-                float2 riverWaveSampleA;
-                float2 riverWaveSampleB;
-                float riverWavePhaseBlend;
-                RiverCurrentWaveSampleXZ(
-                    riverCurrentData, riverWaveSampleA, riverWaveSampleB,
-                    riverWavePhaseBlend);
-                float riverWaveHeight = lerp(
-                    WaveHeight(riverWaveSampleA), WaveHeight(riverWaveSampleB),
-                    riverWavePhaseBlend);
+                float gridWaveHeight = WaveHeight(gridWaveSample);
+                // Mouth-outflow drift twin, gated on the UNIFORM outflow count exactly as the
+                // fragment's WaveSlope twin is: with no outflow the drifted xz is the flat xz and
+                // the influence is 0, so the lerp was the identity and the second 16-sinusoid
+                // WaveHeight loop was pure waste. Per-vertex influence stays inside.
+                [branch]
+                if (_MouthOutflowCount > 0.5)
+                {
+                    float2 outflowWorldXZ = MouthOutflowDriftedWorldXZ(worldFlat.xz);
+                    float2 outflowPoolXZ = WorldToPool(
+                        float3(outflowWorldXZ.x, worldFlat.y, outflowWorldXZ.y)).xz;
+                    float2 outflowWaveSample = RiverEndWindWaveSampleXZ(
+                        outflowPoolXZ, outflowWorldXZ, riverEndSelector);
+                    float outflowInfluence = MouthOutflowCurrentInfluence(worldFlat.xz);
+                    gridWaveHeight = lerp(
+                        gridWaveHeight, WaveHeight(outflowWaveSample), outflowInfluence);
+                }
                 // Value blend (Bert's call: "we sew borders then a fade to mix waves"):
                 // lerping the SAMPLE COORDINATE between two distant anchors sweeps the phase
                 // through many wave cycles across the short transition - that IS the washboard band
                 // at the mouth. Blend the sampled HEIGHTS instead (RAM blends outputs, never
                 // inputs); the terminal row then equals the receiving body's own height
-                // exactly. The uniform branch keeps pools single-evaluation, byte-identical.
+                // exactly. The uniform branch keeps pools single-evaluation, byte-identical: the
+                // two river phase heights (two more WaveHeight loops) exist only inside it.
+                [branch]
                 if (_IsRiver > 0.5)
+                {
+                    float2 riverWaveSampleA;
+                    float2 riverWaveSampleB;
+                    float riverWavePhaseBlend;
+                    RiverCurrentWaveSampleXZ(
+                        riverCurrentData, riverWaveSampleA, riverWaveSampleB,
+                        riverWavePhaseBlend);
+                    float riverWaveHeight = lerp(
+                        WaveHeight(riverWaveSampleA), WaveHeight(riverWaveSampleB),
+                        riverWavePhaseBlend);
                     position.y += lerp(gridWaveHeight * oceanMouthWaveWeight,
                                        riverWaveHeight, riverWeight);
+                }
                 else
                     position.y += gridWaveHeight * oceanMouthWaveWeight;
                                                        // small wind-wave detail; open water
@@ -494,6 +512,85 @@
                 return worldPos;
             }
 
+            struct BaseSheetSurfaceSample
+            {
+                float3 worldPosition;
+                float3 poolPosition;
+                float2 largeWaveSourceXZ;
+            };
+
+            BaseSheetSurfaceSample SampleBaseSheetVertex(float2 poolXZ)
+            {
+                BaseSheetSurfaceSample sample;
+                float3 poolFlat = float3(poolXZ.x, _ChunkSurfacePoolY, poolXZ.y);
+                float3 worldFlat = PoolToWorld(poolFlat);
+                float rippleFade;
+                float4 ripple = SampleRipple(poolFlat, worldFlat, rippleFade);
+                sample.worldPosition = DisplaceSurfaceVertex(
+                    poolFlat, worldFlat, ripple, 0.0, float4(0.0, 0.0, 0.0, 0.0), 0.0,
+                    sample.poolPosition, sample.largeWaveSourceXZ);
+                return sample;
+            }
+
+            BaseSheetSurfaceSample InterpolateBaseSheetTriangle(float2 poolXZ)
+            {
+                float detail = max(_FiniteBaseGridDetail, 1.0);
+                float2 gridPosition = clamp((poolXZ * 0.5 + 0.5) * detail,
+                                            0.0, detail);
+                float2 cell = clamp(floor(gridPosition), 0.0, detail - 1.0);
+                float2 fractionInCell = gridPosition - cell;
+                float poolStep = 2.0 / detail;
+                float2 cellMinimum = cell * poolStep - 1.0;
+                float2 cellMaximum = cellMinimum + poolStep;
+
+                BaseSheetSurfaceSample cornerA;
+                BaseSheetSurfaceSample cornerB;
+                BaseSheetSurfaceSample cornerC;
+                float3 weights;
+                if (fractionInCell.x + fractionInCell.y <= 1.0)
+                {
+                    cornerA = SampleBaseSheetVertex(cellMinimum);
+                    cornerB = SampleBaseSheetVertex(float2(cellMaximum.x, cellMinimum.y));
+                    cornerC = SampleBaseSheetVertex(float2(cellMinimum.x, cellMaximum.y));
+                    weights = float3(1.0 - fractionInCell.x - fractionInCell.y,
+                                     fractionInCell.x, fractionInCell.y);
+                }
+                else
+                {
+                    cornerA = SampleBaseSheetVertex(float2(cellMaximum.x, cellMinimum.y));
+                    cornerB = SampleBaseSheetVertex(float2(cellMinimum.x, cellMaximum.y));
+                    cornerC = SampleBaseSheetVertex(cellMaximum);
+                    weights = float3(1.0 - fractionInCell.y,
+                                     1.0 - fractionInCell.x,
+                                     fractionInCell.x + fractionInCell.y - 1.0);
+                }
+
+                BaseSheetSurfaceSample result;
+                result.worldPosition = cornerA.worldPosition * weights.x
+                                     + cornerB.worldPosition * weights.y
+                                     + cornerC.worldPosition * weights.z;
+                result.poolPosition = cornerA.poolPosition * weights.x
+                                    + cornerB.poolPosition * weights.y
+                                    + cornerC.poolPosition * weights.z;
+                result.largeWaveSourceXZ = cornerA.largeWaveSourceXZ * weights.x
+                                         + cornerB.largeWaveSourceXZ * weights.y
+                                         + cornerC.largeWaveSourceXZ * weights.z;
+                return result;
+            }
+
+            float FinitePatchBaseMorphWeight(float2 poolXZ)
+            {
+                if (_IsPatch < 0.5 || _FiniteBaseGridDetail < 1.0) return 0.0;
+
+                float2 distanceToEdge = _PatchPoolHalf
+                                      - abs(poolXZ - _PatchPoolCenter);
+                float morphWidth = max(_PatchCoverMargin,
+                                       FINITE_PATCH_MORPH_MIN_WIDTH_POOL);
+                float2 morphByAxis = 1.0 - smoothstep(0.0, morphWidth,
+                                                     distanceToEdge);
+                return max(morphByAxis.x, morphByAxis.y);
+            }
+
             v2f vert(appdata v)
             {
                 v2f o;
@@ -579,6 +676,20 @@
                     poolFlat, worldFlat, info, vertexRiverWeight, o.riverCurrentData,
                     o.riverBakeUv.w,
                     o.position, o.largeWaveSourceXZ);
+                // A finite large body draws two different lattices: the dense camera patch and a
+                // coarse full-body sheet. Overlap plus depth bias cannot close their vertical gap at
+                // grazing angles. Across the same rim width used by the base-sheet hole, converge the
+                // patch to the exact triangle-linear surface the coarse grid rasterises. At the outer
+                // edge both meshes now meet at one position; inward the dense displacement takes over.
+                float baseMorph = FinitePatchBaseMorphWeight(poolFlat.xz);
+                if (baseMorph > 0.0)
+                {
+                    BaseSheetSurfaceSample baseSample = InterpolateBaseSheetTriangle(poolFlat.xz);
+                    worldPos = lerp(worldPos, baseSample.worldPosition, baseMorph);
+                    o.position = lerp(o.position, baseSample.poolPosition, baseMorph);
+                    o.largeWaveSourceXZ = lerp(o.largeWaveSourceXZ,
+                                               baseSample.largeWaveSourceXZ, baseMorph);
+                }
                 // The common shader expresses height along the WaterVolume up axis. A ribbon may
                 // turn through a waterfall, so carry that same scalar displacement along its
                 // transported surface normal instead of pulling every wave vertically upward.
@@ -597,15 +708,19 @@
                 }
                 worldPos += o.worldNormal * riverDisturbanceHeight * vertexRiverWeight;
                 o.worldPos = worldPos;
-                // Nudge the patch a fixed few centimetres toward the camera IN VIEW SPACE so it wins the
-                // depth test against the coplanar far plane at EVERY distance. The old bias was a constant
-                // NDC offset (bias * pos.w) which, under the non-linear reversed-Z buffer, grew into a huge
-                // world-depth offset far from the camera and let the patch draw OVER opaque geometry. A
-                // fixed view-space (world-metre) offset can never beat opaque more than _PatchDepthBias
-                // metres behind the patch. Inert when bias = 0 (every non-patch surface).
+                // Derive the depth tie-breaker from a fixed view-space distance, then copy ONLY its
+                // NDC depth onto the physical clip position. Projecting the shifted view position
+                // wholesale also changes screen XY under perspective; near a grazing waterline that
+                // pulled an otherwise sewn patch edge away from the base sheet. Keeping physical
+                // XY/W preserves the exact shared silhouette while retaining metre-bounded ordering.
                 float4 viewPos = mul(UNITY_MATRIX_V, float4(worldPos, 1.0));
-                viewPos.z += _PatchDepthBias; // view forward is -Z, so +Z moves toward the camera (nearer)
-                o.pos = mul(UNITY_MATRIX_P, viewPos);
+                float4 physicalClipPos = mul(UNITY_MATRIX_P, viewPos);
+                float4 depthBiasedViewPos = viewPos;
+                depthBiasedViewPos.z += _PatchDepthBias; // view forward is -Z
+                float4 depthBiasedClipPos = mul(UNITY_MATRIX_P, depthBiasedViewPos);
+                float depthBiasedNdc = depthBiasedClipPos.z / depthBiasedClipPos.w;
+                physicalClipPos.z = depthBiasedNdc * physicalClipPos.w;
+                o.pos = physicalClipPos;
                 o.screenPos = ComputeScreenPos(o.pos);
                 UNITY_TRANSFER_FOG(o, o.pos);
                 return o;

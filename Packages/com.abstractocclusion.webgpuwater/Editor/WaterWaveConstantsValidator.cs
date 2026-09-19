@@ -73,6 +73,17 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // garbage positions or vanish. Two "MUST match" comments used to be the whole guard.
         const string FoamParticleShaderAssetName = "FoamParticles";
         const string ShaderExtension = ".shader";
+        // Surface-shader splinters + their C# drivers (2026-09-02 audit: seven mirrored pairs had
+        // no guard). Each HLSL side sizes a uniform array, a loop cap or a thread group; each C#
+        // side sizes the upload / clamps the knob. WaterVolume.Currents is another DOTTED filename,
+        // read outside the main gate for the same reason as WaterVolume.Underwater above.
+        const string SurfaceVertStageHlslAssetName = "WaterSurfaceVertStage";
+        const string SurfaceFragStagesHlslAssetName = "WaterSurfaceFragStages";
+        const string SurfaceFoamSamplingHlslAssetName = "WaterSurfaceFoamSampling";
+        const string RiverDisturbanceAssetName = "WaterRiverDisturbance";
+        const string RiverFoamAssetName = "WaterRiverFoam";
+        const string QualityAssetName = "WaterQuality";
+        const string CurrentsCSharpAssetName = "WaterVolume.Currents";
         const string FoamParticleStructName = "FoamParticle";
         // StructuredBuffer elements are TIGHTLY packed - no cbuffer 16-byte rounding - and every field
         // of this struct is a float or a float3, so summing component sizes gives the real stride.
@@ -337,6 +348,51 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             ("UPDATE_THREAD_GROUP_SIZE", "UpdateThreadGroupSize"),
         };
 
+        // OCEAN_FFT_TG is the [numthreads] of every 2D OceanFft.compute kernel; WaterOceanFft divides
+        // its dispatch counts by ThreadGroupSize. Same failure as the foam pair above.
+        static readonly (string Hlsl, string CSharp)[] OceanFftThreadGroupConstantPairs =
+        {
+            ("OCEAN_FFT_TG", "ThreadGroupSize"),
+        };
+
+        // WATER_MAX_MOUTH_OUTFLOWS sizes the five _MouthOutflow* uniform arrays (WaterWaves.hlsl);
+        // WaterVolume.MaximumShaderOutflows caps the SetVectorArray upload. C# larger = over-run.
+        static readonly (string Hlsl, string CSharp)[] MouthOutflowConstantPairs =
+        {
+            ("WATER_MAX_MOUTH_OUTFLOWS", "MaximumShaderOutflows"),
+        };
+
+        // The river disturbance source loop is [unroll]ed to RIVER_DISTURBANCE_MAX_SOURCES and its
+        // uniform arrays are that long; WaterRiverDisturbance.MaximumSourceCount caps the upload.
+        static readonly (string Hlsl, string CSharp)[] RiverDisturbanceConstantPairs =
+        {
+            ("RIVER_DISTURBANCE_MAX_SOURCES", "MaximumSourceCount"),
+        };
+
+        // The river cascade transport table: RIVER_CASCADE_TRANSPORT_SAMPLE_COUNT sizes the shader's
+        // sample array, WaterRiverFoam.CascadeTransportResolution the bake it is filled from.
+        static readonly (string Hlsl, string CSharp)[] RiverCascadeTransportConstantPairs =
+        {
+            ("RIVER_CASCADE_TRANSPORT_SAMPLE_COUNT", "CascadeTransportResolution"),
+        };
+
+        // PEAKED_REFINE_MAX_STEPS bounds the fragment's refine loop for the compiler; WaterQuality
+        // clamps the tier knob to MaxRefineSteps. A larger C# cap would be silently clamped by the
+        // shader - the knob's top range doing nothing.
+        static readonly (string Hlsl, string CSharp)[] PeakedRefineConstantPairs =
+        {
+            ("PEAKED_REFINE_MAX_STEPS", "MaxRefineSteps"),
+        };
+
+        // The representative shore-attenuation wavelength of an FFT cascade is a QUARTER of its band
+        // top (WaterShared.hlsl header), and the tile is CascadeTileOversample band tops long, so the
+        // shader's fraction OF THE DOMAIN must equal this / the oversample. The quarter lives only in
+        // that header's prose - the CPU never evaluates the shoal wavelength - so it is named here as
+        // the one fixed side of the relation. Checked by CollectCascadeWavelengthFractionProblems.
+        const double CascadeBandTopFraction = 0.25;
+        const string CascadeWavelengthFractionHlslName = "OCEAN_FFT_CASCADE_WAVELENGTH_FRACTION";
+        const string CascadeTileOversampleCSharpName = "CascadeTileOversample";
+
         // Captures the numeric literal, tolerating scientific notation and a trailing C# 'f'.
         const string NumberPattern = @"(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)";
 
@@ -393,7 +449,13 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 !TryReadPackageAsset(SeaStateFetchHlslAssetName, HlslExtension, out string seaStateFetchHlslSource, out readError) ||
                 !TryReadPackageAsset(SeaStateFetchCSharpAssetName, CSharpExtension, out string seaStateFetchCSharpSource, out readError) ||
                 !TryReadPackageAsset(FogHlslAssetName, HlslExtension, out string fogHlslSource, out readError) ||
-                !TryReadPackageAsset(UniformPublisherAssetName, CSharpExtension, out string uniformPublisherSource, out readError))
+                !TryReadPackageAsset(UniformPublisherAssetName, CSharpExtension, out string uniformPublisherSource, out readError) ||
+                !TryReadPackageAsset(SurfaceVertStageHlslAssetName, HlslExtension, out string surfaceVertStageSource, out readError) ||
+                !TryReadPackageAsset(SurfaceFragStagesHlslAssetName, HlslExtension, out string surfaceFragStagesSource, out readError) ||
+                !TryReadPackageAsset(SurfaceFoamSamplingHlslAssetName, HlslExtension, out string surfaceFoamSamplingSource, out readError) ||
+                !TryReadPackageAsset(RiverDisturbanceAssetName, CSharpExtension, out string riverDisturbanceSource, out readError) ||
+                !TryReadPackageAsset(RiverFoamAssetName, CSharpExtension, out string riverFoamSource, out readError) ||
+                !TryReadPackageAsset(QualityAssetName, CSharpExtension, out string qualitySource, out readError))
             {
                 Debug.LogWarning(LogPrefix + "validation skipped - " + readError);
                 return;
@@ -426,6 +488,16 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                             FoamParticlesAssetName, foamParticlesSource, FoamThreadGroupConstantPairs);
             CollectProblems(problems, FogHlslAssetName, HlslExtension, fogHlslSource,
                             UniformPublisherAssetName, uniformPublisherSource, SceneLightConstantPairs);
+            CollectProblems(problems, OceanFftComputeAssetName, ComputeExtension, oceanFftComputeSource,
+                            OceanFftAssetName, oceanFftSource, OceanFftThreadGroupConstantPairs);
+            CollectProblems(problems, SurfaceVertStageHlslAssetName, HlslExtension, surfaceVertStageSource,
+                            RiverDisturbanceAssetName, riverDisturbanceSource, RiverDisturbanceConstantPairs);
+            CollectProblems(problems, SurfaceFoamSamplingHlslAssetName, HlslExtension, surfaceFoamSamplingSource,
+                            RiverFoamAssetName, riverFoamSource, RiverCascadeTransportConstantPairs);
+            CollectProblems(problems, SurfaceFragStagesHlslAssetName, HlslExtension, surfaceFragStagesSource,
+                            QualityAssetName, qualitySource, PeakedRefineConstantPairs);
+            CollectCascadeWavelengthFractionProblems(problems, sharedHlslSource, oceanFftSource);
+            CollectMouthOutflowProblems(problems, wavesHlslSource);
             CollectFoamParticleLayoutProblems(problems, foamComputeSource, foamShaderSource);
             CollectSurfaceBandProblems(problems);
             if (problems.Count == 0) return;
@@ -455,6 +527,43 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                             UnderwaterCSharpAssetName, underwaterSource, SurfaceBandConstantPairs);
             CollectProblems(problems, WaterlineHlslAssetName, HlslExtension, waterlineSource,
                             FogPassCSharpAssetName, fogPassSource, HeightRtConstantPairs);
+        }
+
+        // Mouth-outflow array cap, read separately from the gate for the same dotted-filename reason
+        // as CollectSurfaceBandProblems.
+        static void CollectMouthOutflowProblems(List<string> problems, string wavesHlslSource)
+        {
+            if (!TryReadPackageAsset(CurrentsCSharpAssetName, CSharpExtension,
+                                     out string currentsSource, out string readError))
+            {
+                problems.Add($"mouth outflows: pair not checked - {readError}");
+                return;
+            }
+            CollectProblems(problems, WavesHlslAssetName, HlslExtension, wavesHlslSource,
+                            CurrentsCSharpAssetName, currentsSource, MouthOutflowConstantPairs);
+        }
+
+        // Derived pair (see CascadeBandTopFraction): hlsl fraction * C# oversample must equal the
+        // quarter-band-top rule, or shore attenuation silently retunes when the oversample changes.
+        static void CollectCascadeWavelengthFractionProblems(List<string> problems, string sharedHlslSource,
+                                                             string oceanFftSource)
+        {
+            if (!TryParseHlslConstant(sharedHlslSource, CascadeWavelengthFractionHlslName, out double fraction))
+            {
+                problems.Add($"{CascadeWavelengthFractionHlslName}: not found in {SharedHlslAssetName}{HlslExtension} (renamed or removed?)");
+                return;
+            }
+            if (!TryParseCSharpConst(oceanFftSource, CascadeTileOversampleCSharpName, out double oversample))
+            {
+                problems.Add($"{CascadeTileOversampleCSharpName}: not found in {OceanFftAssetName}{CSharpExtension} (renamed or removed?)");
+                return;
+            }
+            if (!ValuesMatch(fraction * oversample, CascadeBandTopFraction))
+            {
+                problems.Add($"{CascadeWavelengthFractionHlslName} = {Format(fraction)} (hlsl) must equal " +
+                             $"{Format(CascadeBandTopFraction)} / {CascadeTileOversampleCSharpName} = " +
+                             $"{Format(CascadeBandTopFraction / oversample)} (c#, oversample {Format(oversample)})");
+            }
         }
 
         static void CollectProblems(List<string> problems, string hlslAssetName, string hlslExtension,

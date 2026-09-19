@@ -16,8 +16,9 @@ using static AbstractOcclusion.WebGpuWater.Editor.WaterBuildKit;
 
 namespace AbstractOcclusion.WebGpuWater.Editor
 {
-    // Partial: the "Fit Spray To Object" section lives in WaterWizardWindow.HullSpray.cs, which carries
-    // its own preview drawing and would otherwise double this file's length.
+    // Partials: the "Fit Spray To Object" section lives in WaterWizardWindow.HullSpray.cs (its own
+    // preview drawing would otherwise double this file's length); "Water System" - the multi-body
+    // plan builder - in WaterWizardWindow.WaterSystem.cs.
     internal sealed partial class WaterWizardWindow : EditorWindow
     {
         const string MenuPath = MenuRoot + "Water Wizard";
@@ -33,7 +34,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const string WaterBodyName = "Water Body";
 
         static readonly Vector3 DefaultExtent = new Vector3(2f, 1f, 2f);
-        const float MinExtentComponent = 0.05f;
+        // Shared with the Water System plan so both refuse the same degenerate sizes.
+        const float MinExtentComponent = MinBodyExtentComponent;
         const float WindowMinWidth = 340f;
         const float WindowMinHeight = 520f;
 
@@ -54,9 +56,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const string UnboundedOceanPropertyPath = WaterVolumePropertyPaths.UnboundedOcean;
         const string BodyTypePropertyPath = WaterVolumePropertyPaths.BodyType;
 
-        // The base water type. Fog is a property of the type: only SurfaceWithFog turns it on, so the pool
-        // and plain surface start fog-free. OpenWaterOcean drives the experimental large-body/clipmap path.
-        enum WaterKind { LegacyAnalyticPool, SurfaceOnly, SurfaceWithFog, OpenWaterOcean }
+        // The base water type is WaterBuildKit.WaterKind (via 'using static'): the Water System
+        // plan carries the same enum per body, so one type describes a body in both sections.
 
         // Camera controller wired onto the scene camera: orbit around the water, or free-fly it.
         enum CameraMode { Orbit, Fly }
@@ -171,6 +172,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             _dryInteriorExpanded = WaterEditorUI.Section("Dry Interior", _dryInteriorExpanded,
                                                          DrawDryInteriorSection);
             _hullSprayExpanded = WaterEditorUI.Section("Fit Spray To Object", _hullSprayExpanded, DrawFitSprayToHullSection);
+            _systemExpanded = WaterEditorUI.Section(WaterSystemSectionTitle, _systemExpanded, DrawWaterSystemSection);
             _splashExpanded = WaterEditorUI.Section("Splash & Crown", _splashExpanded, DrawSplashSection);
             _utilitiesExpanded = WaterEditorUI.Section("Utilities", _utilitiesExpanded, DrawUtilitiesSection);
             WaterEditorUI.DrawFooter();
@@ -350,12 +352,12 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         {
             if (!ExtentIsValid())
             {
-                Debug.LogError($"[WebGpuWater] Water not created: every size component must be at least {MinExtentComponent}.");
+                Debug.LogError(LogPrefix + $"Water not created: every size component must be at least {MinExtentComponent}.");
                 return;
             }
             if (_useTerrainBed && _bedTerrain == null)
             {
-                Debug.LogError("[WebGpuWater] Water not created: Use Terrain Bed requires a Terrain assignment.");
+                Debug.LogError(LogPrefix + "Water not created: Use Terrain Bed requires a Terrain assignment.");
                 return;
             }
 
@@ -421,7 +423,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(root.scene);
             AssetDatabase.SaveAssets();
             Undo.CollapseUndoOperations(undoGroup);
-            Debug.Log($"[WebGpuWater] Water built ({RootObjectName}, {_kind}, openWater={openWater}). Press Play.");
+            Debug.Log(LogPrefix + $"Water built ({RootObjectName}, {_kind}, openWater={openWater}). Press Play.");
         }
 
         void ApplyBaseType(WaterVolume body)
@@ -436,7 +438,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             SerializedProperty terrainBed = serialized.FindProperty(WaterVolumePropertyPaths.BedTerrain);
             if (useTerrainBed == null || terrainBed == null)
                 throw new System.InvalidOperationException(
-                    "[WebGpuWater] Wizard terrain-bed settings are missing from WaterVolume.");
+                    LogPrefix + "Wizard terrain-bed settings are missing from WaterVolume.");
 
             useTerrainBed.boolValue = _useTerrainBed;
             terrainBed.objectReferenceValue = _useTerrainBed ? _bedTerrain : null;
@@ -452,7 +454,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         // inspector serializes and can change every one afterwards. The Ocean kind then layers
         // the beach-derived ocean look on top (WaterWizardWindow.OceanDefaults.cs), overriding
         // several of these.
-        const float DefaultFogDensity = 0.2f;
+        const float DefaultFogDensity = DefaultAuthoredFogDensity; // one value with the kit's fog step
         const float DefaultDetailNormalStrength = 0.2f;
         // Default texture files under WaterBuildKit.DefaultTexturesRoot. Note the deliberate
         // crossover: the Foam2 sheet reads best as the ocean WHITECAP and the OceanWhitecap
@@ -592,7 +594,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 {
                     Undo.SetCurrentGroupName("Configure Water Objects");
                     WireObjects();
-                    Debug.Log($"[WebGpuWater] Configured listed objects as {_objectMode}.");
+                    Debug.Log(LogPrefix + $"Configured listed objects as {_objectMode}.");
                 }
             }
 
@@ -624,7 +626,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 MakeFloatable(prop); // same wiring + preset path as the retrofit slots
                 Selection.activeObject = prop;
                 Undo.CollapseUndoOperations(undoGroup);
-                Debug.Log("[WebGpuWater] Buoyant object created - it drops in and floats on whatever " +
+                Debug.Log(LogPrefix + "Buoyant object created - it drops in and floats on whatever " +
                           "water body hosts it (no wiring needed).");
             }
         }
@@ -713,7 +715,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 if (_boatChaseCamera) FocusSceneOnBoat(boat);
                 Selection.activeObject = boat;
                 Undo.CollapseUndoOperations(undoGroup);
-                Debug.Log("[WebGpuWater] Boat created. Press Play - drive with W/S (throttle) and A/D (steer).");
+                Debug.Log(LogPrefix + "Boat created. Press Play - drive with W/S (throttle) and A/D (steer).");
             }
         }
 
@@ -978,7 +980,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 ? "Added " + result.AddedFeatureCount + " feature(s) and assigned " +
                   result.RepairedShaderCount + " shader field(s)."
                 : "The default URP renderer was already configured.";
-            Debug.Log("[WebGpuWater] " + summary, rendererAsset);
+            Debug.Log(LogPrefix + summary, rendererAsset);
             ShowNotification(new GUIContent(summary));
             Repaint();
         }
@@ -1052,7 +1054,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             body.provideSplashEmitter = true; // retrofit turns the gate on so the body actually splashes
             Selection.activeObject = emitter.gameObject;
             Undo.CollapseUndoOperations(undoGroup);
-            Debug.Log($"[WebGpuWater] Splashes enabled on '{body.name}' (shared emitter '{emitter.name}').");
+            Debug.Log(LogPrefix + $"Splashes enabled on '{body.name}' (shared emitter '{emitter.name}').");
         }
 
         void AddSplashToSelectedObjects()
@@ -1072,7 +1074,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 count++;
             }
             Undo.CollapseUndoOperations(undoGroup);
-            Debug.Log($"[WebGpuWater] Added a splash trigger to {count} object(s).");
+            Debug.Log(LogPrefix + $"Added a splash trigger to {count} object(s).");
         }
     }
 }

@@ -69,6 +69,11 @@ Shader "Hidden/AbstractOcclusion/WebGpuWater/WaterUnderwaterWaterline"
             #include "WaterOceanRenderedCoverage.hlsl"
 
 #ifdef WATER_FOG_CLASSIFY_RT
+            // Full-res load, deliberately without the classify RT's scale uniform: the pass
+            // selects this variant ONLY on frames the RT was allocated at full res (the
+            // fog chain keeps it full res whenever the meniscus is armed - B5, 2026-09-02),
+            // because a scaled RT would flatten the gapSmooth derivative the band width is
+            // read from. Scaled frames stay on the analytic variant below.
             float2 LoadWaterFogClassification(float2 uv)
             {
                 int2 pixelMax = max(int2(_ScaledScreenParams.xy) - int2(1, 1), int2(0, 0));

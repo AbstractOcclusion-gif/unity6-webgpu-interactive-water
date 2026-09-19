@@ -57,6 +57,29 @@ namespace AbstractOcclusion.WebGpuWater
         // its authored waves untouched; bigger ones get damped, smaller ones boosted. 0.65 m
         // sits between the chicken (~0.42) and the trojan rabbit (~1.0).
         const float ReferenceSizeMeters = 0.65f;
+        // Floor on the size factor fed to the compression power: pow(0, -c) is infinite, and a
+        // degenerate (collider-less) throwable must still get a finite, merely boosted wave.
+        const float MinWaveSizeFactor = 0.05f;
+        // Auto-catapult jitter around the authored interval, so volleys never fall into a beat.
+        const float AutoIntervalJitterMin = 0.7f;
+        const float AutoIntervalJitterMax = 1.3f;
+        // The containment band can take at most half the extent per axis, or the two opposite
+        // bands would overlap on a small body and push a floater from both sides at once.
+        const float EdgeBandMaxExtentFraction = 0.5f;
+        // Past the border line the inward push keeps growing with the overshoot, capped here so
+        // a throwable that landed well outside is steered back rather than launched back.
+        const float EdgeContainMaxPenetration = 1.5f;
+        // Floor on the apex-to-target drop in the flight-time solve: a target level with (or
+        // above) the apex would otherwise divide the fall time to zero.
+        const float MinFallHeightMeters = 0.01f;
+        // Target scatter across the footprint, as fractions of the spread half-extent. X is
+        // skewed toward the far bank (the launch point sits on the near, -X, edge), so lobs
+        // travel over the water rather than dropping at the catapult's feet.
+        const float TargetSpreadNearFraction = -0.6f;
+        const float TargetSpreadFarFraction = 1f;
+        // Sideways spread of the computed launch point along the near edge, as a fraction of
+        // the body's Z extent; keeps auto volleys from all leaving one spot.
+        const float LaunchSidewaysSpreadFraction = 0.4f;
 
         [Tooltip("Water body the range throws onto. Auto-resolved to the primary body when empty.")]
         [SerializeField] internal WaterVolume waterBody;
@@ -222,7 +245,7 @@ namespace AbstractOcclusion.WebGpuWater
                 _autoTimer -= Time.deltaTime;
                 if (_autoTimer <= 0f)
                 {
-                    _autoTimer = autoInterval * Random.Range(0.7f, 1.3f);
+                    _autoTimer = autoInterval * Random.Range(AutoIntervalJitterMin, AutoIntervalJitterMax);
                     ThrowByKey(RandomKey(), RandomTarget());
                 }
             }
@@ -326,12 +349,12 @@ namespace AbstractOcclusion.WebGpuWater
 
         static void AxisContain(Rigidbody body, Vector3 axis, float coord, float extent)
         {
-            float band = Mathf.Min(EdgeContainBand, extent * 0.5f);
+            float band = Mathf.Min(EdgeContainBand, extent * EdgeBandMaxExtentFraction);
             float edge = extent - band;
             float side = Mathf.Sign(coord);
             float penetration = (Mathf.Abs(coord) - edge) / band;
             if (penetration <= 0f) return;
-            penetration = Mathf.Min(penetration, 1.5f); // past the line it keeps pushing, capped
+            penetration = Mathf.Min(penetration, EdgeContainMaxPenetration); // past the line it keeps pushing, capped
             Vector3 push = axis * (-side * penetration * EdgeContainAccel);
             float outwardSpeed = Vector3.Dot(body.linearVelocity, axis) * side;
             if (outwardSpeed > 0f)
@@ -389,7 +412,7 @@ namespace AbstractOcclusion.WebGpuWater
             // small ones boosted, both around the reference size. The splash BURST stays on the
             // heaviness slider alone (it is speed-derived and already size-blind). Radius takes
             // the square root so the ring's footprint compresses gentler than its strength.
-            float waveBalance = Mathf.Pow(Mathf.Max(t.SizeFactor, 0.05f), -waveSizeCompression);
+            float waveBalance = Mathf.Pow(Mathf.Max(t.SizeFactor, MinWaveSizeFactor), -waveSizeCompression);
             t.Breach.rippleStrength = t.BreachBaseRippleStrength * rippleScale * waveBalance;
             t.Breach.rippleRadius = t.BreachBaseRippleRadius * rippleScale * Mathf.Sqrt(waveBalance);
             t.Wake.strength = t.WakeBaseStrength * wakeScale * waveBalance;
@@ -438,7 +461,8 @@ namespace AbstractOcclusion.WebGpuWater
             float upSpeed = Mathf.Sqrt(2f * gravity * apex);
             // Time up to the apex plus time falling from the apex down to the target height.
             float fallHeight = apex - (to.y - from.y);
-            flightSeconds = upSpeed / gravity + Mathf.Sqrt(2f * Mathf.Max(fallHeight, 0.01f) / gravity);
+            flightSeconds = upSpeed / gravity
+                          + Mathf.Sqrt(2f * Mathf.Max(fallHeight, MinFallHeightMeters) / gravity);
             return new Vector3((to.x - from.x) / flightSeconds, upSpeed,
                                (to.z - from.z) / flightSeconds);
         }
@@ -481,9 +505,11 @@ namespace AbstractOcclusion.WebGpuWater
         {
             Vector3 extent = waterBody.volumeExtent;
             Vector3 center = waterBody.transform.position;
-            return new Vector3(center.x + Random.Range(-0.6f, 1f) * extent.x * TargetSpreadFraction,
+            return new Vector3(center.x + Random.Range(TargetSpreadNearFraction, TargetSpreadFarFraction)
+                                          * extent.x * TargetSpreadFraction,
                                SurfaceY(),
-                               center.z + Random.Range(-1f, 1f) * extent.z * TargetSpreadFraction);
+                               center.z + Random.Range(-TargetSpreadFarFraction, TargetSpreadFarFraction)
+                                          * extent.z * TargetSpreadFraction);
         }
 
         float SurfaceY() => waterBody != null ? waterBody.transform.position.y : 0f;
@@ -496,7 +522,9 @@ namespace AbstractOcclusion.WebGpuWater
             if (launchPoint != null) return launchPoint.position;
             Vector3 extent = waterBody.volumeExtent;
             Vector3 center = waterBody.transform.position;
-            float sideways = withSpread ? Random.Range(-0.4f, 0.4f) * extent.z : 0f;
+            float sideways = withSpread
+                ? Random.Range(-LaunchSidewaysSpreadFraction, LaunchSidewaysSpreadFraction) * extent.z
+                : 0f;
             return new Vector3(center.x - extent.x * 2f * LaunchEdgeFraction,
                                SurfaceY() + launchHeight,
                                center.z + sideways);

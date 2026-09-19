@@ -40,6 +40,14 @@ namespace AbstractOcclusion.WebGpuWater
 
         const int RaymarchShaderPass = 0;
         const int CompositeShaderPass = 3; // passes 1+2 are the (currently unused) blur pair
+        // The Simple-tier twin of pass 0 (2026-09-02): the raymarch fork used to be the global
+        // WATER_FOG_SIMPLE keyword variant of pass 0; it is now a separate pass so the WebGPU
+        // translator guard (`skip_optimizations webgpu`, see the shader) applies to the Simple
+        // march only. Appended after the composite so the indices above stay load-bearing.
+        const int RaymarchSimpleShaderPass = 4;
+        // The composite's classify-RT variant: the fog chain's WATER_FOG_CLASSIFY_RT, selected
+        // on the command buffer exactly as WaterUnderwaterFogPass selects it for its own draws.
+        const string ClassifyRtKeyword = "WATER_FOG_CLASSIFY_RT";
         const int HalfResDivisor = 2; // shafts are low-frequency; half res halves the march cost
         // History weight of the temporal accumulation - THE beam-pace dial. KWS ships 0.35, but
         // their volumetric caustic source is a pre-baked slow flipbook; ours is the LIVE wave
@@ -107,6 +115,7 @@ namespace AbstractOcclusion.WebGpuWater
         sealed class RaymarchPassData
         {
             public Material material;
+            public int shaderPass;
             public TextureHandle history;
             public Matrix4x4 prevViewProj;
             public Matrix4x4 currViewProj;
@@ -119,6 +128,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             public Material material;
             public MaterialPropertyBlock block;
+            public bool useClassifyRt;
         }
 
         public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
@@ -166,8 +176,13 @@ namespace AbstractOcclusion.WebGpuWater
                 ? renderGraph.ImportTexture(entry.Rt)
                 : TextureHandle.nullHandle;
 
+            // Full or Simple march: the SAME fact that used to select the WATER_FOG_SIMPLE
+            // variant of pass 0 (the keyword's CPU mirror, published with it), now a pass index.
+            int raymarchShaderPass = WaterVolume.UnderwaterFogSimplePublished
+                ? RaymarchSimpleShaderPass
+                : RaymarchShaderPass;
             RecordRaymarch(renderGraph, resources, shaftTexture, historyRead, prevVP, viewProj, blend,
-                           sourceBlock);
+                           sourceBlock, raymarchShaderPass);
 
             if (temporal)
             {
@@ -182,7 +197,12 @@ namespace AbstractOcclusion.WebGpuWater
                 entry.PrevValid = true;
             }
 
-            RecordComposite(renderGraph, cameraColor, sourceBlock);
+            // The fog chain's full-res waterline classification, when it recorded one earlier in
+            // this camera's graph (B3): the composite then LOADs its mask pair instead of
+            // evaluating the surface field four times per full-res pixel.
+            bool classifyRtAvailable = WaterUnderwaterFogPass.TryGetClassifyRt(
+                cam, out TextureHandle classifyRt);
+            RecordComposite(renderGraph, cameraColor, sourceBlock, classifyRtAvailable, classifyRt);
         }
 
         MaterialPropertyBlock SourceBlockFor(Camera camera)
@@ -271,12 +291,13 @@ namespace AbstractOcclusion.WebGpuWater
         void RecordRaymarch(RenderGraph renderGraph, UniversalResourceData resources,
                             TextureHandle shaftTexture, TextureHandle historyRead,
                             Matrix4x4 prevVP, Matrix4x4 currVP, float temporalBlend,
-                            MaterialPropertyBlock sourceBlock)
+                            MaterialPropertyBlock sourceBlock, int shaderPass)
         {
             using var builder = renderGraph.AddRasterRenderPass<RaymarchPassData>(
                 _raymarchSampler.name, out RaymarchPassData data, _raymarchSampler);
 
             data.material = _material;
+            data.shaderPass = shaderPass;
             data.history = historyRead;
             data.prevViewProj = prevVP;
             data.currViewProj = currVP;
@@ -303,24 +324,38 @@ namespace AbstractOcclusion.WebGpuWater
                 d.material.SetMatrix(ID_CurrVP, d.currViewProj);
                 d.material.SetFloat(ID_TemporalBlend, d.temporalBlend);
                 d.material.SetFloat(ID_Frame, d.frame);
-                CoreUtils.DrawFullScreen(ctx.cmd, d.material, d.block, RaymarchShaderPass);
+                CoreUtils.DrawFullScreen(ctx.cmd, d.material, d.block, d.shaderPass);
             });
         }
 
         void RecordComposite(RenderGraph renderGraph, TextureHandle cameraColor,
-                             MaterialPropertyBlock sourceBlock)
+                             MaterialPropertyBlock sourceBlock, bool useClassifyRt,
+                             TextureHandle classifyRt)
         {
             using var builder = renderGraph.AddRasterRenderPass<PassData>(
                 _compositeSampler.name, out PassData data, _compositeSampler);
 
             data.material = _material;
             data.block = sourceBlock;
+            data.useClassifyRt = useClassifyRt;
             // ReadWrite (not Write): the Read half forces the rendered scene to be LOADED before the
             // additive Blend One One, instead of discarded (Write alone left the screen black).
             builder.SetRenderAttachment(cameraColor, 0, AccessFlags.ReadWrite);
+            // Declared read of the fog chain's transient (it is also bound as a global by that
+            // chain's SetGlobalTextureAfterPass, which is how the shader reaches it) - the same
+            // UseTexture + globals pairing the fog's own classify-RT consumers ship with.
+            if (useClassifyRt) builder.UseTexture(classifyRt, AccessFlags.Read);
             builder.UseAllGlobalTextures(true);                             // resolve _LargeGodRayTex
+            // The classified reader is a real shader variant, not a uniform branch. RenderGraph
+            // requires an explicit declaration before the command buffer may select that keyword.
+            builder.AllowGlobalStateModification(true);
             builder.SetRenderFunc((PassData d, RasterGraphContext ctx) =>
-                CoreUtils.DrawFullScreen(ctx.cmd, d.material, d.block, CompositeShaderPass));
+            {
+                if (d.useClassifyRt) ctx.cmd.EnableShaderKeyword(ClassifyRtKeyword);
+                else ctx.cmd.DisableShaderKeyword(ClassifyRtKeyword);
+                CoreUtils.DrawFullScreen(ctx.cmd, d.material, d.block, CompositeShaderPass);
+                if (d.useClassifyRt) ctx.cmd.DisableShaderKeyword(ClassifyRtKeyword);
+            });
         }
     }
 }

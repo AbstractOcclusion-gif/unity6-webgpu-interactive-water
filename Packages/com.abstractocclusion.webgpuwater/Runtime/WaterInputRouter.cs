@@ -230,6 +230,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         void HandleKeys()
         {
+            if (!_owner.DemoKeyboardShortcuts) return;
             if (KeySpaceDown()) _owner.TogglePause();
             if (KeyLHeld() && _owner.targetCamera != null)
             {

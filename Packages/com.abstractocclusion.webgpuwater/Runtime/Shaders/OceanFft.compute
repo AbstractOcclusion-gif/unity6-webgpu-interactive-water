@@ -44,7 +44,8 @@ RWTexture2DArray<uint> OceanSpecZ;         // horizontal z spectrum
 RWTexture2DArray<float4> OceanDisplacement;// spatial cascade (x, height, z, foam)
 // CHANNEL CONTRACT - OceanNormal repurposes two lanes; every consumer must honour this:
 //   .xz = surface normal tilt          (OceanFftNormalTilt, WaterLargeWaves.hlsl)
-//   .y  = crest pinch saturate(1 - J)  (OceanFftJacobianShore -> SSS crest glow) - NOT the normal's up-component,
+//   .y  = crest pinch saturate(1 - J)  (OceanFftJacobianFromSum on the fragment's hoisted cascade sum,
+//         OceanFftJacobianShore as the standalone twin -> SSS crest glow) - NOT the normal's up-component,
 //         which no consumer reads; reconstruct up as sqrt(1 - dot(xz, xz)) if ever needed.
 //   .w  = accumulated whitecap foam    (OceanFftFoam -> surface shading + particle spawns)
 RWTexture2DArray<float4> OceanNormal;

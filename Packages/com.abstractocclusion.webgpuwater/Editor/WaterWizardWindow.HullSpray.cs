@@ -203,7 +203,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             WaterSprayEmission emission = ResolveHullSprayEmission();
             int changedCount = WaterSprayPumpEditor.ApplyProbeBehaviour(
                 pumpObject, _hullSprayMode, emission, _hullWaterMotion, _hullIgnoreSurfaceBand);
-            Debug.Log($"[WebGpuWater] Applied {_hullSprayMode} / {emission} behaviour to " +
+            Debug.Log(WaterBuildKit.LogPrefix + $"Applied {_hullSprayMode} / {emission} behaviour to " +
                       $"{changedCount} probe(s) on '{pump.name}'.", pump);
         }
 
@@ -535,7 +535,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             Undo.CollapseUndoOperations(undoGroup);
             Selection.activeObject = hull;
-            Debug.Log($"[WebGpuWater] Fitted {probes.Length} {_hullSprayMode} / {emission} spray probe(s) " +
+            Debug.Log(WaterBuildKit.LogPrefix + $"Fitted {probes.Length} {_hullSprayMode} / {emission} spray probe(s) " +
                       $"to '{hull.name}' " +
                       $"across {_hullSlice.LoopCount} waterline outline(s), arc {_hullPetalArcDegrees:0}°, " +
                       $"elevation {_hullPetalElevationDegrees:0}°.",

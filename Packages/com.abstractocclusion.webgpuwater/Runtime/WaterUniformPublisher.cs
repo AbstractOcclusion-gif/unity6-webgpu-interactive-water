@@ -162,6 +162,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_PatchCoverCenter = Shader.PropertyToID("_PatchPoolCenter");
         static readonly int ID_PatchCoverHalf = Shader.PropertyToID("_PatchPoolHalf");
         static readonly int ID_LargeWaveDetail = Shader.PropertyToID("_LargeWaveDetailSlope");
+        static readonly int ID_FiniteBaseGridDetail =
+            Shader.PropertyToID("_FiniteBaseGridDetail");
         static readonly int ID_LargeWaveEdgeFeather = Shader.PropertyToID("_LargeWaveEdgeFeather");
         static readonly int ID_OceanWorldWaves = Shader.PropertyToID("_OceanWorldWaves");
         static readonly int ID_SwellWavelength = Shader.PropertyToID("_LargeSwellWavelength");
@@ -190,8 +192,8 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_UnderwaterUnbounded = Shader.PropertyToID("_UnderwaterUnbounded");
         static readonly int ID_UnderwaterFogSimple = Shader.PropertyToID("_UnderwaterFogSimple");
         // The SAME fact as ID_UnderwaterFogSimple, as a shader keyword. Both are set from one place
-        // below so they cannot drift: the float stays because other shaders read it
-        // (WaterExclusionWall, fog debug view 13), the keyword exists so the fullscreen fog's Simple
+        // below so they cannot drift: the float stays because the fog debug view
+        // (WaterFogDebug.hlsl, view 13) reads it, the keyword exists so the fullscreen fog's Simple
         // variant is COMPILED without the wavy-crossing machinery instead of merely branching past
         // it at runtime.
         const string KW_UnderwaterFogSimple = "WATER_FOG_SIMPLE";
@@ -241,12 +243,11 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_DetailNormalCrestBoost = Shader.PropertyToID("_DetailNormalCrestBoost");
         static readonly int ID_WindDirection = Shader.PropertyToID("_WindDirection");
         static readonly int ID_OceanCurrentOffset = Shader.PropertyToID("_OceanCurrentOffset");
-        static readonly int ID_MouthOutflowCount = Shader.PropertyToID("_MouthOutflowCount");
-        static readonly int ID_MouthOutflowOrigins = Shader.PropertyToID("_MouthOutflowOrigins");
-        static readonly int ID_MouthOutflowDirections = Shader.PropertyToID("_MouthOutflowDirections");
-        static readonly int ID_MouthOutflowParameters = Shader.PropertyToID("_MouthOutflowParameters");
-        static readonly int ID_MouthOutflowFoamFrames =
-            Shader.PropertyToID("_MouthOutflowFoamFrames");
+        static readonly int ID_MouthOutflowCount = WaterShaderProps.MouthOutflowCount;
+        static readonly int ID_MouthOutflowOrigins = WaterShaderProps.MouthOutflowOrigins;
+        static readonly int ID_MouthOutflowDirections = WaterShaderProps.MouthOutflowDirections;
+        static readonly int ID_MouthOutflowParameters = WaterShaderProps.MouthOutflowParameters;
+        static readonly int ID_MouthOutflowFoamFrames = WaterShaderProps.MouthOutflowFoamFrames;
         static readonly int ID_MouthOutflowFoamAppearance =
             WaterShaderProps.MouthOutflowFoamAppearance;
         static readonly int ID_UnderFresnelPhysical = Shader.PropertyToID("_UnderFresnelPhysical");
@@ -389,8 +390,10 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         // Resolved ONCE PER FRAME. The scene skybox is scene-global and cannot change mid-frame, but
-        // WriteBodyUniforms runs ~22x per frame on a default ocean (body + both patches + every clipmap
-        // level x2), so this was ~66 native material queries per frame all returning the same object.
+        // WriteBodyUniforms runs ~8-12x per frame on a default ocean (body, both patches, the ONE
+        // shared clipmap block, the global mirror, membership, up to four foam blocks, river and
+        // atmosphere/caustic passes), so this was ~3 native material queries per pass all returning
+        // the same object.
         const int InvalidSkyboxCacheFrame = -1;
         static Cubemap _skyboxCube;
         static int _skyboxCubeFrame = InvalidSkyboxCacheFrame;
@@ -403,6 +406,7 @@ namespace AbstractOcclusion.WebGpuWater
             _skyboxCubeFrame = InvalidSkyboxCacheFrame;
             s_mpbCaches = new ConditionalWeakTable<MaterialPropertyBlock, CachedUniformSink>();
             s_globalCache.Invalidate();
+            s_nextFullRewritePhase = 0;
         }
 
         static Cubemap SceneSkyboxCubemap()
@@ -420,11 +424,20 @@ namespace AbstractOcclusion.WebGpuWater
         /// values that changed since this body's last pass over this block reach a native setter.
         /// The block is no longer cleared every call - it is cleared exactly when its cache demands
         /// a full rebuild (owner change, a conditional write turning off, periodic self-heal).</summary>
-        internal void WriteBodyProps(MaterialPropertyBlock mpb)
+        internal void WriteBodyProps(MaterialPropertyBlock mpb) => WriteBodyProps(mpb, null);
+
+        /// <summary>The same pass with the caller's substitutions for ids the body derives (see
+        /// <see cref="IBodyUniformOverride"/>). The substitution happens INSIDE the cached pass,
+        /// so the cache's shadow holds exactly what the block holds; a consumer that instead
+        /// re-set a tracked id after this call would work only for as long as it repeated the
+        /// write every frame, with the shadow lying underneath (the 2026-08-13 hotfix-d rule:
+        /// a tracked id is written by WriteBodyUniforms and nowhere else).</summary>
+        internal void WriteBodyProps(MaterialPropertyBlock mpb, IBodyUniformOverride overrides)
         {
             CachedUniformSink cache = s_mpbCaches.GetValue(mpb, s_createMpbCache);
+            IUniformSink sink = overrides != null ? BindOverrides(cache, overrides) : cache;
             if (cache.BeginPass(this)) mpb.Clear();
-            WriteBodyUniforms(cache);
+            WriteBodyUniforms(sink);
             if (cache.EndPassNeedsRebuild())
             {
                 // A previously-written conditional value (an unassigned texture and its riders)
@@ -433,9 +446,47 @@ namespace AbstractOcclusion.WebGpuWater
                 mpb.Clear();
                 cache.Invalidate();
                 cache.BeginPass(this);
-                WriteBodyUniforms(cache);
+                WriteBodyUniforms(sink);
                 cache.EndPassNeedsRebuild(); // rotate the tracker; a fresh pass cannot miss ids
             }
+        }
+
+        /// <summary>A consumer's substitutions for ids WriteBodyUniforms derives from the body
+        /// (a river ribbon drawn with its parent's uniforms must not inherit the parent's patch
+        /// hole, shore field or mouth-outflow list). Consulted for every float / vector-array
+        /// write of the pass; an id with no override keeps the body's value. Ids the body never
+        /// writes are not tracked by the cache and may be set on the block directly.</summary>
+        internal interface IBodyUniformOverride
+        {
+            bool TryOverrideFloat(int id, out float value);
+            bool TryOverrideVectorArray(int id, out Vector4[] value);
+        }
+
+        // One reusable substitution wrapper per publisher: WriteBodyProps binds it around the
+        // block's cache for the duration of a pass (passes never nest, so one instance is enough).
+        OverridingUniformSink _overridingSink;
+
+        IUniformSink BindOverrides(IUniformSink inner, IBodyUniformOverride overrides)
+        {
+            _overridingSink ??= new OverridingUniformSink();
+            _overridingSink.Inner = inner;
+            _overridingSink.Overrides = overrides;
+            return _overridingSink;
+        }
+
+        sealed class OverridingUniformSink : IUniformSink
+        {
+            public IUniformSink Inner;
+            public IBodyUniformOverride Overrides;
+            public void SetFloat(int id, float value)
+                => Inner.SetFloat(id, Overrides.TryOverrideFloat(id, out float replaced) ? replaced : value);
+            public void SetColor(int id, Color value) => Inner.SetColor(id, value);
+            public void SetVector(int id, Vector4 value) => Inner.SetVector(id, value);
+            public void SetMatrix(int id, Matrix4x4 value) => Inner.SetMatrix(id, value);
+            public void SetVectorArray(int id, Vector4[] value)
+                => Inner.SetVectorArray(
+                    id, Overrides.TryOverrideVectorArray(id, out Vector4[] replaced) ? replaced : value);
+            public void SetTexture(int id, Texture value) => Inner.SetTexture(id, value);
         }
 
         // The primary body mirrors its per-body uniforms to shader globals, the fallback that
@@ -756,6 +807,7 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetVector(ID_PatchCoverCenter, _body.PatchPoolCenter);
             sink.SetVector(ID_PatchCoverHalf, _body.PatchPoolHalf);
             sink.SetFloat(ID_LargeWaveDetail, _body.OceanDetailSlope);
+            sink.SetFloat(ID_FiniteBaseGridDetail, _body.FiniteWindowBaseGridDetail);
             // 0 for pools AND unbounded oceans (the Effective accessor gates); only a BOUNDED
             // open-water body feathers its wave field toward the footprint border.
             sink.SetFloat(ID_LargeWaveEdgeFeather, _body.LargeWaveEdgeFeatherEffective);
@@ -1012,16 +1064,37 @@ namespace AbstractOcclusion.WebGpuWater
         //    global state alternating between the primary and a secondary fog source).
         //  * a CONDITIONAL write turned off (texture unassigned) -> the pass tracker sees a
         //    previously-written id go missing and forces clear + full rewrite.
-        //  * writes from OUTSIDE the publisher -> consumer extras rewrite their own ids every
-        //    frame (audited 2026-08-13: the only id overlaps - _PatchPoolCenter/Half and the
-        //    compute-side _SimEdgeFadeTexels - carry byte-identical values or a different target);
-        //    ClearBodyGlobals invalidates the global shadow explicitly.
+        //  * writes from OUTSIDE the publisher -> a tracked id is written by WriteBodyUniforms
+        //    and nowhere else (re-audited 2026-09-02: the river ribbon's substitutions now
+        //    travel through IBodyUniformOverride INSIDE the pass, the patch's duplicate
+        //    _PatchPoolCenter/Half writes are gone, and consumer extras only touch ids the pass
+        //    never writes); ClearBodyGlobals invalidates the global shadow explicitly.
         //  * self-heal backstop: every FullRewriteIntervalFrames the pass clears its target and
-        //    rewrites in full, so any unforeseen divergence lasts at most ~2 s.
+        //    rewrites in full, so any unforeseen divergence lasts at most ~2 s. Each sink runs
+        //    that clock at its own phase (see FullRewritePhaseStrideFrames): the sinks are all
+        //    created in the first frames, and on one shared clock every block in the scene
+        //    rewrote ~179 properties in the SAME frame - a periodic spike on the worst-ms readout.
         //
         // Comparisons are EXACT (bitwise float equality, reference identity for textures) - the
         // Unity ==-operators are approximate and would silently swallow small drifts.
         const int FullRewriteIntervalFrames = 128;
+        // Phase step between successively created sinks. Odd, so it is coprime with the
+        // power-of-two interval and every phase is visited before one repeats; about a third of
+        // the interval, so even the first three sinks land in different thirds of it.
+        const int FullRewritePhaseStrideFrames = 43;
+        static int s_nextFullRewritePhase;
+
+        // Shared with WaterExclusionVolume's matrix cache for the same reason: an approximate
+        // compare lets a slowly moving key drift under the epsilon forever, so the cached value
+        // is never rebuilt and the error grows without bound.
+        internal static bool ExactlyEqual(Vector4 a, Vector4 b)
+            => a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w;
+
+        internal static bool ExactlyEqual(in Matrix4x4 a, in Matrix4x4 b)
+            => ExactlyEqual(a.GetColumn(0), b.GetColumn(0))
+            && ExactlyEqual(a.GetColumn(1), b.GetColumn(1))
+            && ExactlyEqual(a.GetColumn(2), b.GetColumn(2))
+            && ExactlyEqual(a.GetColumn(3), b.GetColumn(3));
 
         sealed class CachedUniformSink : IUniformSink
         {
@@ -1037,8 +1110,18 @@ namespace AbstractOcclusion.WebGpuWater
             readonly HashSet<int> _currentIds = new HashSet<int>();
             WaterUniformPublisher _owner;
             int _nextFullRewriteFrame;
+            // This sink's slot in the self-heal cycle, 0..FullRewriteIntervalFrames-1: the first
+            // rewrite after a reset comes this many frames EARLY, and every later one keeps the
+            // full interval, so sinks reset together still rewrite on different frames.
+            readonly int _fullRewritePhase;
 
-            public CachedUniformSink(IUniformSink inner) => _inner = inner;
+            public CachedUniformSink(IUniformSink inner)
+            {
+                _inner = inner;
+                _fullRewritePhase = s_nextFullRewritePhase;
+                s_nextFullRewritePhase =
+                    (s_nextFullRewritePhase + FullRewritePhaseStrideFrames) % FullRewriteIntervalFrames;
+            }
 
             public void Invalidate()
             {
@@ -1053,13 +1136,20 @@ namespace AbstractOcclusion.WebGpuWater
             /// self-heal rewrite is due.</summary>
             public bool BeginPass(WaterUniformPublisher owner)
             {
-                bool rebuild = !ReferenceEquals(_owner, owner)
-                            || Time.frameCount >= _nextFullRewriteFrame;
+                bool reset = !ReferenceEquals(_owner, owner);
+                bool rebuild = reset || Time.frameCount >= _nextFullRewriteFrame;
                 if (rebuild)
                 {
                     Invalidate();
                     _owner = owner;
-                    _nextFullRewriteFrame = Time.frameCount + FullRewriteIntervalFrames;
+                    // A reset (first pass, owner change) lands on the shared clock, so the phase
+                    // pulls THIS sink's next rewrite off it; the periodic rewrites that follow
+                    // keep the full interval. The gap is never longer than the interval, so the
+                    // self-heal bound above still holds.
+                    int untilNextRewrite = reset
+                        ? FullRewriteIntervalFrames - _fullRewritePhase
+                        : FullRewriteIntervalFrames;
+                    _nextFullRewriteFrame = Time.frameCount + untilNextRewrite;
                 }
                 _currentIds.Clear();
                 return rebuild;
@@ -1076,15 +1166,6 @@ namespace AbstractOcclusion.WebGpuWater
                 foreach (int id in _currentIds) _previousIds.Add(id);
                 return missing;
             }
-
-            static bool ExactlyEqual(Vector4 a, Vector4 b)
-                => a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w;
-
-            static bool ExactlyEqual(in Matrix4x4 a, in Matrix4x4 b)
-                => ExactlyEqual(a.GetColumn(0), b.GetColumn(0))
-                && ExactlyEqual(a.GetColumn(1), b.GetColumn(1))
-                && ExactlyEqual(a.GetColumn(2), b.GetColumn(2))
-                && ExactlyEqual(a.GetColumn(3), b.GetColumn(3));
 
             public void SetFloat(int id, float value)
             {

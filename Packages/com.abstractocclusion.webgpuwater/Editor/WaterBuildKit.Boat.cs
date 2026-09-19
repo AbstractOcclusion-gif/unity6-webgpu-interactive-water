@@ -141,7 +141,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 {
                     // A model with no renderers can't size the collider; fall back to the
                     // primitive hull's box so the boat still floats and drives predictably.
-                    Debug.LogWarning("[WebGpuWater] Hull model has no renderers; using the default hull-sized collider.");
+                    Debug.LogWarning(LogPrefix + "Hull model has no renderers; using the default hull-sized collider.");
                     worldBounds = new Bounds(boat.transform.position, BoatHullScale);
                 }
                 var box = boat.AddComponent<BoxCollider>();

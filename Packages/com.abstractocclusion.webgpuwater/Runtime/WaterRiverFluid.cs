@@ -26,6 +26,12 @@ namespace AbstractOcclusion.WebGpuWater
         const float DefaultFoamStrength = 0.65f;
         const float DefaultObstacleFoamTrailLengthMeters = 3f;
         const float DefaultBankFoamStrength = 0f;
+        // Below the cell-size floor a rasterized collider would miss every sample point; 10 cm
+        // keeps thin rocks solid on the default grid.
+        const float DefaultObstacleContactRadiusMeters = 0.1f;
+        // The explicit solver divides by the step; this floor keeps a mistyped zero from
+        // producing NaN velocities instead of a slow, stable settle.
+        const float MinimumDeltaTimeSeconds = 0.0001f;
         const float EnabledFeature = 1f;
         const float DisabledFeature = 0f;
 
@@ -38,9 +44,10 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] internal int iterations = DefaultIterations;
         [Tooltip("Static colliders on these layers are rasterized as solid fluid cells.")]
         [SerializeField] internal LayerMask obstacleLayers = ~0;
-        [Min(0f)] [SerializeField] internal float obstacleContactRadius = 0.1f;
+        [Min(0f)] [SerializeField] internal float obstacleContactRadius =
+            DefaultObstacleContactRadiusMeters;
 
-        [Min(0.0001f)] [SerializeField] internal float deltaTime = DefaultDeltaTime;
+        [Min(MinimumDeltaTimeSeconds)] [SerializeField] internal float deltaTime = DefaultDeltaTime;
         [Min(0f)] [SerializeField] internal float viscosity = DefaultViscosity;
         [Min(0f)] [SerializeField] internal float pressure = DefaultPressure;
         [Min(0f)] [SerializeField] internal float flowForce = DefaultForce;
@@ -129,7 +136,7 @@ namespace AbstractOcclusion.WebGpuWater
             iterations = Mathf.Clamp(
                 iterations, WaterRiverFluidSolver.MinimumIterations, MaximumIterations);
             obstacleContactRadius = Mathf.Max(0f, obstacleContactRadius);
-            deltaTime = Mathf.Max(0.0001f, deltaTime);
+            deltaTime = Mathf.Max(MinimumDeltaTimeSeconds, deltaTime);
             viscosity = Mathf.Max(0f, viscosity);
             pressure = Mathf.Max(0f, pressure);
             flowForce = Mathf.Max(0f, flowForce);

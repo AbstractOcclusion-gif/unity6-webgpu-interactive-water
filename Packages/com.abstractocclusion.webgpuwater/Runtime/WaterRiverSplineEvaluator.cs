@@ -10,6 +10,11 @@ namespace AbstractOcclusion.WebGpuWater
         const int ProjectionRefinementIterations = 6;
         const float ProjectionThird = 1f / 3f;
         const float DirectionLengthEpsilonSquared = 1e-8f;
+        // Relative slack on the segment reject bound (TryProjectPoint): the hull bound is exact
+        // in real arithmetic, but the scan's sample positions carry float32 rounding (~1e-7
+        // relative), so a segment is only rejected when its bound beats the nearest knot by
+        // this much - four orders of magnitude more than that rounding, at every river scale.
+        const float ProjectionRejectSlack = 1e-3f;
 
         internal static bool TryEvaluate(IReadOnlyList<WaterRiverKnot> knots, Vector3 origin,
                                          Quaternion rotation, float normalizedT,
@@ -70,6 +75,19 @@ namespace AbstractOcclusion.WebGpuWater
             return true;
         }
 
+        // Nearest-point projection: a coarse sample scan over every segment, then a ternary
+        // refinement on the best one. The scan is the cost (17 frame evaluations per segment, per
+        // query point), so segments that cannot hold the answer are rejected first: a cubic
+        // Bezier lies inside the convex hull of its four control points, so the distance from
+        // the point to that hull's AABB is a LOWER bound on its distance to every sample of the
+        // segment, and the nearest knot is a sample of the scan (t = 0 and t = 1) whose
+        // distance is therefore an UPPER bound on the scan's minimum. A segment whose lower
+        // bound exceeds that upper bound can never win the scan, ties included - the scan keeps
+        // the first strictly-nearer sample and a rejected segment is strictly farther - so the
+        // result is identical to the unrejected scan. The bound costs 4 rotations per segment
+        // (the scan costs 68), and it is rebuilt per call rather than cached: it needs the
+        // world pose as well as the knots, and this evaluator owns neither the transform nor the
+        // spline's change event - a stale cache here would silently move the river.
         internal static bool TryProjectPoint(IReadOnlyList<WaterRiverKnot> knots, Vector3 origin,
                                              Quaternion rotation, Vector3 worldPoint,
                                              out WaterRiverSplineSample sample,
@@ -79,10 +97,16 @@ namespace AbstractOcclusion.WebGpuWater
             squaredDistance = float.PositiveInfinity;
             if (!HasEnoughKnots(knots) || !WaterSurfaceKinematics.IsFinite(worldPoint)) return false;
 
+            float rejectSquaredDistance =
+                NearestKnotSquaredDistance(knots, origin, rotation, worldPoint)
+                * (1f + ProjectionRejectSlack);
             int bestSegment = 0;
             float bestSegmentT = 0f;
             for (int segmentIndex = 0; segmentIndex < knots.Count - 1; segmentIndex++)
             {
+                if (SegmentHullSquaredDistance(knots, origin, rotation, segmentIndex, worldPoint)
+                    > rejectSquaredDistance)
+                    continue;
                 for (int step = 0; step <= ProjectionSamplesPerSegment; step++)
                 {
                     float segmentT = step / (float)ProjectionSamplesPerSegment;
@@ -133,6 +157,50 @@ namespace AbstractOcclusion.WebGpuWater
             if (horizontalDirection.sqrMagnitude < DirectionLengthEpsilonSquared)
                 horizontalDirection = Vector3.forward;
             return Vector3.Cross(Vector3.up, horizontalDirection.normalized).normalized;
+        }
+
+        // Upper bound on the projection scan's minimum: every knot is one of its samples
+        // (segment t = 0 / t = 1), evaluated through the same world placement.
+        static float NearestKnotSquaredDistance(IReadOnlyList<WaterRiverKnot> knots, Vector3 origin,
+                                                Quaternion rotation, Vector3 worldPoint)
+        {
+            float nearest = float.PositiveInfinity;
+            for (int knotIndex = 0; knotIndex < knots.Count; knotIndex++)
+            {
+                Vector3 knotPosition = origin + rotation * knots[knotIndex].LocalPosition;
+                float candidate = (knotPosition - worldPoint).sqrMagnitude;
+                if (candidate < nearest) nearest = candidate;
+            }
+            return nearest;
+        }
+
+        // Lower bound on the distance from worldPoint to ANY point of one segment: the squared
+        // distance to the axis-aligned box of its four Bezier control points (convex-hull
+        // property). Zero when the point is inside the box.
+        static float SegmentHullSquaredDistance(IReadOnlyList<WaterRiverKnot> knots, Vector3 origin,
+                                                Quaternion rotation, int segmentIndex,
+                                                Vector3 worldPoint)
+        {
+            WaterRiverKnot start = knots[segmentIndex];
+            WaterRiverKnot end = knots[segmentIndex + 1];
+            Vector3 startPosition = origin + rotation * start.LocalPosition;
+            Vector3 endPosition = origin + rotation * end.LocalPosition;
+            Vector3 startControl = startPosition + rotation * start.LocalTangent;
+            Vector3 endControl = endPosition - rotation * end.LocalTangent;
+
+            Vector3 boxMin = new Vector3(
+                Mathf.Min(Mathf.Min(startPosition.x, endPosition.x), Mathf.Min(startControl.x, endControl.x)),
+                Mathf.Min(Mathf.Min(startPosition.y, endPosition.y), Mathf.Min(startControl.y, endControl.y)),
+                Mathf.Min(Mathf.Min(startPosition.z, endPosition.z), Mathf.Min(startControl.z, endControl.z)));
+            Vector3 boxMax = new Vector3(
+                Mathf.Max(Mathf.Max(startPosition.x, endPosition.x), Mathf.Max(startControl.x, endControl.x)),
+                Mathf.Max(Mathf.Max(startPosition.y, endPosition.y), Mathf.Max(startControl.y, endControl.y)),
+                Mathf.Max(Mathf.Max(startPosition.z, endPosition.z), Mathf.Max(startControl.z, endControl.z)));
+            Vector3 nearestInBox = new Vector3(
+                Mathf.Clamp(worldPoint.x, boxMin.x, boxMax.x),
+                Mathf.Clamp(worldPoint.y, boxMin.y, boxMax.y),
+                Mathf.Clamp(worldPoint.z, boxMin.z, boxMax.z));
+            return (nearestInBox - worldPoint).sqrMagnitude;
         }
 
         static float SquaredDistanceAt(IReadOnlyList<WaterRiverKnot> knots, Vector3 origin,

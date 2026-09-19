@@ -20,7 +20,6 @@ namespace AbstractOcclusion.WebGpuWater
         internal const int IndicesPerRibbonQuad = 6;
         internal const int RibbonQuadsPerCrossSectionPair = VerticesPerCrossSection - 1;
 
-        const float HalfWidth = 0.5f;
         const float LeftBankUv = 0f;
         const float RightBankUv = 1f;
         const float LocalSourceLongitudinalMeters = 0f;
@@ -222,7 +221,7 @@ namespace AbstractOcclusion.WebGpuWater
                 }
 
                 WriteCrossSection(splineSection, centre, right, up,
-                                  sample.Width * HalfWidth,
+                                  sample.HalfWidth,
                                   sourceDistance, longitudinalOrigin + sourceDistance,
                                   sample.Speed,
                                   FullSeamWeight - bodyBlend, endSelector, worldToLocal,

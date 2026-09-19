@@ -8,7 +8,6 @@ namespace AbstractOcclusion.WebGpuWater
     [DisallowMultipleComponent]
     public sealed class WaterRiverCurrentField : WaterCurrentField
     {
-        const float HalfWidth = 0.5f;
         const float DomainBoundaryTolerance = 1e-4f;
         const float EndpointParameterTolerance = 1e-4f;
         const float DirectionLengthEpsilonSquared = 1e-8f;
@@ -34,7 +33,7 @@ namespace AbstractOcclusion.WebGpuWater
             Vector3 centreToPoint = worldPoint - sample.Position;
             if (IsOutsideSplineEnds(sample, centreToPoint)) return false;
 
-            float halfWidth = sample.Width * HalfWidth;
+            float halfWidth = sample.HalfWidth;
             float lateralDistance = Mathf.Abs(Vector3.Dot(centreToPoint, sample.Right));
             if (!float.IsFinite(lateralDistance) ||
                 lateralDistance > halfWidth + DomainBoundaryTolerance)
