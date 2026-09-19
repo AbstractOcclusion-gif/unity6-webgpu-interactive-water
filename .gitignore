@@ -5,6 +5,16 @@
 !/ProjectSettings/
 !/.gitignore
 !/.gitattributes
+# The GitHub front page: the root readme/licence and the demo media it shows.
+# Only media at the top of docs/ - the internal notes and subfolders stay local.
+!/README.md
+!/LICENSE.md
+!/docs/
+/docs/*
+!/docs/*.png
+!/docs/*.gif
+!/docs/*.mp4
+/docs/*(1)*
 
 # Unity generated folders
 [Ll]ibrary/
