@@ -64,6 +64,7 @@ namespace AbstractOcclusion.WebGpuWater
                     // early whenever no whole solver step is owed, which at high frame rates is most
                     // frames, and the stamps must still land every frame the way an immediate dispatch
                     // did. Also before Step so the flush precedes the sim window's scroll.
+                    InjectRainRipples(dt); // queued like any other drop, so it rides the flush below
                     _water?.FlushInjections();
                     if (ShouldRunRippleSolver())
                         Step(dt);
@@ -157,6 +158,48 @@ namespace AbstractOcclusion.WebGpuWater
             if (isPrimary)
                 using (GlobalPublicationMarker.Auto())
                     PublishBodyGlobalsTracked();
+        }
+
+        // Rain: the startup seeding's recipe made continuous - random drops placed directly in SIM
+        // space, so every one lands on the simulated surface (a bounded body's whole footprint, a
+        // windowed body's camera-following window). Each drop is the POINTER's click ripple
+        // (WaterInputRouter -> AddRipple): the body's own Ripple Radius and Ripple Strength, a
+        // positive stamp, the same normalisation - so rain inherits the look already tuned for
+        // this body instead of carrying a second set of numbers. Goes through AddDrop, so it arms
+        // the injection latch and a sleeping pool wakes the frame it starts raining.
+        void InjectRainRipples(float dt)
+        {
+            float rain = Mathf.Max(rippleSettings.rainRipples, _weatherRain);
+            if (rain <= 0f || _water == null) { _rainDropDebt = 0f; return; }
+
+            // AddRipple's normalisation: radius by the horizontal extent, height by extent.y.
+            float horizontalExtent = _windowed ? SimHorizontalExtent : VolumeHorizontalExtent;
+            float radius = RippleRadius / horizontalExtent;
+            // The grid cannot carry a drop under ~4 texels, so on a 10-20 m window a 5 cm request
+            // lands ~30 cm wide. One click survives that; rain's small drops do not - the same
+            // height over a wider bump is a proportionally flatter slope (rings invisible on big
+            // sims, fine on small ones; the wake never showed it because an interactor's radius is
+            // its real size, already above the floor). So hold the SLOPE: height x inflation.
+            float landedRadius = Mathf.Max(radius, _water.MinDropRadius);
+            float inflation = Mathf.Min(landedRadius / radius, RainMaxRadiusInflation);
+            // ...and the COVERAGE: wide rings overlap into mush at a per-m2 rate tuned for small ones.
+            float coverage = RainReferenceRadius / Mathf.Max(landedRadius * horizontalExtent, RainReferenceRadius);
+
+            float halfX = _windowed ? SimHorizontalExtent : VolumeExtentSafe.x;
+            float halfZ = _windowed ? SimHorizontalExtent : VolumeExtentSafe.z;
+            float dropsPerSecond = rain * RainDropsPerSquareMeter * rippleSettings.rainRippleDensity
+                                 * (4f * halfX * halfZ) * Mathf.Pow(coverage, RainCoverageExponent);
+            _rainDropDebt = Mathf.Min(_rainDropDebt + dropsPerSecond * dt, RainMaxDropsPerFrame);
+            int count = Mathf.FloorToInt(_rainDropDebt);
+            if (count <= 0) return;
+            _rainDropDebt -= count;
+
+            float strength = RippleStrength * rippleSettings.rainRippleStrength * inflation
+                           * Mathf.Lerp(RainLightStrengthScale, 1f, rain)
+                           / VolumeExtentSafe.y;
+            for (int i = 0; i < count; i++)
+                _water.AddDrop(UnityEngine.Random.value * 2f - 1f, UnityEngine.Random.value * 2f - 1f,
+                               radius, strength);
         }
 
         bool ShouldRunRippleSolver()
@@ -263,6 +306,18 @@ namespace AbstractOcclusion.WebGpuWater
             return b;
         }
 
+        /// <summary>True while this body's pool god-ray box is drawn by the after-fog pass instead
+        /// of at queue time. Decided in <see cref="SetRenderersEnabled"/>; read by
+        /// WaterParticlesAfterFogPass.</summary>
+        internal bool GodRaysAfterFog { get; private set; }
+
+        internal static bool AnyGodRaysAfterFog()
+        {
+            for (int i = 0; i < Bodies.Count; i++)
+                if (Bodies[i] != null && Bodies[i].GodRaysAfterFog) return true;
+            return false;
+        }
+
         internal void SetRenderersEnabled(bool on)
         {
             bool renderGeometry = on && renderBuiltInGeometry;
@@ -279,12 +334,29 @@ namespace AbstractOcclusion.WebGpuWater
             SetRendererEnabled(_patchUnderRenderer, renderGeometry && _windowed);
             SetClipmapRenderersEnabled(renderGeometry && IsOceanClipmap);
             // God rays obey the quality tier as well as culling: a tier that disables them
-            // keeps the renderer off even when the body is on-screen. Windowed bodies also
-            // suppress god rays (out of scope, same reason as caustics). A CHUNK draws its own
+            // keeps the renderer off even when the body is on-screen. The OCEAN clipmap
+            // suppresses this pool box (its shafts come from the fullscreen large-body march); a
+            // windowed POND keeps it, now that its pool caustic is window-aware. A CHUNK draws its own
             // shafts inside the shell wall (shaped to its primitive + fill), so the pool god-ray
             // box is suppressed for chunks to avoid double, unshaped shafts.
-            SetRendererEnabled(godRayRenderer,
-                               renderGeometry && _godRaysAllowed && !_windowed && !IsChunk);
+            bool godRaysOn = renderGeometry && _godRaysAllowed && !IsOceanClipmap && !IsChunk;
+            // AFTER-FOG REROUTE (2026-09-19, the shaft half of the particle/fog sorting fix). The
+            // fullscreen fog's absorb pass multiplies the WHOLE colour buffer by the transmittance
+            // to OPAQUE depth, so shafts drawn at queue time - which already price their own
+            // camera->sample fog in GodRays.shader - were fogged a second time, over the longer
+            // scene distance (across a pond: most of the beam gone, the rest shifted blue). While
+            // this body is the armed fullscreen-fog source its box skips the queue-time draw and
+            // WaterParticlesAfterFogPass submits it after the fog instead (the ocean shafts' slot).
+            // The pass honours THIS flag, not its own read of the gate: the gate refreshes at
+            // camera-render time, after this Update, and two readers one frame apart would drop
+            // or double the shafts on the frame it flips.
+#if WEBGPUWATER_URP
+            GodRaysAfterFog = godRaysOn && godRayRenderer != null && fullscreenVolumeFog
+                           && UnderwaterFogActive && FogSource == this;
+#else
+            GodRaysAfterFog = false; // no URP = no after-fog pass to redraw the box
+#endif
+            SetRendererEnabled(godRayRenderer, godRaysOn && !GodRaysAfterFog);
             SetChunkShellEnabled(renderGeometry);
         }
 

@@ -342,8 +342,10 @@ namespace AbstractOcclusion.WebGpuWater
         {
             get
             {
-                if (!_windowed) return CausticFrame.Pool;
-                return IsOceanClipmap ? CausticFrame.Window : CausticFrame.None;
+                // Windowed NON-ocean bodies take the pool caustic too (2026-09-19): Caustics.shader
+                // now indexes the ripple sim through the window frame, so the pool projection is no
+                // longer mismapped - wind waves caustic the whole body, live ripples add in the window.
+                return IsOceanClipmap ? CausticFrame.Window : CausticFrame.Pool;
             }
         }
 

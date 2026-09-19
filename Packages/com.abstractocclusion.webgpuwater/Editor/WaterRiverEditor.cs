@@ -71,6 +71,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         const string SurfaceSamplesPerSegmentPath = "samplesPerSegment";
         const string SurfaceGameplayDepthPath = "gameplayDepthMeters";
         const string SurfaceUnderMaterialPath = "underSurfaceMaterial";
+        const string SurfaceReflectionProbePath = "reflectionProbe";
         const string CurrentFieldFluidPath = "fluid";
 
         // Foldout state; persisted through SessionState (per-instance fields reset on every

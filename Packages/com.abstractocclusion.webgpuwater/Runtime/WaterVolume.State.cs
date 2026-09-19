@@ -189,6 +189,26 @@ namespace AbstractOcclusion.WebGpuWater
         const float SeedRippleRadius = 0.03f;
         const float SeedRippleStrength = 0.01f;
 
+        // Rain (RippleSettings.rainRipples / SetWeatherRain), all at intensity 1. Impacts are per
+        // square metre so a pond and a lake read equally wet; the per-frame cap bounds the cost on
+        // a large body (and stays well under WaterSimulation.MaxQueuedInjections, so rain never
+        // forces the extra mid-frame flush a full queue costs). The radius is a floor request: the
+        // sim raises any drop to its minimum texel radius.
+        const float RainDropsPerSquareMeter = 1.5f;
+        const int RainMaxDropsPerFrame = 24;
+        // Ring size the density above was tuned at. A wider ring (a bigger authored Ripple Radius,
+        // or the grid's texel floor) covers more water, so fewer of them give the same wetness.
+        const float RainReferenceRadius = 0.05f; // world units
+        // How hard a wider ring thins the rate. 2 would hold the covered AREA exactly constant, but
+        // in play that read too sparse on a 10-20 m window: a ring fades as it spreads, so its
+        // visible footprint grows slower than its radius squared.
+        const float RainCoverageExponent = 1.6f;
+        const float RainLightStrengthScale = 0.5f; // a drizzle's drops are smaller, not only rarer
+        // A coarse grid lands a drop WIDER than asked (the sim's minimum texel radius). Past this
+        // factor a ring is no longer rain-sized, so the compensation stops growing it and lets the
+        // rain fade out on a huge un-windowed grid instead of stamping metre-wide swells.
+        const float RainMaxRadiusInflation = 8f;
+
         // Skip a sim step after an editor hitch/breakpoint: integrating one huge dt would
         // slam the explicit solver with energy in a single step.
         const float MaxStepSeconds = 1f;

@@ -80,9 +80,13 @@ namespace AbstractOcclusion.WebGpuWater
                                   || foamOverlayNeeded);
             bool userTransparentsNeeded = WaterFogTransparent.Live.Count > 0
                                        && WaterVolume.ActiveBodyCount > 0;
+            // Third half: pond god-ray boxes whose queue-time draw the body suppressed because the
+            // fullscreen fog would fog them twice (WaterVolume.GodRaysAfterFog).
+            bool godRaysNeeded = WaterVolume.AnyGodRaysAfterFog();
             if (!WaterDebugView.FogViewActive && _particlePass != null
-                && (spritesNeeded || userTransparentsNeeded))
+                && (spritesNeeded || userTransparentsNeeded || godRaysNeeded))
             {
+                _particlePass.GodRaysThisFrame = godRaysNeeded;
                 _particlePass.SpritesThisFrame = spritesNeeded;
                 _particlePass.UserTransparentsThisFrame = userTransparentsNeeded;
                 renderer.EnqueuePass(_particlePass);
@@ -138,8 +142,10 @@ namespace AbstractOcclusion.WebGpuWater
     {
         readonly ProfilingSampler _sampler = new ProfilingSampler("WaterParticlesAfterFog");
         readonly ProfilingSampler _userSampler = new ProfilingSampler("WaterTransparentsAfterFog");
+        readonly ProfilingSampler _godRaySampler = new ProfilingSampler("WaterPondGodRaysAfterFog");
 
         // Set by the feature each enqueue (see AddRenderPasses): which of the two halves run.
+        internal bool GodRaysThisFrame;
         internal bool SpritesThisFrame;
         internal bool UserTransparentsThisFrame;
         // The fog material, for the WaterRestoreOpaqueDepth draw in the user half. Null when
@@ -154,6 +160,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         sealed class PassData { public Camera camera; public MaterialPropertyBlock block; }
         sealed class UserPassData { public Material fogMaterial; }
+        sealed class GodRayPassData { }
 
         internal WaterParticlesAfterFogPass()
         {
@@ -165,6 +172,22 @@ namespace AbstractOcclusion.WebGpuWater
             UniversalResourceData resources = frameData.Get<UniversalResourceData>();
             UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
             if (!resources.activeColorTexture.IsValid()) return;
+
+            // ---- Half 0: pond god-ray boxes (the stated order: fog, god rays, then sprites) -----
+            // Additive (Blend One One), ZTest Always, no depth write: colour ReadWrite only. The
+            // shader reads the scene depth and the main-light shadow map through globals.
+            if (GodRaysThisFrame)
+            {
+                using (var builder = renderGraph.AddRasterRenderPass("WaterPondGodRaysAfterFog",
+                                                                     out GodRayPassData _, _godRaySampler))
+                {
+                    builder.SetRenderAttachment(resources.activeColorTexture, 0, AccessFlags.ReadWrite);
+                    builder.AllowPassCulling(false); // driven by the bodies' flags, not renderer visibility
+                    builder.UseAllGlobalTextures(true);
+                    builder.SetRenderFunc((GodRayPassData d, RasterGraphContext ctx) =>
+                        DrawPondGodRays(ctx.cmd));
+                }
+            }
 
             // ---- Half 1: sprites + pond-foam overlay (armed frames only, the original pass) --
             if (SpritesThisFrame)
@@ -236,6 +259,21 @@ namespace AbstractOcclusion.WebGpuWater
                         DrawUserTransparents(ctx.cmd);
                     });
                 }
+            }
+        }
+
+        // Submits each rerouted pond god-ray box with its OWN renderer (mesh, matrix, live
+        // property block) and material. sharedMaterial (singular) does not allocate.
+        static void DrawPondGodRays(RasterCommandBuffer cmd)
+        {
+            var bodies = WaterVolume.Bodies;
+            for (int i = 0; i < bodies.Count; i++)
+            {
+                WaterVolume body = bodies[i];
+                if (body == null || !body.GodRaysAfterFog) continue;
+                Renderer box = body.godRayRenderer;
+                if (box == null || box.sharedMaterial == null) continue;
+                cmd.DrawRenderer(box, box.sharedMaterial, 0, 0);
             }
         }
 

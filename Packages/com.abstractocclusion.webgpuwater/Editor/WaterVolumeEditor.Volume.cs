@@ -132,21 +132,25 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "depthAttenuation.causticDepthFade",
                     "depthAttenuation.screenSpaceCaustics",
                     "depthAttenuation.screenCausticIntensity",
-                    "depthAttenuation.causticWindWaveStrength");
+                    "depthAttenuation.causticWindWaveStrength",
+                    "depthAttenuation.causticSimRippleStrength",
+                    "depthAttenuation.causticRippleFieldStrength");
                 WaterEditorUI.SubHeading("Ocean caustics");
                 DrawFieldsIf(IsOcean, "ocean.largeGodRayCausticStrength");
                 _showCausticsAdvanced = WaterEditorUI.SubSection("Advanced", _showCausticsAdvanced, () =>
                 {
+                    // Ripple Speed / Scale are SHARED with the pond's Caustic Ripple Field Strength
+                    // above, so they stay editable on every body; the rest is ocean-only.
                     WaterEditorUI.SubHeading("Ripple shaping");
                     DrawFields(
                         "ocean.largeCausticTimeScale",
-                        "ocean.largeCausticRippleScale",
-                        "ocean.largeCausticRippleStrength");
+                        "ocean.largeCausticRippleScale");
+                    DrawFieldsIf(IsOcean, "ocean.largeCausticRippleStrength");
                     WaterEditorUI.SubHeading("Softening");
-                    DrawFields(
+                    DrawFieldsIf(IsOcean,
                         "ocean.largeCausticProjectionSoften",
                         "ocean.largeGodRayCausticSmooth");
-                }, contentEnabled: IsOcean);
+                });
                 EditorGUILayout.HelpBox(CausticResolutionHelp, MessageType.None);
             });
         }
@@ -201,7 +205,8 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                         WaterVolumePropertyPaths.ClarityDeepDepth,
                         "bedDepthSettings.clarityShallow",
                         "bedDepthSettings.clarityDeep",
-                        "bedDepthSettings.clarityStrength");
+                        "bedDepthSettings.clarityStrength",
+                        "bedDepthSettings.clarityShallowReflection");
                 });
             },
             contentEnabled: UsesBedDepth);

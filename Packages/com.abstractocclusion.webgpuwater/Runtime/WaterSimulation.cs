@@ -118,6 +118,11 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>Grid resolution of the heightfield RTs (per side). Set per quality tier.</summary>
         public int Resolution { get; }
 
+        /// <summary>Smallest drop radius the grid can carry, in the normalised units AddDrop takes:
+        /// AddDrop raises any smaller request to this. A caller stamping sub-texel drops (rain) reads
+        /// it to learn how much WIDER than asked its drop will land, and compensates.</summary>
+        internal float MinDropRadius => MinDropTexelRadius / Resolution;
+
         readonly ComputeShader _cs;
         readonly int _kDrop, _kSphereInteract, _kUpdate, _kNormal, _kObstacle, _kObstacleSmooth, _kFoam, _kConserve, _kScroll, _kScrollFoam;
         readonly int _kReframe, _kReframeFoam;

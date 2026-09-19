@@ -214,9 +214,17 @@ namespace AbstractOcclusion.WebGpuWater
 
         internal static bool AnyFoamOverlayBody(Camera camera)
         {
-            IReadOnlyList<WaterRuntimeBodySnapshot> snapshot = GetSnapshot(camera);
-            for (int i = 0; i < snapshot.Count; i++)
-                if (snapshot[i].FoamWanted && snapshot[i].FrustumVisible) return true;
+            CameraSnapshot snapshot = EnsureSnapshot(camera);
+            Plane[] externalPlanes = camera != null ? snapshot.FrustumPlanes : null;
+            for (int i = 0; i < snapshot.Bodies.Count; i++)
+            {
+                WaterRuntimeBodySnapshot state = snapshot.Bodies[i];
+                if (!state.FoamWanted || state.Body == null) continue;
+                // External surfaces (river ribbons) are culled by their own bounds: they can be
+                // in view while the parent body's box is not.
+                if (state.FrustumVisible ||
+                    state.Body.AnyExternalFoamRendererVisible(externalPlanes)) return true;
+            }
             return false;
         }
 
@@ -232,11 +240,16 @@ namespace AbstractOcclusion.WebGpuWater
                 {
                     WaterRuntimeBodySnapshot state = snapshot.Bodies[i];
                     WaterVolume body = state.Body;
-                    if (!state.FoamWanted || !state.FrustumVisible || body == null) continue;
+                    if (!state.FoamWanted || body == null) continue;
                     int rendererCountBefore = into.Count;
-                    if (body.Foam || body.RiverMouthOutflowCount > 0)
+                    if (state.FrustumVisible && (body.Foam || body.RiverMouthOutflowCount > 0))
                         body.CollectAboveSurfaceRenderers(into);
-                    body.CollectExternalFoamRenderers(into);
+                    // Ribbons cull by their OWN bounds, never the parent's box (see
+                    // WaterVolume.ExternalFoam): Pass 0 defers their foam to this overlay
+                    // whenever the fog is armed, so a parent-box gate made cascade foam vanish
+                    // at every angle that kept the ribbon in view but the parent out of it.
+                    body.CollectExternalFoamRenderers(
+                        into, camera != null ? snapshot.FrustumPlanes : null);
                     state.FoamDrawn = into.Count > rendererCountBefore;
                     state.FoamCulled = !state.FoamDrawn;
                     snapshot.Bodies[i] = state;

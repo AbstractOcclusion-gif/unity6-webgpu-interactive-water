@@ -55,9 +55,35 @@ Enviro's volumetric-light texture on water because the main surface shader uses 
 texture registers.
 
 At runtime, `EnviroWaterWeatherBridge` is installed automatically. It synchronizes Enviro wind with
-all active water bodies and creates rain ripples from Enviro's wetness target. Add the component to
-your scene yourself only when you want to tune its wind scale, rain area/rate, or disable one of the
+all active water bodies and drives their rain from Enviro's wetness target. Add the component to
+your scene yourself only when you want to tune its wind scale, rain scale, or disable one of the
 links; a scene instance prevents creation of the default bridge.
+
+Rain itself belongs to the water: every `WaterVolume` has a **Rain Ripples** slider (Interactive
+Ripples, 0..1) that scatters impact rings over its whole simulated surface, with or without Enviro.
+The bridge only supplies a live intensity through `WaterVolume.SetWeatherRain`; the stronger of the
+slider and the weather value wins. A raindrop is the pointer's click ripple made smaller: it uses the
+body's own Ripple Radius and Ripple Strength, scaled by **Rain Ripple Strength** (a fraction of a
+click). Rings cannot be finer than about four texels of the ripple grid; on a coarse grid the ring
+height is raised and the drop rate thinned so the look holds from a small pool to a 20 m window.
+
+The same bridge keeps Enviro's fullscreen air fog out of the water. Enviro fogs opaque geometry
+before the water draws and has no notion of a waterline, so a submerged camera would otherwise see
+air fog on the bed underneath the water's own fog. **Underwater Fog Removal** has four modes:
+
+- **Auto** (default): Zones where the graphics API supports them, Global Switch everywhere else.
+- **Zones**: one Enviro Effect Removal Zone per water body, fitted to its rest water column (an
+  unbounded ocean gets a zone that follows the main camera). Per pixel, so a view straddling the
+  waterline stays correct. Direct3D, Metal and Vulkan only - Enviro compiles its zones out
+  elsewhere, WebGPU included.
+- **Global Switch**: turns Enviro's fog off while the camera is submerged and restores it on
+  surfacing. Works on every graphics API, but acts on the whole frame and on every camera, and a
+  change Enviro makes to that flag during a dive is overwritten by the restore.
+- **Off**: leave Enviro's fog untouched.
+
+Limits: rivers are spline ribbons, not boxes, so zones do not cover them; a zone's top is the flat
+rest surface, not the displaced one; and Enviro adds its point/spot volumetric-light term after the
+zones, so that term still shows underwater while Enviro volumetrics are on.
 
 ## Demo scenes
 

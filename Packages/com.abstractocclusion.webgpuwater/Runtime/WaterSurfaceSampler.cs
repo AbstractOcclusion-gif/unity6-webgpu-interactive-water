@@ -136,9 +136,9 @@ namespace AbstractOcclusion.WebGpuWater
             {
                 // Oceans sample the wind-wave layer in WORLD metres (extent-independent) to match the
                 // shader's WindWaveSampleXZ; bounded bodies stay in pool xz. m = (world/mpu) * mpu = world.
-                float mpu = _body.WaveMetersPerUnit;
-                float waveX = _body.IsOceanClipmap ? world.x / mpu : poolX;
-                float waveZ = _body.IsOceanClipmap ? world.z / mpu : poolZ;
+                Vector2 mpu = _body.WaveMetersPerAxis;   // per axis: metric on rectangular bodies too
+                float waveX = _body.IsOceanClipmap ? world.x / mpu.x : poolX;
+                float waveZ = _body.IsOceanClipmap ? world.z / mpu.y : poolZ;
                 surfaceH += _body.WaveBank.SampleHeight(waveX, waveZ, _body.WaveTime, mpu, minWavelengthMeters);
                 Vector2 waveSlope = _body.WaveBank.SampleSlope(
                     waveX, waveZ, _body.WaveTime, mpu, minWavelengthMeters);

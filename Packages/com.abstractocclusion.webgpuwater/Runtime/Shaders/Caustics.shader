@@ -25,6 +25,7 @@ Shader "AbstractOcclusion/WebGpuWater/Caustics"
             #include "UnityCG.cginc"
             // Brings WaterShared: CAUSTIC_PROJECTION_SCALE, CAUSTIC_FOCUS_SCALE,
             // CAUSTIC_NORMAL_SOFTEN (shared with LargeBodyCaustics), RIM_SHADOW_*, POOL_*.
+            #define WATER_CAUSTIC_FIELD 1 // CausticField + _LargeCausticTime/_LargeCausticRippleScale (WaterShared.hlsl)
             #include "WaterCommon.hlsl"
             // WaveSlope + _WaveTime: the SAME analytic wind-wave layer the surface folds into its
             // normal (EvaluateSurfaceGeometry, WaterSurfaceFragStages.hlsl), so the caustic focuses through the exact
@@ -37,6 +38,15 @@ Shader "AbstractOcclusion/WebGpuWater/Caustics"
             // Normalised pool step between adjacent caustic-mesh vertices (2 / meshResolution), set
             // by WaterCausticsPass. THE epsilon the focusing Jacobian is measured over - see vert.
             float _CausticGridStepNorm;
+            // Pond-side caustic shaping (WaterCausticsPass.Render sets both; defaults keep every
+            // existing pool byte-identical):
+            //  _PoolCausticFieldStrength - strength of the dedicated caustic ripple field (the ocean
+            //      generator's CausticField, shared). 0 = off. Independent of _WaveNormalStrength on
+            //      purpose: that one is already scaled by Caustic Wind Wave Strength, and the whole
+            //      point of this layer is a pattern that does NOT depend on the visible waves.
+            //  _CausticSimRippleStrength - weight of the interactive ripple sim in the caustic. 1 = as before.
+            float _PoolCausticFieldStrength;
+            float _CausticSimRippleStrength;
 
             struct appdata { float4 vertex : POSITION; };
             struct v2f
@@ -49,6 +59,29 @@ Shader "AbstractOcclusion/WebGpuWater/Caustics"
                 // newPos SURVIVES: the rim shadow in frag needs the actual projected floor hit.
                 float3 newPos : TEXCOORD1;
             };
+
+            // Ripple state under a POOL xy. A whole-body sim is indexed by the pool xy directly. A
+            // WINDOWED body's sim texture only covers the camera-following window, so it is indexed
+            // through the window frame (the surface's own SampleRipple mapping: WorldToSim + the
+            // border fade) and contributes nothing outside it. The wind waves below are analytic
+            // and cover the whole body either way, so a windowed pond gets a caustic EVERYWHERE,
+            // with the live ripples added on top around the camera (2026-09-19; windowed non-ocean
+            // bodies used to get no caustic at all, which also took their god rays away).
+            // Single exit on purpose: see the D3D note on SampleRipple in WaterSurfaceVertStage.
+            float4 SampleCausticRipple(float2 poolXY)
+            {
+                float2 uv = poolXY * 0.5 + 0.5;
+                float fade = 1.0;
+                if (_SimWindowed > 0.5)
+                {
+                    uv = WorldToSim(PoolToWorld(float3(poolXY.x, 0.0, poolXY.y))).xz * 0.5 + 0.5;
+                    float band = max(_SimEdgeFadeTexels, 0.0) * _WaterTexel.x; // texels -> UV
+                    float2 d = min(uv, 1.0 - uv);                              // negative outside
+                    fade = saturate(min(d.x, d.y) / max(band, 1e-5));
+                    uv = saturate(uv);
+                }
+                return SampleWaterBilinear(uv) * fade;
+            }
 
             // project the ray onto the pool floor plane
             float3 project(float3 origin, float3 ray, float3 refractedLight)
@@ -70,7 +103,7 @@ Shader "AbstractOcclusion/WebGpuWater/Caustics"
                 // Manual bilinear (not tex2Dlod): WebGPU point-samples float32 textures, so a
                 // plain sample makes the projected heights/normals - and therefore the whole
                 // caustic focusing - blocky in builds whenever mesh res != sim res.
-                float4 info = SampleWaterBilinear(poolXY * 0.5 + 0.5);
+                float4 info = SampleCausticRipple(poolXY) * _CausticSimRippleStrength;
                 // Softens the ripple normal (CAUSTIC_NORMAL_SOFTEN, WaterShared - shared with the
                 // large-body caustic): full-strength slopes over-focus into hard sparkles.
                 info.ba *= CAUSTIC_NORMAL_SOFTEN;
@@ -85,12 +118,25 @@ Shader "AbstractOcclusion/WebGpuWater/Caustics"
                 // already uses, so nothing downstream changes.
                 float2 nxz = info.ba * SIM_SLOPE_TO_POOL * _SimSlopeToWorld.xy
                            - WaveSlope(poolXY) * _WaveNormalStrength * _PoolSlopeToWorld.xy;
+                // Dedicated caustic ripple field, ON TOP (same composition as the ocean generator).
+                // Evaluated in METRES in the pool-aligned frame (pool xy * extent), so its slopes are
+                // in the same frame as the two slopes above on a rotated body. A uniform branch.
+                float fieldHeightPool = 0.0;
+                if (_PoolCausticFieldStrength > 0.0)
+                {
+                    float3 extent = VolumeExtentSafe();
+                    float2 fieldSlope;
+                    float fieldHeight;
+                    CausticField(poolXY * extent.xz, fieldSlope, fieldHeight);
+                    nxz -= fieldSlope * _PoolCausticFieldStrength;
+                    fieldHeightPool = fieldHeight * _PoolCausticFieldStrength / extent.y; // metres -> pool y
+                }
                 float3 normal = float3(nxz.x, sqrt(max(0.0, 1.0 - dot(nxz, nxz))), nxz.y);
                 float3 ray = refract(-_LightDir, normal, IOR_AIR / IOR_WATER);
                 // v.vertex.xzy put the grid's z into y; baseY carries that through unchanged.
                 float3 base = float3(poolXY.x, baseY, poolXY.y);
                 oldPos = project(base, refractedLight, refractedLight);
-                newPos = project(base + float3(0.0, info.r, 0.0), ray, refractedLight);
+                newPos = project(base + float3(0.0, info.r + fieldHeightPool, 0.0), ray, refractedLight);
             }
 
             v2f vert(appdata v)

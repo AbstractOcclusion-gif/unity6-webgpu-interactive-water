@@ -936,6 +936,14 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                 EditorGUILayout.HelpBox("Water scene fog comes from Enviro 3. Foam/splash sprites still use " +
                     "Unity fog (Enviro's Unity Fog option keeps them close). Enviro volumetric-light shafts " +
                     "are omitted on the water surface because its D3D11 texture budget is full.", MessageType.None);
+
+            // Independent of the hook above: Enviro's fullscreen fog is a separate pass, and keeping
+            // it out of the water column is the runtime bridge's job, not a shader include's.
+            EditorGUILayout.HelpBox("Underwater: EnviroWaterWeatherBridge keeps Enviro's fullscreen air fog " +
+                "out of the water column (its 'Underwater Fog Removal' setting). Auto uses Enviro Effect " +
+                "Removal Zones on Direct3D, Metal and Vulkan, and switches Enviro's fog off while the " +
+                "camera is submerged on every other graphics API. Rivers are not covered by zones.",
+                MessageType.None);
         }
 
         // Chunks and exclusion volumes resolve their wall/depth shaders by NAME at runtime, so they

@@ -282,7 +282,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 }
 
                 WaterGeomStage geom = EvaluateSurfaceGeometry(i);
-                float waterClarity = EvaluateWaterClarity(i, geom.shore);
+                float shallowReflectionMask;
+                float waterClarity = EvaluateWaterClarity(i, geom.shore, shallowReflectionMask);
 
                 // Both paths gate on the SAME uniform, so control flow stays uniform
                 // (the WGSL derivative contract) exactly like the old if/else did.
@@ -308,7 +309,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                                 oceanFoamLayer, pondFoamLayer, surfFoamLayer, oceanCoverage);
 
                 float3 outColor = CompositeSurfaceColor(geom, fresnel, reflectedColor, refractedColor,
-                                                        oceanCoverage, pondFoamLayer, surfFoamLayer, sssBoost);
+                                                        oceanCoverage, pondFoamLayer, surfFoamLayer, sssBoost,
+                                                        shallowReflectionMask);
                 outColor = ApplyShallowClarity(outColor, refractedColor, geom.shore);
 
                 FoamLayer swashFoamLayer;

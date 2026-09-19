@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c51fe72019bd25441838cde02c84f2f0, type: 3}
   m_Name: DefaultWaterQuality
   m_EditorClassIdentifier: AbstractOcclusion.WebGpuWater::AbstractOcclusion.WebGpuWater.WaterQuality
-  selection: 0
+  selection: 3
   highSimResolution: 256
   highCausticResolution: 1024
   highGodRaySteps: 24
@@ -26,8 +26,12 @@ MonoBehaviour:
   highCausticInterval: 1
   highReadbackInterval: 1
   highOceanFftInterval: 1
+  highOceanFftResolution: 128
   highMaxFoamParticles: 65536
   highUnderwaterFog: 2
+  highFogSolveScale: 1
+  highMaxSimulatedBodies: 4
+  highMaxCausticProjectionBodies: 4
   mediumSimResolution: 128
   mediumCausticResolution: 512
   mediumGodRaySteps: 16
@@ -41,8 +45,12 @@ MonoBehaviour:
   mediumCausticInterval: 1
   mediumReadbackInterval: 1
   mediumOceanFftInterval: 1
+  mediumOceanFftResolution: 128
   mediumMaxFoamParticles: 65536
   mediumUnderwaterFog: 2
+  mediumFogSolveScale: 1
+  mediumMaxSimulatedBodies: 4
+  mediumMaxCausticProjectionBodies: 4
   lowSimResolution: 128
   lowCausticResolution: 256
   lowGodRaySteps: 12
@@ -56,5 +64,12 @@ MonoBehaviour:
   lowCausticInterval: 2
   lowReadbackInterval: 3
   lowOceanFftInterval: 2
+  lowOceanFftResolution: 128
   lowMaxFoamParticles: 1024
   lowUnderwaterFog: 1
+  lowFogSolveScale: 1
+  lowMaxSimulatedBodies: 4
+  lowMaxCausticProjectionBodies: 4
+  fogQualitySource: 0
+  fogOverrideMode: 2
+  fogOverrideSolveScale: 1

@@ -185,6 +185,21 @@ float WaterDepthClarityCurve(float columnDepthWorld)
     return lerp(_DepthClarityRange.z, _DepthClarityRange.w, t);
 }
 
+// Shallow reflection mask (2026-09-19): fades the surface's mirror + sun glint toward the BORDERS,
+// on the SAME two depths as the clarity curve above, so "how see-through is the shallow water" and
+// "how much does it mirror" are shaped by one depth ramp. Published as a CUT (1 - the inspector's
+// Reflection At Shallow) so an unset uniform reads 0 = no effect. Returns 1 (identity) when depth
+// clarity is off, at the deep end, and everywhere when the cut is 0 - every existing body unchanged.
+float _ShallowReflectionCut; // 0 = reflection untouched; 1 = no reflection at the shallow end
+
+float WaterShallowReflectionMask(float columnDepthWorld)
+{
+    if (_DepthClarityStrength <= 0.0) return 1.0;
+    float span = max(_DepthClarityRange.y - _DepthClarityRange.x, 1e-3);
+    float t = saturate((columnDepthWorld - _DepthClarityRange.x) / span);
+    return 1.0 - saturate(_ShallowReflectionCut) * (1.0 - t);
+}
+
 // Clarity at a world column depth. 1 = clear (identity), 0 = murky. Returns 1 when the feature is
 // off (strength 0) so every caller is a no-op until a body opts in.
 float WaterDepthClarity(float columnDepthWorld)

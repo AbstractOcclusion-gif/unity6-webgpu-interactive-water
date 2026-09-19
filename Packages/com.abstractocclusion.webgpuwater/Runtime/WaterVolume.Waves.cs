@@ -154,10 +154,30 @@ namespace AbstractOcclusion.WebGpuWater
         // layer's wavelength is now given in metres, and that promise only holds if this conversion
         // matches the body's real footprint. It used to be a hand-entered field that also pretended to
         // be a fetch, so a 50 m lake with the default 10 left every wavelength stretched five times.
-        // A non-square footprint still stretches the pattern on its short axis - pool space is
-        // normalised per axis - which is a pre-existing property of sampling in pool space.
+        // This scalar (the long side) remains the bank's regeneration key; the PHASE conversion is
+        // per axis (WaveMetersPerAxis below), so a non-square footprint no longer stretches.
         internal float WaveMetersPerUnit =>
             Mathf.Max(MinWaveMetersPerUnit, Mathf.Max(VolumeExtentSafe.x, VolumeExtentSafe.z));
+
+        // PER-AXIS pool -> metres for the wave phase. Pool space is normalised per axis, so the
+        // scalar above squeezed the pattern along the short side of a rectangular body. Bounded
+        // bodies convert each axis by its own half extent; an ocean clipmap samples in world
+        // metres (world / scalar, then * scalar), so it keeps the scalar on both axes. Mirrored by
+        // _WaveMetersPerAxis (WaterWaves.hlsl) - CPU buoyancy and the rendered surface must agree.
+        internal Vector2 WaveMetersPerAxis
+        {
+            get
+            {
+                if (IsOceanClipmap)
+                {
+                    float metersPerUnit = WaveMetersPerUnit;
+                    return new Vector2(metersPerUnit, metersPerUnit);
+                }
+                Vector3 extent = VolumeExtentSafe;
+                return new Vector2(Mathf.Max(MinWaveMetersPerUnit, extent.x),
+                                   Mathf.Max(MinWaveMetersPerUnit, extent.z));
+            }
+        }
 
         // Regenerate the bank only when a wind/scale parameter actually changes, so
         // the phases stay stable frame-to-frame (a fresh bank would pop the surface).

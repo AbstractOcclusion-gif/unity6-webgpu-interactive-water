@@ -115,11 +115,11 @@ namespace AbstractOcclusion.WebGpuWater
                                 float minWavelength, float largeWaveVerticalRate)
         {
             // Match the sampler's ocean-vs-pool coordinate choice for the wind-wave layer.
-            float metersPerUnit = WaveMetersPerUnit;
-            float waveX = IsOceanClipmap ? worldPoint.x / metersPerUnit : poolX;
-            float waveZ = IsOceanClipmap ? worldPoint.z / metersPerUnit : poolZ;
+            Vector2 metersPerAxis = WaveMetersPerAxis;
+            float waveX = IsOceanClipmap ? worldPoint.x / metersPerAxis.x : poolX;
+            float waveZ = IsOceanClipmap ? worldPoint.z / metersPerAxis.y : poolZ;
 
-            float poolRate = WindWaves ? WaveBank.SampleVerticalVelocity(waveX, waveZ, WaveTime, metersPerUnit, minWavelength) : 0f;
+            float poolRate = WindWaves ? WaveBank.SampleVerticalVelocity(waveX, waveZ, WaveTime, metersPerAxis, minWavelength) : 0f;
             // Pool vertical rate -> world Y rate along the same transform the height uses (PoolToWorld scales
             // by extent.y and rotates), so Velocity.y is exactly d(Height)/dt for the wind-wave layer.
             float worldRate = (VolumeRotation * new Vector3(0f, poolRate * VolumeExtentSafe.y, 0f)).y;

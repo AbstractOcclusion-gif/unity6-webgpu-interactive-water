@@ -45,6 +45,7 @@ namespace AbstractOcclusion.WebGpuWater
         const string MouthEndWaveFramePropertyName = "_RiverEndWaveFrame1";
         const string MouthEndWaveAnchorPropertyName = "_RiverEndWaveAnchor1";
         const float EndAnchorPoolFrameMode = 1f;
+        const float EndAnchorUnitRatio = 1f;   // the per-axis metres ratio rides the frame rows
         const float MinAnchorMetersPerUnit = 1e-4f;
         static readonly int SourceEndWaveFrameId =
             Shader.PropertyToID(SourceEndWaveFramePropertyName);
@@ -54,6 +55,13 @@ namespace AbstractOcclusion.WebGpuWater
             Shader.PropertyToID(MouthEndWaveFramePropertyName);
         static readonly int MouthEndWaveAnchorId =
             Shader.PropertyToID(MouthEndWaveAnchorPropertyName);
+        // Reflection-base ids the parent's publisher writes (WaterUniformPublisher ID_Sky /
+        // ID_EnvReflectionIntensity); re-written on the block after every publisher pass when the
+        // ribbon owns a probe. (_UseUrpProbe has no shader uniform - it only steers the C# choice.)
+        static readonly int ReflectionBaseTextureId = Shader.PropertyToID("_Sky");
+        static readonly int EnvReflectionIntensityId = Shader.PropertyToID("_EnvReflectionIntensity");
+        const float MinimumProbeIntensity = 0f;
+        const float StandaloneEnvReflectionIntensity = 1f;
         static readonly int MouthOutflowCountId = WaterShaderProps.MouthOutflowCount;
         static readonly int MouthOutflowOriginsId = WaterShaderProps.MouthOutflowOrigins;
         static readonly int MouthOutflowDirectionsId = WaterShaderProps.MouthOutflowDirections;
@@ -79,6 +87,12 @@ namespace AbstractOcclusion.WebGpuWater
                  "runtime child renders the same ribbon mesh from below, so a submerged camera " +
                  "looking up sees the river surface. Empty = no underside (legacy).")]
         [SerializeField] internal Material underSurfaceMaterial;
+        [Tooltip("Optional reflection BASE for this ribbon only. A river inherits every uniform " +
+                 "from its parent body, including the parent's reflection probe - wrong once the " +
+                 "ribbon leaves the parent's room. When set (realtime, baked or custom probe), " +
+                 "its cubemap and intensity replace the parent's for this ribbon; SSR and planar " +
+                 "still layer on top. Empty = inherit the parent (previous behaviour).")]
+        [SerializeField] internal ReflectionProbe reflectionProbe;
 
         MeshFilter _meshFilter;
         MeshRenderer _meshRenderer;
@@ -723,6 +737,23 @@ namespace AbstractOcclusion.WebGpuWater
             _propertyBlock.SetFloat(
                 WaterShaderProps.RiverCascadeTransportActive, DisabledFeature);
             _propertyBlock.SetFloat(WaterShaderProps.RiverFluidActive, DisabledFeature);
+            ApplyReflectionProbeOverride();
+        }
+
+        // The ribbon's own reflection base. Mirrors WaterUniformPublisher.ResolveReflectionTexture:
+        // only a ready CUBE texture is accepted (realtime probes expose a cube RenderTexture,
+        // baked/custom ones a Cubemap); anything else leaves the parent's base in place.
+        void ApplyReflectionProbeOverride()
+        {
+            if (reflectionProbe == null) return;
+            Texture probeTexture = reflectionProbe.texture;
+            if (probeTexture == null || probeTexture.dimension != TextureDimension.Cube) return;
+
+            float bodyIntensity = waterVolume != null
+                ? waterVolume.EnvReflectionIntensity : StandaloneEnvReflectionIntensity;
+            _propertyBlock.SetTexture(ReflectionBaseTextureId, probeTexture);
+            _propertyBlock.SetFloat(EnvReflectionIntensityId,
+                bodyIntensity * Mathf.Max(MinimumProbeIntensity, reflectionProbe.intensity));
         }
 
         // Id -> value table behind WaterUniformPublisher.IBodyUniformOverride. Dictionaries so
@@ -788,13 +819,19 @@ namespace AbstractOcclusion.WebGpuWater
             Vector3 axisX = endBody.VolumeRotation * Vector3.right;
             Vector3 axisZ = endBody.VolumeRotation * Vector3.forward;
             Vector3 center = endBody.VolumeCenter;
-            float metersPerUnitRatio = endBody.WaveMetersPerUnit /
-                Mathf.Max(waterVolume.WaveMetersPerUnit, MinAnchorMetersPerUnit);
+            // The bank phase multiplies the sample by the PARENT's per-axis metres downstream
+            // (_WaveMetersPerAxis), so each row carries receiving-axis / parent-axis metres: the
+            // product is then the receiving body's own metric phase on rectangular bodies too.
+            // The ratio lives in the rows (it is per axis now); anchor.z stays the neutral 1.
+            Vector2 endMeters = endBody.WaveMetersPerAxis;
+            Vector2 parentMeters = waterVolume.WaveMetersPerAxis;
+            float ratioX = endMeters.x / Mathf.Max(parentMeters.x, MinAnchorMetersPerUnit);
+            float ratioZ = endMeters.y / Mathf.Max(parentMeters.y, MinAnchorMetersPerUnit);
             _propertyBlock.SetVector(frameId, new Vector4(
-                axisX.x / extent.x, axisX.z / extent.x,
-                axisZ.x / extent.z, axisZ.z / extent.z));
+                axisX.x / extent.x * ratioX, axisX.z / extent.x * ratioX,
+                axisZ.x / extent.z * ratioZ, axisZ.z / extent.z * ratioZ));
             _propertyBlock.SetVector(anchorId, new Vector4(
-                center.x, center.z, metersPerUnitRatio, EndAnchorPoolFrameMode));
+                center.x, center.z, EndAnchorUnitRatio, EndAnchorPoolFrameMode));
         }
 
         void EnsureUnderRenderer()

@@ -55,7 +55,10 @@ namespace AbstractOcclusion.WebGpuWater.Editor
                     "rippleSettings.rippleStrength",
                     "rippleSettings.rippleRadius",
                     "rippleSettings.rippleChoppiness",
-                    "rippleSettings.splashImpactRippleCap");
+                    "rippleSettings.splashImpactRippleCap",
+                    "rippleSettings.rainRipples",
+                    "rippleSettings.rainRippleStrength",
+                    "rippleSettings.rainRippleDensity");
                 _showWakeSafety = WaterEditorUI.SubSection("Wake Safety", _showWakeSafety, () =>
                 {
                     EditorGUILayout.HelpBox("This cap applies to every wake interactor on this water body. " +

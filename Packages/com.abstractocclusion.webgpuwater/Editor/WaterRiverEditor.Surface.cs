@@ -24,7 +24,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             _showRibbon = WaterEditorUI.Section("Ribbon", _showRibbon, () =>
             {
                 DrawFields(surface, SurfaceSamplesPerSegmentPath, SurfaceGameplayDepthPath,
-                           SurfaceUnderMaterialPath);
+                           SurfaceUnderMaterialPath, SurfaceReflectionProbePath);
                 DrawRibbonReadouts((WaterRiverSurface)surface.targetObject);
             });
             surface.ApplyModifiedProperties();

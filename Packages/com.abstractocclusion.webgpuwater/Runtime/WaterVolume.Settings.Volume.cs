@@ -198,6 +198,15 @@ namespace AbstractOcclusion.WebGpuWater
                      "visible surface ripples are untouched either way; this only decouples the " +
                      "projected light pattern from them. (Oceans: use Large Caustic Ripple Strength.)")]
             [Range(0f, 1f)] public float causticWindWaveStrength = 1f;
+            [Tooltip("How much the interactive ripple sim (bobber, fish, boat wakes) drives the caustic " +
+                     "generator and the god rays. 1 = unchanged, 0 = ripples generate no caustics.")]
+            [Range(0f, 2f)] public float causticSimRippleStrength = 1f;
+            [Tooltip("Pond version of the ocean's dedicated caustic ripple field: a wave layer that " +
+                     "exists ONLY in the caustic generator (the visible surface is untouched), so the " +
+                     "light pattern and the god-ray beams can use a wavelength the caustic lattice can " +
+                     "resolve even when the visible wind waves are tiny. 0 = off (unchanged). Its " +
+                     "wavelength and speed are the shared Ripple Scale / Ripple Speed under Advanced.")]
+            [Range(0f, 2f)] public float causticRippleFieldStrength = 0f;
             [Tooltip("Mirror the fog extinction into the depth extinction each frame, so one dial " +
                      "drives fog + depth darkening. Off = the depth colour is fully independent.")]
             public bool linkDepthToFog = false;
@@ -212,6 +221,8 @@ namespace AbstractOcclusion.WebGpuWater
         internal float screenCausticIntensity => depthAttenuation.screenCausticIntensity;
         internal float godRayDepthFade => depthAttenuation.godRayDepthFade;
         internal float causticWindWaveStrength => depthAttenuation.causticWindWaveStrength;
+        internal float causticSimRippleStrength => depthAttenuation.causticSimRippleStrength;
+        internal float causticRippleFieldStrength => depthAttenuation.causticRippleFieldStrength;
         internal bool linkDepthToFog => depthAttenuation.linkDepthToFog;
     }
 }

@@ -30,6 +30,17 @@ float4 _WaveB[WATER_MAX_WAVES];
 float  _WaveCount;          // active components (float so it binds via MaterialPropertyBlock); 0 disables
 float  _WaveTime;           // shared animation time (published with the bank)
 float  _WaveMetersPerUnit;  // pool unit -> metres (waves are defined in metres)
+// PER-AXIS pool unit -> metres (xy = body half extent x / z). Pool space is normalised per axis,
+// so one scalar stretched the whole pattern along the long side of a rectangular body. World-wave
+// (ocean) bodies publish the scalar on both axes. Unpublished (zero) falls back to the scalar, so
+// a consumer the publisher never reached keeps the old isotropic conversion instead of going flat.
+float4 _WaveMetersPerAxis;
+
+float2 WaveMetresPerAxis()
+{
+    return _WaveMetersPerAxis.x > 0.0 ? _WaveMetersPerAxis.xy
+                                      : float2(_WaveMetersPerUnit, _WaveMetersPerUnit);
+}
 
 // Guard for the world-metres division below and for every consumer that mirrors it.
 #define WAVE_METERS_MIN 1e-3
@@ -64,7 +75,7 @@ float2 OceanCurrentDrift(float2 worldXZ)
 float2 WindWaveSampleXZ(float2 poolXZ, float2 worldXZ)
 {
     if (_OceanWorldWaves > 0.5)
-        return OceanCurrentDrift(worldXZ) / max(_WaveMetersPerUnit, WAVE_METERS_MIN);
+        return OceanCurrentDrift(worldXZ) / max(WaveMetresPerAxis(), WAVE_METERS_MIN);
     return poolXZ;
 }
 
@@ -82,7 +93,7 @@ void RiverCurrentWaveSampleXZ(float4 currentData, out float2 sampleA,
     float phaseA = frac(_WaveTime * RIVER_CURRENT_PHASE_RATE);
     float phaseB = frac(phaseA + 0.5);
     phaseBlend = abs(phaseA * 2.0 - 1.0);
-    float inverseWaveMetres = rcp(max(_WaveMetersPerUnit, WAVE_METERS_MIN));
+    float2 inverseWaveMetres = rcp(max(WaveMetresPerAxis(), WAVE_METERS_MIN));
     sampleA = (currentData.xy - currentData.zw *
                (phaseA * RIVER_CURRENT_PHASE_WINDOW_SECONDS)) * inverseWaveMetres;
     sampleB = (currentData.xy - currentData.zw *
@@ -375,7 +386,8 @@ float MouthOutflowOceanCalm(float2 worldXZ)
 // per-end uniforms carry the receiving body's own pool anchor so the terminal grid target IS that
 // body's rendered field: frame = world->pool rows (xAxis.xz / extent.x, zAxis.xz / extent.z),
 // anchor = (center.xz, receiving-body metres-per-pool-unit / PARENT metres-per-pool-unit - the
-// bank phase multiplies by the PARENT's _WaveMetersPerUnit downstream - and w as the mode gate:
+// bank phase multiplies by the PARENT's per-axis metres downstream; since 2026-09-19 that ratio is
+// per axis and rides the frame rows, anchor.z is a neutral 1 - and w as the mode gate:
 // 0 = inactive, keep the parent-anchored path; 1 = anchor to the receiving body). Published by
 // WaterRiverSurface each LateUpdate; unpublished defaults are zero, so every non-river renderer
 // and every unconnected end keeps today's path bit-for-bit.
@@ -485,7 +497,7 @@ float WaveStokesDerivative(float height)
 // Height (pool units) of the wind-wave layer at pool-space xz in [-1, 1].
 float WaveHeight(float2 poolXZ)
 {
-    float2 m = poolXZ * _WaveMetersPerUnit;
+    float2 m = poolXZ * WaveMetresPerAxis();
     int count = (int)_WaveCount;
     float linearHeight = 0.0;
     [loop]
@@ -499,7 +511,7 @@ float WaveHeight(float2 poolXZ)
 // Used to perturb the surface normal: normal.xz = -gradient.
 float2 WaveSlope(float2 poolXZ)
 {
-    float2 m = poolXZ * _WaveMetersPerUnit;
+    float2 m = poolXZ * WaveMetresPerAxis();
     int count = (int)_WaveCount;
     float linearHeight = 0.0;
     float2 gradient = 0.0;
@@ -509,11 +521,11 @@ float2 WaveSlope(float2 poolXZ)
         float phase = WavePhase(i, m);
         linearHeight += _WaveB[i].x * sin(phase);
         // d/d(poolXZ) introduces a factor k * dir * d(m)/d(poolXZ) = k * dir * metersPerUnit.
-        gradient += _WaveB[i].x * cos(phase) * _WaveA[i].z * _WaveA[i].xy * _WaveMetersPerUnit;
+        gradient += _WaveB[i].x * cos(phase) * _WaveA[i].z * _WaveA[i].xy * WaveMetresPerAxis();
     }
     float2 envelopeGradient;
     float envelope = WaveGroupEnvelope(m, envelopeGradient);
-    envelopeGradient *= _WaveMetersPerUnit;   // the envelope's phase is in metres too
+    envelopeGradient *= WaveMetresPerAxis();   // the envelope's phase is in metres too
     // Product rule through the envelope, then the chain rule through the crest term.
     return WaveStokesDerivative(linearHeight * envelope)
            * (gradient * envelope + envelopeGradient * linearHeight);

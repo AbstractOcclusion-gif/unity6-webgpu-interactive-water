@@ -18,6 +18,26 @@ All notable changes to this package are documented here.
   configured scene instance exists. It maps Enviro's normalized wind speed/direction to all live
   `WaterVolume` bodies and emits rain impacts from Enviro's blended wetness target. It uses a cached
   reflection binding, so the water runtime keeps compiling and running when Enviro is not installed.
+- **WaterTerrain's underwater edge follows the moving surface.** The switch that turns caustics,
+  the underwater tint and the refracted shadow on tested `poolPos.y < simH` - no wind waves, and
+  a pool-frame height against a surface that may sit on the shore-field level. It now tests the
+  same rippled `surfaceY` (sim ripples, wakes, small wind waves) as every other depth term.
+- **Rain Ripples slider** on every `WaterVolume` (Interactive Ripples, 0..1, scripting:
+  `RainRipples`). Random impact rings are queued directly in sim space - the startup seeding's
+  recipe made continuous - at a rate per square metre, so every drop lands on the simulated
+  surface and a pond and a lake read equally wet; a per-frame cap bounds large bodies.
+  `SetWeatherRain` lets a weather provider add a live intensity beside the slider (the stronger
+  wins). The Enviro bridge now drives that instead of throwing its own drops in a 24 m disc
+  around the camera, where almost all of them missed a small pond; its drop rate/area/radius/
+  strength fields are replaced by one **Maximum Rain Ripples** scale.
+- **Enviro fog no longer shows underwater.** Enviro's fullscreen fog pass runs before the water
+  draws and knows nothing about a waterline, so a submerged camera saw air fog on the bed under the
+  water's own medium (from above, the Blend Off sheet already overwrote it). `EnviroWaterWeatherBridge`
+  gains **Underwater Fog Removal** (Auto / Zones / Global Switch / Off). Zones keeps one Enviro
+  Effect Removal Zone on each body's rest column, bound by reflection like the weather link; an
+  unbounded ocean gets a camera-following zone. Enviro compiles zones out on WebGPU/GL, so Auto
+  falls back there to switching Enviro's fog flag off while `WaterVolume.CameraSubmerged` is true,
+  restoring it on surfacing, when Enviro stands down and on disable. Enviro itself is unmodified.
 
 ### Changed
 - Global `_SunColor` renamed `_WaterSunColor` (shaders + WaterUniformPublisher). Enviro 3

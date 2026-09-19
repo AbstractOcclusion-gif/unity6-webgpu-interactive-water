@@ -70,6 +70,18 @@ namespace AbstractOcclusion.WebGpuWater
                      "an over-tall impact ring without changing the splash particles. 0 = off (no cap). " +
                      "Lower positive = softer impact ripple.")]
             [Range(0f, 0.08f)] public float splashImpactRippleCap = 0f;
+            [Tooltip("Continuous rain on this body: random impact rings scattered over the whole simulated " +
+                     "surface. 0 = off, 1 = a downpour. A live weather provider (the Enviro 3 bridge) can " +
+                     "drive it too - the stronger of the two wins. A ring cannot be finer than about four " +
+                     "texels of the ripple grid, and any rain keeps this body's ripple solver awake.")]
+            [Range(0f, 1f)] public float rainRipples = 0f;
+            [Tooltip("Rain ring height as a fraction of Ripple Strength: a raindrop is the pointer's " +
+                     "click ripple (same Ripple Radius, same stamp), only smaller. 1 = every drop hits " +
+                     "as hard as a click. The height is already compensated for a coarse ripple grid.")]
+            [Range(0f, 2f)] public float rainRippleStrength = 0.25f;
+            [Tooltip("How many rain rings land, as a multiplier on the built-in rate. 1 = the tuned " +
+                     "default; raise it if the rain reads sparse on a large ripple window.")]
+            [Range(0.25f, 4f)] public float rainRippleDensity = 1f;
             [Tooltip("Seed the pool with random ripples on start.")]
             public bool seedRipplesOnStart = true;
             [Tooltip("Keep total water volume constant so the surface doesn't drift up/down.")]
@@ -100,5 +112,18 @@ namespace AbstractOcclusion.WebGpuWater
 
         /// <summary>Radius of a click/drag ripple (world units).</summary>
         public float RippleRadius { get => rippleSettings.rippleRadius; set => rippleSettings.rippleRadius = value; }
+
+        /// <summary>Authored rain intensity, 0..1 (the Rain Ripples slider).</summary>
+        public float RainRipples { get => rippleSettings.rainRipples; set => rippleSettings.rainRipples = Mathf.Clamp01(value); }
+
+        // Live weather rain (SetWeatherRain). Deliberately NOT serialized: unlike the wind, which
+        // a provider writes into the authored setting and must restore, this rides beside the
+        // slider, so stopping the provider can never leave a scene raining.
+        float _weatherRain;
+        float _rainDropDebt;
+
+        /// <summary>Applies a live weather provider's rain, 0..1, without touching the authored
+        /// Rain Ripples slider; the stronger of the two drives the body. Pass 0 to release.</summary>
+        public void SetWeatherRain(float intensity01) => _weatherRain = Mathf.Clamp01(intensity01);
     }
 }

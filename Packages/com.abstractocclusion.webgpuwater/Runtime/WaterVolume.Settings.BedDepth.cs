@@ -56,6 +56,11 @@ namespace AbstractOcclusion.WebGpuWater
             [Range(0f, 1f)] public float clarityDeep = 0f;
             [Tooltip("How strongly the depth curve pushes the look vs the flat per-body turbidity/fog. 0 = off.")]
             [Range(0f, 1f)] public float clarityStrength = 1f;
+            [Tooltip("Reflection at the SHALLOW end of the clarity curve - the borders. 1 = unchanged, " +
+                     "0 = no mirror reflection and no sun glint where the water is shallow, ramping back " +
+                     "to full reflection at the Deep depth. Uses the same two depths as the clarity curve; " +
+                     "only active while Clarity From Depth is on.")]
+            [Range(0f, 1f)] public float clarityShallowReflection = 1f;
             [Tooltip("Depth (world metres) over which the open-water swell shoals toward shore. Waves keep " +
                      "full height in water deeper than this and calm within it toward the waterline; larger " +
                      "reaches the calming further out into deeper water. 0 = no shoaling.")]
@@ -209,6 +214,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal float clarityShallow => bedDepthSettings.clarityShallow;
         internal float clarityDeep => bedDepthSettings.clarityDeep;
         internal float clarityStrength => bedDepthSettings.clarityStrength;
+        internal float clarityShallowReflection => bedDepthSettings.clarityShallowReflection;
         internal float shoreShoalDepth => bedDepthSettings.shoreShoalDepth;
         internal float shoreRefraction => bedDepthSettings.shoreRefraction;
         internal float shoreCompression => bedDepthSettings.shoreCompression;

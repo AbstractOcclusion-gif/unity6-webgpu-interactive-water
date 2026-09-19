@@ -98,6 +98,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_ShorelineStrength = Shader.PropertyToID("_ShorelineStrength");
         static readonly int ID_DepthClarityRange = Shader.PropertyToID("_DepthClarityRange");
         static readonly int ID_DepthClarityStrength = Shader.PropertyToID("_DepthClarityStrength");
+        static readonly int ID_ShallowReflectionCut = Shader.PropertyToID("_ShallowReflectionCut");
         static readonly int ID_FoamMask = WaterShaderProps.FoamMask;
         static readonly int ID_FoamColor = Shader.PropertyToID("_FoamColor");
         static readonly int ID_FoamEnabled = WaterShaderProps.FoamEnabled;
@@ -122,6 +123,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_WaveCount = Shader.PropertyToID("_WaveCount");
         static readonly int ID_WaveTime = Shader.PropertyToID("_WaveTime");
         static readonly int ID_WaveMeters = Shader.PropertyToID("_WaveMetersPerUnit");
+        static readonly int ID_WaveMetersAxis = Shader.PropertyToID("_WaveMetersPerAxis");
         static readonly int ID_WaveNormal = Shader.PropertyToID("_WaveNormalStrength");
         // Wind-wave SHAPING (group envelopes + Stokes crest term). Precomputed by the bank, so these
         // are plain uploads - see WaterWaves.hlsl for what each lane means.
@@ -534,6 +536,7 @@ namespace AbstractOcclusion.WebGpuWater
             material.SetVectorArray(ID_WaveB, _body.WaveBank.PackedB);
             material.SetFloat(ID_WaveCount, _body.WindWaves ? _body.WaveBank.Count : 0f);
             material.SetFloat(ID_WaveMeters, _body.WaveMetersPerUnit);
+            material.SetVector(ID_WaveMetersAxis, _body.WaveMetersPerAxis);
             material.SetFloat(ID_WaveNormal, _body.waveNormalStrength);
             // The caustic normal is built from the same two slopes the surface uses, so it needs the
             // same pool -> world conversion; without it the material reads 0 and the surface goes flat.
@@ -559,6 +562,7 @@ namespace AbstractOcclusion.WebGpuWater
             computeShader.SetVectorArray(ID_WaveB, _body.WaveBank.PackedB);
             computeShader.SetFloat(ID_WaveCount, _body.WindWaves ? _body.WaveBank.Count : 0f);
             computeShader.SetFloat(ID_WaveMeters, _body.WaveMetersPerUnit);
+            computeShader.SetVector(ID_WaveMetersAxis, _body.WaveMetersPerAxis);
             computeShader.SetVector(ID_WaveGroupA, _body.WaveBank.GroupA);
             computeShader.SetVector(ID_WaveGroupB, _body.WaveBank.GroupB);
             computeShader.SetVector(ID_WaveGroupC, _body.WaveBank.GroupC);
@@ -836,6 +840,7 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetVectorArray(ID_WaveB, _body.WaveBank.PackedB);
             sink.SetFloat(ID_WaveCount, _body.WindWaves ? _body.WaveBank.Count : 0f);
             sink.SetFloat(ID_WaveMeters, _body.WaveMetersPerUnit);
+            sink.SetVector(ID_WaveMetersAxis, _body.WaveMetersPerAxis);
             sink.SetFloat(ID_WaveNormal, _body.waveNormalStrength);
             sink.SetVector(ID_WaveGroupA, _body.WaveBank.GroupA);
             sink.SetVector(ID_WaveGroupB, _body.WaveBank.GroupB);
@@ -998,6 +1003,8 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetVector(ID_DepthClarityRange, new Vector4(
                 _body.clarityShallowDepth, _body.clarityDeepDepth, _body.clarityShallow, _body.clarityDeep));
             sink.SetFloat(ID_DepthClarityStrength, _body.clarityFromDepth ? _body.clarityStrength : 0f);
+            // Published as a CUT so an unset uniform (0) means "reflection untouched" - see WaterFog.hlsl.
+            sink.SetFloat(ID_ShallowReflectionCut, 1f - Mathf.Clamp01(_body.clarityShallowReflection));
 
             sink.SetColor(ID_FoamColor, _body.foamColor);
             sink.SetFloat(ID_FoamEnabled, _body.Foam ? 1f : 0f);

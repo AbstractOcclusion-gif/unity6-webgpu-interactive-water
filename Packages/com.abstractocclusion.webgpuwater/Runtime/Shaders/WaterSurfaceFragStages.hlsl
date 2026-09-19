@@ -358,8 +358,11 @@ WaterGeomStage EvaluateSurfaceGeometry(v2f i)
     return g;
 }
 
-float EvaluateWaterClarity(v2f i, ShoreData shoreFrag)
+// reflectionMask: the shallow-border reflection fade (WaterShallowReflectionMask), computed HERE
+// because it rides the same column depth - one _BedTex fetch serves both. 1 = identity.
+float EvaluateWaterClarity(v2f i, ShoreData shoreFrag, out float reflectionMask)
 {
+    reflectionMask = 1.0;
     // Depth clarity (auto transparency): ONE curve from the baked bed depth drives the
     // turbidity + underwater-fog reach below (and the deep-water tint in the shoreline
     // block). Identity (1) when the feature is off or no bed is baked, so every existing
@@ -373,6 +376,7 @@ float EvaluateWaterClarity(v2f i, ShoreData shoreFrag)
         if (_SurfActive > 0.5 && shoreFrag.influence > 0.0)
             colDepthClarity = lerp(colDepthClarity, shoreFrag.depth, saturate(shoreFrag.influence));
         waterClarity = WaterDepthClarity(colDepthClarity);
+        reflectionMask = WaterShallowReflectionMask(colDepthClarity);
     }
     return waterClarity;
 }
@@ -1573,7 +1577,8 @@ void FoamLayersStage(v2f i, WaterGeomStage g, float2 foamWorldDdx, float2 foamWo
 // GGX sun lobe, + the emissive crest glow.
 float3 CompositeSurfaceColor(WaterGeomStage g, float fresnel, float3 reflectedColor,
                              float3 refractedColor, float oceanCoverage,
-                             FoamLayer pondFoamLayer, FoamLayer surfFoamLayer, float sssBoost)
+                             FoamLayer pondFoamLayer, FoamLayer surfFoamLayer, float sssBoost,
+                             float reflectionMask)
 {
     float3 normal = g.normal;
     float3 incomingRay = g.incomingRay;
@@ -1587,7 +1592,7 @@ float3 CompositeSurfaceColor(WaterGeomStage g, float fresnel, float3 reflectedCo
     float foamMatte = max(max(oceanFoam, pondFoamAlpha), surfFoamAlpha);
 
     float3 outColor = lerp(refractedColor, reflectedColor,
-                           fresnel * _ReflectionStrength * (1.0 - foamMatte));
+                           fresnel * _ReflectionStrength * (1.0 - foamMatte) * reflectionMask);
 
     // ---- GGX sun specular, added AFTER the fresnel composite: the lobe carries its
     // own Schlick term at the half-vector, so folding it into the reflection lerp
@@ -1596,7 +1601,7 @@ float3 CompositeSurfaceColor(WaterGeomStage g, float fresnel, float3 reflectedCo
     // also keeps reflection-off bodies sun-free like the legacy glint did. Shares
     // surfaceRoughness with the sky mip above (computed with reflectedColor). ----
     outColor += SunSpecular(normal, -incomingRay, surfaceRoughness)
-              * (_ReflectionStrength * (1.0 - foamMatte));
+              * (_ReflectionStrength * (1.0 - foamMatte) * reflectionMask);
 
     // ---- Wave-crest subsurface glow, added emissively so it reads on EVERY sun-facing
     // crest regardless of what is behind it (the earlier in-scatter form only showed where

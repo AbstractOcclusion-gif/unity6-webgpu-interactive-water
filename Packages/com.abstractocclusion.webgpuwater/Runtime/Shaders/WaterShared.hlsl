@@ -76,6 +76,50 @@ float SmoothMax(float a, float b, float blend)
 #define CAUSTIC_FOCUS_SCALE   0.2
 #define CAUSTIC_NORMAL_SOFTEN 0.5
 
+// ---- Dedicated caustic ripple field (shared by BOTH generators) -------------------------------
+// Moved VERBATIM from LargeBodyCaustics.shader (2026-09-19) so the pool generator can use the same
+// field: a pond whose visible wind waves are too small for the caustic lattice to resolve gets a
+// caustic-only wave layer at a scale the lattice CAN resolve, on its own clock. Opt-in per shader
+// (define WATER_CAUSTIC_FIELD before the include) so no other consumer of this header grows two
+// uniforms and a loop it never calls.
+#ifdef WATER_CAUSTIC_FIELD
+float _LargeCausticTime;           // owner wave clock * largeCausticTimeScale
+float _LargeCausticRippleScale;    // dominant ripple wavelength (metres)
+
+// The dedicated field is additive to the FFT swell. Its first six waves provide the
+// independently timed dapple; waves 6-8 add broad slow bands at 6/10/17x the ripple
+// scale. Time scale 0 freezes this layer without freezing the visible ocean.
+#define CAUSTIC_FIELD_WAVE_COUNT 9
+
+void CausticField(float2 p, out float2 slope, out float height)
+{
+    slope = float2(0.0, 0.0);
+    height = 0.0;
+    // This function is expanded at five projected positions per vertex. Unrolling it
+    // duplicates 45 trigonometric wave chains and can time out Unity's shader compiler
+    // on a cold package import. A fixed runtime loop preserves the field while keeping
+    // the compiled vertex program bounded.
+    [loop]
+    for (int i = 0; i < CAUSTIC_FIELD_WAVE_COUNT; i++)
+    {
+        float ang = 2.399963 * float(i) + 0.7;                // golden-angle spread
+        float2 dir = float2(cos(ang), sin(ang));
+        float jitter = frac(sin(ang * 12.9898) * 43758.5453); // per-wave wavelength variety
+        // Waves 0-5: the ripple octave at the knob scale (the caustic TRIGGER);
+        // 6-8: the swell octave, at a gentler steepness.
+        float octave = (i < 6) ? 1.0 : ((i == 6) ? 6.0 : ((i == 7) ? 10.0 : 17.0));
+        float steep = (i < 6) ? 0.02 : 0.012;                // amplitude = steep * lambda
+        float lambda = _LargeCausticRippleScale * octave * (0.75 + 0.6 * jitter);
+        float k = 6.2831853 / max(lambda, 0.05);
+        float omega = sqrt(9.81 * k);                         // deep-water dispersion
+        float phase = dot(dir, p) * k - omega * _LargeCausticTime + float(i) * 1.7;
+        float amp = steep * lambda;
+        slope += dir * (amp * k * cos(phase));
+        height += amp * sin(phase);
+    }
+}
+#endif // WATER_CAUSTIC_FIELD
+
 // FFT ocean cascade layout, shared by every consumer (WaterLargeWaves.hlsl sampling,
 // OceanFft.compute generation, WaterFoamParticles.compute crest-foam spawning) - three files used
 // to carry their own copies. MAX_CASCADES also mirrors WaterOceanFft.cs MaxCascades

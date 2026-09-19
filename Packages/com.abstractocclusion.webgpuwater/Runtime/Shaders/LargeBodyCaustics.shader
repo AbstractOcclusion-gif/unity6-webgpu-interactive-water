@@ -29,6 +29,7 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyCaustics"
             #pragma fragment frag
             #pragma target 4.0
             #include "UnityCG.cginc"
+            #define WATER_CAUSTIC_FIELD 1  // pulls CausticField + its two uniforms out of WaterShared.hlsl
             #include "WaterCommon.hlsl"     // SampleWaterBilinear, _LightDir, _WaterTexel; WaterShared: IOR_*, SafeRefractedLightY
             #include "WaterVolume.hlsl"     // _SimCenter / _SimExtent (window frame) + LARGE_CAUSTIC_REFERENCE_DEPTH
             #include "WaterLargeCausticWaves.hlsl" // compile-bounded FFT height + normal for this five-sample pass
@@ -60,8 +61,8 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyCaustics"
             // too fast to read. So the caustic gets ITS OWN ripples on its own clock: wavelength,
             // strength and speed are direct knobs, the visible surface is untouched, and the
             // smoothed swell above still anchors the pattern to the big waves.
-            float _LargeCausticTime;           // owner wave clock * largeCausticTimeScale
-            float _LargeCausticRippleScale;    // dominant ripple wavelength (metres)
+            // _LargeCausticTime / _LargeCausticRippleScale are declared with CausticField in
+            // WaterShared.hlsl (one declaration for both generators).
             float _LargeCausticRippleStrength; // field strength (0 = FFT swell + interactive sim only)
 
             // Normalised window step between adjacent caustic-mesh vertices (2 / meshResolution),
@@ -71,38 +72,8 @@ Shader "AbstractOcclusion/WebGpuWater/LargeBodyCaustics"
             // and the caustic mesh's are the same today, but they are not the same THING).
             float _CausticGridStepNorm;
 
-            // The dedicated field is additive to the FFT swell. Its first six waves provide the
-            // independently timed dapple; waves 6-8 add broad slow bands at 6/10/17x the ripple
-            // scale. Time scale 0 freezes this layer without freezing the visible ocean.
-            #define CAUSTIC_FIELD_WAVE_COUNT 9
-
-            void CausticField(float2 p, out float2 slope, out float height)
-            {
-                slope = float2(0.0, 0.0);
-                height = 0.0;
-                // This function is expanded at five projected positions per vertex. Unrolling it
-                // duplicates 45 trigonometric wave chains and can time out Unity's shader compiler
-                // on a cold package import. A fixed runtime loop preserves the field while keeping
-                // the compiled vertex program bounded.
-                [loop]
-                for (int i = 0; i < CAUSTIC_FIELD_WAVE_COUNT; i++)
-                {
-                    float ang = 2.399963 * float(i) + 0.7;                // golden-angle spread
-                    float2 dir = float2(cos(ang), sin(ang));
-                    float jitter = frac(sin(ang * 12.9898) * 43758.5453); // per-wave wavelength variety
-                    // Waves 0-5: the ripple octave at the knob scale (the caustic TRIGGER);
-                    // 6-8: the swell octave, at a gentler steepness.
-                    float octave = (i < 6) ? 1.0 : ((i == 6) ? 6.0 : ((i == 7) ? 10.0 : 17.0));
-                    float steep = (i < 6) ? 0.02 : 0.012;                // amplitude = steep * lambda
-                    float lambda = _LargeCausticRippleScale * octave * (0.75 + 0.6 * jitter);
-                    float k = 6.2831853 / max(lambda, 0.05);
-                    float omega = sqrt(9.81 * k);                         // deep-water dispersion
-                    float phase = dot(dir, p) * k - omega * _LargeCausticTime + float(i) * 1.7;
-                    float amp = steep * lambda;
-                    slope += dir * (amp * k * cos(phase));
-                    height += amp * sin(phase);
-                }
-            }
+            // CausticField (the dedicated ripple field) now lives in WaterShared.hlsl, shared with
+            // the pool generator - see WATER_CAUSTIC_FIELD above the includes.
 
             struct appdata { float4 vertex : POSITION; };
             struct v2f

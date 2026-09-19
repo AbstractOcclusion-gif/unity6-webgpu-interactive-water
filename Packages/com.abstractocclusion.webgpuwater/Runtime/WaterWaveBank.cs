@@ -385,8 +385,13 @@ namespace AbstractOcclusion.WebGpuWater
         /// <paramref name="minWavelengthMeters"/> > 0 skips components shorter than it, so a large
         /// floater rides the swell without buzzing on ripples finer than the object (LOD filtering).</summary>
         public float SampleHeight(float poolX, float poolZ, float time, float metersPerPoolUnit, float minWavelengthMeters = 0f)
+            => SampleHeight(poolX, poolZ, time, new Vector2(metersPerPoolUnit, metersPerPoolUnit), minWavelengthMeters);
+
+        /// <summary>Per-axis variant: <paramref name="metersPerPoolAxis"/> = (x, z) half extent, so
+        /// the pattern stays metric on a rectangular body (mirror of _WaveMetersPerAxis).</summary>
+        public float SampleHeight(float poolX, float poolZ, float time, Vector2 metersPerPoolAxis, float minWavelengthMeters = 0f)
         {
-            var meters = new Vector2(poolX * metersPerPoolUnit, poolZ * metersPerPoolUnit);
+            var meters = new Vector2(poolX * metersPerPoolAxis.x, poolZ * metersPerPoolAxis.y);
             float linear = 0f;
             bool hasIncludedWave = false;
             for (int i = 0; i < _count; i++)
@@ -405,8 +410,12 @@ namespace AbstractOcclusion.WebGpuWater
         /// wave velocity with no cross-frame state. Not uploaded to the shader (velocity is
         /// physics-only, never rendered), so there is no HLSL mirror to keep in lockstep.</summary>
         public float SampleVerticalVelocity(float poolX, float poolZ, float time, float metersPerPoolUnit, float minWavelengthMeters = 0f)
+            => SampleVerticalVelocity(poolX, poolZ, time, new Vector2(metersPerPoolUnit, metersPerPoolUnit), minWavelengthMeters);
+
+        /// <summary>Per-axis variant of <see cref="SampleVerticalVelocity(float,float,float,float,float)"/>.</summary>
+        public float SampleVerticalVelocity(float poolX, float poolZ, float time, Vector2 metersPerPoolAxis, float minWavelengthMeters = 0f)
         {
-            var meters = new Vector2(poolX * metersPerPoolUnit, poolZ * metersPerPoolUnit);
+            var meters = new Vector2(poolX * metersPerPoolAxis.x, poolZ * metersPerPoolAxis.y);
             float linear = 0f, linearRate = 0f;
             for (int i = 0; i < _count; i++)
             {
@@ -424,8 +433,12 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>Gradient d(height)/d(poolXZ) of the wave layer (pool units).
         /// <paramref name="minWavelengthMeters"/> > 0 skips components shorter than it (LOD filtering).</summary>
         public Vector2 SampleSlope(float poolX, float poolZ, float time, float metersPerPoolUnit, float minWavelengthMeters = 0f)
+            => SampleSlope(poolX, poolZ, time, new Vector2(metersPerPoolUnit, metersPerPoolUnit), minWavelengthMeters);
+
+        /// <summary>Per-axis variant of <see cref="SampleSlope(float,float,float,float,float)"/>.</summary>
+        public Vector2 SampleSlope(float poolX, float poolZ, float time, Vector2 metersPerPoolAxis, float minWavelengthMeters = 0f)
         {
-            var meters = new Vector2(poolX * metersPerPoolUnit, poolZ * metersPerPoolUnit);
+            var meters = new Vector2(poolX * metersPerPoolAxis.x, poolZ * metersPerPoolAxis.y);
             float linear = 0f, gx = 0f, gz = 0f;
             for (int i = 0; i < _count; i++)
             {
@@ -434,12 +447,12 @@ namespace AbstractOcclusion.WebGpuWater
                 float arg = Phase(w, meters, time);
                 linear += w.amp * Mathf.Sin(arg);
                 // d/d(poolXZ) introduces a factor k * dir * d(m)/d(poolXZ) = k * dir * metersPerUnit.
-                float common = w.amp * Mathf.Cos(arg) * w.k * metersPerPoolUnit;
-                gx += common * w.dir.x;
-                gz += common * w.dir.y;
+                float common = w.amp * Mathf.Cos(arg) * w.k;
+                gx += common * w.dir.x * metersPerPoolAxis.x;
+                gz += common * w.dir.y * metersPerPoolAxis.y;
             }
             float envelope = GroupEnvelope(meters, time, out _, out Vector2 envelopeGradient);
-            envelopeGradient *= metersPerPoolUnit;   // the envelope's phase is in metres too
+            envelopeGradient = Vector2.Scale(envelopeGradient, metersPerPoolAxis);   // the envelope's phase is in metres too
             return StokesDerivativeFactor(linear * envelope)
                    * (new Vector2(gx, gz) * envelope + envelopeGradient * linear);
         }

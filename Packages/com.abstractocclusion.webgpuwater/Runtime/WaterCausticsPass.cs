@@ -25,6 +25,11 @@ namespace AbstractOcclusion.WebGpuWater
         // focusing Jacobian over exactly this span, so it has to describe the mesh this pass draws -
         // not the sim texture, which merely happens to share its resolution today.
         static readonly int ID_CausticGridStep = Shader.PropertyToID("_CausticGridStepNorm");
+        static readonly int ID_SimWindowed = Shader.PropertyToID("_SimWindowed");
+        static readonly int ID_PoolCausticFieldStrength = Shader.PropertyToID("_PoolCausticFieldStrength");
+        static readonly int ID_CausticSimRippleStrength = Shader.PropertyToID("_CausticSimRippleStrength");
+        static readonly int ID_SimEdgeFade = Shader.PropertyToID("_SimEdgeFadeTexels");
+        static readonly int ID_WaterTexel = Shader.PropertyToID("_WaterTexel");
         static readonly int ID_CausticRippleStrength = Shader.PropertyToID("_LargeCausticRippleStrength");
         static readonly int ID_PoolSlopeToWorld = Shader.PropertyToID("_PoolSlopeToWorld");
         static readonly int ID_SimSlopeToWorld = Shader.PropertyToID("_SimSlopeToWorld");
@@ -133,6 +138,23 @@ namespace AbstractOcclusion.WebGpuWater
             _material.SetFloat(ID_WaveNormalStrength,
                                _owner.waveNormalStrength * _owner.causticWindWaveStrength);
             _material.SetFloat(ID_CausticGridStep, CausticGridStepNorm());
+            // The volume + sim-window frames, set explicitly for the same reason as the wave params
+            // above: Caustics.shader's SampleCausticRipple maps a pool xy into the sim WINDOW on a
+            // windowed body, and must not depend on which body last wrote the globals.
+            _material.SetVector(WaterShaderProps.VolumeCenter, volumeCenter);
+            _material.SetVector(WaterShaderProps.VolumeExtent, volumeExtent);
+            _material.SetMatrix(WaterShaderProps.VolumeRot, Matrix4x4.Rotate(volumeRotation));
+            _material.SetFloat(ID_SimWindowed, _owner.IsWindowed ? 1f : 0f);
+            _material.SetVector(ID_SimCenter, _owner.SimWindowCenter);
+            _material.SetVector(ID_SimExtent, _owner.SimHalfExtent);
+            _material.SetFloat(ID_SimEdgeFade, _owner.simWindowEdgeFadeTexels);
+            _material.SetVector(ID_WaterTexel, _owner.WaterTexel);
+            // Pond caustic shaping: the sim-ripple weight, and the dedicated ripple field shared with
+            // the ocean generator (same Ripple Scale / Ripple Speed settings, pond-side strength).
+            _material.SetFloat(ID_CausticSimRippleStrength, _owner.causticSimRippleStrength);
+            _material.SetFloat(ID_PoolCausticFieldStrength, _owner.causticRippleFieldStrength);
+            _material.SetFloat(ID_CausticTime, _owner.WaveTime * _owner.LargeCausticTimeScale);
+            _material.SetFloat(ID_CausticRippleScale, _owner.LargeCausticRippleScale);
 
             _cb.Clear();
             _cb.SetRenderTarget(_target);

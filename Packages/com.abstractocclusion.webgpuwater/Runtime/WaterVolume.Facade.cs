@@ -321,9 +321,9 @@ namespace AbstractOcclusion.WebGpuWater
             if (!QueryPoolXZ(probe, out float px, out float pz)) return false;
 
             // Oceans sample the wind-wave layer in WORLD metres (extent-independent) to match the shader.
-            float mpu = WaveMetersPerUnit;
-            float waveX = IsOceanClipmap ? worldX / mpu : px;
-            float waveZ = IsOceanClipmap ? worldZ / mpu : pz;
+            Vector2 mpu = WaveMetersPerAxis;   // per axis: metric on rectangular bodies too
+            float waveX = IsOceanClipmap ? worldX / mpu.x : px;
+            float waveZ = IsOceanClipmap ? worldZ / mpu.y : pz;
             float poolHeight = windWaves ? _waveBank.SampleHeight(waveX, waveZ, _waveTime, mpu) : 0f;
             height = PoolToWorld(new Vector3(px, poolHeight, pz)).y;
             // Open water layers the big world-space swell on top of the small wind waves, mirroring

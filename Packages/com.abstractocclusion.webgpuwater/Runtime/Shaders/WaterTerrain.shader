@@ -134,6 +134,11 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTerrain"
         _CausticStrength ("Caustic Strength", Range(0,8)) = 3
         _CausticTint ("Caustic Tint", Color) = (1,1,1,1)
         _UnderwaterTint ("Underwater Tint", Color) = (0.55, 0.85, 0.95, 1)
+        // Metres of WATER COLUMN over which the tint above fades in from the waterline. 0 = the
+        // legacy flat tint (full strength the instant ground is submerged - the same colour at
+        // every depth, and a hard colour step at the shoreline). Exponential, so ~63% of the tint
+        // is reached at this depth and ~95% at three times it.
+        _UnderwaterTintFadeDepth ("Underwater Tint Fade Depth (m)", Range(0,20)) = 0
         _SpecColor ("Specular Color", Color) = (0.2, 0.2, 0.2, 1)
     }
 
@@ -193,6 +198,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTerrain"
             CBUFFER_START(UnityPerMaterial)
                 float4 _SeabedTint, _BeachTint, _RockTint, _GrassTint;
                 float4 _CausticTint, _UnderwaterTint, _SpecColor;
+                float _UnderwaterTintFadeDepth;
                 float _SeabedTop, _BeachTop, _HeightFeather, _RockSlope, _SlopeFeather;
                 float _TriplanarSharpness, _NormalScale;
                 float _SeabedTiling, _BeachTiling, _RockTiling, _GrassTiling;
@@ -472,7 +478,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTerrain"
                 smoothness = wetSurface.smoothness;
 
                 // ---- Lighting ------------------------------------------------------------------
-                bool underwater = (insideBody > 0.5 && poolPos.y < simH);
+                // Against the SAME rippled surfaceY every depth term below uses (sim ripples + wakes
+                // + the small wind-wave layer, on the shore-field level). This used to test
+                // poolPos.y < simH: no wind waves at all, and a pool-frame height against a surface
+                // that may sit on _ShoreWaterLevel - so the edge where caustics, the underwater tint
+                // and the refracted shadow switch on stood still while the waterline drawn by the
+                // sheet moved over it. WaterReceiver never showed it because it folds the wind wave
+                // into simH before its own test.
+                bool underwater = (insideBody > 0.5 && IN.positionWS.y < surfaceY);
 
                 // FRAME-AWARE caustic map. A Unity Terrain under an OCEAN belongs to a body whose
                 // caustic RT is written in the sim WINDOW's frame, not the pool box: reading it
@@ -527,7 +540,14 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTerrain"
                     color += albedo * _CausticTint.rgb
                            * (causticSample.r * _CausticStrength * causticFade * lightShadow
                               * causticMap.footprint);
-                    color *= _UnderwaterTint.rgb;
+                    // Tint BY WATER COLUMN (2026-09-19): the flat multiply made submerged ground the
+                    // same colour at every depth and stepped it at the waterline. The column is
+                    // measured against the same rippled surfaceY every other depth term here uses.
+                    float tintColumn = max(0.0, surfaceY - IN.positionWS.y);
+                    float tintWeight = (_UnderwaterTintFadeDepth > 1e-4)
+                                     ? 1.0 - exp(-tintColumn / _UnderwaterTintFadeDepth)
+                                     : 1.0; // 0 = legacy flat tint
+                    color *= lerp(float3(1.0, 1.0, 1.0), _UnderwaterTint.rgb, tintWeight);
                 }
 
                 if (insideBody > 0.5)
