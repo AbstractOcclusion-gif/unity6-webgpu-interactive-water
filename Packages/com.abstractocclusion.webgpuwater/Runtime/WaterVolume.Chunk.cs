@@ -236,7 +236,7 @@ namespace AbstractOcclusion.WebGpuWater
         // with the shared submerge hysteresis, gated on the camera being inside the footprint.
         bool ComputeChunkCameraUnder()
         {
-            Camera cam = targetCamera;
+            Camera cam = Eye;
             if (cam == null) { _wasChunkCameraUnder = false; return false; }
 
             Vector3 cameraPos = cam.transform.position;

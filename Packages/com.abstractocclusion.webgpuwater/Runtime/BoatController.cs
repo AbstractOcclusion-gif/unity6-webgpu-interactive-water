@@ -65,6 +65,16 @@ namespace AbstractOcclusion.WebGpuWater
         // touch drive is active. Summed with the keyboard axes then clamped, so either input
         // can drive without fighting the other; desktop behaviour is unchanged at (0,0).
         Vector2 _touchInput;
+        public bool InputEnabled { get; private set; } = true;
+
+        /// <summary>Gate the helm without disabling passive hull resistance.</summary>
+        public void SetInputEnabled(bool value)
+        {
+            InputEnabled = value;
+            if (value) return;
+            _rawThrottle = _rawSteer = _throttle = _steer = 0f;
+            _touchInput = Vector2.zero;
+        }
 
         internal void SetTouchInput(Vector2 stick) => _touchInput = stick;
 
@@ -72,6 +82,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         void Update()
         {
+            if (!InputEnabled) return;
             float throttleInput = Mathf.Clamp(ReadAxis(ThrottleAxis) + _touchInput.y, -1f, 1f);
             float steerInput = Mathf.Clamp(ReadAxis(SteerAxis) + _touchInput.x, -1f, 1f);
             if (_driveReference == null)

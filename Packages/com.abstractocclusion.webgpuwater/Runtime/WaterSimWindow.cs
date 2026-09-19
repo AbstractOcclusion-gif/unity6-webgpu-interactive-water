@@ -13,6 +13,14 @@ namespace AbstractOcclusion.WebGpuWater
 
         int _cellX, _cellZ; // window centre as integer texel indices in the volume's local frame
         bool _centerInit;
+        Transform _lastFollow;
+        WaterSimulationWindowSettings _lastSettings;
+        Vector3 _lastFollowPosition;
+        float _lastFollowTime;
+        float _smoothedSpeed;
+        float _nextResizeTime;
+        internal float HalfSize { get; private set; }
+        internal int SizeVersion { get; private set; }
 
         /// <summary>World centre of the window, on the surface plane, texel-snapped.
         /// Defaults to the volume centre until the first Track().</summary>
@@ -22,6 +30,7 @@ namespace AbstractOcclusion.WebGpuWater
         {
             _body = body ?? throw new System.ArgumentNullException(nameof(body));
             Center = body.VolumeCenter;
+            HalfSize = Mathf.Max(1f, body.simWindowMeters);
         }
 
         // Offset in the follow target's horizontal frame (x = right, y = forward), projected onto the
@@ -59,22 +68,27 @@ namespace AbstractOcclusion.WebGpuWater
             if (sim == null) return;
 
             // Follow an explicit focus (e.g. the boat) when set, otherwise the target camera.
-            Transform focus = _body.simWindowFocus;
-            Camera cam = _body.targetCamera;
+            _body.ResolveSimulationFocus(out Transform focus, out Vector2 offset,
+                out WaterSimulationWindowSettings settings);
+            Camera cam = _body.Eye;
             if (focus == null && cam == null) return;
             Transform follow = focus != null ? focus : cam.transform;
+            float previousHalfSize = HalfSize;
+            Vector3 previousCenter = Center;
+            HalfSize = ResolveHalfSize(follow, settings);
+            bool resized = !Mathf.Approximately(previousHalfSize, HalfSize);
 
             // Follow point projected onto the surface plane (through the volume centre, along up), then an
             // optional lead/lateral offset in the follow target's own horizontal frame.
             Vector3 up = _body.VolumeUp;
             Vector3 followPos = follow.position;
             Vector3 onPlane = followPos - Vector3.Dot(followPos - _body.VolumeCenter, up) * up;
-            onPlane += HorizontalOffset(follow, up, _body.simWindowOffset);
+            onPlane += HorizontalOffset(follow, up, offset);
 
             // Work in the volume's local horizontal frame so the lattice is axis-aligned.
             Vector3 local = Quaternion.Inverse(_body.VolumeRotation) * (onPlane - _body.VolumeCenter);
 
-            float texel = 2f * _body.simWindowMeters / _body.SimResolution;
+            float texel = 2f * HalfSize / _body.SimResolution;
             // Clamp the window centre so it stays inside the footprint (or may overhang the edge). An
             // unbounded ocean has no footprint edge - its surface spans everywhere - so the window must
             // scroll FREELY with the camera; clamping it to the bounded extent pins it at the edge and it
@@ -88,8 +102,8 @@ namespace AbstractOcclusion.WebGpuWater
             else
             {
                 Vector3 e = _body.VolumeExtentSafe;
-                float limitX = _body.clampWindowToShore ? Mathf.Max(0f, e.x - _body.simWindowMeters) : e.x;
-                float limitZ = _body.clampWindowToShore ? Mathf.Max(0f, e.z - _body.simWindowMeters) : e.z;
+                float limitX = _body.clampWindowToShore ? Mathf.Max(0f, e.x - HalfSize) : e.x;
+                float limitZ = _body.clampWindowToShore ? Mathf.Max(0f, e.z - HalfSize) : e.z;
                 clampedX = Mathf.Clamp(local.x, -limitX, limitX);
                 clampedZ = Mathf.Clamp(local.z, -limitZ, limitZ);
             }
@@ -111,12 +125,51 @@ namespace AbstractOcclusion.WebGpuWater
                     // Local x -> sim texel u, local z -> sim texel v. The kernel does
                     // Dst[p] = Src[p - offset]; offsetting by -delta keeps world features fixed
                     // (see WaterSimulation.Scroll).
-                    if (scrollSimulation) sim.Scroll(-dx, -dz);
+                    if (scrollSimulation && !resized) sim.Scroll(-dx, -dz);
                     _cellX = cellX; _cellZ = cellZ;
                 }
             }
 
             Center = _body.VolumeCenter + _body.VolumeRotation * new Vector3(_cellX * texel, 0f, _cellZ * texel);
+            if (resized)
+            {
+                SizeVersion++;
+                if (scrollSimulation)
+                {
+                    Vector3 delta = Quaternion.Inverse(_body.VolumeRotation) * (Center - previousCenter);
+                    sim.Reframe(HalfSize / previousHalfSize,
+                        new Vector2(delta.x, delta.z) * (_body.SimResolution / (2f * previousHalfSize)));
+                }
+            }
+        }
+
+        private float ResolveHalfSize(Transform follow, WaterSimulationWindowSettings settings)
+        {
+            float now = Time.time;
+            bool changed = follow != _lastFollow || settings != _lastSettings;
+            float dt = now - _lastFollowTime;
+            if (changed) _smoothedSpeed = 0f;
+            else if (dt > 0f)
+            {
+                float speed = Vector3.ProjectOnPlane(follow.position - _lastFollowPosition,
+                    _body.VolumeUp).magnitude / dt;
+                _smoothedSpeed = Mathf.Lerp(_smoothedSpeed, speed, 1f - Mathf.Exp(-dt / 0.5f));
+            }
+            _lastFollow = follow;
+            _lastSettings = settings;
+            _lastFollowPosition = follow.position;
+            _lastFollowTime = now;
+            float desired = settings != null ? settings.ResolveHalfSize(_smoothedSpeed)
+                : Mathf.Max(1f, _body.simWindowMeters);
+            if (!changed && settings != null && settings.adaptive)
+            {
+                if (now < _nextResizeTime || Mathf.Abs(desired - HalfSize) < Mathf.Max(0.5f, HalfSize * 0.1f))
+                    return HalfSize;
+            }
+            float interval = settings != null && float.IsFinite(settings.resizeIntervalSeconds)
+                ? Mathf.Max(0.25f, settings.resizeIntervalSeconds) : 1.5f;
+            _nextResizeTime = now + interval;
+            return desired;
         }
     }
 }

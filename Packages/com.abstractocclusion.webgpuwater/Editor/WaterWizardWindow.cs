@@ -892,6 +892,50 @@ namespace AbstractOcclusion.WebGpuWater.Editor
 
             DrawChunkShaderRegistration();
             DrawRendererFeatureCheck();
+            DrawThirdPartyFog();
+        }
+
+        // Scene fog on the water is Unity fog unless a sky asset replaces it. The toggle rewrites the
+        // hook header (Runtime/Shaders/WaterThirdPartyFog.hlsl) - see WaterThirdPartyFogSetup for why
+        // a written define, not a keyword. Reading the state parses that file, so this UI never
+        // drifts from what the shaders actually compile.
+        void DrawThirdPartyFog()
+        {
+            EditorGUILayout.Space(6f);
+            EditorGUILayout.LabelField("Third-party fog", EditorStyles.boldLabel);
+            bool on = WaterThirdPartyFogSetup.ReadEnviro3Enabled();
+            string enviroFolder = WaterThirdPartyFogSetup.FindEnviro3IncludeFolder();
+            bool installed = enviroFolder != null;
+            EditorGUILayout.LabelField("Hook state", on ? "Enviro 3 (WaterThirdPartyFog.hlsl)" : "Unity fog",
+                EditorStyles.miniLabel);
+
+            using (new EditorGUI.DisabledScope(!installed && !on))
+            {
+                bool want = EditorGUILayout.Toggle(new GUIContent("Enviro 3 fog",
+                    "Fog the water surface, chunk walls and WaterTransparent materials with Enviro 3's " +
+                    "height/distance fog instead of Unity fog, so the sheet matches the fogged " +
+                    "terrain. Rewrites WaterThirdPartyFog.hlsl and recompiles the water shaders."), on);
+                if (want != on && !WaterThirdPartyFogSetup.SetEnviro3(want, out string error))
+                    EditorUtility.DisplayDialog("Third-party fog", error, "OK");
+            }
+
+            if (!installed)
+            {
+                EditorGUILayout.HelpBox(on
+                    ? "Enviro 3 fog is enabled but Enviro 3 is not detected - the water will render " +
+                      "unfogged (its globals are unset). Untick, or reinstall Enviro 3."
+                    : "Enviro 3 not detected in this project.", on ? MessageType.Warning : MessageType.None);
+                return;
+            }
+            string[] drifted = WaterThirdPartyFogSetup.Enviro3DriftedFiles(enviroFolder);
+            if (drifted.Length > 0)
+                EditorGUILayout.HelpBox("Enviro's " + string.Join(" and ", drifted) + " differ from the version " +
+                    "the water's fog port was written against (Enviro 3.3.2b). Compare them with " +
+                    "Runtime/Shaders/WaterEnviro3Fog.hlsl before trusting the match.", MessageType.Warning);
+            else if (on)
+                EditorGUILayout.HelpBox("Water scene fog comes from Enviro 3. Foam/splash sprites still use " +
+                    "Unity fog (Enviro's Unity Fog option keeps them close). Enviro volumetric-light shafts " +
+                    "are omitted on the water surface because its D3D11 texture budget is full.", MessageType.None);
         }
 
         // Chunks and exclusion volumes resolve their wall/depth shaders by NAME at runtime, so they

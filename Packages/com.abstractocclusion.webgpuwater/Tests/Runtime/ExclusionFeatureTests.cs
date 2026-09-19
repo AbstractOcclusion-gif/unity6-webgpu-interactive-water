@@ -24,6 +24,19 @@ namespace AbstractOcclusion.WebGpuWater.Tests
         }
 
         [Test]
+        public void BuoyancyOwnerIgnoresOnlyItsOwnDryInterior()
+        {
+            var owner = new GameObject("Hull");
+            _objects.Add(owner);
+            var ownInterior = CreateVolume("Own interior", WaterExclusionVolume.Shape.Box, Vector3.zero, Vector3.one * 2f);
+            ownInterior.transform.SetParent(owner.transform, true);
+            Assert.That(WaterExclusionVolume.ContainsPoint(Vector3.zero), Is.True);
+            Assert.That(WaterExclusionVolume.ContainsPoint(Vector3.zero, owner.transform), Is.False);
+            CreateVolume("Other dry room", WaterExclusionVolume.Shape.Box, Vector3.zero, Vector3.one * 2f);
+            Assert.That(WaterExclusionVolume.ContainsPoint(Vector3.zero, owner.transform), Is.True);
+        }
+
+        [Test]
         public void ContainsPoint_UsesTheVolumeShapeTransformAndScale()
         {
             WaterExclusionVolume box = CreateVolume("Box", WaterExclusionVolume.Shape.Box,

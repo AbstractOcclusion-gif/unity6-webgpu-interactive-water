@@ -283,6 +283,11 @@ bool WaterlineFarFromSurface(float3 classifyPoint, bool exclusionsActive, out fl
 // only ever be raised, never trimmed toward the 0.93 the linear theory alone would justify.
 #define SURFACE_BAND_CREST_REACH 1.2
 
+// Wind-wave layer significant height in METRES (WaterUniformPublisher, 0 with WindWaves off).
+// The pool-unit wave bank authors real metres; without this term the band bounded the layer
+// with nothing but the pad - the same class of hole the FFT seaReach term below closed.
+float _WindWaveBandReach;
+
 float SurfaceHeightBand()
 {
     // Surf fronts shoal + break to crests well above the swell (H <= _SurfAmplitude * setAmp_max
@@ -305,7 +310,9 @@ float SurfaceHeightBand()
     float analyticReach = abs(_LargeWaveAmplitude) * SURFACE_BAND_AMPLITUDES;
     float seaReach = _OffshoreSignificantHeight * abs(_LargeWaveAmplitude)
                    * SURFACE_BAND_CREST_REACH;
-    return max(max(analyticReach, seaReach), surfReach) + SURFACE_BAND_PAD_METERS;
+    // Wind-wave layer: crest reach as the same Hs multiple the FFT term uses (only ever widens).
+    float windReach = _WindWaveBandReach * SURFACE_BAND_CREST_REACH;
+    return max(max(max(analyticReach, seaReach), surfReach), windReach) + SURFACE_BAND_PAD_METERS;
 }
 
 // ---- Waterline coverage: ONE curve for every consumer -------------------------------

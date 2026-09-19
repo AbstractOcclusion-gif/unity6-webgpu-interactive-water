@@ -39,15 +39,11 @@ namespace AbstractOcclusion.WebGpuWater
             WaterRuntimeRelevance.ApplySimulationSchedule(ScheduleCamera());
         }
 
-        // Prefer the primary's camera; fall back to any body's camera, then the main camera.
-        internal static Camera ScheduleCamera()
-        {
-            if (WaterVolume.Primary != null && WaterVolume.Primary.targetCamera != null)
-                return WaterVolume.Primary.targetCamera;
-            var bodies = WaterVolume.Bodies;
-            for (int i = 0; i < bodies.Count; i++)
-                if (bodies[i].targetCamera != null) return bodies[i].targetCamera;
-            return Camera.main;
-        }
+        // The eye drives the schedule (frustum culling, budgets, LOD centre). WaterEye owns the
+        // whole ladder now - live WaterEye, then the primary's legacy targetCamera, then any
+        // body's, then Camera.main - so this is one call instead of a second, subtly different
+        // copy of the same fallback chain (the old copy accepted INACTIVE cameras, which is what
+        // let a disabled rig keep winning the election).
+        internal static Camera ScheduleCamera() => WaterEye.Resolve();
     }
 }

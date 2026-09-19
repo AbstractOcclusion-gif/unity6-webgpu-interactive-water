@@ -336,6 +336,7 @@ namespace AbstractOcclusion.WebGpuWater
             FogSource = null;
             _globalsSource = null;
             _globalsFrame = -1;
+            WaterEye.ResetStaticState();
             WaterSimScheduler.ResetStaticState();
             WaterInteractable.ResetStaticState();
             WaterRiverInteractor.ResetStaticState();

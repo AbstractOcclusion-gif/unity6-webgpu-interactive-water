@@ -122,10 +122,13 @@
             }
 
             // True where the dense near-field patch already draws this pixel, so the base sheet must
-            // NOT (one surface per pixel). Patch/clipmap/underside renderers stay out.
+            // NOT (one surface per pixel). Patch/clipmap renderers stay out. The UNDER base sheet
+            // cuts the hole too: every windowed body now has an under patch twin filling it (see
+            // CreateSimWindowPatch) - a whole coarse under-plane beneath the dense patch showed
+            // its away-tilted facets through the surface at grazing angles.
             bool PatchCoversBaseSheet(float3 poolPos)
             {
-                if (_PatchCoverActive < 0.5 || _IsPatch > 0.5 || _IsClipmap > 0.5 || _Underwater > 0.5)
+                if (_PatchCoverActive < 0.5 || _IsPatch > 0.5 || _IsClipmap > 0.5)
                     return false;
                 float2 inner = _PatchPoolHalf - _PatchCoverMargin;
                 if (any(inner <= 0.0)) return false; // margin swallowed the window: keep the sheet whole
@@ -584,9 +587,19 @@
 
                 float2 distanceToEdge = _PatchPoolHalf
                                       - abs(poolXZ - _PatchPoolCenter);
-                float morphWidth = max(_PatchCoverMargin,
+                // The base sheet still DRAWS across the outer ring [0, margin] (its hole starts at
+                // margin - see PatchCoversBaseSheet). The patch must be the base surface EXACTLY over
+                // that whole ring, or the two lattices differ inside it and the coarse triangles win
+                // the depth test at grazing angles (the 2 cm bias cannot cover a height gap there).
+                // So weight 1 across the ring, and the dense->coarse blend happens INSIDE the hole,
+                // where the patch is the only surface. The blend band is capped so a small window on
+                // a coarse sheet keeps a dense core.
+                float ringWidth = max(_PatchCoverMargin,
+                                      FINITE_PATCH_MORPH_MIN_WIDTH_POOL);
+                float minimumHalf = min(_PatchPoolHalf.x, _PatchPoolHalf.y);
+                float blendWidth = max(min(ringWidth, 0.5 * minimumHalf - ringWidth),
                                        FINITE_PATCH_MORPH_MIN_WIDTH_POOL);
-                float2 morphByAxis = 1.0 - smoothstep(0.0, morphWidth,
+                float2 morphByAxis = 1.0 - smoothstep(ringWidth, ringWidth + blendWidth,
                                                      distanceToEdge);
                 return max(morphByAxis.x, morphByAxis.y);
             }

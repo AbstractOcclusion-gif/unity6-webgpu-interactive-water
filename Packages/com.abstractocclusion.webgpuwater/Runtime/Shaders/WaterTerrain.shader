@@ -17,6 +17,18 @@
 // They all go through the shared inline sampler_TrilinearRepeat instead (see the project's
 // shared-sampler rule), which URP core declares - declaring it here again is a redefinition error.
 // That collapses eight units into one and leaves the pass with real headroom.
+//
+// TEXTURE BUDGET (WebGPU): 16 sampled textures per stage is the default WebGPU limit, and this pass
+// already binds 14 (8 substrate maps, caustic, sim, foam, two shore fields, the main shadow map). The
+// ground-marks field makes 15. That is why MUD and SNOW below own NO maps of their own: mud is the
+// beach maps re-tinted, smoothed and flattened; snow is the beach maps at their own tiling under a
+// white tint with the normal flattened hard. Giving either its own albedo+normal would cross the limit
+// and silently break WebGPU builds only.
+//
+// GROUND MARKS (footprints, keel grooves): read from WaterGroundMarks.hlsl, applied FRAGMENT-ONLY -
+// a one-step parallax offset on the substrate UVs, a normal from the mark's gradient, darkening in the
+// pit and a wet/crumbled rim while the print is fresh. Silhouettes stay flat on purpose: WebGPU has no
+// tessellation stage, and vertex displacement would have to be repeated in the shadow/depth passes.
 Shader "AbstractOcclusion/WebGpuWater/WaterTerrain"
 {
     Properties
@@ -67,6 +79,48 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTerrain"
         // Grass barely darkens - the water sits on the blades, it does not soak into them.
         _GrassWetDarken ("Grass Wet Darkening", Range(0,1)) = 0.25
         _GrassWetSmoothness ("Grass Wet Smoothness", Range(0,1)) = 0.45
+
+        [Header(Mud (beach variant, no extra maps))]
+        // Mud replaces the beach where the shore is FLAT and LOW: the same maps, re-tinted darker,
+        // glossier, with the normal flattened - the look of saturated silt, not a separate splat.
+        _MudAmount ("Mud Amount", Range(0,1)) = 0
+        _MudMaxHeight ("Mud Max Height Above Waterline (m)", Range(0,5)) = 0.4
+        _MudMaxSlope ("Mud Max Slope", Range(0.01,1)) = 0.15
+        _MudTint ("Mud Tint", Color) = (0.30, 0.25, 0.19, 1)
+        _MudTiling ("Mud Tiles / metre", Range(0.01,4)) = 0.4
+        _MudSmoothness ("Mud Smoothness", Range(0,1)) = 0.45
+        _MudNormalFlatten ("Mud Normal Flatten", Range(0,1)) = 0.5
+        _MudWetDarken ("Mud Wet Darkening", Range(0,1)) = 0.5
+        _MudWetSmoothness ("Mud Wet Smoothness", Range(0,1)) = 0.9
+
+        [Header(Snow (global overlay, no extra maps))]
+        // Weather-driven cover over every substrate, gated by height above the waterline (the swash
+        // zone stays bare) and slope (steep rock sheds it). Reuses the beach maps - see the header.
+        _SnowAmount ("Snow Amount", Range(0,1)) = 0
+        _SnowMinHeight ("Snow Min Height Above Waterline (m)", Range(0,5)) = 0.3
+        _SnowHeightFeather ("Snow Height Feather (m)", Range(0.01,3)) = 0.3
+        _SnowMaxSlope ("Snow Max Slope", Range(0.05,1)) = 0.6
+        _SnowSlopeFeather ("Snow Slope Feather", Range(0.01,0.5)) = 0.15
+        _SnowTint ("Snow Tint", Color) = (0.92, 0.94, 0.98, 1)
+        _SnowTiling ("Snow Tiles / metre", Range(0.01,4)) = 0.8
+        _SnowTextureInfluence ("Snow Texture Influence", Range(0,1)) = 0.15
+        _SnowSmoothness ("Snow Smoothness", Range(0,1)) = 0.25
+        _SnowNormalFlatten ("Snow Normal Flatten", Range(0,1)) = 0.8
+
+        [Header(Ground marks (footprints and keel grooves))]
+        // Depth in METRES a full-strength mark presses into each ground. 0 = that ground takes none.
+        // The WaterGroundMarks component must be in the scene; without it this block costs nothing.
+        _MarkStrength ("Marks", Range(0,1)) = 1
+        _MarkDepthSeabed ("Print Depth Seabed (m)", Range(0,0.3)) = 0.02
+        _MarkDepthBeach ("Print Depth Sand (m)", Range(0,0.3)) = 0.03
+        _MarkDepthMud ("Print Depth Mud (m)", Range(0,0.3)) = 0.06
+        _MarkDepthGrass ("Print Depth Grass (m)", Range(0,0.3)) = 0.01
+        _MarkDepthSnow ("Print Depth Snow (m)", Range(0,0.3)) = 0.12
+        _MarkParallax ("Print Parallax", Range(0,2)) = 1
+        _MarkNormalStrength ("Print Normal Strength", Range(0,4)) = 1.5
+        _MarkDarken ("Print Darkening", Range(0,1)) = 0.35
+        _MarkFreshWet ("Fresh Print Wetness", Range(0,1)) = 0.6
+        _MarkSnowRim ("Snow Rim Brightening", Range(0,1)) = 0.35
 
         [Header(Wetness)]
         // Master, exactly as on WaterReceiver: 0 = the whole wetness block is skipped.
@@ -119,8 +173,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTerrain"
             #include "WaterFoamMask.hlsl"        // SimFoamCoverage, SampleWetMarkWindowed, _WetMarkActive
             #include "WaterShore.hlsl"           // ShoreSample / ShoreData / _ShoreWaterLevel
             #include "WaterSurfWaves.hlsl"       // EvaluateSurfSwash + _SurfBeatTime
+            #include "WaterWaves.hlsl"           // WaveHeight / WindWaveSampleXZ - small wind-wave layer
             #include "WaterWetness.hlsl"         // THE wetness model, shared with WaterReceiver
             #include "WaterTerrainSubstrate.hlsl" // THE substrate model
+            #include "WaterGroundMarks.hlsl"      // SampleGroundMark / GroundMarkGradient (Load-based)
 
             // All eight share ONE sampler unit (see the header note). sampler_TrilinearRepeat is
             // declared by URP core - re-declaring it here is a redefinition error, not a safeguard.
@@ -146,6 +202,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTerrain"
                 float _WetStrength, _WetBandHeight, _WetNormalFlatten;
                 float _WetSwashStrength, _WetFoamStrength;
                 float _CausticStrength;
+                float4 _MudTint, _SnowTint;
+                float _MudAmount, _MudMaxHeight, _MudMaxSlope, _MudTiling, _MudSmoothness, _MudNormalFlatten;
+                float _MudWetDarken, _MudWetSmoothness;
+                float _SnowAmount, _SnowMinHeight, _SnowHeightFeather, _SnowMaxSlope, _SnowSlopeFeather;
+                float _SnowTiling, _SnowTextureInfluence, _SnowSmoothness, _SnowNormalFlatten;
+                float _MarkStrength, _MarkDepthSeabed, _MarkDepthBeach, _MarkDepthMud, _MarkDepthGrass, _MarkDepthSnow;
+                float _MarkParallax, _MarkNormalStrength, _MarkDarken, _MarkFreshWet, _MarkSnowRim;
             CBUFFER_END
 
             // Sim height, manually filtered: WebGPU cannot hardware-filter the float32 sim texture, so
@@ -250,37 +313,116 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTerrain"
                 // height. stillY may come from the shore field (_ShoreWaterLevel) while PoolToWorld is
                 // relative to the volume centre, so adding an absolute pool height to a shore-field
                 // level would mix two different origins and step the waterline at the field boundary.
+                // Small wind-wave layer: the SAME pool-unit WaveHeight the surface vertex adds
+                // (WaterSurfaceVertStage), so the terrain waterline finally moves with small
+                // waves instead of only with the ripple sim. Gated on the footprint for bounded
+                // bodies (outside it there is no wind-wave surface); world-wave oceans keep it
+                // everywhere, exactly like their own vertices do.
+                float2 windSampleXZ = WindWaveSampleXZ(poolPos.xz, IN.positionWS.xz);
+                float windGate = (_OceanWorldWaves > 0.5) ? 1.0 : insideBody;
+                float windH = WaveHeight(windSampleXZ) * windGate;
                 float poolStillY = PoolToWorld(float3(poolPos.x, 0.0, poolPos.z)).y;
-                float rippleOffset = PoolToWorld(float3(poolPos.x, simH, poolPos.z)).y - poolStillY;
+                float rippleOffset = PoolToWorld(float3(poolPos.x, simH + windH, poolPos.z)).y - poolStillY;
                 float surfaceY = stillY + rippleOffset;
                 float heightAboveWater = IN.positionWS.y - stillY;
 
                 // ---- Which substrate? ----------------------------------------------------------
-                float4 w = WaterTerrainSubstrateWeights(heightAboveWater,
-                                                        WaterTerrainSlope01(geometricNormal),
+                float slope01 = WaterTerrainSlope01(geometricNormal);
+                float4 w = WaterTerrainSubstrateWeights(heightAboveWater, slope01,
                                                         _SeabedTop, _BeachTop, _HeightFeather,
                                                         _RockSlope, _SlopeFeather);
 
+                // MUD is a share of the BEACH: flat and low enough to stay saturated. Taken out of
+                // w.y so the five weights still sum to 1 and every blend below stays convex.
+                float mud = w.y * WaterTerrainMudShare(heightAboveWater, slope01, _MudAmount,
+                                                       _MudMaxHeight, _MudMaxSlope);
+                w.y -= mud;
+
+                // SNOW is an overlay on everything (applied after the substrate blend), not a
+                // weight: it must be able to cover grass, sand and flat rock alike.
+                float snow = WaterTerrainSnowCover(heightAboveWater, slope01, _SnowAmount,
+                                                   _SnowMinHeight, _SnowHeightFeather,
+                                                   _SnowMaxSlope, _SnowSlopeFeather);
+
+                // ---- Ground marks: how deep is THIS ground pressed here? ------------------------
+                // Depth in metres that a full mark reaches, per ground; snow overrides because the
+                // print is in the snow, not in what lies under it.
+                float printDepthM = _MarkDepthSeabed * w.x + _MarkDepthBeach * w.y + _MarkDepthMud * mud
+                                  + _MarkDepthGrass * w.w;                              // rock: none
+                printDepthM = lerp(printDepthM, _MarkDepthSnow, snow) * _MarkStrength;
+
+                float3 viewDirWS = normalize(GetWorldSpaceViewDir(IN.positionWS));
+                float2 mark = float2(0.0, 0.0);      // (depth 0..1, fresh 0..1)
+                float2 markGradient = float2(0.0, 0.0);
+                float2 substrateUV = planarUV;       // parallax-shifted for the planar maps
+                if (_GroundMarkActive > 0.5 && printDepthM > 0.0)
+                {
+                    float2 markUV = GroundMarkUV(planarUV);
+                    mark = SampleGroundMark(markUV);
+                    if (mark.x > 0.001)
+                    {
+                        // ONE-STEP PARALLAX: a pit reads as displaced away from the eye. Tangent
+                        // frame: T = world X, B = -world Z (see TerrainTangentFrame), so a
+                        // tangent-space shift (du, dv) is (dx, -dz) in world XZ.
+                        float3 viewTS = float3(dot(viewDirWS, tangentWS), dot(viewDirWS, bitangentWS),
+                                               dot(viewDirWS, geometricNormal));
+                        float pitHeight = -mark.x * printDepthM * _MarkParallax;
+                        float2 shift = float2(viewTS.x, -viewTS.y) / max(viewTS.z, 0.25) * pitHeight;
+                        substrateUV = planarUV + shift;
+                        markUV = GroundMarkUV(substrateUV);
+                        mark = SampleGroundMark(markUV);
+                        markGradient = GroundMarkGradient(markUV);
+                    }
+                }
+
                 float3 triBlend = WaterTerrainTriplanarWeights(geometricNormal, _TriplanarSharpness);
 
-                float3 seabedA = _SeabedTint.rgb * SAMPLE_TEXTURE2D(_SeabedMap, sampler_TrilinearRepeat, planarUV * _SeabedTiling).rgb;
-                float3 beachA  = _BeachTint.rgb  * SAMPLE_TEXTURE2D(_BeachMap,  sampler_TrilinearRepeat, planarUV * _BeachTiling).rgb;
-                float3 grassA  = _GrassTint.rgb  * SAMPLE_TEXTURE2D(_GrassMap,  sampler_TrilinearRepeat, planarUV * _GrassTiling).rgb;
+                float3 seabedA = _SeabedTint.rgb * SAMPLE_TEXTURE2D(_SeabedMap, sampler_TrilinearRepeat, substrateUV * _SeabedTiling).rgb;
+                float3 beachA  = _BeachTint.rgb  * SAMPLE_TEXTURE2D(_BeachMap,  sampler_TrilinearRepeat, substrateUV * _BeachTiling).rgb;
+                float3 grassA  = _GrassTint.rgb  * SAMPLE_TEXTURE2D(_GrassMap,  sampler_TrilinearRepeat, substrateUV * _GrassTiling).rgb;
                 float3 rockA   = _RockTint.rgb   * TriplanarRockAlbedo(IN.positionWS, triBlend, _RockTiling);
+                // Mud and snow: the beach maps again at their own tiling (texture budget, see header).
+                float3 mudA    = _MudTint.rgb    * SAMPLE_TEXTURE2D(_BeachMap,  sampler_TrilinearRepeat, substrateUV * _MudTiling).rgb;
+                float3 snowTex = SAMPLE_TEXTURE2D(_BeachMap, sampler_TrilinearRepeat, substrateUV * _SnowTiling).rgb;
+                float snowLum  = dot(snowTex, float3(0.2126, 0.7152, 0.0722));
+                float3 snowA   = _SnowTint.rgb * lerp(1.0, snowLum * 2.0, _SnowTextureInfluence);
 
-                float3 albedo = seabedA * w.x + beachA * w.y + rockA * w.z + grassA * w.w;
+                float3 albedo = seabedA * w.x + beachA * w.y + rockA * w.z + grassA * w.w + mudA * mud;
 
-                float3 seabedN = TangentToWorld(UnpackNormalScale(SAMPLE_TEXTURE2D(_SeabedNormal, sampler_TrilinearRepeat, planarUV * _SeabedTiling), _NormalScale), tangentWS, bitangentWS, geometricNormal);
-                float3 beachN  = TangentToWorld(UnpackNormalScale(SAMPLE_TEXTURE2D(_BeachNormal,  sampler_TrilinearRepeat, planarUV * _BeachTiling),  _NormalScale), tangentWS, bitangentWS, geometricNormal);
-                float3 grassN  = TangentToWorld(UnpackNormalScale(SAMPLE_TEXTURE2D(_GrassNormal,  sampler_TrilinearRepeat, planarUV * _GrassTiling),  _NormalScale), tangentWS, bitangentWS, geometricNormal);
+                float3 seabedN = TangentToWorld(UnpackNormalScale(SAMPLE_TEXTURE2D(_SeabedNormal, sampler_TrilinearRepeat, substrateUV * _SeabedTiling), _NormalScale), tangentWS, bitangentWS, geometricNormal);
+                float3 beachN  = TangentToWorld(UnpackNormalScale(SAMPLE_TEXTURE2D(_BeachNormal,  sampler_TrilinearRepeat, substrateUV * _BeachTiling),  _NormalScale), tangentWS, bitangentWS, geometricNormal);
+                float3 grassN  = TangentToWorld(UnpackNormalScale(SAMPLE_TEXTURE2D(_GrassNormal,  sampler_TrilinearRepeat, substrateUV * _GrassTiling),  _NormalScale), tangentWS, bitangentWS, geometricNormal);
                 float3 rockN   = TriplanarRockNormal(IN.positionWS, geometricNormal, triBlend, _RockTiling);
+                float3 mudN    = TangentToWorld(UnpackNormalScale(SAMPLE_TEXTURE2D(_BeachNormal, sampler_TrilinearRepeat, substrateUV * _MudTiling), _NormalScale * (1.0 - _MudNormalFlatten)), tangentWS, bitangentWS, geometricNormal);
+                float3 snowN   = TangentToWorld(UnpackNormalScale(SAMPLE_TEXTURE2D(_BeachNormal, sampler_TrilinearRepeat, substrateUV * _SnowTiling), _NormalScale * (1.0 - _SnowNormalFlatten)), tangentWS, bitangentWS, geometricNormal);
 
                 // Blend the world-space normals and renormalise: the weights sum to 1, so this is a
                 // convex combination and cannot invert the normal however the substrates overlap.
-                float3 N = normalize(seabedN * w.x + beachN * w.y + rockN * w.z + grassN * w.w);
+                float3 N = normalize(seabedN * w.x + beachN * w.y + rockN * w.z + grassN * w.w + mudN * mud);
 
                 float smoothness = _SeabedSmoothness * w.x + _BeachSmoothness * w.y
-                                 + _RockSmoothness * w.z + _GrassSmoothness * w.w;
+                                 + _RockSmoothness * w.z + _GrassSmoothness * w.w + _MudSmoothness * mud;
+
+                // ---- Snow overlay ----------------------------------------------------------------
+                albedo = lerp(albedo, snowA, snow);
+                N = normalize(lerp(N, snowN, snow));
+                smoothness = lerp(smoothness, _SnowSmoothness, snow);
+
+                // ---- Ground marks: the look -----------------------------------------------------
+                // Pit normal from the gradient: the surface is h = -D * m, so its normal is
+                // (D dm/dx, 1, D dm/dz) in world XZ - T carries X, -B carries Z.
+                float markPit = mark.x * _MarkDarken;
+                if (mark.x > 0.001)
+                {
+                    float2 g = markGradient * printDepthM * _MarkNormalStrength;
+                    N = normalize(N + tangentWS * g.x - bitangentWS * g.y);
+                    // Rim: the soft edge of the print, where fresh (the unscaled stamp mask) is
+                    // between 0 and 1. Peaks at 0.5, zero in the core and outside.
+                    float rim = 4.0 * mark.y * (1.0 - mark.y);
+                    // Snow crumbles bright at the rim; bare ground just darkens in the pit.
+                    albedo *= 1.0 - markPit * (1.0 - snow);
+                    albedo *= 1.0 + rim * _MarkSnowRim * snow;
+                }
 
                 // ---- How wet? ------------------------------------------------------------------
                 // Same three sources and the same shared model as WaterReceiver, so the ground and any
@@ -310,12 +452,18 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTerrain"
 
                     wet = _WetStrength * WaterWetCombine(bandWet, swashWet, foamWet);
                 }
+                // A FRESH print in sand or mud is wetter than its surroundings: the boot squeezed
+                // the water table up. Not in snow (it is not wet, it is crushed) and not on rock.
+                wet = max(wet, _WetStrength * mark.y * _MarkFreshWet * (1.0 - snow) * (1.0 - w.z));
 
                 WaterWetLook wetLook;
                 wetLook.darken = _SeabedWetDarken * w.x + _BeachWetDarken * w.y
-                               + _RockWetDarken * w.z + _GrassWetDarken * w.w;
+                               + _RockWetDarken * w.z + _GrassWetDarken * w.w + _MudWetDarken * mud;
                 wetLook.smoothness = _SeabedWetSmoothness * w.x + _BeachWetSmoothness * w.y
-                                   + _RockWetSmoothness * w.z + _GrassWetSmoothness * w.w;
+                                   + _RockWetSmoothness * w.z + _GrassWetSmoothness * w.w + _MudWetSmoothness * mud;
+                // Snow barely darkens when wet and never glosses like silt.
+                wetLook.darken = lerp(wetLook.darken, 0.15, snow);
+                wetLook.smoothness = lerp(wetLook.smoothness, _SnowSmoothness + 0.1, snow);
                 wetLook.normalFlatten = _WetNormalFlatten;
                 WaterWetSurface wetSurface = WaterApplyWetness(wetLook, wet, albedo, smoothness,
                                                                N, geometricNormal);
@@ -360,10 +508,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTerrain"
 
                 float3 color = albedo * (ambient + mainLight.color * (ndl * lightShadow));
 
-                float3 viewDirWS = normalize(GetWorldSpaceViewDir(IN.positionWS));
                 float3 halfDirWS = normalize(mainLight.direction + viewDirWS);
-                float dryExponent = WaterSpecularExponent(_SeabedSmoothness * w.x + _BeachSmoothness * w.y
-                                                        + _RockSmoothness * w.z + _GrassSmoothness * w.w);
+                float dryExponent = WaterSpecularExponent(
+                    lerp(_SeabedSmoothness * w.x + _BeachSmoothness * w.y + _RockSmoothness * w.z
+                         + _GrassSmoothness * w.w + _MudSmoothness * mud, _SnowSmoothness, snow));
                 float specExponent = WaterSpecularExponent(smoothness);
                 float specTerm = pow(saturate(dot(N, halfDirWS)), specExponent) * ndl * lightShadow;
                 // Wet ground is shinier only because the narrowing lobe keeps its energy - see
@@ -385,7 +533,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTerrain"
                 if (insideBody > 0.5)
                     color = ApplyWaterFog(color, WaterPathLength(IN.positionWS, _WorldSpaceCameraPos, surfaceY),
                                           WaterInscatterColor(normalize(_WorldSpaceCameraPos - IN.positionWS),
-                                                              _LightDir, _SunColor, 0.0));
+                                                              _LightDir, _WaterSunColor, 0.0));
 
                 return half4(color, 1);
             }

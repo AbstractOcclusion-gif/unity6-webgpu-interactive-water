@@ -5,12 +5,35 @@ All notable changes to this package are documented here.
 ## [Unreleased] - pre-release audit pass
 
 ### Added
+- **Enviro 3 fog compatibility** (Water Wizard > Utilities > Third-party fog). One tick routes
+  the water surface, chunk walls and WaterTransparent scene fog through Enviro 3's height/distance
+  fog instead of Unity fog. Implemented as a wizard-written include hook
+  (`Runtime/Shaders/WaterThirdPartyFog.hlsl`), so projects without Enviro compile unchanged and
+  no extra variants exist while it is off. The Enviro maths is PORTED (`WaterEnviro3Fog.hlsl`,
+  pinned to Enviro 3.3.2b, drift-checked by the wizard) rather than included: Enviro's include
+  carries 8 samplers and overflows WaterSurface's 16-register budget. Unity fog keywords are
+  dropped while Enviro is active (Pass 0: 48 -> 24 variants). WaterSkyFogFeature now stands
+  down whenever Enviro is active (`_EnviroActive`), since Enviro fogs its own sky.
+- **Automatic Enviro weather bridge.** `EnviroWaterWeatherBridge` is created in play mode when no
+  configured scene instance exists. It maps Enviro's normalized wind speed/direction to all live
+  `WaterVolume` bodies and emits rain impacts from Enviro's blended wetness target. It uses a cached
+  reflection binding, so the water runtime keeps compiling and running when Enviro is not installed.
+
+### Changed
+- Global `_SunColor` renamed `_WaterSunColor` (shaders + WaterUniformPublisher). Enviro 3
+  publishes its own `_SunColor` (sun disc colour) every frame, which both failed to compile
+  alongside ours and silently overwrote the water's sun colour x intensity at runtime.
+
 - **Water Wizard Renderer Setup tool** installs or repairs all six WebGpuWater renderer
   features on the active URP asset's default Renderer Data. It assigns all seven required
   shaders, preserves existing custom assignments, avoids duplicates, maintains URP's local-ID
   feature map, and supports Undo. Camera renderer overrides remain explicit.
 
 ### Fixed
+- **Enviro fog no longer creates a 17th D3D11 fragment texture.** The water-side fog port is now
+  sampler-free and does not compile an `ENVIRO_VOLUMELIGHT` variant. Enviro height/distance fog still
+  matches the transparent sheet to the terrain; volumetric-light shafts remain in Enviro's opaque
+  fullscreen pass because WaterSurface already consumes D3D11's sixteen texture slots.
 - **Large-body caustics no longer time out the D3D11 shader compiler on a cold package import**:
   the five-point projection now samples the generated ocean FFT through a dedicated compile-bounded
   path instead of expanding the complete shore/surf surface graph at every point.

@@ -147,7 +147,7 @@ namespace AbstractOcclusion.WebGpuWater
         int IWaterSurfaceProvider.Specificity => WaterSurfaceProviders.VolumeSpecificity;
 
         bool IWaterSurfaceProvider.ContainsXZ(Vector3 worldPoint)
-            => WorldToPoolXZ(worldPoint, out _, out _);
+            => QueryPoolXZ(worldPoint, out _, out _);
 
         bool IWaterSurfaceProvider.ContainsPoint(Vector3 worldPoint) => ContainsPointXYZ(worldPoint);
 

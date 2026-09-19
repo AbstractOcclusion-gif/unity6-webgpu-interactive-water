@@ -65,7 +65,7 @@ Shader "AbstractOcclusion/WebGpuWater/GodRays"
 
             TEXTURE2D(_CausticTex); SAMPLER(sampler_CausticTex);
             float3 _LightDir;       // global, normalized direction toward the light
-            // _SunColor is declared by WaterFog.hlsl (included above) - the header that owns the in-scatter needing it.
+            // _WaterSunColor is declared by WaterFog.hlsl (included above) - the header that owns the in-scatter needing it.
             float _CausticOccluderActive; // 1 when submerged objects wrote the refracted occluder shadow into caustic.g
 
             // Interleaved gradient noise (Jimenez, "Next Generation Post Processing in
@@ -228,7 +228,7 @@ Shader "AbstractOcclusion/WebGpuWater/GodRays"
                 }
                 accum *= dt * _GodRayDensity;
 
-                return half4(_GodRayColor.rgb * _SunColor * accum, 1.0);
+                return half4(_GodRayColor.rgb * _WaterSunColor * accum, 1.0);
             }
             ENDHLSL
         }

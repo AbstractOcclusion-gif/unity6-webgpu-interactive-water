@@ -166,12 +166,18 @@ namespace AbstractOcclusion.WebGpuWater
         // Refresh the underwater fog gate at the START of the target camera's render. WHY here and not
         // in Update: Update runs at DefaultExecutionOrder -50, before the OrbitCamera moves the camera
         // in LateUpdate, so an Update-time read lagged the fog one frame on entry. This fires after
-        // LateUpdate, just before the fog feature's AddRenderPasses. Gated to the primary body's own
-        // target camera so the reflection and scene-view cameras never drive the gate.
+        // LateUpdate, just before the fog feature's AddRenderPasses. Gated to the elected EYE
+        // (WaterEye) so the reflection and scene-view cameras never drive the gate.
         void OnBeginCameraRender(ScriptableRenderContext context, Camera cam)
         {
             if (!_initialized) return;
-            if (cam != targetCamera) return; // ignore reflection / scene-view cameras
+            // All cameras must see late object injections in this frame, including a mirror
+            // rendered before the elected eye. The queue drains once; later cameras do no work.
+            FlushLateInjectionsForRendering();
+            // Was `cam != targetCamera`: reference equality against an authored field, which an
+            // INACTIVE camera failed exactly like a wrong one - the eye vanished and the fog never
+            // armed, silently. The election handles camera switching and refuses dead cameras.
+            if (!WaterEye.IsEye(cam)) return; // ignore reflection / scene-view / non-eye cameras
 
             RenderPlanarMirror(cam); // per-body planar: every planar body mirrors its OWN plane, not just primary
 
@@ -673,7 +679,7 @@ namespace AbstractOcclusion.WebGpuWater
         // World-space surface height at the camera's xz. Open water bobs with the large swell (analytic
         // + FFT), the dominant partial-submersion motion; pools / bounded bodies use the rest plane
         // (their wind-wave detail is small and the pond fog is box-clipped anyway).
-        float SurfaceHeightAtCamera() => SurfaceHeightAtCamera(targetCamera, out _);
+        float SurfaceHeightAtCamera() => SurfaceHeightAtCamera(Eye, out _);
 
         // 'measured' is false when the height is a placeholder rather than a reading of the
         // rendered sea - see SurfaceHeightAtWorldXZ.

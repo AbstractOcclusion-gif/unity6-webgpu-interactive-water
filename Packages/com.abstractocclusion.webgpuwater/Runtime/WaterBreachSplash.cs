@@ -222,7 +222,7 @@ namespace AbstractOcclusion.WebGpuWater
                 surfacePos, WaterQueryIntent.RayInteraction, ref noHint);
             if (body == null) return null;
             // Cache the auto-resolved emitter: bodies do not swap emitters at runtime.
-            splashEmitter = body.GetComponent<WaterSplashEmitter>();
+            splashEmitter = body.ResolveSplashEmitter();
             return splashEmitter;
         }
 

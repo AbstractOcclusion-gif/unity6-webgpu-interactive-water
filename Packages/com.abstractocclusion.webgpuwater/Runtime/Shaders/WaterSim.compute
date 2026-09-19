@@ -26,6 +26,8 @@
 #pragma kernel Conserve
 #pragma kernel Scroll
 #pragma kernel ScrollFoam
+#pragma kernel Reframe
+#pragma kernel ReframeFoam
 
 // Compute thread-group size. MUST equal WaterSimulation.ThreadGroupSize on the C# side.
 #define THREAD_GROUP_SIZE 8
@@ -126,6 +128,7 @@ float _ActivityWetMarkInverseThreshold;
 // ripples stay world-anchored while the sim window follows the camera. C# passes
 // the offset with the sign that keeps world features fixed (see WaterSimulation.Scroll).
 int2 _ScrollOffset;
+float4 _ReframeTransform; // scale, source offset x/y in texels
 
 // ---- Queued injection -------------------------------------------------------------------------
 // Drops and wake interactors used to cost ONE FULL-GRID PING-PONG EACH. A moving object emits up to
@@ -1082,4 +1085,56 @@ void ScrollFoam(uint3 id : SV_DispatchThreadID)
     int2 p = int2(id.xy);
     int2 src = p - _ScrollOffset;
     FoamDst[p] = InGrid(src) ? FoamSrc.Load(int3(src, 0)) : (float2)0.0;
+}
+
+// Manual bilinear loads work on WebGPU float32 textures without requiring
+// float32 filtering. Newly exposed world space is initialized to rest.
+float2 ReframeSource(int2 p)
+{
+    return (float2(p) + 0.5 - _Size * 0.5) * _ReframeTransform.x
+        + _Size * 0.5 - 0.5 + _ReframeTransform.yz;
+}
+
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
+void Reframe(uint3 id : SV_DispatchThreadID)
+{
+    int2 p = int2(id.xy);
+    float2 source = ReframeSource(p);
+    int2 corner = int2(floor(source));
+    float2 fraction = frac(source);
+    float4 state = REST_STATE;
+    float2 flow = 0;
+    [unroll] for (int y = 0; y < 2; y++)
+    [unroll] for (int x = 0; x < 2; x++)
+    {
+        int2 q = corner + int2(x, y);
+        float weight = (x == 0 ? 1 - fraction.x : fraction.x)
+            * (y == 0 ? 1 - fraction.y : fraction.y);
+        if (InGrid(q))
+        {
+            state += Src.Load(int3(q, 0)) * weight;
+            flow += FlowSrc.Load(int3(q, 0)) * weight;
+        }
+    }
+    Dst[p] = state;
+    FlowDst[p] = flow;
+}
+
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
+void ReframeFoam(uint3 id : SV_DispatchThreadID)
+{
+    int2 p = int2(id.xy);
+    float2 source = ReframeSource(p);
+    int2 corner = int2(floor(source));
+    float2 fraction = frac(source);
+    float2 foam = 0;
+    [unroll] for (int y = 0; y < 2; y++)
+    [unroll] for (int x = 0; x < 2; x++)
+    {
+        int2 q = corner + int2(x, y);
+        float weight = (x == 0 ? 1 - fraction.x : fraction.x)
+            * (y == 0 ? 1 - fraction.y : fraction.y);
+        if (InGrid(q)) foam += FoamSrc.Load(int3(q, 0)) * weight;
+    }
+    FoamDst[p] = foam;
 }

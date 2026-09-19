@@ -56,7 +56,7 @@ float GodRayGap(float3 world, float flatFallbackY)
 }
 
 float3 _LightDir;   // global, normalized direction toward the sun
-// _SunColor is declared by WaterFog.hlsl (included above) - the header that owns the in-scatter needing it.
+// _WaterSunColor is declared by WaterFog.hlsl (included above) - the header that owns the in-scatter needing it.
 
 // Published by the underwater fog path. SIMPLE TIERS ONLY: the flat Simple fog
 // waterline is keyed on this CPU scalar, so the shafts read the same value there to
@@ -649,7 +649,7 @@ half4 FragRaymarch(Varyings input) : SV_Target
         lampCount++;
     }
     // The lamps' OWN accumulator, never the sun's: the sun sum is later multiplied by
-    // _SunColor x HG phase x _LargeGodRayColor x density, none of which a lamp owes.
+    // _WaterSunColor x HG phase x _LargeGodRayColor x density, none of which a lamp owes.
     float3 lampAccum = float3(0.0, 0.0, 0.0);
 #endif
 
@@ -774,7 +774,7 @@ half4 FragRaymarch(Varyings input) : SV_Target
     // red-first spectral loss along the ray; the floor guards a fully-extinct march.
     accum /= max(viewFogWeightSum, 1e-4);
 
-    float3 col = _LargeGodRayColor.rgb * _SunColor * (accum * _LargeGodRayDensity * phase);
+    float3 col = _LargeGodRayColor.rgb * _WaterSunColor * (accum * _LargeGodRayDensity * phase);
 #if defined(WATER_GODRAY_POINT_LIGHTS) && !defined(WATER_FOG_SIMPLE)
     // A2 lamps join here - BEFORE the regime scale and the temporal blend, so the
     // halo is waterline-masked like the sun shafts, calmed by the same history, and

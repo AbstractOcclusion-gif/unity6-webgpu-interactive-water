@@ -54,7 +54,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTransparent"
             #pragma vertex vert
             #pragma fragment frag
             #pragma target 4.0
-            #pragma multi_compile_fog
+            // Unity fog keywords come from WaterThirdPartyFog.hlsl (none while a third-party fog is active).
             // ONE 4-way set, exactly as URP's own Lit.shader declares it (the receiver's note:
             // two independent pragmas compile unreachable *_SCREEN cross products).
             #pragma multi_compile_fragment _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
@@ -65,6 +65,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTransparent"
             // THE one include that carries the medium. Pulls WaterVolume.hlsl + WaterParticleFog.hlsl
             // + WaterFog.hlsl behind it, so no other water header is needed for the water itself.
             #include "WebGpuWaterFogAPI.hlsl"
+            #include_with_pragmas "WaterThirdPartyFog.hlsl" // scene fog: Unity or third-party (Water Wizard)
             // WaterSpecularExponent only - the receiver and the terrain shader read the smoothness
             // remap from here, and a fourth copy of that curve is how a waterline seam appears.
             // Safe to include anywhere: the file declares no textures and includes nothing.
@@ -74,7 +75,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTransparent"
             TEXTURE2D(_BumpMap); SAMPLER(sampler_BumpMap);
             // Global "toward the sun", published by the primary WaterVolume - the SAME direction the
             // sheet and the receivers feed the in-scatter, so a prop's tint cannot drift from the
-            // water around it. _SunColor is declared by WaterFog.hlsl.
+            // water around it. _WaterSunColor is declared by WaterFog.hlsl.
             float3 _LightDir;
             float _CameraUnderwater;
 
@@ -157,7 +158,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTransparent"
                 // turbidity on rays that cross the waterline. Applied AFTER the albedo multiply -
                 // exact, because the pair is linear in the colour (see the API header).
                 float3 fogMul, fogAdd;
-                WebGpuWaterFogTransparent(IN.positionWS, _LightDir, _SunColor, fogMul, fogAdd);
+                WebGpuWaterFogTransparent(IN.positionWS, _LightDir, _WaterSunColor, fogMul, fogAdd);
                 // Per-material opt-out: lerp the PAIR, not the result, so strength 0 is provably
                 // identity (fogMul -> 1, fogAdd -> 0) rather than "almost the original colour".
                 float strength = saturate(_WaterFogStrength);
@@ -168,7 +169,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterTransparent"
                 // The water-medium term above is the below-surface optical path. Unity fog is
                 // a scene-atmosphere term, so it is applied only while the camera remains in air.
                 if (_CameraUnderwater < 0.5)
-                    color = MixFog(color, ComputeFogFactor(IN.positionCS.z));
+                    color = WaterApplySceneFog(color, IN.positionCS, IN.positionWS,
+                                               ComputeFogFactor(IN.positionCS.z));
 
                 return half4(color, alpha);
             }

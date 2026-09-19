@@ -427,10 +427,11 @@ namespace AbstractOcclusion.WebGpuWater
         /// so clicks and drags never ripple or splash the carved-dry surface, and the domain
         /// resolver applies it as the dry-wins veto on every gameplay sample (rule 5) - which
         /// is why the world->shape matrix is cached per volume rather than inverted per call.</summary>
-        internal static bool ContainsPoint(Vector3 worldPoint)
+        internal static bool ContainsPoint(Vector3 worldPoint, Transform exclusionOwner = null)
         {
             for (int i = 0; i < _active.Count; i++)
-                if (_active[i].ContainsPointLocal(worldPoint)) return true;
+                if ((!exclusionOwner || !_active[i].transform.IsChildOf(exclusionOwner))
+                    && _active[i].ContainsPointLocal(worldPoint)) return true;
             return false;
         }
 

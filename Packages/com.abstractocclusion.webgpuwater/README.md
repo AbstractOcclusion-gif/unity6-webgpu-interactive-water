@@ -47,6 +47,18 @@ materials. All waters reuse the editable project foam profile at
 and quality defaults remain under the package's `Runtime/Defaults` folder. Drag on the surface for ripples; drop a Rigidbody with
 `WaterBuoyancy` in and it floats, rocks, and rides the wind waves.
 
+## Enviro 3
+
+Enable **Water Wizard > Utilities > Third-party fog > Enviro 3 fog** to apply Enviro's
+height/distance fog directly to the transparent water surface. The integration deliberately omits
+Enviro's volumetric-light texture on water because the main surface shader uses all sixteen D3D11
+texture registers.
+
+At runtime, `EnviroWaterWeatherBridge` is installed automatically. It synchronizes Enviro wind with
+all active water bodies and creates rain ripples from Enviro's wetness target. Add the component to
+your scene yourself only when you want to tune its wind scale, rain area/rate, or disable one of the
+links; a scene instance prevents creation of the default bridge.
+
 ## Demo scenes
 
 Import **Demo Scenes** from Package Manager to get the numbered sample catalog. The scenes

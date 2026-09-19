@@ -185,7 +185,7 @@ Shader "AbstractOcclusion/WebGpuWater/AnalyticPool"
                 if (inside > 0.5)
                     color = ApplyWaterFog(color, WaterPathLength(i.worldPos, _WorldSpaceCameraPos, surfaceY),
                                           WaterInscatterColor(normalize(_WorldSpaceCameraPos - i.worldPos),
-                                                              _LightDir, _SunColor, 0.0));
+                                                              _LightDir, _WaterSunColor, 0.0));
 
                 return half4(color, 1);
             }

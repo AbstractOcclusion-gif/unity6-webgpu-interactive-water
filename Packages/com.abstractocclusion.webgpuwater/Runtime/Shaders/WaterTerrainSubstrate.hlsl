@@ -82,4 +82,31 @@ float3 WaterTerrainTriplanarWeights(float3 normalWS, float sharpness)
     return weights / max(weights.x + weights.y + weights.z, TRIPLANAR_MIN_WEIGHT_SUM);
 }
 
+// MUD: the share of the BEACH weight that is saturated silt - flat enough to hold standing water and
+// low enough to still be fed by it. Returned as a 0..1 fraction the caller takes OUT of the beach
+// weight, so the substrate weights keep summing to 1. Not a sixth substrate: mud has no maps of its
+// own (WaterTerrain's texture budget), it is what the beach looks like where it cannot drain.
+float WaterTerrainMudShare(float heightAboveWater, float slope01, float amount,
+                           float maxHeight, float maxSlope)
+{
+    float low  = 1.0 - smoothstep(maxHeight * 0.5, maxHeight, heightAboveWater);
+    float flat = 1.0 - smoothstep(maxSlope * 0.5, maxSlope, slope01);
+    return saturate(amount) * low * flat;
+}
+
+// SNOW cover 0..1, applied as an OVERLAY after the substrate blend (it must be able to sit on grass,
+// sand and flat rock alike, so it cannot be one of the convex weights). Two gates, same shape as the
+// substrate selection: height above the waterline - the swash zone stays bare, snow does not survive
+// where water reaches - and slope, because steep faces shed it. Feathers are half-widths like the
+// substrate ones, so the boundary itself never moves as a feather is widened.
+float WaterTerrainSnowCover(float heightAboveWater, float slope01, float amount,
+                            float minHeight, float heightFeather, float maxSlope, float slopeFeather)
+{
+    float hf = max(heightFeather, SUBSTRATE_WEIGHT_EPSILON);
+    float sf = max(slopeFeather, SUBSTRATE_WEIGHT_EPSILON);
+    float high = smoothstep(minHeight - hf, minHeight + hf, heightAboveWater);
+    float flat = 1.0 - smoothstep(maxSlope - sf, maxSlope + sf, slope01);
+    return saturate(amount) * high * flat;
+}
+
 #endif // WEBGPUWATER_TERRAIN_SUBSTRATE_INCLUDED

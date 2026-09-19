@@ -52,6 +52,21 @@ namespace AbstractOcclusion.WebGpuWater
                  "speed, tapering to nothing at a standstill. 0 = no fade (old behaviour).")]
         [Min(0f)] [SerializeField] float wakeFadeSpeed = 0.5f;
 
+        [Header("Ground marks")]
+        [Tooltip("When this hull is NOT afloat (no water under it, or the water is below its bottom) and it " +
+                 "moves, press a keel groove into the ground-marks field (WaterGroundMarks in the scene). " +
+                 "Off by default: only boats that get beached or dragged need it.")]
+        [SerializeField] bool markGround = false;
+
+        [Tooltip("Groove depth 0..1 (the terrain material maps 1 to its per-substrate print depth).")]
+        [Range(0f, 1f)] [SerializeField] float groundMarkDepth = 0.7f;
+
+        [Tooltip("Groove half-width as a fraction of the sphere radius: a keel is narrower than the hull.")]
+        [Range(0.05f, 1f)] [SerializeField] float groundMarkWidthScale = 0.35f;
+
+        [Tooltip("Edge softness of the groove in metres.")]
+        [Min(0f)] [SerializeField] float groundMarkSoftness = 0.08f;
+
         Collider _collider;
         Renderer _renderer;
         Vector3 _prevCenter;
@@ -85,6 +100,9 @@ namespace AbstractOcclusion.WebGpuWater
             if (stepSqr < MinStepDistance * MinStepDistance) return;      // effectively still
             if (stepSqr > maxStepDistance * maxStepDistance) return;      // teleport guard
 
+            float effectiveRadius = EffectiveRadius();
+            if (markGround) MarkGroundIfGrounded(center, step, effectiveRadius);
+
             // Low-speed wake fade: the velocity dipole ADDS to the sim each frame, so a boat that slows to
             // a creep dwells over the same cells and those pushes accumulate (toward a ~1/(1-damping) steady
             // state) into one giant bow wave, which relaxes once it fully stops. Taper the injected strength
@@ -97,11 +115,37 @@ namespace AbstractOcclusion.WebGpuWater
 
             // The facade applies the submersion weight (an airborne or deeply-sunk sphere makes no wake),
             // so we always forward and let it gate.
-            WaterVolume.TrySphereInteractionAt(center, step, EffectiveRadius(), strength * speedRamp,
+            WaterVolume.TrySphereInteractionAt(center, step, effectiveRadius, strength * speedRamp,
                                                 verticalForceCap);
         }
 
+        // A hull that is not afloat is resting on the ground, so its travel presses a groove. "Afloat"
+        // is decided by the water itself (the same query buoyancy uses): a body under the hull AND its
+        // surface above the hull's bottom. No raycast - the boat's own collider would be the first hit.
+        // The groove is the horizontal step, stretched a little along travel so consecutive frames
+        // overlap into one continuous line instead of a dotted one.
+        void MarkGroundIfGrounded(Vector3 center, Vector3 step, float hullRadius)
+        {
+            bool afloat = WaterVolume.TrySampleHeightAt(center, out float waterY)
+                          && waterY > center.y - hullRadius;
+            if (afloat) return;
+
+            Vector2 heading = new Vector2(step.x, step.z);
+            float travel = heading.magnitude;
+            if (travel < MinStepDistance) return;
+            float halfWidth = hullRadius * groundMarkWidthScale;
+            float halfLength = Mathf.Max(halfWidth, travel);
+            WaterGroundMarks.TryStamp(center, heading, halfLength, halfWidth, groundMarkDepth, groundMarkSoftness);
+        }
+
         Vector3 CenterWorld() => transform.TransformPoint(centerOffset);
+
+        // Shared by object-drop emission so submerged objects use the same native depth fade.
+        internal static float AutoRadius(Bounds bounds)
+        {
+            Vector3 e = bounds.extents;
+            return Mathf.Max(AutoRadiusFloor, HorizontalExtentMeanWeight * (e.x + e.z));
+        }
 
         // World radius: explicit if set, otherwise half the horizontal bounds of the collider (preferred)
         // or renderer. Falls back to a small default when the object has neither.
@@ -110,13 +154,11 @@ namespace AbstractOcclusion.WebGpuWater
             if (radius > 0f) return radius;
             if (_collider != null)
             {
-                Vector3 e = _collider.bounds.extents;
-                return Mathf.Max(AutoRadiusFloor, HorizontalExtentMeanWeight * (e.x + e.z));
+                return AutoRadius(_collider.bounds);
             }
             if (_renderer != null)
             {
-                Vector3 e = _renderer.bounds.extents;
-                return Mathf.Max(AutoRadiusFloor, HorizontalExtentMeanWeight * (e.x + e.z));
+                return AutoRadius(_renderer.bounds);
             }
             return FallbackRadius;
         }

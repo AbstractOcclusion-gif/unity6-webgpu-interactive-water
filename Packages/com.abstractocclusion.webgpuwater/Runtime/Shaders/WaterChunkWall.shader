@@ -36,7 +36,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
             #pragma vertex vert
             #pragma fragment frag
             #pragma target 4.0
-            #pragma multi_compile_fog
+            // Unity fog keywords come from WaterThirdPartyFog.hlsl (none while a third-party fog is active).
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
             #include "WaterChunkPrimitive.hlsl" // ChunkIntersect / ChunkSurfaceNormalPool (+ WaterShared: IOR_*)
@@ -44,10 +44,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
             #include "WaterFog.hlsl"            // WaterInscatterColor + DownwellingAttenuation + _ScatterAmbient + fog globals
             #include "WaterVolume.hlsl"         // PoolToWorld / WorldToPool / PoolNormalToWorld (this body's frame)
             #include "WaterWaterline.hlsl"      // WaveHeight (wind-wave layer) via its wave includes
+            #include_with_pragmas "WaterThirdPartyFog.hlsl" // scene fog: Unity or third-party (Water Wizard)
+            float _CameraUnderwater; // WaterUniformPublisher: 1 while the eye is below the surface
 
             // Published globals (WaterUniformPublisher). _LightDir comes from WaterCommon; _RealRefraction
             // is the tier flag (0 on Low).
-            // _SunColor is declared by WaterFog.hlsl (included above) - the header that owns the in-scatter needing it.
+            // _WaterSunColor is declared by WaterFog.hlsl (included above) - the header that owns the in-scatter needing it.
             float  _RealRefraction;
             sampler2D _CameraOpaqueTexture;
 
@@ -167,7 +169,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
                               * pow(1.0 - saturate(dot(surfaceNormal, viewDirWS)), 5.0);
                 float3 reflDir = reflect(-viewDirWS, surfaceNormal);
                 float sunGlint = pow(saturate(dot(reflDir, _LightDir)), CHUNK_SUN_SPEC_POWER);
-                float3 reflectColor = _ScatterAmbient.rgb + _SunColor * (sunGlint * CHUNK_SUN_SPEC_GAIN);
+                float3 reflectColor = _ScatterAmbient.rgb + _WaterSunColor * (sunGlint * CHUNK_SUN_SPEC_GAIN);
                 return reflectColor * (fresnel * _ChunkReflectivity);
             }
 
@@ -399,7 +401,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
                 // changed with the viewpoint (above / close / inside / outside all disagreed).
                 // One volume, one water colour: the face normal keeps feeding only the
                 // reflection sheen and the refraction bend below.
-                float3 inscatter = WaterInscatterColor(viewDirWS, _LightDir, _SunColor, 0.0);
+                float3 inscatter = WaterInscatterColor(viewDirWS, _LightDir, _WaterSunColor, 0.0);
                 float3 transmittance = exp(-_WaterExtinction.rgb * (_WaterFogDensity * column));
                 float3 reflection = ChunkSurfaceReflection(surfaceN, viewDirWS);
 
@@ -433,7 +435,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
                         float grFade = DepthFadeScalar(grWorld.y, wavyTopY, _GodRayDepthFade);
                         grAccum += grCaustic.r * grShadow * grFade;
                     }
-                    shaftGlow = _ChunkGodRayColor.rgb * _SunColor * (grAccum * grDt * _ChunkGodRayStrength);
+                    shaftGlow = _ChunkGodRayColor.rgb * _WaterSunColor * (grAccum * grDt * _ChunkGodRayStrength);
                 }
 
                 // VEIL path: premultiplied in-scatter over the framebuffer. Taken on the CHEAP tier
@@ -472,7 +474,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterChunkWall"
                 color += reflection;
                 color *= depthDarken;
                 color += shaftGlow; // volumetric shafts add after the depth darken (they are their own light)
-                color = MixFog(color, IN.fogFactor);
+                // Scene fog is an AIR term: only while the camera is above the water (published global).
+                if (_CameraUnderwater < 0.5)
+                    color = WaterApplySceneFog(color, IN.positionCS, IN.positionWS, IN.fogFactor);
                 return half4(color, 1.0);
             }
             ENDHLSL

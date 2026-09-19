@@ -29,9 +29,16 @@ namespace AbstractOcclusion.WebGpuWater
             _pass = new WaterSkyFogPass(_material);
         }
 
+        // Enviro 3 publishes this global (> 0) whenever it is driving the sky; it then owns the sky's
+        // fog itself, so this Unity-fog paint over the skybox would double it. Gated on the global,
+        // not on the Water Wizard's third-party hook: the double-paint happens whether or not the
+        // water opted into Enviro's fog. Reads 0 in any project without Enviro (never-set global).
+        static readonly int ID_EnviroActive = Shader.PropertyToID("_EnviroActive");
+
         public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
         {
             if (_pass == null || !RenderSettings.fog) return;
+            if (Shader.GetGlobalFloat(ID_EnviroActive) > 0f) return;
             // Preview thumbnails never need a fogged skybox - this was the ONE water feature with
             // no camera gate, so it recorded a fullscreen pass for material/prefab previews too.
             // Reflection cameras DELIBERATELY keep the pass: this is scene fog, not a water-volume

@@ -135,8 +135,87 @@ namespace AbstractOcclusion.WebGpuWater.Editor
         void DrawCameraSection()
         {
             _showCamera = WaterEditorUI.Section("Camera", _showCamera, () =>
-                DrawFields("orbit", "configureCamera"));
+            {
+                DrawEyeStatus();
+                DrawFields("orbit", "configureCamera");
+            });
         }
+
+        // Who is actually the eye, and a one-click way to make that a deliberate answer.
+        // The whole point of WaterEye is that this question used to have no visible answer at all:
+        // a stale targetCamera killed the underwater fog while the inspector showed a filled-in
+        // field and validation reported nothing.
+        void DrawEyeStatus()
+        {
+            WaterEditorUI.SubHeading("Eye");
+            var volume = (WaterVolume)target;
+            Camera wired = WaterEye.ResolveWired();
+            Camera resolved = WaterEye.Resolve();
+            Camera legacy = volume.targetCamera;
+
+            if (wired != null)
+            {
+                EditorGUILayout.LabelField(EyeLabel, wired.name + EyeSourceSuffix(wired));
+            }
+            else if (resolved != null)
+            {
+                EditorGUILayout.HelpBox(string.Format(EyeUnwiredHelp, resolved.name),
+                                        MessageType.Warning);
+            }
+            else
+            {
+                EditorGUILayout.HelpBox(EyeMissingHelp, MessageType.Error);
+            }
+
+            // The failure this component was written for: assigned, non-null, and dead.
+            if (legacy != null && !legacy.isActiveAndEnabled && wired == null)
+                EditorGUILayout.HelpBox(string.Format(EyeStaleHelp, legacy.name), MessageType.Error);
+
+            Camera candidate = resolved != null ? resolved : legacy;
+            using (new EditorGUI.DisabledScope(candidate == null ||
+                                               candidate.GetComponent<WaterEye>() != null))
+            {
+                if (GUILayout.Button(candidate != null
+                        ? string.Format(AddEyeButton, candidate.name)
+                        : AddEyeButtonEmpty))
+                    AddEyeTo(candidate);
+            }
+        }
+
+        static string EyeSourceSuffix(Camera eye)
+            => eye.GetComponent<WaterEye>() != null ? EyeFromComponent : EyeFromLegacy;
+
+        static void AddEyeTo(Camera camera)
+        {
+            if (camera == null || camera.GetComponent<WaterEye>() != null) return;
+            Undo.AddComponent<WaterEye>(camera.gameObject);
+            WaterEye.Invalidate();
+        }
+
+        static readonly GUIContent EyeLabel = new GUIContent(
+            "Driving the water",
+            "The camera whose submersion arms the underwater fog and whose position centres the " +
+            "simulation LOD. Elected every frame, so switching cameras needs no re-wiring.");
+
+        const string EyeFromComponent = "  (Water Eye)";
+        const string EyeFromLegacy = "  (legacy Target Camera)";
+
+        const string EyeUnwiredHelp =
+            "No Water Eye and no live Target Camera: the water is riding \"{0}\" only because it " +
+            "carries the MainCamera tag. Add a Water Eye to the camera you actually mean - a " +
+            "second MainCamera, or a camera swap, silently moves the underwater fog otherwise.";
+
+        const string EyeMissingHelp =
+            "No eye at all: no enabled Water Eye, no live Target Camera, no MainCamera. The " +
+            "underwater fog cannot arm and the simulation has no LOD centre.";
+
+        const string EyeStaleHelp =
+            "Target Camera points at \"{0}\", which cannot render (its object or its Camera is " +
+            "disabled, or it lives in a disabled prefab instance). That is why the underwater fog " +
+            "is dead. Add a Water Eye to the camera that IS rendering.";
+
+        const string AddEyeButton = "Add Water Eye to \"{0}\"";
+        const string AddEyeButtonEmpty = "Add Water Eye (no camera found)";
 
         static readonly GUIContent OpenWaterLabel = new GUIContent(
             "Open Water",

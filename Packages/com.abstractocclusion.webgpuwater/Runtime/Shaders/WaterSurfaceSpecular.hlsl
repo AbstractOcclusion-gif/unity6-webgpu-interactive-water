@@ -290,7 +290,7 @@ float3 SamplePlanarReflection(float4 screenPos, float3 normal, float roughness)
 // into the above-water mirror would double the sun.
 float3 LegacySunGlint(float3 worldRay)
 {
-    return SUN_GLINT_TINT * _SunColor * _SunReflectionIntensity
+    return SUN_GLINT_TINT * _WaterSunColor * _SunReflectionIntensity
          * pow(max(0.0, dot(_LightDir, worldRay)), SUN_GLINT_SHARPNESS);
 }
 
@@ -445,7 +445,7 @@ float3 SunSpecular(float3 normal, float3 viewDir, float roughness)
     lobe += _SunSheen * GgxLobeDistribution(noh, nol, nov,
                                             max(roughness, _SunSheenRoughness));
 
-    return min(lobe, SUN_SPEC_CLAMP) * _SunColor * _SunReflectionIntensity;
+    return min(lobe, SUN_SPEC_CLAMP) * _WaterSunColor * _SunReflectionIntensity;
 }
 
 #endif // WATER_SURFACE_SPECULAR_INCLUDED

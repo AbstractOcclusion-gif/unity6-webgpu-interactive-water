@@ -613,7 +613,17 @@ namespace AbstractOcclusion.WebGpuWater
         // Hole half-width in cells, shrunk by the overlap margin so each level overlaps the finer one.
         int ClipmapHoleHalfCells => Mathf.Max(1, ClipmapGridRes / 4 - ClipmapHoleMarginCells);
         // Finest cell size (metres) so the innermost level's hole sits just inside the near-field patch.
-        float ClipmapBaseCell => (ClipmapPatchOverlap * SimHorizontalExtent) / ClipmapHoleHalfCells;
+        float ClipmapBaseCell => ResolveClipmapBaseCell(SimHorizontalExtent, ClipmapHoleHalfCells);
+
+        internal static float ResolveClipmapBaseCell(float patchHalfSize, int holeHalfCells)
+        {
+            float hole = Mathf.Max(1, holeHalfCells);
+            // A level snaps by up to half its snap interval on each axis.
+            // The ENTIRE shifted hole must fit under the patch, even at low
+            // grid resolutions where the old 10% overlap alone was too small.
+            float snapAllowance = ClipmapSnapCellMultiple * 0.5f;
+            return ClipmapPatchOverlap * patchHalfSize / (hole + snapAllowance);
+        }
         // Level 0's outer reach (metres); each further level doubles it.
         float ClipmapLevel0Reach => (ClipmapGridRes / 2f) * ClipmapBaseCell;
         // Levels needed for the outermost to reach at least the horizon target.

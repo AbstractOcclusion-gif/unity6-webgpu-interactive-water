@@ -706,7 +706,7 @@ namespace AbstractOcclusion.WebGpuWater
             // The density splat + spawn-quality projections follow the body's target camera when
             // one is assigned, else the main camera. In views without one (or with the sim paused) the density field
             // would be stale/unanchored, so those frames fall back to reprojectable quads.
-            Camera densityCamera = volume.targetCamera != null ? volume.targetCamera : Camera.main;
+            Camera densityCamera = volume.Eye; // election already ends at Camera.main
             _densityCamera = densityCamera;
 
             if (volume.IsSimulating && Time.deltaTime > 0f)

@@ -101,9 +101,9 @@ namespace AbstractOcclusion.WebGpuWater
         void OnDisable() { _active.Remove(this); }
 
         // Mouse-like drop emission. LateUpdate so physics (FixedUpdate) and the volume's
-        // sim step have settled; AddRipple QUEUES the drop - WaterVolume flushes the queue in
-        // one batched dispatch just before the next sim step (FlushInjections) - so it is safe
-        // to call any time.
+        // sim step have settled; AddRipple QUEUES the drop. WaterVolume flushes late injections
+        // before rendering, so a new ring appears at this frame's visual pose; it then propagates
+        // on subsequent solver steps. Existing rings remain in the water as the object moves on.
         void LateUpdate()
         {
             if (Renderer == null) return;
@@ -119,6 +119,18 @@ namespace AbstractOcclusion.WebGpuWater
             }
             if (!body.TryGetAnalyticWaterline(bounds.center.x, bounds.center.z, out float waterlineY)
                 || !IsSubmerged(waterlineY))
+            {
+                _tracking = false;
+                return;
+            }
+
+            // A submerged object is not a cursor on the surface. Reuse the native sphere
+            // interactor's size-relative depth envelope: deep tackle must not stamp full-strength
+            // surface rings underneath its lagging underwater position. Use the object footprint,
+            // not the visual ripple radius (which may be widened by the simulation's texel floor).
+            float depthWeight = body.SphereSubmersionWeight(bounds.center,
+                WaterSphereInteractor.AutoRadius(bounds));
+            if (depthWeight <= 0f)
             {
                 _tracking = false;
                 return;
@@ -145,7 +157,7 @@ namespace AbstractOcclusion.WebGpuWater
             // bounds - inflating radius by bounds spread the fixed strength over a wide
             // dome that read as a soft swell, nothing like the mouse's crisp ring.
             float radius = body.RippleRadius * rippleRadiusScale;
-            float strength = body.RippleStrength * displaceScale;
+            float strength = body.RippleStrength * displaceScale * depthWeight;
             int budget = MaxDropsPerFrame;
 
             // Vertical bobbing: one drop per spacing step of plunge/rise. Signed like the

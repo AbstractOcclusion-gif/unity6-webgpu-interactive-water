@@ -21,7 +21,7 @@ float _ProceduralPool; // 1 = this body draws the analytic/procedural pool (tile
 float3 DeepWaterColor(float3 worldOrigin, float3 waterColor)
 {
     float3 viewDirWS = normalize(_WorldSpaceCameraPos - worldOrigin);
-    return WaterInscatterColor(viewDirWS, _LightDir, _SunColor, 0.0) * waterColor;
+    return WaterInscatterColor(viewDirWS, _LightDir, _WaterSunColor, 0.0) * waterColor;
 }
 
 // WGSL derivative uniformity: GetSurfaceRayColor reaches the wall colour inside a PER-FRAGMENT

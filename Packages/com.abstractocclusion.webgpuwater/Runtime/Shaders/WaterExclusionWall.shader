@@ -61,7 +61,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
 
             // Sun globals (published by WaterUniformPublisher), same declarations as the fog pass.
             float3 _LightDir;
-            // _SunColor is declared by WaterFog.hlsl (included above) - the header that owns the in-scatter needing it.
+            // _WaterSunColor is declared by WaterFog.hlsl (included above) - the header that owns the in-scatter needing it.
             // "The eye is IN WATER" (published by PublishUnderwater): with the armed flag below it
             // gates the above-water fog reconstruction. Camera state -> uniform -> screen-coherent.
             // NOT "below the surface plane": an eye inside a dry carve is below sea level and still
@@ -255,7 +255,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
                 float3 transmittance = (_WaterFogEnabled > 0.5)
                                      ? exp(-_WaterExtinction.rgb * (density * pathLen))
                                      : float3(1.0, 1.0, 1.0);
-                float3 fogColor = WaterInscatterColor(viewDirWS, _LightDir, _SunColor * sunVisibility, 0.0)
+                float3 fogColor = WaterInscatterColor(viewDirWS, _LightDir, _WaterSunColor * sunVisibility, 0.0)
                                 * lerp(EXCLUSION_SHADOW_FLOOR, 1.0, sunVisibility);
                 float3 depthAttenuation = DownwellingAttenuation(deepestY, level);
                 return (sceneColor * transmittance + fogColor * (1.0 - transmittance)) * depthAttenuation;
@@ -339,7 +339,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterExclusionWall"
 
                 // Standing water: lit in-scatter (falls back to the flat fog colour when volume
                 // scattering is off).
-                float3 color = WaterInscatterColor(viewDirWS, _LightDir, _SunColor * sunWrap, 0.0);
+                float3 color = WaterInscatterColor(viewDirWS, _LightDir, _WaterSunColor * sunWrap, 0.0);
 
                 // Water opacity over the CARVED span this ray actually crosses behind the
                 // fragment (capped at the real scene), per channel: this is BOTH the colour

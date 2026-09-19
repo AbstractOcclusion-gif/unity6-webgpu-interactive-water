@@ -44,6 +44,8 @@ namespace AbstractOcclusion.WebGpuWater
         const string KernelConserve = "Conserve";
         const string KernelScroll = "Scroll";
         const string KernelScrollFoam = "ScrollFoam";
+        const string KernelReframe = "Reframe";
+        const string KernelReframeFoam = "ReframeFoam";
 
         // Compute property ids, cached once instead of re-hashing strings every dispatch.
         static readonly int ID_Size = WaterShaderProps.Size;
@@ -105,6 +107,7 @@ namespace AbstractOcclusion.WebGpuWater
         static readonly int ID_ActivityWetMarkInverseThreshold =
             Shader.PropertyToID("_ActivityWetMarkInverseThreshold");
         static readonly int ID_ScrollOffset = Shader.PropertyToID("_ScrollOffset");
+        static readonly int ID_ReframeTransform = Shader.PropertyToID("_ReframeTransform");
         static readonly int ID_FlowSrc = Shader.PropertyToID("FlowSrc");
         static readonly int ID_FlowDst = Shader.PropertyToID("FlowDst");
         static readonly int ID_FlowGradientToWorld = Shader.PropertyToID("_FlowGradientToWorld");
@@ -117,6 +120,7 @@ namespace AbstractOcclusion.WebGpuWater
 
         readonly ComputeShader _cs;
         readonly int _kDrop, _kSphereInteract, _kUpdate, _kNormal, _kObstacle, _kObstacleSmooth, _kFoam, _kConserve, _kScroll, _kScrollFoam;
+        readonly int _kReframe, _kReframeFoam;
         readonly int _kReduceMean, _kReduceMeanFinal, _kReduceActivity, _kReduceActivityFinal;
         readonly int _groups;
         readonly Vector4 _delta; // (1/Resolution, 1/Resolution, 0, 0), precomputed once
@@ -212,6 +216,7 @@ namespace AbstractOcclusion.WebGpuWater
         readonly DropInjection[] _dropQueue = new DropInjection[MaxQueuedInjections];
         readonly SphereInjection[] _sphereQueue = new SphereInjection[MaxQueuedInjections];
         int _dropCount, _sphereCount;
+        internal bool HasPendingInjections => _dropCount > 0 || _sphereCount > 0;
         bool _hasReceivedInjection;
         ComputeBuffer _dropBuffer, _sphereBuffer;   // allocated on first use; a scene with no ripples pays nothing
 
@@ -276,7 +281,7 @@ namespace AbstractOcclusion.WebGpuWater
             KernelDrop, KernelSphereInteract, KernelUpdate, KernelNormal, KernelObstacle,
             KernelObstacleSmooth, KernelFoam, KernelReduceMean, KernelReduceMeanFinal,
             KernelReduceActivity, KernelReduceActivityFinal, KernelConserve,
-            KernelScroll, KernelScrollFoam
+            KernelScroll, KernelScrollFoam, KernelReframe, KernelReframeFoam
         };
 
         public WaterSimulation(ComputeShader cs, int resolution)
@@ -309,6 +314,8 @@ namespace AbstractOcclusion.WebGpuWater
             _kConserve = cs.FindKernel(KernelConserve);
             _kScroll = cs.FindKernel(KernelScroll);
             _kScrollFoam = cs.FindKernel(KernelScrollFoam);
+            _kReframe = cs.FindKernel(KernelReframe);
+            _kReframeFoam = cs.FindKernel(KernelReframeFoam);
             _groups = Resolution / ThreadGroupSize;
 
             _a = Create(RenderTextureFormat.ARGBFloat, "WaterSimState");
@@ -676,9 +683,9 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>QUEUE an analytic cosine drop. Every drop queued this frame is applied in ONE
         /// full-grid pass by <see cref="FlushInjections"/> instead of one pass each - a moving object
         /// emitting four drops a frame used to read and write the whole field four times just to stamp
-        /// a wake. This is coalescing, not deferral: the flush runs at the same point in the frame an
-        /// immediate dispatch landed (before the sim window scrolls and before the solver steps), so
-        /// the queued centres are still in the field coordinates they were measured in.</summary>
+        /// a wake. The body flushes before scrolling/stepping and again before rendering if late
+        /// sources queued input. The queued centres are still in the field coordinates they were
+        /// measured in, and an emitted height drop need not wait for the next solver step.</summary>
         public void AddDrop(float x, float y, float radius, float strength)
         {
             if (strength != 0f) MarkInjected();
@@ -731,9 +738,9 @@ namespace AbstractOcclusion.WebGpuWater
         }
 
         /// <summary>Apply everything queued since the last frame: ONE full-grid pass per KIND of stamp,
-        /// not one per stamp. Call once per frame from the body's update, BEFORE the sim window scrolls -
-        /// the queued centres are in the field coordinates they were measured in, and scrolling first
-        /// would slide them off by one window step.</summary>
+        /// not one per stamp. Flush before the sim window scrolls, and before rendering for sources
+        /// that emit after the body's Update. Queued centres belong to the current field frame;
+        /// scrolling before flushing would slide them off by one window step.</summary>
         public void FlushInjections()
         {
             FlushDrops();
@@ -980,6 +987,28 @@ namespace AbstractOcclusion.WebGpuWater
             _cs.Dispatch(_kScrollFoam, _groups, _groups, 1);
             (_foamA, _foamB) = (_foamB, _foamA);
 
+        }
+
+        /// <summary>Reproject into a new world footprint without allocating new textures.</summary>
+        internal void Reframe(float sizeRatio, Vector2 sourceOffsetTexels)
+        {
+            SetGridUniforms();
+            int stateKernel = _kReframe;
+            int foamKernel = _kReframeFoam;
+            _cs.SetVector(ID_ReframeTransform, new Vector4(sizeRatio,
+                sourceOffsetTexels.x, sourceOffsetTexels.y, 0f));
+            _cs.SetTexture(stateKernel, ID_Src, _a);
+            _cs.SetTexture(stateKernel, ID_Dst, _b);
+            _cs.SetTexture(stateKernel, ID_FlowSrc, _horizontalFlowA);
+            _cs.SetTexture(stateKernel, ID_FlowDst, _horizontalFlowB);
+            _cs.Dispatch(stateKernel, _groups, _groups, 1);
+            (_a, _b) = (_b, _a);
+            (_horizontalFlowA, _horizontalFlowB) = (_horizontalFlowB, _horizontalFlowA);
+            _cs.SetTexture(foamKernel, ID_FoamSrc, _foamA);
+            _cs.SetTexture(foamKernel, ID_FoamDst, _foamB);
+            _cs.Dispatch(foamKernel, _groups, _groups, 1);
+            (_foamA, _foamB) = (_foamB, _foamA);
+            UpdateNormals();
         }
     }
 }

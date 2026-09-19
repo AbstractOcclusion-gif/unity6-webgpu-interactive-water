@@ -115,6 +115,55 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // back automatically to the established analytic chop inversion.
         TEXTURE2D(_WaterLensHeightRT); SAMPLER(sampler_WaterLensHeightRT);
         float4 _WaterLensHeightRTFrame; // xy centre, z half extent, w valid this frame
+
+        // Pond ripple authority: the interactive sim height (R channel, pool units) that the
+        // rendered pond surface adds on top of the wind waves (WaterSurfaceVertStage's info.r).
+        // The analytic SurfaceSignedGap chain knows only the wind-wave layer, so without this tap
+        // the pond fog's waterline ignored ripples entirely and popped against the drawn surface.
+        // Oceans are untouched: their ripples already reach the fog through the F3 height/lens RTs.
+        TEXTURE2D(_WaterTex); SAMPLER(sampler_WaterTex);
+#ifndef WEBGL_WATER_COMMON_INCLUDED
+        float4 _WaterTexel;        // (1/width, 1/height, width, height) of _WaterTex, pushed from C#
+#endif
+
+        // Manual bilinear, mirroring WaterReceiver.SampleWaterHeightBilinear: WebGPU cannot
+        // hardware-filter the float32 sim texture, so a filtered sample silently point-samples
+        // in builds and the fog's ripple waterline would go blocky.
+        float PondSimHeightPool(float2 uv)
+        {
+            float2 texel = _WaterTexel.xy;
+            float2 st = uv * _WaterTexel.zw - 0.5;
+            float2 f = frac(st);
+            float2 baseUV = (floor(st) + 0.5) * texel;
+            float c00 = SAMPLE_TEXTURE2D_LOD(_WaterTex, sampler_WaterTex, baseUV, 0).r;
+            float c10 = SAMPLE_TEXTURE2D_LOD(_WaterTex, sampler_WaterTex, baseUV + float2(texel.x, 0.0), 0).r;
+            float c01 = SAMPLE_TEXTURE2D_LOD(_WaterTex, sampler_WaterTex, baseUV + float2(0.0, texel.y), 0).r;
+            float c11 = SAMPLE_TEXTURE2D_LOD(_WaterTex, sampler_WaterTex, baseUV + texel, 0).r;
+            return lerp(lerp(c00, c10, f.x), lerp(c01, c11, f.x), f.y);
+        }
+
+        // World-space ripple lift of the pond surface at a world xz. 0 for unbounded bodies and
+        // outside the sim's coverage (branchless: no per-pixel flow divergence, so the smooth
+        // classification gap may subtract it without breaking its ddx/ddy contract). The pool-unit
+        // sim height goes through the volume frame exactly as the vertex path lifts info.r, so the
+        // fog and the drawn surface cannot disagree about a ripple.
+        float PondRippleWorldOffset(float2 worldXZ)
+        {
+            float3 world = float3(worldXZ.x, _VolumeCenter.y, worldXZ.y);
+            float3 poolPos = WorldToPool(world);
+            float3 simPos = (_SimWindowed > 0.5) ? WorldToSim(world) : poolPos;
+            float covered = (max(abs(simPos.x), abs(simPos.z)) <= 1.0) ? 1.0 : 0.0;
+            covered *= 1.0 - saturate(_UnderwaterUnbounded);
+            float simH = PondSimHeightPool(saturate(simPos.xz * 0.5 + 0.5)) * covered;
+            return PoolToWorld(float3(poolPos.x, simH, poolPos.z)).y
+                 - PoolToWorld(float3(poolPos.x, 0.0, poolPos.z)).y;
+        }
+
+        // Pond signed gap: the analytic wind-wave gap minus the ripple lift under this xz.
+        float PondSignedGap(float3 world)
+        {
+            return SurfaceSignedGap(world) - PondRippleWorldOffset(world.xz);
+        }
         float _OceanSurfaceDepthValid; // 1 = the prepass ran this frame (set by the fog pass)
         // Prepass resolution as a fraction of camera resolution (WaterUnderwaterFogPass publishes
         // it beside the validity flag). The RT is read with pixel LOADs, so every load coordinate
@@ -124,7 +173,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // Needed so the underwater in-scatter can use the same lit WaterInscatterColor as the surface, for a
         // continuous colour crossing the waterline.
         float3 _LightDir;
-        // _SunColor is declared by WaterFog.hlsl (included above) - the header that owns the in-scatter needing it.
+        // _WaterSunColor is declared by WaterFog.hlsl (included above) - the header that owns the in-scatter needing it.
 
         // Per-pixel wavy-waterline crossing search (U2). The camera->scene ray meets the DISPLACED surface
         // at a height that follows crests/troughs, so we bracket the FIRST sign change of
@@ -337,6 +386,21 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             {
                 float3 m = 0.5 * (a + b);
                 float gapM = SurfaceSignedGapRT(m, flatFallbackY);
+                if (gapA * gapM <= 0.0) { b = m; }
+                else { a = m; gapA = gapM; }
+            }
+            return 0.5 * (a + b);
+        }
+
+        // Pond twin: bisection against the ripple-aware pond gap, so the entry/exit clamps land
+        // on the surface the pond actually renders (wind waves + interactive ripples).
+        float3 PondRefineSurfaceCrossing(float3 a, float gapA, float3 b)
+        {
+            [loop]
+            for (int r = 0; r < UNDERWATER_CROSS_REFINE_ITERS; r++)
+            {
+                float3 m = 0.5 * (a + b);
+                float gapM = PondSignedGap(m);
                 if (gapA * gapM <= 0.0) { b = m; }
                 else { a = m; gapA = gapM; }
             }
@@ -759,10 +823,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // in the trough. Returns the surface crossing when the entry is above water; else keeps the entry.
         float3 ClampEntryToSurface(float3 enterWorld, float3 exitWorld)
         {
-            float gapEnter = SurfaceSignedGap(enterWorld);
+            float gapEnter = PondSignedGap(enterWorld);
             if (gapEnter <= 0.0) return enterWorld;                   // entry already underwater: keep it
-            if (SurfaceSignedGap(exitWorld) > 0.0) return exitWorld;  // whole segment in air: no water (len 0)
-            return RefineSurfaceCrossing(enterWorld, gapEnter, exitWorld);
+            if (PondSignedGap(exitWorld) > 0.0) return exitWorld;     // whole segment in air: no water (len 0)
+            return PondRefineSurfaceCrossing(enterWorld, gapEnter, exitWorld);
         }
 
         // Mirror clamp for the raised lid (see the pond branch): pull a segment's EXIT down to the
@@ -773,9 +837,9 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
         // entry (degenerate all-air segments arrive with entry == exit and stay length 0).
         float3 ClampExitToSurface(float3 enterWorld, float3 exitWorld)
         {
-            float gapExit = SurfaceSignedGap(exitWorld);
+            float gapExit = PondSignedGap(exitWorld);
             if (gapExit <= 0.0) return exitWorld; // exit already underwater: keep it
-            return RefineSurfaceCrossing(exitWorld, gapExit, enterWorld);
+            return PondRefineSurfaceCrossing(exitWorld, gapExit, enterWorld);
         }
 #endif // !WATER_FOG_SIMPLE
 
@@ -1005,6 +1069,12 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
             }
 
             classifyGap = SurfaceSignedGapChopInvertedPair(classifyPoint, gapSmooth);
+            // Bounded bodies: fold the interactive ripple lift into the same pair the coverage
+            // curve and the wet/dry ray decision read, so the fog mask follows the rippled
+            // surface too (0 for oceans - their lens RT already carries ripples).
+            float ripple = PondRippleWorldOffset(classifyPoint.xz);
+            classifyGap -= ripple;
+            gapSmooth -= ripple;
         }
 #endif
 
@@ -1628,7 +1698,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterUnderwaterFog"
                 // Sun colour attenuated by the exclusion-volume sun visibility: only the DIRECT
                 // term darkens (WaterInscatterColor's ambient term ignores sunColor), so the
                 // carve shadow reads as a lit fog losing its beam, never as black.
-                float3 fogColor = WaterInscatterColor(viewDirWS, _LightDir, _SunColor * sunVisibility, 0.0);
+                float3 fogColor = WaterInscatterColor(viewDirWS, _LightDir, _WaterSunColor * sunVisibility, 0.0);
                 // Overall floor multiplier on top: keeps a visible (never black) shadow column
                 // whether Volume Scatter is on or off.
                 fogColor *= lerp(EXCLUSION_SHADOW_FLOOR, 1.0, sunVisibility);

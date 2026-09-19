@@ -67,6 +67,7 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             half = Mathf.Max(MinExtent, volume.simWindowMeters);
             if (Application.isPlaying)
             {
+                half = volume.ActiveSimulationHalfSizeMeters;
                 center = volume.SimWindowCenter;
                 return volume.IsWindowed;
             }

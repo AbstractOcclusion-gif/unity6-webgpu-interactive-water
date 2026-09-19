@@ -1,0 +1,101 @@
+// WebGpuWater - GROUND MARKS: footprints and keel grooves pressed into sand, mud and snow.
+//
+// One camera/player-following window, one RG float field, two kernels. This is deliberately the
+// same SHAPE as the ripple sim's foam buffer (WaterSim.compute: Foam + ScrollFoam) and NOT a
+// channel of it: the foam buffer is water-height semantics, only exists on windowed bodies, and
+// freezes when the sim sleeps - a player 200 m inland in snow would get nothing from it.
+//
+// FIELD CONTRACT (matches WaterGroundMarks.hlsl, the only reader):
+//   R = DEPTH  0..1 - how deep the ground is pressed here. Decays with the substrate's dry time.
+//   G = FRESH  0..1 - 1 the frame a mark lands, decays much faster. The terrain uses it for the
+//                     wet sheen / crumbled-rim look of a print that was just made.
+// Both are in [0,1] and both are MAX-combined with new stamps: a second boot on the same spot
+// does not dig twice as deep, it re-freshens the print.
+//
+// STAMP CONTRACT: every stamp is a rounded rectangle in TEXEL space, oriented along `axis`
+// (unit, texel-space direction = world XZ direction, the window is world-axis aligned). C#
+// converts metres -> texels before queuing so the kernel never needs the window transform.
+//   center   texel-space centre (texel = 1 unit, origin = texel 0's corner)
+//   axis     unit heading (along the boot / along the keel)
+//   halfSize .x along the axis, .y across it, in texels
+//   depth    0..1 written into R at the stamp's core
+//   softness edge fade distance in texels (0 = hard edge; C# floors it at one texel)
+//
+// SCROLL: integer texel shift, Dst[p] = Src[p - offset]; newly exposed cells reset to nothing.
+// Identical sign convention to WaterSimulation.Scroll so the C# side reads the same.
+//
+// WebGPU: rg32float storage (core format), Load() reads, no barriers, uniform loop bound.
+#pragma kernel Step
+#pragma kernel Scroll
+
+#define THREAD_GROUP_SIZE 8
+
+struct GroundStamp
+{
+    float2 center;
+    float2 axis;
+    float2 halfSize;
+    float  depth;
+    float  softness;
+};
+
+Texture2D<float2>   Src;
+RWTexture2D<float2> Dst;
+
+StructuredBuffer<GroundStamp> Stamps;
+uint  _StampCount;
+// Survival factors for THIS step, already raised to the frame's reference-step count on the C#
+// side (same recipe as the foam's pow(survival, dtSteps)), so the decay is frame-rate independent.
+float _DepthSurvival;
+float _FreshSurvival;
+int2  _ScrollOffset;
+uint  _Size;
+
+bool InGrid(int2 p) { return all(p >= 0) && all(p < (int)_Size); }
+
+// Rounded-rectangle signed distance in the stamp's local frame (along, across).
+float StampDistance(float2 local, float2 halfSize)
+{
+    float2 q = abs(local) - halfSize;
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0);
+}
+
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
+void Step(uint3 id : SV_DispatchThreadID)
+{
+    int2 p = int2(id.xy);
+    float2 v = Src.Load(int3(p, 0));
+
+    // Decay first, then stamp: a mark landing this frame starts at its full authored depth.
+    v.x *= _DepthSurvival;
+    v.y *= _FreshSurvival;
+
+    float2 c = float2(p) + 0.5;
+    for (uint i = 0; i < _StampCount; i++)
+    {
+        GroundStamp s = Stamps[i];
+        float2 d = c - s.center;
+        // Cheap reject before the rotation: the stamp's bounding circle.
+        float reach = max(s.halfSize.x, s.halfSize.y) + s.softness + 1.0;
+        if (dot(d, d) > reach * reach) continue;
+
+        float2 local = float2(dot(d, s.axis), dot(d, float2(-s.axis.y, s.axis.x)));
+        float sd = StampDistance(local, s.halfSize);
+        // 1 inside the rectangle, smooth fade to 0 over `softness` texels outside it.
+        float m = saturate(1.0 - sd / max(s.softness, 1e-3));
+        m = m * m * (3.0 - 2.0 * m);
+
+        v.x = max(v.x, s.depth * m);
+        v.y = max(v.y, m);
+    }
+
+    Dst[p] = v;
+}
+
+[numthreads(THREAD_GROUP_SIZE, THREAD_GROUP_SIZE, 1)]
+void Scroll(uint3 id : SV_DispatchThreadID)
+{
+    int2 p = int2(id.xy);
+    int2 src = p - _ScrollOffset;
+    Dst[p] = InGrid(src) ? Src.Load(int3(src, 0)) : (float2)0.0;
+}

@@ -382,7 +382,7 @@ namespace AbstractOcclusion.WebGpuWater
 
             // Rule 5: dry wins. Box/sphere are exact analytic; mesh volumes answer through their
             // authored proxy (WaterExclusionVolume.meshProxy) - the documented CPU policy.
-            sample.Excluded = WaterExclusionVolume.ContainsPoint(point);
+            sample.Excluded = WaterExclusionVolume.ContainsPoint(point, options.ExclusionOwner);
             if (sample.Excluded && !options.IncludeExcludedSpace)
             {
                 sample.Validity = WaterDomainValidity.Excluded;

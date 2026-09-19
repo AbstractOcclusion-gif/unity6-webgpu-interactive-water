@@ -29,6 +29,11 @@ namespace AbstractOcclusion.WebGpuWater.Editor
             cam.fieldOfView = WaterVolume.CameraFieldOfView;
             cam.nearClipPlane = WaterVolume.CameraNearClip;
 
+            // Mark it as the eye explicitly. A built scene used to depend on the body's
+            // targetCamera reference alone, which is exactly the wiring that goes stale the first
+            // time someone swaps the camera; the component follows the camera instead.
+            if (cam.GetComponent<WaterEye>() == null) Undo.AddComponent<WaterEye>(cam.gameObject);
+
             orbit = cam.GetComponent<OrbitCamera>();
             if (orbit == null) orbit = Undo.AddComponent<OrbitCamera>(cam.gameObject);
             else Undo.RecordObject(orbit, "Frame Water Camera");

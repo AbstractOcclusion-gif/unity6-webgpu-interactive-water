@@ -156,7 +156,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
             float _DrawKind;
             // _LargeBody (1 = open water, picks the large-body glue below) comes from
             // WaterVolume.hlsl - already included; do not redeclare.
-            // _SunColor comes from WaterFog.hlsl, reached TRANSITIVELY via WaterParticleFog.hlsl - declaring it here again is a redefinition.
+            // _WaterSunColor comes from WaterFog.hlsl, reached TRANSITIVELY via WaterParticleFog.hlsl - declaring it here again is a redefinition.
             float _CameraUnderwater;
             float4 _Tint;
             float _ParticleOpacity;
@@ -679,7 +679,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                 o.pos = mul(UNITY_MATRIX_VP, float4(worldVertex, 1.0));
                 o.uv = uv;
                 o.screenPos = ComputeScreenPos(o.pos);
-                o.litColor = FoamLitColor(_Tint.rgb, _SunColor, wrapped);
+                o.litColor = FoamLitColor(_Tint.rgb, _WaterSunColor, wrapped);
                 float eyeDepth = -mul(UNITY_MATRIX_V, float4(worldVertex, 1.0)).z;
                 o.fade = float2(envelope, eyeDepth);
                 o.crestRollerData = float2(isAnalyticSurfRoller ? 1.0 : 0.0,
@@ -704,7 +704,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                     // even an ungated call would have measured a zero wet path. Price the TRUE
                     // position against the bubble's OWN local waterline instead.
                     ParticleUnderwaterFogAtLevel(bubbleWorld, surfaceWorld.y, fogLightDir,
-                                                 _SunColor, fogMul, fogAdd);
+                                                 _WaterSunColor, fogMul, fogAdd);
                 }
                 else
                 {
@@ -713,7 +713,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamParticles"
                     // is a different height entirely and dry spray over a trough came out
                     // fog-coloured. surfaceWorld.y is already the glue's answer - no extra sample.
                     ParticleUnderwaterFogArmedAtLevel(worldVertex, surfaceWorld.y, fogLightDir,
-                                                      _SunColor, fogMul, fogAdd);
+                                                      _WaterSunColor, fogMul, fogAdd);
                 }
                 o.fogMul = fogMul;
                 o.fogAdd = fogAdd;

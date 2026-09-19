@@ -73,7 +73,10 @@ namespace AbstractOcclusion.WebGpuWater
         {
             get
             {
-                if (!openWater || !_windowed || IsOceanClipmap || discSurface) return 0;
+                // Every finite windowed body sews its patch rim to the base sheet - ponds too, not
+                // only open water (2026-09-19): a windowed pond got overlap + depth bias alone, and
+                // at grazing angles the coarse base triangles punched through the patch at the rim.
+                if (!_windowed || IsOceanClipmap || discSurface) return 0;
                 return ResolveBaseSurfaceGridDetail();
             }
         }
@@ -160,7 +163,12 @@ namespace AbstractOcclusion.WebGpuWater
             // material fills the under-clipmap's centre hole and matches the top vertex-for-vertex, so
             // the two never show through each other at the waterline. Bounded and non-ocean windowed
             // bodies keep their single bounded under-plane (no twin), so they stay unchanged.
-            if (IsOceanClipmap && surfaceUnder != null && surfaceUnder.sharedMaterial != null)
+            // EVERY windowed body gets the twin now (2026-09-19), not only the ocean clipmap: a
+            // bounded windowed pond kept its single COARSE under-plane beneath the DENSE patch, and
+            // at grazing angles the coarse plane's away-tilted facets (the ones the underside cull
+            // draws) rose above the dense surface - underside-shaded streaks seen from the air.
+            // The under base sheet now cuts the same hole as the above one (PatchCoversBaseSheet).
+            if (surfaceUnder != null && surfaceUnder.sharedMaterial != null)
                 _patchUnderRenderer = CreateSurfaceRenderer(PatchUnderObjectName, _patchGrid, surfaceUnder.sharedMaterial);
         }
 

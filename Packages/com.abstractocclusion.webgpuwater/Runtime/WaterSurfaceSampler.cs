@@ -23,6 +23,9 @@ namespace AbstractOcclusion.WebGpuWater
         // CPU copy of the height field for buoyancy queries
         Color[] _heightCpu;
         bool _heightReady;
+        Vector3 _requestedCenter, _sampledCenter;
+        Vector3 _requestedExtent, _sampledExtent;
+        Quaternion _requestedRotation, _sampledRotation;
 
         // Demand gate. The readback is 1.0-1.56 MiB of GPU->CPU traffic per request (the full
         // ARGBFloat sim RT) plus a same-size managed memcpy on landing, and nothing checked that
@@ -55,6 +58,12 @@ namespace AbstractOcclusion.WebGpuWater
             // The channel refuses while a request is in flight, on "unsupported" (probed in its
             // ctor) and after "errored out" (OnReadbackGaveUp below); TrySamplePoolSurface serves
             // queries from the analytic waterline in the latter two cases.
+            if (!_readback.InFlight)
+            {
+                _requestedCenter = _body.SimWindowCenter;
+                _requestedExtent = _body.SimHalfExtent;
+                _requestedRotation = _body.VolumeRotation;
+            }
             _readback.Request(_body.Simulation.Texture, TextureFormat.RGBAFloat, _onHeightReadback);
         }
 
@@ -66,6 +75,9 @@ namespace AbstractOcclusion.WebGpuWater
             if (_heightCpu == null || _heightCpu.Length != data.Length)
                 _heightCpu = new Color[data.Length];
             data.CopyTo(_heightCpu);
+            _sampledCenter = _requestedCenter;
+            _sampledExtent = _requestedExtent;
+            _sampledRotation = _requestedRotation;
             _heightReady = true;
         }
 
@@ -146,7 +158,11 @@ namespace AbstractOcclusion.WebGpuWater
             float u, v;
             if (_body.IsWindowed)
             {
-                Vector3 sim = _body.WorldToSim(new Vector3(world.x, _body.SimWindowCenter.y, world.z));
+                // Readback belongs to its captured frame, not today's resized/moved window.
+                Vector3 local = Quaternion.Inverse(_sampledRotation)
+                    * (new Vector3(world.x, _sampledCenter.y, world.z) - _sampledCenter);
+                Vector3 sim = new Vector3(local.x / Mathf.Max(0.001f, _sampledExtent.x),
+                    0f, local.z / Mathf.Max(0.001f, _sampledExtent.z));
                 if (sim.x < -1f || sim.x > 1f || sim.z < -1f || sim.z > 1f)
                     return new Color(0f, 0f, 0f, 0f); // outside the window: flat rest
                 u = sim.x * 0.5f + 0.5f; v = sim.z * 0.5f + 0.5f;

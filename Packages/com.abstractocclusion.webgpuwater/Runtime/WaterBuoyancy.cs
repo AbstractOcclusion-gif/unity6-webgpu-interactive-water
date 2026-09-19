@@ -108,6 +108,27 @@ namespace AbstractOcclusion.WebGpuWater
         Vector3[] _worldPoints;
         WaterSample[] _results;
 
+        /// <summary>An integration may sample and step this solver in its own fixed update.
+        /// This prevents competing physics writers during casting, attachment or a motion lease.</summary>
+        public bool ExternallyDriven { get; set; }
+        public WaterDomainSample Surface { get; private set; }
+        public float SubmergedFraction { get; private set; }
+        public bool HasSurfaceSample => Surface.IsValid && Surface.Provider != null;
+        public float FloatStrength => buoyancy;
+
+        /// <summary>Configure the existing solver; lift is a multiple of displaced body weight.
+        /// Zero sinks, one is neutral, greater than one can float. No surface glue.</summary>
+        public void ConfigureForTackle(float lift, float linearDrag, float angularDrag)
+        {
+            buoyancy = Mathf.Max(0f, lift);
+            waterLinearDamping = Mathf.Max(0f, linearDrag);
+            waterAngularDamping = Mathf.Max(0f, angularDrag);
+            surfaceRelativeDrag = true;
+            waveDriftStrength = 0f; // Relative drag already transfers the water's motion.
+            verticalSettleDamping = 0f;
+            surfaceGlueIntensity = 0f;
+        }
+
         void Awake()
         {
             _rb = GetComponent<Rigidbody>();
@@ -117,7 +138,7 @@ namespace AbstractOcclusion.WebGpuWater
         void Start()
         {
             BuildSamplePoints();
-            if (WaterVolume.Resolve() == null)
+            if (!ExternallyDriven && WaterVolume.Resolve() == null)
                 Debug.LogWarning("WaterBuoyancy: no WaterVolume in the scene; object will not float.");
         }
 
@@ -174,6 +195,21 @@ namespace AbstractOcclusion.WebGpuWater
         // Local-space (unscaled) box of the collider; TransformPoint reapplies scale.
         void GetLocalBox(Collider col, out Vector3 center, out Vector3 size)
         {
+            // A rotated world AABB cannot be inverted into the original collider box.
+            // Tackle can already be tilted when its probe layout is initialized.
+            if (col is SphereCollider sphere)
+            {
+                center = sphere.center;
+                size = Vector3.one * (2f * sphere.radius);
+                return;
+            }
+            if (col is CapsuleCollider capsule)
+            {
+                center = capsule.center;
+                size = Vector3.one * (2f * capsule.radius);
+                size[capsule.direction] = Mathf.Max(capsule.height, 2f * capsule.radius);
+                return;
+            }
             if (col is BoxCollider box)
             {
                 center = box.center;
@@ -193,6 +229,18 @@ namespace AbstractOcclusion.WebGpuWater
 
         void FixedUpdate()
         {
+            if (!ExternallyDriven) Step(true);
+        }
+
+        /// <summary>Refresh water contact even while another system owns the Rigidbody.
+        /// applyForces=false performs the identical queries without applying motion.</summary>
+        public void Step(bool applyForces)
+        {
+            if (!_rb) _rb = GetComponent<Rigidbody>();
+            if (_localPoints == null) BuildSamplePoints();
+            SubmergedFraction = 0f;
+            Surface = new WaterDomainSample { Validity = WaterDomainValidity.NoContainingBody };
+            applyForces &= _rb && !_rb.isKinematic;
             // Re-resolve every step so an object that drifts between lakes floats on the one it
             // is currently in. Domain-resolved (2026-08-29): full-XYZ - stacked bodies pick by
             // elevation; exclusion volumes read as dry (no lift inside a carved hull interior);
@@ -203,7 +251,8 @@ namespace AbstractOcclusion.WebGpuWater
             WaterDomainQueryOptions options =
                 WaterDomainQueryOptions.ForIntent(WaterQueryIntent.BuoyancySurface);
             options.PreviousBodyId = _domainBodyId;
-            options.Fields = WaterQueryFields.Height;
+            options.ExclusionOwner = transform;
+            options.Fields = WaterQueryFields.HeightNormalVelocity;
             options.MinimumWaveLength = objectWidth;
             options.ExcludeInteractiveRipples = ignoreInteractiveRipples;
             if (!WaterDomainResolver.Resolve(transform.position, in options,
@@ -215,6 +264,7 @@ namespace AbstractOcclusion.WebGpuWater
                 return;
             }
             _domainBodyId = domain.BodyId;
+            Surface = domain;
             _body = domain.Body;
             _provider = domain.Provider;
             if (_provider == null || _localPoints == null || _localPoints.Length == 0) return;
@@ -254,11 +304,13 @@ namespace AbstractOcclusion.WebGpuWater
                 if (fraction <= 0f) continue;
 
                 submergedSum += fraction;
-                ApplyPointForces(world, sample, up, gravity, fraction * invCount);
+                if (applyForces) ApplyPointForces(world, sample, up, gravity, fraction * invCount);
             }
 
             if (submergedSum <= 0f) return;
             float averageFraction = submergedSum * invCount;
+            SubmergedFraction = averageFraction;
+            if (!applyForces) return;
             ApplySurfaceGlue(up, gravity, averageFraction);
             ApplyBodyDamping(up, averageFraction);
         }

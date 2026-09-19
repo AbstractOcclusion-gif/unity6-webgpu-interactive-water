@@ -15,6 +15,12 @@ namespace AbstractOcclusion.WebGpuWater
         CullingDisabled = 1 << 5,
         RetainsPausedResources = 1 << 6,
         UnwiredConnection = 1 << 7,
+        // Set when targetCamera names a camera that cannot render (destroyed prefab rig, disabled
+        // object, disabled Camera) and nothing else is wired to cover for it. This is the exact
+        // shape of the failure the WaterEye rewrite exists to end: the reference is non-null, so
+        // the old `targetCamera == null` check reported a clean scene while the underwater fog was
+        // dead. Always accompanied by MissingCamera; it is the one that says WHY.
+        StaleLegacyCamera = 1 << 8,
     }
 
     internal static class WaterRuntimeValidation
@@ -27,8 +33,15 @@ namespace AbstractOcclusion.WebGpuWater
             WaterRuntimeValidationFlags flags = WaterRuntimeValidationFlags.None;
             if (!body.HasRequiredWiringForDiagnostics)
                 flags |= WaterRuntimeValidationFlags.MissingRequiredWiring;
-            if (body.targetCamera == null)
+            // "No eye" is now about what will actually RENDER, not about a field being filled:
+            // a live WaterEye, or a legacy targetCamera that is itself active and enabled.
+            // ResolveWired deliberately stops short of the Camera.main fallback, so a scene that
+            // only works by accident of the MainCamera tag still reports as unwired - which is
+            // what this flag has always meant.
+            if (WaterEye.ResolveWired() == null)
                 flags |= WaterRuntimeValidationFlags.MissingCamera;
+            if (WaterEye.HasStaleLegacyCamera(body))
+                flags |= WaterRuntimeValidationFlags.StaleLegacyCamera;
             if (primaryCount == 0)
                 flags |= WaterRuntimeValidationFlags.MissingPrimary;
             else if (primaryCount > 1)

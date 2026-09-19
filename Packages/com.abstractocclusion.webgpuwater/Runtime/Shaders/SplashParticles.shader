@@ -2,7 +2,7 @@
 //
 // Replaces Sprites/Default on the splash emitters so event splashes sit in the same
 // light as the water's foam: wrapped sun diffuse over an ambient floor (driven by the
-// _LightDir/_SunColor globals the primary WaterVolume publishes), erosion-based
+// _LightDir/_WaterSunColor globals the primary WaterVolume publishes), erosion-based
 // dissolve driven by the particle's own colorOverLifetime alpha, and a soft fade
 // against the opaque scene. Queued after the water surface so ordering is stable.
 //
@@ -76,7 +76,7 @@ Shader "AbstractOcclusion/WebGpuWater/SplashParticles"
             float _PackedChannels;
             float _TransmissionStrength;
             float3 _LightDir; // globals published by the primary WaterVolume (toward the sun)
-            // _SunColor comes from WaterFog.hlsl, reached TRANSITIVELY via WaterParticleFog.hlsl - declaring it here again is a redefinition.
+            // _WaterSunColor comes from WaterFog.hlsl, reached TRANSITIVELY via WaterParticleFog.hlsl - declaring it here again is a redefinition.
             float _CameraUnderwater;
             sampler2D _CameraDepthTexture;
 
@@ -136,7 +136,7 @@ Shader "AbstractOcclusion/WebGpuWater/SplashParticles"
                                     SPLASH_TRANSMISSION_SHARPNESS);
                 o.backlit = backlit;
                 o.worldPos = worldPos;
-                ParticleUnderwaterFog(worldPos, lightDir, _SunColor, o.fogMul, o.fogAdd);
+                ParticleUnderwaterFog(worldPos, lightDir, _WaterSunColor, o.fogMul, o.fogAdd);
                 return o;
             }
 
@@ -148,7 +148,7 @@ Shader "AbstractOcclusion/WebGpuWater/SplashParticles"
                 // Lit base is shared by both paths: the sprite's true color is flat _Tint
                 // (legacy sheets are premultiplied; packed sheets carry data, not color).
                 float3 albedo = _Tint.rgb * i.color.rgb;
-                float3 lit = FoamLitColor(albedo, _SunColor, i.fade.x);
+                float3 lit = FoamLitColor(albedo, _WaterSunColor, i.fade.x);
 
                 // soft fade against the opaque scene (pool walls, floating objects)
                 float2 suv = i.screenPos.xy / max(i.screenPos.w, 1e-5);
@@ -167,7 +167,7 @@ Shader "AbstractOcclusion/WebGpuWater/SplashParticles"
                     // Backlit forward scatter: thin spray glows when the sun is view-opposed.
                     // exp(-thickness) confines the glow to edges and lace; mass keeps it on
                     // the splash. Free (multiplies to zero) with the sun anywhere else.
-                    lit += _SunColor * (_TransmissionStrength * i.backlit
+                    lit += _WaterSunColor * (_TransmissionStrength * i.backlit
                                         * exp(-sprite.a * SPLASH_TRANSMISSION_DENSITY)
                                         * sprite.r * envelope);
 
@@ -178,7 +178,7 @@ Shader "AbstractOcclusion/WebGpuWater/SplashParticles"
 
                     // Cubed shine: tight sun-lit sparkle on the droplet cores.
                     float shine = sprite.g;
-                    lit += _SunColor * (shine * shine * shine * SPLASH_SHINE_GAIN * envelope);
+                    lit += _WaterSunColor * (shine * shine * shine * SPLASH_SHINE_GAIN * envelope);
                 }
                 else
                 {

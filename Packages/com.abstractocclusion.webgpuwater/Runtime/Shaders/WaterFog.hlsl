@@ -89,7 +89,7 @@ float VolumeSchlickPhase(float g, float cosTheta)
 // "solid geometry seen through water" shaders (AnalyticPool / WaterReceiver / WaterTerrain) include
 // this header but not that one. Safe as a MOVE rather than a second declaration - WaterSurface.shader
 // is the only consumer of WaterSurfaceSpecular.hlsl and includes WaterFog.hlsl first in all 3 passes.
-float3 _SunColor; // Unity directional light color * intensity (global)
+float3 _WaterSunColor; // Unity directional light color * intensity (global)
 
 float3 WaterInscatterColor(float3 viewDirWS, float3 sunDir, float3 sunColor, float sunBoost)
 {

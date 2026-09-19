@@ -5,6 +5,7 @@
 // One material is instanced twice by the scene builder: an "above water" object
 // (_Underwater = 0, Cull Front) and an "under water" object (_Underwater = 1,
 // Cull Back), sharing the same displaced grid mesh.
+// Scene fog (including the optional sampler-free Enviro 3 port) is applied in the forward passes.
 Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
 {
     Properties
@@ -109,7 +110,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             #pragma vertex vert
             #pragma fragment frag
             #pragma target 4.0
-            #pragma multi_compile_fog
+            // Unity fog keywords come from WaterThirdPartyFog.hlsl (none while a third-party fog is active).
             // Main-light shadow keywords: this pass samples the shadow map BY HAND (it is CGPROGRAM, so
             // it can't include URP's Shadows.hlsl) to gate the analytic floor caustic. Needs "Transparent
             // Receive Shadows" ON in the active Renderer asset, else the keyword is never set (caustic
@@ -167,6 +168,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             // shared with the ocean-surface eye-depth prepass (Pass 1 below) so that pass
             // displaces EXACTLY like this visible one. ----
             #include "WaterSurfaceVertStage.hlsl"
+            #include_with_pragmas "WaterThirdPartyFog.hlsl" // scene fog: Unity or third-party (Water Wizard)
             // AFTER VertStage: the renderer-id view reads _IsClipmap / _IsPatch / _PatchDepthBias,
             // which VertStage declares. Inert whenever _WaterDebugMode is 0.
             #include "WaterSurfaceDebug.hlsl"
@@ -316,7 +318,10 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                                                surfFoamLayer, swashFoamLayer);
                 // Scene fog owns the above-water match against terrain and props. Keep the
                 // debug return below unfogged: it represents data rather than the final look.
-                UNITY_APPLY_FOG(i.fogCoord, outColor);
+                // Scene fog is an AIR term: applied only while the camera is above the surface. From
+                // below, the water medium (fullscreen fog + this sheet's own scatter) is the whole story.
+                if (_CameraUnderwater < 0.5)
+                    WATER_APPLY_SCENE_FOG(i, outColor);
                 // Debug views LAST, so they REPLACE the finished colour rather than perturb it.
                 // Uniform branch: one compare per pixel whenever _WaterDebugMode is 0.
                 float3 debugColor;
@@ -471,7 +476,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             #pragma vertex vert
             #pragma fragment fragFoamOverlay
             #pragma target 4.0
-            #pragma multi_compile_fog
+            // Unity fog keywords come from WaterThirdPartyFog.hlsl (none while a third-party fog is active).
             // This IS the after-fog redraw: keep PondFoamLayer's overlay-skip gate out.
             #define WATER_FOAM_OVERLAY_PASS 1
             #include "UnityCG.cginc"
@@ -490,6 +495,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
             #include "WaterSurfaceFoamSampling.hlsl"
             #include "WaterSurfaceDetailNormal.hlsl"
             #include "WaterSurfaceVertStage.hlsl"
+            #include_with_pragmas "WaterThirdPartyFog.hlsl" // scene fog: Unity or third-party (Water Wizard)
             #include "WaterSurfaceFragStages.hlsl"
 
             // Below this alpha the blend would be invisible: clip instead of paying it.
@@ -546,7 +552,8 @@ Shader "AbstractOcclusion/WebGpuWater/WaterSurface"
                 WaterGeomStage geom = EvaluateSurfaceGeometry(i);
                 FoamLayer foam = PondFoamLayerFromCoverage(i, geom, pondFoamCoverage);
                 clip(foam.alpha - FOAM_OVERLAY_MIN_ALPHA);
-                UNITY_APPLY_FOG(i.fogCoord, foam.look);
+                if (_CameraUnderwater < 0.5)
+                    WATER_APPLY_SCENE_FOG(i, foam.look);
                 return fixed4(foam.look, foam.alpha);
             }
             ENDCG

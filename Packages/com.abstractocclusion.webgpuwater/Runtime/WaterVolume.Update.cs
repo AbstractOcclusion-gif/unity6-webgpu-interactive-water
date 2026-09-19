@@ -92,8 +92,9 @@ namespace AbstractOcclusion.WebGpuWater
             // whereas a skipped dispatch freezes the ocean SURFACE itself (WaterQuality.MaxOceanFftInterval).
             if (IsOceanClipmap && !_paused && Time.frameCount % _oceanFftInterval == 0)
             {
-                Vector2 camXZ = targetCamera != null
-                    ? new Vector2(targetCamera.transform.position.x, targetCamera.transform.position.z)
+                Camera eye = Eye;
+                Vector2 camXZ = eye != null
+                    ? new Vector2(eye.transform.position.x, eye.transform.position.z)
                     : new Vector2(VolumeCenter.x, VolumeCenter.z);
                 // Deposit knob maps to the compute's slow-fade fraction inverted (more deposit = slower dense
                 // fade). Drift and max buildup pass straight through.
@@ -138,6 +139,24 @@ namespace AbstractOcclusion.WebGpuWater
                 _sampler.RequestReadback();  // paused bodies keep their last height (objects still float)
                 if (IsOceanClipmap) _oceanFft?.RequestHeightReadback(); // FFT swell height for buoyancy
             }
+        }
+
+        // Interactables and line effects emit after Update, from the pose that will be rendered.
+        // Publish those stamps before the first camera consumes the field. Do not advance the
+        // solver or wave clock again: new height drops appear now, and propagation/velocity wakes
+        // integrate on the next scheduled solver step. No pending input means no extra GPU work.
+        void FlushLateInjectionsForRendering()
+        {
+            if (_paused || !_simulate || _water == null || !_water.HasPendingInjections) return;
+            _water.FlushInjections();
+            _water.UpdateNormals();
+            // Both dispatches can swap the state textures; renderers and fallback consumers must
+            // reference the final texture, with normals matching its newly stamped height.
+            using (BodyPublicationMarker.Auto())
+                ApplyBodyBlock();
+            if (isPrimary)
+                using (GlobalPublicationMarker.Auto())
+                    PublishBodyGlobalsTracked();
         }
 
         bool ShouldRunRippleSolver()
@@ -257,7 +276,7 @@ namespace AbstractOcclusion.WebGpuWater
             SetRendererEnabled(surfaceUnder, renderGeometry && !underClipmapActive);
             SetRendererEnabled(poolRenderer, renderGeometry);
             SetRendererEnabled(_patchRenderer, renderGeometry && _windowed);
-            SetRendererEnabled(_patchUnderRenderer, renderGeometry && IsOceanClipmap);
+            SetRendererEnabled(_patchUnderRenderer, renderGeometry && _windowed);
             SetClipmapRenderersEnabled(renderGeometry && IsOceanClipmap);
             // God rays obey the quality tier as well as culling: a tier that disables them
             // keeps the renderer off even when the body is on-screen. Windowed bodies also

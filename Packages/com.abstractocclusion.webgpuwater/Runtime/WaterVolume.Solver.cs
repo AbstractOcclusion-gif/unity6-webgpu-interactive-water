@@ -14,6 +14,7 @@ namespace AbstractOcclusion.WebGpuWater
 {
     public partial class WaterVolume
     {
+        private int _obstacleWindowSizeVersion = -1;
         // Static-reflection tuning (fixed for v1; promote to per-body settings if scene tuning is needed).
         // Threshold is in the solid mask's coverage units (submerged thickness, world); a low floor just
         // rejects faint silhouette edges. Rest dip is a world depression shown under a reflector, 0 = flat.
@@ -76,6 +77,7 @@ namespace AbstractOcclusion.WebGpuWater
             // Scroll the sim window to track the camera before injecting/stepping, so ripples
             // stay world-anchored. No-op for whole-body bodies.
             if (_windowed) _simWindow.Track();
+            if (_windowed) ResolveSimDensityRatio();
 
             // FootprintDelta mode only: push the surface with the temporally-smoothed
             // submerged footprint. In MouseLikeDrops mode the WaterInteractables emit
@@ -87,13 +89,26 @@ namespace AbstractOcclusion.WebGpuWater
                 _obstacle.Render(VolumeCenter.y);
                 // Temporal EMA (compute): Curr = lerp(Prev, Raw, blend). blend = 1 - obstacleSmoothing,
                 // so smoothing 0 = no low-pass (Curr = Raw), higher = heavier anti-flicker smoothing.
-                _water.SmoothObstacleFootprint(_obstacle.Prev, _obstacle.Raw, _obstacle.Curr,
+                bool resizedFootprint = _windowed
+                    && _obstacleWindowSizeVersion != _simWindow.SizeVersion;
+                if (resizedFootprint)
+                {
+                    // A different footprint frame is not physical object movement.
+                    // Prime both histories so resizing cannot inject a false splash.
+                    Graphics.CopyTexture(_obstacle.Raw, _obstacle.Prev);
+                    Graphics.CopyTexture(_obstacle.Raw, _obstacle.Curr);
+                    _obstacleWindowSizeVersion = _simWindow.SizeVersion;
+                }
+                else
+                {
+                    _water.SmoothObstacleFootprint(_obstacle.Prev, _obstacle.Raw, _obstacle.Curr,
                                                1f - obstacleSmoothing);
                 // Compensate for extent.y so an object's displacement is a fixed world height
                 // regardless of pool depth (PoolToWorld scales surface height by extent.y).
                 _water.ApplyObstacle(_obstacle.Prev, _obstacle.Curr,
                                      obstacleStrength / VolumeExtentSafe.y, obstacleFlipY,
                                      obstacleDeadband);
+                }
             }
 
             // Static reflection (opt-in per WaterInteractable.reflectsWaves, independent of the emission

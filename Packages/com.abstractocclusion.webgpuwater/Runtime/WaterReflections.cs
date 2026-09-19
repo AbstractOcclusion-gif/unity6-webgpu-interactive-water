@@ -25,8 +25,7 @@ namespace AbstractOcclusion.WebGpuWater
         internal static bool IsPlanarGranted(WaterVolume body)
         {
             if (body == null) return false;
-            Camera camera = body.targetCamera != null
-                ? body.targetCamera : WaterSimScheduler.ScheduleCamera();
+            Camera camera = body.Eye;
             return WaterRuntimeRelevance.IsPlanarGranted(body, camera);
         }
     }

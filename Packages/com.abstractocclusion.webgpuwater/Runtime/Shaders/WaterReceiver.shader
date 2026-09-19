@@ -67,6 +67,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
             #include "WaterFoamMask.hlsl" // SimFoamCoverage (also declares _WaterTexel for us)
             #include "WaterShore.hlsl"    // ShoreSample / ShoreData - the baked shore substrate
             #include "WaterSurfWaves.hlsl" // EvaluateSurfSwash + _SurfBeatTime (pure math, no samplers)
+            #include "WaterWaves.hlsl"     // WaveHeight / WindWaveSampleXZ - small wind-wave layer
             #include "WaterWetness.hlsl"  // THE wetness model, shared with the terrain shader
 
             TEXTURE2D(_BaseMap);    SAMPLER(sampler_BaseMap);
@@ -203,6 +204,13 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
                 // foam window fade exists to stop.
                 float simCovered = (max(abs(simPos.x), abs(simPos.z)) <= 1.0) ? 1.0 : 0.0;
                 float simH = SampleWaterHeightBilinear(wuv) * simCovered;
+                // Small wind-wave layer: the SAME pool-unit WaveHeight the surface vertex adds
+                // (WaterSurfaceVertStage), folded into simH so the underwater cut, wetness band
+                // and caustic fade all follow small waves, not just the ripple sim. Footprint-
+                // gated for bounded bodies; world-wave oceans keep it everywhere.
+                float2 windSampleXZ = WindWaveSampleXZ(poolPos.xz, IN.positionWS.xz);
+                float windGate = (_OceanWorldWaves > 0.5) ? 1.0 : inside;
+                simH += WaveHeight(windSampleXZ) * windGate;
                 float surfaceY = PoolToWorld(float3(poolPos.x, simH, poolPos.z)).y;
                 bool underwater = (waterMask > 0.5 && poolPos.y < simH);
 
@@ -340,7 +348,7 @@ Shader "AbstractOcclusion/WebGpuWater/WaterReceiver"
                 if (waterMask > 0.5)
                     color = ApplyWaterFog(color, WaterPathLength(IN.positionWS, _WorldSpaceCameraPos, surfaceY),
                                           WaterInscatterColor(normalize(_WorldSpaceCameraPos - IN.positionWS),
-                                                              _LightDir, _SunColor, 0.0));
+                                                              _LightDir, _WaterSunColor, 0.0));
                 return half4(color, 1);
             }
             ENDHLSL

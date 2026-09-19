@@ -31,7 +31,7 @@ namespace AbstractOcclusion.WebGpuWater
         const float DefaultReflectionSourceIntensity = 1f;
         const float MinimumReflectionSourceIntensity = 0f;
         static readonly int ID_Light = WaterShaderProps.LightDir;
-        static readonly int ID_SunColor = Shader.PropertyToID("_SunColor");
+        static readonly int ID_SunColor = Shader.PropertyToID("_WaterSunColor");
         static readonly int ID_FogColor = Shader.PropertyToID("_WaterFogColor");
         static readonly int ID_FogExt = Shader.PropertyToID("_WaterExtinction");
         static readonly int ID_UnderwaterLightScatter = Shader.PropertyToID("_UnderwaterLightScatter");
@@ -126,6 +126,7 @@ namespace AbstractOcclusion.WebGpuWater
         // Wind-wave SHAPING (group envelopes + Stokes crest term). Precomputed by the bank, so these
         // are plain uploads - see WaterWaves.hlsl for what each lane means.
         static readonly int ID_WaveGroupA = Shader.PropertyToID("_WaveGroupA");
+        static readonly int ID_WindWaveBandReach = Shader.PropertyToID("_WindWaveBandReach");
         static readonly int ID_WaveGroupB = Shader.PropertyToID("_WaveGroupB");
         static readonly int ID_WaveGroupC = Shader.PropertyToID("_WaveGroupC");
         static readonly int ID_WaveGroupD = Shader.PropertyToID("_WaveGroupD");
@@ -335,8 +336,9 @@ namespace AbstractOcclusion.WebGpuWater
         // (edit-mode previews, headless).
         void PublishExclusionVolumes()
         {
-            Vector3 reference = _body.targetCamera != null
-                ? _body.targetCamera.transform.position
+            Camera referenceEye = _body.Eye;
+            Vector3 reference = referenceEye != null
+                ? referenceEye.transform.position
                 : _body.VolumeCenter;
             int count = WaterExclusionVolume.WriteVolumeUniforms(
                 _exclusionMatrices, _exclusionShapes, _exclusionEdgeColors, _exclusionEdgeParams,
@@ -651,7 +653,7 @@ namespace AbstractOcclusion.WebGpuWater
                 Shader.SetGlobalFloat(ID_SceneLightCount, 0f);
                 return 0;
             }
-            Camera eye = _body.targetCamera;
+            Camera eye = _body.Eye;
             Vector3 eyePos = eye != null ? eye.transform.position : _body.VolumeCenter;
             RefreshSceneLightCache();
             int count = 0;
@@ -842,6 +844,9 @@ namespace AbstractOcclusion.WebGpuWater
             sink.SetVector(ID_WaveGroupPhases, _body.WaveBank.GroupPhases);
             sink.SetVector(ID_WaveShape, _body.WaveBank.Shape);
             sink.SetFloat(ID_WaveStokesNorm, _body.WaveBank.StokesNorm);
+            // Metres-scale bound for SurfaceHeightBand (WaterWaterline.hlsl): the wind-wave
+            // layer's significant height, so the fog lid/march band can bracket its crests.
+            sink.SetFloat(ID_WindWaveBandReach, _body.WindWaves ? _body.WaveHeightEffective : 0f);
             int mouthOutflowCount = _body.RiverMouthOutflowCount;
             sink.SetFloat(ID_MouthOutflowCount, mouthOutflowCount);
             sink.SetVectorArray(ID_MouthOutflowOrigins, _body.RiverMouthOutflowOrigins);

@@ -150,5 +150,27 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>Ambient wind-driven wave layer composited on top of the interactive
         /// ripples. Floating objects ride these waves too.</summary>
         public bool WindWaves { get => windWaveSettings.windWaves; set => windWaveSettings.windWaves = value; }
+
+        /// <summary>Wind speed in metres per second. Runtime-safe; changing it rebuilds the
+        /// analytic wave bank naturally on its next update.</summary>
+        public float WindSpeed
+        {
+            get => windWaveSettings.windSpeed;
+            set => windWaveSettings.windSpeed = Mathf.Clamp(value, 0f, 15f);
+        }
+
+        /// <summary>Direction the wind blows toward in degrees; zero is world +X.</summary>
+        public float WindFromDegrees
+        {
+            get => windWaveSettings.windFromDegrees;
+            set => windWaveSettings.windFromDegrees = Mathf.Repeat(value, 360f);
+        }
+
+        /// <summary>Applies a live weather provider's wind without exposing serialized settings.</summary>
+        public void SetWeatherWind(float speedMetersPerSecond, float headingDegrees)
+        {
+            WindSpeed = speedMetersPerSecond;
+            WindFromDegrees = headingDegrees;
+        }
     }
 }

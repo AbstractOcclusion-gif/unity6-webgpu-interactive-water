@@ -92,6 +92,8 @@ namespace AbstractOcclusion.WebGpuWater
         /// <summary>Debug/rendering callers: fill the sample even inside exclusions (Validity
         /// still reports Excluded; the resolve still returns false).</summary>
         public bool IncludeExcludedSpace;
+        /// <summary>Buoyancy owner whose own dry-interior children must not exclude its hull.</summary>
+        public Transform ExclusionOwner;
         public WaterQueryFields Fields;
         /// <summary>Wavelength cut-off forwarded to the surface sample (object size; 0 = full).</summary>
         public float MinimumWaveLength;

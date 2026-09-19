@@ -132,7 +132,7 @@ namespace AbstractOcclusion.WebGpuWater
         // Submersion weight for the sphere interactor: 1 at the waterline, a Gaussian fade as the sphere
         // sinks (a deep sphere barely dents the surface), and a sqrt fade to 0 as it lifts a radius clear.
         // Mirrors Crest's SphereWaterInteraction weighting. Uses the analytic waterline (valid from frame 0).
-        float SphereSubmersionWeight(Vector3 worldPos, float radius)
+        internal float SphereSubmersionWeight(Vector3 worldPos, float radius)
         {
             if (!TryGetAnalyticWaterline(worldPos.x, worldPos.z, out float surfaceY)) return 0f;
             float r = Mathf.Max(radius, 1e-3f);
@@ -159,6 +159,23 @@ namespace AbstractOcclusion.WebGpuWater
             WaterVolume body = BodyContaining(worldPos);
             if (body == null) return false;
             body.AddSphereInteraction(worldPos, worldStep, radius, strength, verticalForceCap);
+            return true;
+        }
+
+        /// <summary>Emit this body's native splash particles at a world-space surface point.
+        /// Returns false when the body has splash emission disabled or no emitter is available.
+        /// The emitter is resolved through the body's configured splash routing, including its
+        /// assigned emitter and the play-mode fallback emitter.</summary>
+        public bool SpawnSplash(Vector3 surfacePos, float strength, float radius,
+                                float amountScale = 1f, Vector3 petalDirection = default,
+                                float arcDegrees = 360f, float elevationDegrees = 0f,
+                                bool allowCrown = true)
+        {
+            WaterSplashEmitter emitter = ResolveSplashEmitter();
+            if (emitter == null) return false;
+
+            emitter.EmitSplash(surfacePos, strength, radius, amountScale,
+                               petalDirection, arcDegrees, elevationDegrees, allowCrown);
             return true;
         }
 

@@ -53,7 +53,7 @@ namespace AbstractOcclusion.WebGpuWater
             HandleMouse();
         }
 
-        Ray PixelRay(Vector2 p) => _owner.targetCamera.ScreenPointToRay(new Vector3(p.x, p.y, 0f));
+        Ray PixelRay(Vector2 p) => _owner.Eye.ScreenPointToRay(new Vector3(p.x, p.y, 0f));
 
         // Nearest water body whose surface the ray hits (null = none, so we orbit instead).
         static WaterVolume FindHitBody(Ray ray, out Vector3 worldHit)
@@ -85,7 +85,7 @@ namespace AbstractOcclusion.WebGpuWater
         void HandleMouse()
         {
             // No camera -> no rays to cast; skip input rather than NRE in PixelRay.
-            if (_owner.targetCamera == null) return;
+            if (_owner.Eye == null) return;
 
 #if ENABLE_INPUT_SYSTEM
             // On touch, a finger drives the fly camera; only a tap (short-travel release) ripples the water.
@@ -232,13 +232,14 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (!_owner.DemoKeyboardShortcuts) return;
             if (KeySpaceDown()) _owner.TogglePause();
-            if (KeyLHeld() && _owner.targetCamera != null)
+            Camera eye = _owner.Eye;
+            if (KeyLHeld() && eye != null)
             {
                 // Point the real sun along the camera view (or the fallback vector).
                 if (_owner.sun != null)
-                    _owner.sun.transform.rotation = Quaternion.LookRotation(_owner.targetCamera.transform.forward);
+                    _owner.sun.transform.rotation = Quaternion.LookRotation(eye.transform.forward);
                 else
-                    _owner.lightDir = -_owner.targetCamera.transform.forward;
+                    _owner.lightDir = -eye.transform.forward;
             }
         }
 

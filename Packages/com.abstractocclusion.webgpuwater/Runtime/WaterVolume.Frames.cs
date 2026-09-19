@@ -125,12 +125,16 @@ namespace AbstractOcclusion.WebGpuWater
         // Half-size (world) of the window: simWindowMeters horizontally, the body's depth
         // scale vertically (ripple height stays coupled to extent.y like the whole-body sim).
         internal Vector3 SimHalfExtent => new Vector3(
-            Mathf.Max(simWindowMeters, MinWindowHalfExtent),
+            SimHorizontalExtent,
             VolumeExtentSafe.y,
-            Mathf.Max(simWindowMeters, MinWindowHalfExtent));
+            SimHorizontalExtent);
 
         // Average horizontal window half-size, keeping an injected ripple round in world units.
-        float SimHorizontalExtent => Mathf.Max(simWindowMeters, MinWindowHalfExtent);
+        float SimHorizontalExtent => Mathf.Max(
+            _simWindow != null ? _simWindow.HalfSize : simWindowMeters, MinWindowHalfExtent);
+
+        /// <summary>Current runtime half-size, including any focus profile override.</summary>
+        public float ActiveSimulationHalfSizeMeters => SimHorizontalExtent;
 
         // POOL-space slope -> WORLD slope, per axis. Pool space normalises each axis by its own
         // extent, so a slope measured there is the world slope times horizontal/vertical - and on a

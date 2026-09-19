@@ -25,6 +25,20 @@ namespace AbstractOcclusion.WebGpuWater
         // Idle pulses use a small stamp so the shimmer stays sub-wavelength.
         const float IdleRippleRadius = 0.25f;
 
+        [Tooltip("Scale disturbance radii, tail offset and reach with this creature's world scale. Enable for individually sized fish; authored dimensions are for scale 1.")]
+        [SerializeField] bool scaleWithTransform;
+
+        internal float DisturbanceScale
+        {
+            get
+            {
+                if (!scaleWithTransform) return 1f;
+                Vector3 size = transform.lossyScale;
+                return Mathf.Max(0.01f, Mathf.Max(Mathf.Abs(size.x),
+                    Mathf.Max(Mathf.Abs(size.y), Mathf.Abs(size.z))));
+            }
+        }
+
         [Header("Surface Detection")]
         [Tooltip("Maximum distance from the surface (above or below) where disturbance is generated.")]
         [Min(0.05f)] [SerializeField] float depthThreshold = 0.6f;
@@ -101,7 +115,8 @@ namespace AbstractOcclusion.WebGpuWater
         void LateUpdate()
         {
             Vector3 position = transform.position;
-            Vector3 tailPosition = position - transform.forward * wakeTailOffset;
+            float size = DisturbanceScale;
+            Vector3 tailPosition = position - transform.forward * (wakeTailOffset * size);
             if (!_primed)
             {
                 _prevPosition = position;
@@ -119,7 +134,8 @@ namespace AbstractOcclusion.WebGpuWater
             }
 
             float distanceToSurface = Mathf.Abs(surfaceY - position.y);
-            _isNearSurface = distanceToSurface <= depthThreshold;
+            float surfaceReach = depthThreshold * size;
+            _isNearSurface = distanceToSurface <= surfaceReach;
             if (!_isNearSurface)
             {
                 _tailFlicking = false;
@@ -129,7 +145,7 @@ namespace AbstractOcclusion.WebGpuWater
             }
 
             float depthFactor = fadeWithDepth
-                ? 1f - Mathf.Clamp01(distanceToSurface / depthThreshold)
+                ? 1f - Mathf.Clamp01(distanceToSurface / surfaceReach)
                 : 1f;
 
             float deltaTime = Mathf.Max(Time.deltaTime, MinDeltaTime);
@@ -157,7 +173,8 @@ namespace AbstractOcclusion.WebGpuWater
             if (strength <= 0f) return;
 
             Vector3 injectAt = new Vector3(tailPosition.x, surfaceY, tailPosition.z);
-            WaterVolume.TrySphereInteractionAt(injectAt, tailStep, wakeRadius, strength);
+            WaterVolume.TrySphereInteractionAt(injectAt, tailStep,
+                wakeRadius * DisturbanceScale, strength);
         }
 
         void UpdateIdleRipple(Vector3 position, float surfaceY, float speed, float depthFactor,
@@ -173,8 +190,8 @@ namespace AbstractOcclusion.WebGpuWater
             _idleTimer = 0f;
             _nextIdlePulse = NextInterval(idlePulseInterval, idlePulseJitter);
             Vector3 injectAt = new Vector3(position.x, surfaceY, position.z);
-            WaterVolume.TrySpawnRippleAt(injectAt, IdleRippleRadius,
-                                         idleStrength * depthFactor * idleBlend);
+            WaterVolume.TrySpawnRippleAt(injectAt, IdleRippleRadius * DisturbanceScale,
+                                         idleStrength * DisturbanceScale * depthFactor * idleBlend);
         }
 
         void UpdateTailFlick(Vector3 tailPosition, float surfaceY, float depthFactor,
@@ -194,9 +211,9 @@ namespace AbstractOcclusion.WebGpuWater
                 float envelope = Mathf.Sin(t * Mathf.PI);
                 Vector3 lateral = Vector3.Cross(transform.forward, Vector3.up).normalized
                                   * _tailFlickSide;
-                Vector3 flickStep = lateral * (TailFlickSweepSpeed * envelope * deltaTime);
+                Vector3 flickStep = lateral * (TailFlickSweepSpeed * DisturbanceScale * envelope * deltaTime);
                 Vector3 injectAt = new Vector3(tailPosition.x, surfaceY, tailPosition.z);
-                WaterVolume.TrySphereInteractionAt(injectAt, flickStep, wakeRadius,
+                WaterVolume.TrySphereInteractionAt(injectAt, flickStep, wakeRadius * DisturbanceScale,
                                                    tailFlickStrength * envelope * depthFactor);
                 return;
             }
@@ -230,19 +247,20 @@ namespace AbstractOcclusion.WebGpuWater
         {
             Vector3 center = transform.position;
             if (WaterVolume.TrySampleHeightAt(center, out float surfaceY)) center.y = surfaceY;
+            float size = DisturbanceScale;
 
             Gizmos.color = new Color(0.3f, 0.8f, 0.9f, 0.2f);
-            Gizmos.DrawWireSphere(center, wakeRadius);
-            Gizmos.DrawLine(center + Vector3.up * depthThreshold + Vector3.left * 0.5f,
-                            center + Vector3.up * depthThreshold + Vector3.right * 0.5f);
-            Gizmos.DrawLine(center + Vector3.down * depthThreshold + Vector3.left * 0.5f,
-                            center + Vector3.down * depthThreshold + Vector3.right * 0.5f);
+            Gizmos.DrawWireSphere(center, wakeRadius * size);
+            Gizmos.DrawLine(center + Vector3.up * (depthThreshold * size) + Vector3.left * 0.5f,
+                            center + Vector3.up * (depthThreshold * size) + Vector3.right * 0.5f);
+            Gizmos.DrawLine(center + Vector3.down * (depthThreshold * size) + Vector3.left * 0.5f,
+                            center + Vector3.down * (depthThreshold * size) + Vector3.right * 0.5f);
 
             if (enableWake)
             {
                 Gizmos.color = new Color(0.2f, 0.5f, 1f, 0.5f);
-                Vector3 tail = center - transform.forward * wakeTailOffset;
-                Gizmos.DrawWireSphere(tail, wakeRadius * 0.5f);
+                Vector3 tail = center - transform.forward * (wakeTailOffset * size);
+                Gizmos.DrawWireSphere(tail, wakeRadius * size * 0.5f);
                 Gizmos.DrawLine(center, tail);
             }
         }

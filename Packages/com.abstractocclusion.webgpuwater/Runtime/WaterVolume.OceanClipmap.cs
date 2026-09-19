@@ -83,7 +83,6 @@ namespace AbstractOcclusion.WebGpuWater
         {
             public MeshRenderer above;
             public MeshRenderer under;                 // null when the body has no under-surface material
-            public float cellSize;                     // world metres per grid cell at this level
             public float depthBias;                    // view-space nudge toward the camera; finer levels win an overlap
             public float morphStart;                   // cheb cell distance where the edge geomorph begins (>= M/2 = off)
             public float morphScale;                   // 1 / morph-band width in cells
@@ -106,23 +105,35 @@ namespace AbstractOcclusion.WebGpuWater
         void ApplyClipmapBlock()
         {
             if (_clipmapLevels == null) return;
+            // A smaller focus window needs additional levels to reach the same
+            // horizon. Only rebuild when the required level count changes.
+            if (_clipmapLevels.Length != ClipmapLevelCount)
+            {
+                SetClipmapRenderersEnabled(false);
+                DestroyOceanClipmap();
+                CreateOceanClipmap();
+                SetRenderersEnabled(_visible);
+                if (_clipmapLevels == null) return;
+            }
             // Body uniforms ONCE for the whole clipmap. The per-level floats below are written
             // unconditionally for every level, so nothing stale survives even though the block is
             // persistent now (cached publisher sinks push only changed body values).
             _clipmapBlock ??= new MaterialPropertyBlock();
             WriteBodyProps(_clipmapBlock);
             for (int i = 0; i < _clipmapLevels.Length; i++)
-                PositionClipmapLevel(_clipmapLevels[i]);
+                PositionClipmapLevel(_clipmapLevels[i], i);
         }
 
         // Place one LOD level: snap its centre to the level's own world lattice, scale the shared template
         // to the level's cell size, and push its per-level uniforms (the _IsClipmap flag, the edge geomorph
         // band, and a small toward-camera depth bias so a finer level wins where it overlaps a coarser one).
         // The above and under twins share the centre + scale; only their material (and cull) differ.
-        void PositionClipmapLevel(ClipmapLevel level)
+        void PositionClipmapLevel(ClipmapLevel level, int index)
         {
-            Vector3 center = ClipmapLevelSnappedCenter(level.cellSize);
-            Vector3 scale = new Vector3(level.cellSize, 1f, level.cellSize); // template verts are in cell units
+            // Never cache the world cell size: the patch can resize at runtime.
+            float cellSize = ClipmapBaseCell * Mathf.Pow(2f, index);
+            Vector3 center = ClipmapLevelSnappedCenter(cellSize);
+            Vector3 scale = new Vector3(cellSize, 1f, cellSize); // template verts are in cell units
             PlaceClipmapRenderer(level.above, center, scale, level, isUnderTwin: false);
             PlaceClipmapRenderer(level.under, center, scale, level, isUnderTwin: true);
         }
@@ -179,18 +190,11 @@ namespace AbstractOcclusion.WebGpuWater
         // frame about VolumeCenter). Because the shared template's vertices sit at integer-cell offsets,
         // snapping to 2*cell keeps every vertex on the fixed world lattice VolumeCenter + cell*Z, so the
         // wave field (a pure function of world XZ) is sampled at stable points as the camera follows - which
-        // is what removes the geometry swim. Follows the same target as the sim window (an explicit focus,
-        // else the camera); falls back to the window centre when neither exists.
+        // is what removes the geometry swim. The hole must follow the actual patch,
+        // including runtime focus overrides, offsets and shoreline clamping.
         Vector3 ClipmapLevelSnappedCenter(float cellSize)
         {
-            Transform follow = simWindowFocus != null ? simWindowFocus
-                             : (targetCamera != null ? targetCamera.transform : null);
-            if (follow == null) return SimWindowCenter;
-
-            Vector3 up = VolumeUp;
-            Vector3 followPos = follow.position;
-            Vector3 onPlane = followPos - Vector3.Dot(followPos - VolumeCenter, up) * up;
-            Vector3 local = Quaternion.Inverse(VolumeRotation) * (onPlane - VolumeCenter);
+            Vector3 local = Quaternion.Inverse(VolumeRotation) * (SimWindowCenter - VolumeCenter);
             float snap = ClipmapSnapCellMultiple * cellSize;
             local.x = Mathf.Round(local.x / snap) * snap;
             local.z = Mathf.Round(local.z / snap) * snap;
@@ -222,7 +226,6 @@ namespace AbstractOcclusion.WebGpuWater
             _clipmapTemplate.hideFlags = HideFlags.HideAndDontSave;
 
             int levelCount = ClipmapLevelCount;
-            float baseCell = ClipmapBaseCell;
             float morphBandCells = Mathf.Max(1f, Mathf.Round((ClipmapGridRes / 4f) * ClipmapMorphBandFraction));
             float biasStep = PatchDepthBiasMeters / (levelCount + 1);   // every level stays under the patch's bias
             bool buildUnder = surfaceUnder != null && surfaceUnder.sharedMaterial != null;
@@ -233,7 +236,6 @@ namespace AbstractOcclusion.WebGpuWater
                 bool outermost = level == levelCount - 1;
                 var entry = new ClipmapLevel
                 {
-                    cellSize = baseCell * Mathf.Pow(2f, level),
                     // Finer levels get a larger toward-camera nudge so they win where they overlap a coarser
                     // one; all stay below the patch bias so the patch still owns the innermost overlap.
                     depthBias = biasStep * (levelCount - 1 - level),

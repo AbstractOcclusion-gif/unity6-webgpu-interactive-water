@@ -94,7 +94,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamDensityComposite"
             float3 _DensityCamPos;
             float3 _DensityCamForward;
             float3 _LightDir; // globals published by the primary WaterVolume
-            float3 _SunColor;
+            float3 _WaterSunColor;
             float _CameraUnderwater;
             sampler2D _CameraDepthTexture;
 
@@ -265,7 +265,7 @@ Shader "AbstractOcclusion/WebGpuWater/FoamDensityComposite"
                 // Shared foam lighting, as upward-facing foam (a screen-space layer has no
                 // normal); the default _Tint carries KWS's cool sea-foam cast.
                 float wrapped = FoamWrappedDiffuseNdotL(_LightDir.y);
-                float3 lit = FoamLitColor(_Tint.rgb, _SunColor, wrapped);
+                float3 lit = FoamLitColor(_Tint.rgb, _WaterSunColor, wrapped);
                 float3 premultipliedColor = lit * alpha;
                 if (_CameraUnderwater < 0.5)
                     premultipliedColor = lerp(unity_FogColor.rgb * alpha, premultipliedColor,

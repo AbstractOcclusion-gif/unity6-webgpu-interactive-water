@@ -881,7 +881,7 @@ float4 UnderwaterStage(v2f i, WaterGeomStage g, float waterClarity)
     // the mirror toward the body's own in-scatter colour: a real TIR mirror shows the
     // DEPTHS, not the sky, so blending toward the water colour reads truer; 0 keeps
     // the legacy tinted-sky mirror.
-    float3 bodyInscatterUnder = WaterInscatterColor(-incomingRay, _LightDir, _SunColor, 0.0);
+    float3 bodyInscatterUnder = WaterInscatterColor(-incomingRay, _LightDir, _WaterSunColor, 0.0);
     float3 reflectedColor = lerp(SampleEnvironment(reflectedRay) * UnderwaterViewTint(),
                                  bodyInscatterUnder, _UnderMirrorWaterBlend);
     // VOLUMETRIC COUPLING (KWS increment, phase 1). A real TIR mirror shows THE DEPTHS, and the
@@ -1207,7 +1207,7 @@ float3 RefractionStage(v2f i, WaterGeomStage g, float waterClarity, out float3 b
     // water, scene refraction, pool, turbidity) so the scatter actually shows. The crest glow
     // is NOT folded in here - as a volume target it only shows where the water behind the
     // crest is deep (sky/far behind), so it is added emissively after compositing instead.
-    float3 bodyInscatter = WaterInscatterColor(-incomingRay, _LightDir, _SunColor, 0.0);
+    float3 bodyInscatter = WaterInscatterColor(-incomingRay, _LightDir, _WaterSunColor, 0.0);
     bodyInscatterOut = bodyInscatter;
 
     // No constant tint: for open/deep water GetSurfaceRayColor -> DeepWaterColor already lights the
@@ -1374,7 +1374,7 @@ FoamLayer OceanWhitecapLayer(v2f i, WaterGeomStage g, float2 foamWorldDdx,
         oceanTint *= lerp(float3(1.0, 1.0, 1.0),
                           exp(-_WaterExtinction.rgb * (1.0 - saturate(oceanFoam))),
                           _OceanFoamDepthTint);
-        oceanFoamLook = FoamLitColor(oceanTint, _SunColor, oceanWrap);
+        oceanFoamLook = FoamLitColor(oceanTint, _WaterSunColor, oceanWrap);
         oceanFoamAlpha = oceanFoam * _OceanFoamColor.a;
     }
     oceanCoverage = oceanFoam;
@@ -1481,7 +1481,7 @@ FoamLayer PondFoamLayerFromCoverage(v2f i, WaterGeomStage g, float coverage)
         float wrapped = FoamWrappedDiffuse(foamNormal, _LightDir);
         float3 albedo = _FoamColor.rgb * lerp(
             foam.pattern, float3(1.0, 1.0, 1.0), foam.core * FOAM_CORE_WHITEN);
-        pondFoamLook = FoamLitColor(albedo, _SunColor, wrapped);
+        pondFoamLook = FoamLitColor(albedo, _WaterSunColor, wrapped);
         pondFoamAlpha = foam.alpha;
     }
     FoamLayer layer;
@@ -1546,7 +1546,7 @@ FoamLayer SurfWhitewashLayer(v2f i, WaterGeomStage g, float2 foamWorldDdx,
         float surfWrapped = FoamWrappedDiffuse(surfFoamNormal, _LightDir);
         float3 surfTint = _SurfFoamColor.rgb
             * lerp(surfPattern, float3(1.0, 1.0, 1.0), surfFoam);
-        surfFoamLook = FoamLitColor(surfTint, _SunColor, surfWrapped);
+        surfFoamLook = FoamLitColor(surfTint, _WaterSunColor, surfWrapped);
         surfFoamAlpha = surfFoam * _SurfFoamColor.a;
     }
     FoamLayer layer;
@@ -1604,7 +1604,7 @@ float3 CompositeSurfaceColor(WaterGeomStage g, float fresnel, float3 reflectedCo
     // body colour and lit by the sun; sssBoost already carries the crest pinch, sun-facing
     // and intensity. Knocked down by foam so whitecaps stay matte over the glow. ----
     if (sssBoost > 0.0)
-        outColor += _ScatterColor.rgb * _SunColor * (sssBoost * (1.0 - foamMatte));
+        outColor += _ScatterColor.rgb * _WaterSunColor * (sssBoost * (1.0 - foamMatte));
     return outColor;
 }
 
@@ -1857,7 +1857,7 @@ float3 ShorelineStage(v2f i, WaterGeomStage g, float3 outColor, float3 refracted
                         float swashWrapped = FoamWrappedDiffuse(normal, _LightDir);
                         float3 swashTint = _SurfFoamColor.rgb
                             * lerp(swashPattern, float3(1.0, 1.0, 1.0), swashFoam);
-                        swashFoamLook = FoamLitColor(swashTint, _SunColor, swashWrapped);
+                        swashFoamLook = FoamLitColor(swashTint, _WaterSunColor, swashWrapped);
                         swashFoamAlpha = swashFoam * _SurfFoamColor.a;
                     }
                 }

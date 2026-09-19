@@ -18,6 +18,13 @@ namespace AbstractOcclusion.WebGpuWater
         bool HasRequiredWiring() => simCompute != null && causticsShader != null && waterMesh != null;
         internal bool HasRequiredWiringForDiagnostics => HasRequiredWiring();
 
+        /// <summary>The camera the water treats as the eye - see <see cref="WaterEye"/>. Every
+        /// eye-role read in the package goes through here rather than touching
+        /// <see cref="targetCamera"/>, which is now only the legacy fallback inside the election.
+        /// One eye is shared by all bodies: the global underwater state it drives is static, so
+        /// per-body eyes were never actually independent.</summary>
+        internal Camera Eye => WaterEye.Resolve();
+
         // Fail fast on the required wiring (play mode); a missing piece would otherwise surface
         // later as a confusing downstream error (broken caustic material, per-frame DrawMesh errors).
         void FailMissingWiring()
@@ -80,6 +87,10 @@ namespace AbstractOcclusion.WebGpuWater
         {
             if (!Application.isPlaying) return;
 
+            // Legacy convenience only. The EYE no longer depends on this landing anywhere:
+            // WaterEye.Resolve ends at Camera.main by itself, every frame, whether or not this
+            // field was ever filled. Kept because `orbit` below and Configure Camera still read
+            // the field directly, and because clearing it would change authored scenes on load.
             if (targetCamera == null) targetCamera = Camera.main;
             if (sun == null) sun = ResolveSun();
             if (orbit == null && targetCamera != null) orbit = targetCamera.GetComponent<OrbitCamera>();

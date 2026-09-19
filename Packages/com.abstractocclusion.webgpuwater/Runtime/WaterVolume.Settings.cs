@@ -26,6 +26,11 @@ namespace AbstractOcclusion.WebGpuWater
         [SerializeField] internal Shader obstacleShader; // AbstractOcclusion/WebGpuWater/ObstacleDepth - footprint of interactable objects
         [SerializeField] internal Shader occluderShader; // AbstractOcclusion/WebGpuWater/CausticOccluder - refracted-light object shadow into the caustic RT (optional; Shader.Find fallback)
         [SerializeField] internal Mesh waterMesh;        // XY grid plane, [-1,1], shared with the water surface renderers
+        [Tooltip("LEGACY fallback. Prefer a Water Eye component on your camera: it survives " +
+                 "camera switching and cannot silently go stale. This field is only consulted " +
+                 "when no Water Eye is enabled, and only while the camera it names is itself " +
+                 "active and enabled. It is still the field the demo framing (Configure Camera) " +
+                 "and the Orbit lookup read directly.")]
         [SerializeField] internal Camera targetCamera;
         [SerializeField] internal Light sun;             // directional light: drives water, caustics AND real shadows
 
