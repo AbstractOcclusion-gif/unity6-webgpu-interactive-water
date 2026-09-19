@@ -46,3 +46,8 @@ crashlytics-build.properties
 # Local working notes and scratch (not for the repo)
 /PROMPT_*.md
 /_to_delete/
+/_CodexRendererFeatureVerification/
+/_stage_tmp/
+/WaterDebug/
+/UIElementsSchema/
+/ThreeJsDemo/
