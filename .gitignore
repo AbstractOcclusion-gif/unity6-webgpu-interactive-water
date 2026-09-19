@@ -1,3 +1,11 @@
+# The repo holds ONLY the package and the project settings. Everything else at the
+# project root is local (notes, prompts, scratch, demos, docs) and stays out.
+/*
+!/Packages/
+!/ProjectSettings/
+!/.gitignore
+!/.gitattributes
+
 # Unity generated folders
 [Ll]ibrary/
 [Tt]emp/
@@ -42,12 +50,3 @@ crashlytics-build.properties
 # Asset Store publishing tools (local dev tool, embedded package - not for the repo).
 # (The Assets/AssetStoreTools entries are gone: the whole /Assets/ folder is ignored above.)
 /[Pp]ackages/com.unity.asset-store-tools/
-
-# Local working notes and scratch (not for the repo)
-/PROMPT_*.md
-/_to_delete/
-/_CodexRendererFeatureVerification/
-/_stage_tmp/
-/WaterDebug/
-/UIElementsSchema/
-/ThreeJsDemo/
